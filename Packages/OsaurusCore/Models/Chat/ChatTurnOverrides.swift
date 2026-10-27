@@ -49,6 +49,15 @@ public struct ChatTurnOverrides: Codable, Equatable, Sendable {
         try ChatTemplateParameters.validate(templateKwargs)
     }
 
+    /// Shared workspace agents execute their host's controls. Never accept
+    /// an explicit local override and silently discard it on the remote wire.
+    func validate(forWorkspaceAgent isWorkspaceAgent: Bool) throws {
+        try validate()
+        if isWorkspaceAgent, !isEmpty {
+            throw ValidationError.invalid("Per-turn controls are not supported for shared workspace agents. The remote agent owns its generation settings.")
+        }
+    }
+
     func apply(to request: inout ResponsesInferenceRequest) {
         if let temperature { request.generation.temperature = temperature }
         if let topP { request.generation.topP = topP }

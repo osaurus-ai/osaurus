@@ -6415,8 +6415,15 @@ final class ChatSession: ObservableObject {
         // the phone's run in this chat too; a message is held, not lost.
         if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
             if hasContent {
-                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId, taskIntent: resolvedTaskIntent, inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride, generationControls: generationControls ?? captureGenerationControls(overrides: turnOverrides))
-                nextTurnOverrides = ChatTurnOverrides()
+                let heldControls = generationControls ?? captureGenerationControls(overrides: turnOverrides)
+                do { try heldControls.overrides.validate(); turnParametersError = nil }
+                catch {
+                    turnParametersError = error.localizedDescription
+                    restoreTurnsRollbackAfterAbortedRegeneration()
+                    return
+                }
+                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId, taskIntent: resolvedTaskIntent, inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride, generationControls: heldControls)
+                if generationControls == nil, turnOverrides == nil { nextTurnOverrides = ChatTurnOverrides() }
             }
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
@@ -6437,7 +6444,11 @@ final class ChatSession: ObservableObject {
             ?? (isRegeneration ? turns.last(where: { $0.role == .user })?.generationControls : nil)
             ?? captureGenerationControls(overrides: turnOverrides)
         do { try controls.overrides.validate(); turnParametersError = nil }
-        catch { turnParametersError = error.localizedDescription; return }
+        catch {
+            turnParametersError = error.localizedDescription
+            restoreTurnsRollbackAfterAbortedRegeneration()
+            return
+        }
         let storedTurnOptions = controls.storedExplicitOptions
         if hasContent, generationControls == nil, turnOverrides == nil {
             nextTurnOverrides = ChatTurnOverrides()
@@ -6580,9 +6591,8 @@ final class ChatSession: ObservableObject {
             // await above widened the window in which another window can
             // grab the runtime. Put the draft back instead of dropping it.
             rollbackPreAppendedUserTurn(preAppendedUserTurn, restoringDraft: nil)
-            if hasContent, input.isEmpty, pendingAttachments.isEmpty {
-                input = trimmed
-                pendingAttachments = attachments
+            if hasContent {
+                restoreAbortedSendDraft(text: trimmed, attachments: attachments, controls: generationControls)
             }
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
@@ -9074,6 +9084,15 @@ final class ChatSession: ObservableObject {
     /// path when the post-handshake dispatch aborts (a run started or
     /// another window grabbed the local runtime while we waited). Restores
     /// the draft when asked so the user's text isn't silently dropped.
+    /// Restore only the draft this aborted send owned. A newly authored
+    /// one-turn override remains the composer's newer choice.
+    func restoreAbortedSendDraft(text: String, attachments: [Attachment], controls: ChatTurnGenerationControls?) {
+        guard input.isEmpty, pendingAttachments.isEmpty else { return }
+        input = text
+        pendingAttachments = attachments
+        if nextTurnOverrides.isEmpty, let controls { nextTurnOverrides = controls.overrides }
+    }
+
     private func rollbackPreAppendedUserTurn(
         _ turn: ChatTurn?,
         restoringDraft draft: (text: String, attachments: [Attachment])?
@@ -9083,10 +9102,8 @@ final class ChatSession: ObservableObject {
             turns.remove(at: index)
             rebuildVisibleBlocks()
         }
-        if let draft, input.isEmpty, pendingAttachments.isEmpty {
-            input = draft.text
-            pendingAttachments = draft.attachments
-            if let controls = turn.generationControls { nextTurnOverrides = controls.overrides }
+        if let draft {
+            restoreAbortedSendDraft(text: draft.text, attachments: draft.attachments, controls: turn.generationControls)
         }
     }
 

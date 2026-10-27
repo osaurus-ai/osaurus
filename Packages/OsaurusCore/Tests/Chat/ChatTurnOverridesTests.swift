@@ -179,6 +179,94 @@ struct ChatTurnOverridesTests {
         #expect(DispatchRequest(prompt: "inherit").generationOverrides == nil)
     }
 
+    @Test func workspaceOverridesRejectBeforePrepareAndDirectExecutionReportsFailure() async throws {
+        try await ChatHistoryTestStorage.run {
+            let controls = ChatTurnOverrides(temperature: 0, topK: 0)
+            try ChatTurnOverrides().validate(forWorkspaceAgent: true)
+            try controls.validate(forWorkspaceAgent: false)
+            #expect(throws: (any Error).self) { try controls.validate(forWorkspaceAgent: true) }
+            let ref = WorkspaceAgentRef(workspaceId: "controls-fixture", agentAddress: "0x1111111111111111111111111111111111111111")
+            let client = WorkspaceAgentRunClient.shared
+            let saved = client.routerEnabled
+            var prepareChecks = 0
+            client.routerEnabled = { prepareChecks += 1; return false }
+            defer { client.routerEnabled = saved }
+            let request = DispatchRequest(prompt: "extract", target: .workspace(ref), generationOverrides: controls)
+            #expect(await BackgroundTaskManager.shared.dispatchChat(request) == nil)
+            #expect(prepareChecks == 0)
+            let prepared = WorkspaceAgentRunClient.Prepared(ref: ref, providerId: UUID(),
+                displayName: "Fixture", effectiveModel: nil, workspaceName: nil)
+            let context = ExecutionContext(workspace: prepared, source: .chat)
+            let engine = TurnParameterRecordingEngine()
+            context.chatSession.chatEngineFactory = { _ in engine }
+            let failure = await context.start(prompt: "extract", generationOverrides: controls)
+            #expect(failure != nil)
+            #expect(context.chatSession.lastStreamError == failure)
+            #expect(context.chatSession.turns.isEmpty)
+            #expect(!context.isExecuting)
+            #expect(await engine.requests.isEmpty)
+        }
+    }
+
+    @Test func abortedSendRestoresItsControlsWithoutReplacingANewerDraft() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            var controls = ChatTurnGenerationControls.capture(activeModelOptions: [:])
+            controls.overrides = .init(temperature: 0, topK: 0,
+                templateKwargs: ["template": .object(["field": .null])])
+            session.restoreAbortedSendDraft(text: "original", attachments: [], controls: controls)
+            #expect(session.input == "original")
+            #expect(session.nextTurnOverrides == controls.overrides)
+            session.input = ""
+            session.nextTurnOverrides = .init(temperature: 1.2)
+            session.restoreAbortedSendDraft(text: "original", attachments: [], controls: controls)
+            #expect(session.input == "original")
+            #expect(session.nextTurnOverrides.temperature == 1.2)
+            session.input = "newer text"
+            session.restoreAbortedSendDraft(text: "old text", attachments: [], controls: controls)
+            #expect(session.input == "newer text")
+        }
+    }
+
+    @Test func phoneHeldCapturedControlsDoNotConsumeALaterComposerDraft() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let id = UUID()
+            session.sessionId = id
+            RemoteSessionContinuation.beginPhoneRun(id)
+            defer { session.queuedSend = nil; RemoteSessionContinuation.endPhoneRun(id) }
+            var captured = ChatTurnGenerationControls.capture(activeModelOptions: [:])
+            captured.overrides = .init(temperature: 0, topK: 0)
+            session.nextTurnOverrides = .init(temperature: 1.2, topK: 5)
+            session.send("held", generationControls: captured)
+            #expect(session.queuedSend?.generationControls == captured)
+            #expect(session.nextTurnOverrides.temperature == 1.2)
+            #expect(session.nextTurnOverrides.topK == 5)
+            #expect(session.turns.isEmpty)
+        }
+    }
+
+    @Test func invalidSavedRegenerationRestoresTheOriginalTranscript() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let engine = TurnParameterRecordingEngine()
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in engine }
+            let user = ChatTurn(role: .user, content: "original")
+            var invalid = ChatTurnGenerationControls.capture(activeModelOptions: [:])
+            invalid.overrides = .init(topK: -1)
+            user.generationControls = invalid
+            let answer = ChatTurn(role: .assistant, content: "keep answer")
+            session.turns = [user, answer]
+            session.regenerate(turnId: answer.id)
+            #expect(session.turns.map(\.id) == [user.id, answer.id])
+            #expect(session.turns.map(\.content) == ["original", "keep answer"])
+            #expect(session.turnParametersError != nil)
+            #expect(!session.isSendActiveForComposer)
+            #expect(await engine.requests.isEmpty)
+        }
+    }
+
     private func waitForCompletion(_ session: ChatSession) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while session.isSendActiveForComposer || session.turns.last?.role == .user {

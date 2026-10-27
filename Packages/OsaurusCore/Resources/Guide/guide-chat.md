@@ -61,6 +61,14 @@ Settings → General → Advanced → Data & Storage → **File History** contro
 
 On macOS 26+, the sandbox toggle on the input bar runs shell/code work inside an isolated Linux VM instead of your Mac. Combined with a working folder, the host folder is read-only and execution happens in the VM.
 
+## Parameters for the next turn
+
+Use **Next turn** in the input bar to set Temperature, Top P, Top K, or the model’s available Thinking/Reasoning Effort controls for one submitted message. Blank fields and **Inherit** keep your existing defaults; **0** is an explicit value (Top K 0 disables that filter). **Reset to inherited** clears the one-turn choices without changing your agent, model, or server settings.
+
+The choices stay with that message through its tool steps and regeneration, including after reopening the chat. A queued message keeps its own choices and waits for a new run when they differ from the active turn. Choices you prepare for a later draft are kept separately.
+
+**Template parameters (JSON)** passes a JSON object to a supporting model’s own chat template, for example `{"template":{"city":null}}` for an extraction template. Nested `null` values are preserved. The object cannot replace the conversation, tool list, or generation-prompt structure. Unsupported provider or shared-workspace-agent controls are reported rather than silently ignored; a shared agent uses its host’s settings.
+
 ## Useful chat extras
 
 - `/screenshot` captures your main display into the chat's artifacts (needs Screen Recording permission).

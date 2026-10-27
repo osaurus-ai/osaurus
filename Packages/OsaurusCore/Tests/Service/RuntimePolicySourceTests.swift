@@ -3451,7 +3451,7 @@ struct RuntimePolicySourceTests {
                 && evaluator.contains("ChatExecutionContext.$currentSessionSource.withValue(")
                 && dispatch.contains("request.inferenceSourceOverride = ChatExecutionContext.inferenceSourceOverride")
                 && background.contains("ChatExecutionContext.$inferenceSourceOverride.withValue(request.inferenceSourceOverride)")
-                && background.contains("await context.start(prompt: request.prompt, taskIntent: request.taskIntent)")
+                && background.contains("await context.start(prompt: request.prompt, taskIntent: request.taskIntent, generationOverrides: request.generationOverrides)")
                 && execution.contains("source == .chatUI && inferenceSourceOverride == .evaluation ? .evaluation : source")
                 && engine.contains("ChatExecutionContext.resolvedInferenceSource(baseInferenceSource)"),
             "The whole evaluation conversation and detached delegated start must carry scoped headless ownership without rewriting persisted Chat/Agent provenance, borrowing HTTP protection or leaving a reused engine sticky."

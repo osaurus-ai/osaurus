@@ -999,7 +999,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
-        do { try request.generationOverrides?.validate() }
+        do { try request.generationOverrides?.validate(forWorkspaceAgent: request.workspaceTarget != nil) }
         catch {
             print("[BackgroundTaskManager] Invalid generation controls: \(error.localizedDescription)")
             return nil
@@ -1258,7 +1258,13 @@ public final class BackgroundTaskManager: ObservableObject {
                                 await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
                                     await residencyContext.run {
                                         await ChatExecutionContext.$inferenceSourceOverride.withValue(request.inferenceSourceOverride) {
-                                            await context.start(prompt: request.prompt, taskIntent: request.taskIntent, generationOverrides: request.generationOverrides)
+                                            if let startFailure = await context.start(prompt: request.prompt, taskIntent: request.taskIntent, generationOverrides: request.generationOverrides) {
+                                                // A rejected start never flips isStreaming. Complete this
+                                                // registered task explicitly rather than waiting forever
+                                                // for the ordinary streaming-observed terminal path.
+                                                self.markCompleted(state, success: false, summary: startFailure)
+                                                self.pumpQueue()
+                                            }
                                         }
                                     }
                                 }
