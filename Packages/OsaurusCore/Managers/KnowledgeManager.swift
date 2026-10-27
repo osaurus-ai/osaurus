@@ -130,7 +130,7 @@ public final class KnowledgeManager: ObservableObject {
         // capture across the task boundary is safe.
         let isGitRepo = await Task.detached(
             priority: .userInitiated,
-            operation: { @Sendable in collection.isGitRepository }
+            operation: { @Sendable [collection] in collection.isGitRepository }
         ).value
         if isGitRepo {
             collection.gitRemoteURL = await KnowledgeGitSyncService.shared.remoteURL(of: collection.folderURL)
