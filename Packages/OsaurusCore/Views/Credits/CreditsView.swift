@@ -618,7 +618,12 @@ struct CreditsView: View {
     // MARK: - Credits activity
 
     private var activityCard: some View {
-        card {
+        // Build the merged timeline once per body pass and thread it through;
+        // it is expensive (ledger matching + timestamp parsing) and was being
+        // recomputed several times per render, hanging the main thread.
+        let timeline = mergedTimeline
+        let pagedEntries = pagedTimelineEntries(in: timeline)
+        return card {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -650,11 +655,11 @@ struct CreditsView: View {
                     .disabled(isExportingDiagnostics || ledgerTotalCount == 0)
                 }
 
-                if pagedTimelineEntries.isEmpty {
+                if pagedEntries.isEmpty {
                     emptyActivityState
                 } else {
-                    activityList
-                    activityPaginationControls
+                    activityList(pagedEntries)
+                    activityPaginationControls(timeline: timeline, pagedEntries: pagedEntries)
                 }
 
                 if let diagnosticsMessage {
@@ -667,9 +672,8 @@ struct CreditsView: View {
         }
     }
 
-    private var activityList: some View {
-        let entries = pagedTimelineEntries
-        return VStack(spacing: 0) {
+    private func activityList(_ entries: [CreditsTimelineEntry]) -> some View {
+        VStack(spacing: 0) {
             ForEach(entries) { entry in
                 Group {
                     switch entry {
@@ -719,9 +723,12 @@ struct CreditsView: View {
         .padding(.vertical, 36)
     }
 
-    private var activityPaginationControls: some View {
+    private func activityPaginationControls(
+        timeline: [CreditsTimelineEntry],
+        pagedEntries: [CreditsTimelineEntry]
+    ) -> some View {
         HStack(spacing: 10) {
-            Text(verbatim: timelineRangeLabel)
+            Text(verbatim: timelineRangeLabel(loaded: timeline.count, pageCount: pagedEntries.count))
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
@@ -741,7 +748,7 @@ struct CreditsView: View {
             } label: {
                 if isLoadingCurrentActivity {
                     ProgressView().scaleEffect(0.7)
-                } else if canLoadMoreFromServer {
+                } else if canLoadMoreFromServer(loaded: timeline.count) {
                     Label(localized: "Load more", systemImage: "arrow.down.circle")
                 } else {
                     Label(localized: "Next", systemImage: "chevron.right")
@@ -749,7 +756,7 @@ struct CreditsView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .disabled(!canGoToNextActivityPage || isLoadingCurrentActivity)
+            .disabled(!canGoToNextActivityPage(loaded: timeline.count) || isLoadingCurrentActivity)
         }
     }
 
@@ -780,8 +787,7 @@ struct CreditsView: View {
             .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
     }
 
-    private var pagedTimelineEntries: [CreditsTimelineEntry] {
-        let timeline = mergedTimeline
+    private func pagedTimelineEntries(in timeline: [CreditsTimelineEntry]) -> [CreditsTimelineEntry] {
         let start = timelinePageIndex * Self.activityPageSize
         guard start < timeline.count else { return [] }
         let end = min(start + Self.activityPageSize, timeline.count)
@@ -796,9 +802,9 @@ struct CreditsView: View {
         timelinePageIndex > 0
     }
 
-    private var canGoToNextActivityPage: Bool {
+    private func canGoToNextActivityPage(loaded: Int) -> Bool {
         let nextStart = (timelinePageIndex + 1) * Self.activityPageSize
-        return nextStart < mergedTimeline.count || hasMoreOnServer
+        return nextStart < loaded || hasMoreOnServer
     }
 
     private var hasMoreOnServer: Bool {
@@ -807,19 +813,18 @@ struct CreditsView: View {
 
     /// True only when the next page isn't already loaded but the server says more
     /// rows exist — i.e. the advance button should fetch instead of just paging.
-    private var canLoadMoreFromServer: Bool {
+    private func canLoadMoreFromServer(loaded: Int) -> Bool {
         let nextStart = (timelinePageIndex + 1) * Self.activityPageSize
-        return nextStart >= mergedTimeline.count && hasMoreOnServer
+        return nextStart >= loaded && hasMoreOnServer
     }
 
     /// Honest range over what we've actually loaded. The router never returns a
     /// true total, so "loaded" makes clear more may exist behind "Load more"
     /// rather than implying a misleading grand total.
-    private var timelineRangeLabel: String {
-        let loaded = mergedTimeline.count
+    private func timelineRangeLabel(loaded: Int, pageCount: Int) -> String {
         guard loaded > 0 else { return "" }
         let start = timelinePageIndex * Self.activityPageSize
-        let end = min(start + pagedTimelineEntries.count, loaded)
+        let end = min(start + pageCount, loaded)
         if hasMoreOnServer {
             return L("Showing \(start + 1)-\(end) of \(loaded) loaded")
         }
