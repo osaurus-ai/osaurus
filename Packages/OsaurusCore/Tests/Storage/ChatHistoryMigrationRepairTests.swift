@@ -519,6 +519,65 @@ struct ChatHistoryMigrationRepairTests {
         }
     }
 
+    /// Upgrade the actual prior on-disk schema, rather than a new v23 memory DB.
+    @Test
+    func v22TurnControlsUpgradePreservesOldRowsAndPersistsNewSnapshot() async throws {
+        try await runWithPlaintextRoot {
+            let session = ChatSessionData(
+                title: "v22 generation controls upgrade",
+                turns: [
+                    ChatTurnData(role: .user, content: "legacy question"),
+                    ChatTurnData(role: .assistant, content: "legacy answer", thinking: "legacy reasoning"),
+                ]
+            )
+            let initial = ChatHistoryDatabase()
+            try initial.open()
+            try initial.saveSession(session)
+            initial.close()
+
+            // Preserve all prior row bytes/columns, remove only the v23 carrier,
+            // and stamp the schema a shipped v22 build would have left.
+            try self.seedChatHistoryDB([
+                "ALTER TABLE turns DROP COLUMN turn_generation_controls",
+                "PRAGMA user_version = 22",
+            ])
+            #expect(self.diskUserVersion() == 22)
+            #expect(!self.diskColumns(table: "turns").contains("turn_generation_controls"))
+
+            let upgraded = ChatHistoryDatabase()
+            try upgraded.open()
+            var loaded = try #require(upgraded.loadSession(id: session.id))
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
+            #expect(self.diskColumns(table: "turns").contains("turn_generation_controls"))
+            #expect(loaded.turns.map(\.id) == session.turns.map(\.id))
+            #expect(loaded.turns.map(\.content) == ["legacy question", "legacy answer"])
+            #expect(loaded.turns[1].thinking == "legacy reasoning")
+            #expect(loaded.turns.allSatisfy { $0.generationControls == nil })
+
+            var controls = ChatTurnGenerationControls.capture(activeModelOptions: ["disableThinking": .bool(false)])
+            controls.hasResolvedReasoning = true
+            controls.overrides = ChatTurnOverrides(temperature: 0, topK: 0,
+                templateKwargs: ["template": .object(["city": .null])])
+            var next = ChatTurnData(role: .user, content: "new controlled question")
+            next.generationControls = controls
+            loaded.turns.append(next)
+            try upgraded.saveSession(loaded)
+            upgraded.close()
+
+            let reopened = ChatHistoryDatabase()
+            try reopened.open()
+            defer { reopened.close() }
+            let restored = try #require(reopened.loadSession(id: session.id))
+            #expect(restored.turns.map(\.id) == loaded.turns.map(\.id))
+            #expect(restored.turns.map(\.content) == ["legacy question", "legacy answer", "new controlled question"])
+            #expect(restored.turns[1].thinking == "legacy reasoning")
+            #expect(restored.turns[0].generationControls == nil)
+            #expect(restored.turns[1].generationControls == nil)
+            #expect(restored.turns[2].generationControls == controls)
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
+        }
+    }
+
     // MARK: - Helpers
 
     /// Run `body` with an isolated temp root in plaintext storage posture,
