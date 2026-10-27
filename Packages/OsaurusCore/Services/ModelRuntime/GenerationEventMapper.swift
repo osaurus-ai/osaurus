@@ -60,6 +60,12 @@ enum GenerationEventMapper {
         /// Fired when vmlx emits its authoritative terminal stats. Cache
         /// persistence may still be draining after this boundary.
         onCompletionInfo: @escaping @Sendable () -> Void = {},
+        /// Injectable diagnostic sink. The default writes only this model's
+        /// actual stats (or removes its stale value when stats are unavailable).
+        /// Awaited before the terminal is surfaced; no global test observer.
+        recordMTPStats: @escaping @Sendable (String, MTPStatsSummary?) async -> Void = {
+            await MLXBatchAdapter.recordLastMTPStats(modelName: $0, stats: $1)
+        },
         /// Injectable sink; the default reports only whitelisted native GPU
         /// failures and obeys the existing crash-reporting consent gate.
         reportFailure: @escaping @Sendable (GenerationFailure, String, Int, Int) -> Void = {
@@ -145,10 +151,24 @@ enum GenerationEventMapper {
             for await event in events {
                 if case .info(let info) = event {
                     onCompletionInfo()
+                    let firstCompletionInfo = !sawCompletionInfo
                     sawCompletionInfo = true
                     terminalInfoAt = CFAbsoluteTimeGetCurrent()
                     finalTokenCount = info.generationTokenCount
                     logCompletionInfo(info)
+                    let mtp = Self.mtpSummary(from: info)
+                    // Record this request's actual partial stats before surfacing
+                    // a failure. Missing stats on failure/cancellation invalidate
+                    // only this model's previous readout; they are not evidence
+                    // that its earlier successful MTP run describes this one.
+                    // Await the actor write so a surfaced terminal cannot race
+                    // an unstructured diagnostic update. Late cleanup info must
+                    // not replace the first terminal's diagnostic.
+                    if firstCompletionInfo, recordMTPLastRun, !suppressProgressUI,
+                        mtp != nil || info.generationFailure != nil || info.stopReason == .cancelled
+                    {
+                        await recordMTPStats(modelName, mtp)
+                    }
                     if let failure = info.generationFailure {
                         if !reportedFailure {
                             reportedFailure = true
@@ -159,21 +179,8 @@ enum GenerationEventMapper {
                         continuation.finish(throwing: failure)
                         continue
                     }
-                    let mtp = Self.mtpSummary(from: info)
                     if info.promptTokenCount >= 0, info.promptTokenCount != promptTokenCount {
                         continuation.yield(.inputTokenCount(info.promptTokenCount))
-                    }
-                    // Park the ADAPTIVE result where a Settings poll can read it.
-                    // Completion-time, so it shows what the controller settled on
-                    // (e.g. asked depth 3, ran depth 1 on low acceptance) rather
-                    // than the load-time request. Only real interactive turns that
-                    // actually ran native MTP — warm-up prefills, background
-                    // housekeeping (follow-ups/titles), and every non-MTP decode
-                    // path leave the readout untouched. Proven live: without the
-                    // background gate, the follow-up-suggestions turn overwrote a
-                    // depth 3→1 downshift readout within seconds.
-                    if recordMTPLastRun, !suppressProgressUI, let mtp {
-                        Task { await MLXBatchAdapter.recordLastMTPStats(modelName: modelName, stats: mtp) }
                     }
                     // Prefix-cache reuse for the usage block: what `.cacheRestore`
                     // reported, never more than the prompt itself.
@@ -308,7 +315,12 @@ enum GenerationEventMapper {
                 // EOF is not a model stop or measured usage. The typed
                 // Responses adapter rejects EOF without logical completion;
                 // an explicitly cancelled mapper retains cancellation instead.
-                if Task.isCancelled { continuation.finish(throwing: CancellationError()) }
+                if Task.isCancelled {
+                    if recordMTPLastRun, !suppressProgressUI {
+                        await recordMTPStats(modelName, nil)
+                    }
+                    continuation.finish(throwing: CancellationError())
+                }
             }
 
             let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
