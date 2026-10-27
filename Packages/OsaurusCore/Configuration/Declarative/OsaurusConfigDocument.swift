@@ -473,6 +473,10 @@ public struct AgentEntry: Equatable, Sendable {
     /// `builtin` or a registered harness runtime's name.
     public var runtime: String?
     public var claudeCode: AgentClaudeCodeEntry?
+    /// Read only when the entry creates the agent: `false` keeps the new
+    /// agent out of the Orchestrator's spawn pool. Patching an existing
+    /// agent ignores it, so the user's Settings → Subagents choice stays.
+    public var orchestratorSpawnable: Bool?
 
     public init(name: String) {
         self.name = name
@@ -497,6 +501,7 @@ extension AgentEntry: Codable {
         case sourceTemplate = "source_template"
         case runtime
         case claudeCode = "claude_code"
+        case orchestratorSpawnable = "orchestrator_spawnable"
     }
 
     public init(from decoder: Decoder) throws {
@@ -520,6 +525,7 @@ extension AgentEntry: Codable {
         sourceTemplate = try c.decodeIfPresent(String.self, forKey: .sourceTemplate)
         runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
         claudeCode = try c.decodeIfPresent(AgentClaudeCodeEntry.self, forKey: .claudeCode)
+        orchestratorSpawnable = try c.decodeIfPresent(Bool.self, forKey: .orchestratorSpawnable)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -543,6 +549,7 @@ extension AgentEntry: Codable {
         try c.encodeIfPresent(sourceTemplate, forKey: .sourceTemplate)
         try c.encodeIfPresent(runtime, forKey: .runtime)
         try c.encodeIfPresent(claudeCode, forKey: .claudeCode)
+        try c.encodeIfPresent(orchestratorSpawnable, forKey: .orchestratorSpawnable)
     }
 }
 

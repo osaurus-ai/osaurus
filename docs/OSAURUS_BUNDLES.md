@@ -253,6 +253,7 @@ All keys except `name` are optional. These are the ones a bundle is likely to us
 | `plugins` | The same, for plugins, by registry id. |
 | `sandbox` | `enabled` turns on sandboxed code execution. `network_enabled` controls network access from the sandbox, and `allowed_domains` narrows it to a list. Also `max_commands_per_turn`, `background_process_enabled`, `plugin_create`. |
 | `subagents` | Whether this agent may delegate, and to which agents (by name). |
+| `orchestrator_spawnable` | `false` keeps the agent out of the Orchestrator's delegation list (Settings → Orchestrator → Subagents → Allowed subagents) when the bundle creates it. Omitted or `true`, the agent joins the list as usual. It only applies at creation: an update leaves the list alone, so an agent the user added by hand stays added. Use it to ship agents in later bundle updates without needing `osaurus config` to take them out of the list. |
 | `runtime` | `builtin` (Osaurus's own loop, the default) or a harness runtime's name: one from this bundle, or one already registered on the Mac such as `Claude Code`. |
 | `claude_code` | For an agent on a Claude Code runtime: `model` (`sonnet`, `opus`, `haiku` or a full model id), `mode` (`agent` or `text_only`), `allow_writes`, `allow_shell`, `allow_osaurus_tools`. |
 | `working_folder` | A path hint. macOS needs the user to grant folder access, so Osaurus asks the user to pick the folder the first time (the item reports `needs_user_action`) unless it can attach it on its own. |

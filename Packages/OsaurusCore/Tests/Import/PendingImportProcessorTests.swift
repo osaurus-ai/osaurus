@@ -30,7 +30,9 @@ struct PendingImportProcessorTests {
         var runtime: String
     }
 
-    private func makeFixture(withServer: Bool = false, withRuntime: Bool = false) throws -> Fixture {
+    private func makeFixture(
+        withServer: Bool = false, withRuntime: Bool = false, orchestratorSpawnable: Bool? = nil
+    ) throws -> Fixture {
         let suffix = UUID().uuidString.prefix(8).lowercased()
         let fixture = Fixture(
             root: FileManager.default.temporaryDirectory
@@ -56,6 +58,7 @@ struct PendingImportProcessorTests {
             "name": fixture.agent, "system_prompt": "Triage tickets.", "skills": [fixture.skill],
             "tools": ["mode": "manual", "enabled": ["tickets_\(suffix)_search"]],
         ]
+        if let orchestratorSpawnable { agent["orchestrator_spawnable"] = orchestratorSpawnable }
         if withServer {
             manifest["mcp_servers"] = [
                 [
@@ -179,6 +182,34 @@ struct PendingImportProcessorTests {
             #expect(rest.items.allSatisfy { $0.status == .done }, "\(rest.items)")
             #expect(SkillManager.shared.skill(named: fixture.skill) == nil)
             #expect(receipts(fixture).isEmpty)
+        }
+    }
+
+    @Test
+    func agentWithOrchestratorSpawnableFalse_staysOutOfThePool_andUpdatesKeepTheUsersChoice() async throws {
+        try await exclusive {
+            let fixture = try makeFixture(orchestratorSpawnable: false)
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+            let first = try await run(.install, fixture)
+            #expect(first.status == .applied, "\(first.items)")
+            let installed = try #require(agent(named: fixture.agent))
+            #expect(!SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(installed.id))
+
+            // The user adds it in Settings → Subagents; a bundle update that
+            // changes the agent file patches it and must leave the pool alone.
+            _ = SubagentConfigurationStore.mutate { $0.spawnableAgentIDs.append(installed.id) }
+            let agentFile = fixture.root.appendingPathComponent("agents/support.json")
+            try String(contentsOf: agentFile, encoding: .utf8)
+                .replacingOccurrences(of: "Triage tickets.", with: "Triage tickets carefully.")
+                .write(to: agentFile, atomically: true, encoding: .utf8)
+            let update = try await run(.update, fixture)
+            #expect(update.items.first { $0.kind == .agent }?.status == .done, "\(update.items)")
+            #expect(agent(named: fixture.agent)?.systemPrompt == "Triage tickets carefully.")
+            #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(installed.id))
+
+            _ = try await run(.remove, fixture)
+            #expect(agent(named: fixture.agent) == nil)
         }
     }
 

@@ -319,6 +319,10 @@ public enum ConfigManifest {
                         ]),
                         comment: "per-agent delegation (Default agent uses `delegation`)"),
                     ConfigKeySpec(
+                        "orchestrator_spawnable", .scalar(.boolean, example: "true"),
+                        comment: "creation only: false keeps a new agent out of the",
+                        moreComments: ["Orchestrator's delegation list; ignored when patching"]),
+                    ConfigKeySpec(
                         "working_folder", .scalar(.string, example: "null", nullable: true),
                         comment: "folder PATH hint; attached when it exists locally,",
                         moreComments: ["otherwise the apply asks the user to pick it"]),

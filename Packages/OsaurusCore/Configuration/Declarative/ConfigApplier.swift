@@ -486,12 +486,25 @@ enum ConfigApplier {
                     // New agents join the Default spawn pool on create
                     // (`AgentManager.add`), so the orchestrator can run one
                     // immediately — and same-turn: the post-apply hook stages
-                    // the spawn specs for this very conversation.
+                    // the spawn specs for this very conversation. An entry
+                    // that opts out leaves the pool here; a `delegation`
+                    // section in the same document applies later and wins.
+                    let joinsPool = entry.orchestratorSpawnable != false
+                    if !joinsPool {
+                        let agentId = agent.id
+                        _ = SubagentConfigurationStore.mutate { config in
+                            config.spawnableAgentIDs.removeAll { $0 == agentId }
+                        }
+                    }
                     var message: String
                     if case .resolved(let runtime)? = AgentManager.shared.effectiveHarness(for: agent.id) {
                         message =
                             "Created on harness runtime `\(runtime.displayName)`. Chat with `\(agent.name)` "
                             + "directly; `spawn_agent` only runs agents on the built-in runtime."
+                    } else if !joinsPool {
+                        message =
+                            "Created. `\(agent.name)` is not in the Orchestrator's delegation list "
+                            + "(`orchestrator_spawnable: false`); add it in Settings → Subagents to delegate to it."
                     } else {
                         message =
                             "Created. `\(agent.name)` is spawnable now — "

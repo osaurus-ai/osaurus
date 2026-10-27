@@ -116,6 +116,99 @@ struct SpawnPoolAutoAddTests {
             !SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(agent.id))
     }
 
+    @Test("orchestrator_spawnable: false keeps a created agent out of the pool; patching ignores it")
+    func orchestratorSpawnableFalse_onlyAppliesOnCreate() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            try await orchestratorSpawnableBody()
+        }
+    }
+
+    private func orchestratorSpawnableBody() async throws {
+        let name = "Opt Out Probe \(UUID().uuidString.prefix(6))"
+        var entry = AgentEntry(name: name)
+        entry.description = "Handles independent tasks for this isolated delegation test."
+        entry.orchestratorSpawnable = false
+        var document = OsaurusConfigDocument()
+        document.agents = [entry]
+
+        let plan = try ConfigPlanner.plan(document: document, prune: false)
+        let createAction = plan.actions.first { $0.section == "agents" && $0.target == name }
+        #expect(createAction?.changes.contains("not added to the Orchestrator's delegation list") == true)
+
+        let results = await ConfigApplier.apply(document: document, prune: false)
+        #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+        let created = try #require(AgentManager.shared.agents.first { $0.name == name })
+        defer { Task { _ = await AgentManager.shared.delete(id: created.id) } }
+        #expect(
+            !SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(created.id),
+            "an opted-out agent must not join the Default spawn pool")
+        let createResult = results.first { $0.section == "agents" && $0.target == name }
+        #expect(createResult?.message?.contains("Settings → Subagents") == true, "\(String(describing: createResult))")
+
+        // The user adds it by hand; a bundle update carrying the same flag
+        // patches the agent and must leave that choice alone.
+        _ = SubagentConfigurationStore.mutate { $0.spawnableAgentIDs.append(created.id) }
+        _ = await ConfigApplier.apply(document: document, prune: false)
+        #expect(
+            SubagentConfigurationStore.snapshot().spawnableAgentIDs.filter { $0 == created.id }.count == 1,
+            "patching must not remove an agent the user added to the pool")
+    }
+
+    @Test("orchestrator_spawnable omitted or true joins the pool as before")
+    func orchestratorSpawnableTrueOrOmitted_joinsPool() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            for flag in [nil, true] as [Bool?] {
+                let name = "Opt In Probe \(UUID().uuidString.prefix(6))"
+                var entry = AgentEntry(name: name)
+                entry.description = "Handles independent tasks for this isolated delegation test."
+                entry.orchestratorSpawnable = flag
+                var document = OsaurusConfigDocument()
+                document.agents = [entry]
+                let results = await ConfigApplier.apply(document: document, prune: false)
+                #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+                let created = try #require(AgentManager.shared.agents.first { $0.name == name })
+                #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(created.id))
+                _ = await AgentManager.shared.delete(id: created.id)
+            }
+        }
+    }
+
+    @Test("a delegation section in the same document overrides orchestrator_spawnable")
+    func delegationSectionWinsOverOptOut() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            let name = "Opt Out Override \(UUID().uuidString.prefix(6))"
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            entry.orchestratorSpawnable = false
+            var delegation = DelegationSection()
+            delegation.spawnableAgents = [name]
+            var document = OsaurusConfigDocument()
+            document.agents = [entry]
+            document.delegation = delegation
+            let results = await ConfigApplier.apply(document: document, prune: false)
+            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+            let created = try #require(AgentManager.shared.agents.first { $0.name == name })
+            #expect(SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(created.id))
+            _ = await AgentManager.shared.delete(id: created.id)
+        }
+    }
+
+    @Test("bundle agent files accept orchestrator_spawnable through the strict parser")
+    func templateParseAcceptsOrchestratorSpawnable() throws {
+        let template = try Template.parse(
+            #"{ "name": "Strict Probe", "orchestrator_spawnable": false, "system_prompt": "Hi." }"#)
+        #expect(template.agent.orchestratorSpawnable == false)
+        #expect(throws: (any Error).self) {
+            try Template.parse(#"{ "name": "Strict Probe", "orchestrator_spawnabel": false }"#)
+        }
+    }
+
     @Test("duplicate, bundle import, and backup restore are wired to the pool hook")
     func creationBypassPaths_callTheSpawnPoolHook() throws {
         // These creation paths save via `AgentStore.save` directly (never

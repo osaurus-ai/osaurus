@@ -1437,6 +1437,9 @@ enum ConfigPlanner {
                     }
                 }
                 summarizePortableSettings(entry, into: &changes)
+                if entry.orchestratorSpawnable == false {
+                    changes.append("not added to the Orchestrator's delegation list")
+                }
                 diffRuntime(
                     entry.runtime, claudeCode: entry.claudeCode,
                     currentRuntime: nil, currentClaudeCode: .default,
