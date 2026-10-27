@@ -423,6 +423,24 @@ struct AnthropicAPITests {
         #expect(openAIReq.messages[3].content == "How are you?")
     }
 
+    @Test func thinkingAndTopKReachTheChatRequest() throws {
+        func convert(_ thinking: String) throws -> ChatCompletionRequest {
+            let json = """
+                {"model": "m", "max_tokens": 16, "top_k": 40, \(thinking)
+                 "messages": [{"role": "user", "content": "Hi"}]}
+                """
+            return try JSONDecoder().decode(AnthropicMessagesRequest.self, from: Data(json.utf8))
+                .toChatCompletionRequest()
+        }
+        let disabled = try convert(#""thinking": {"type": "disabled"},"#)
+        #expect(disabled.enable_thinking == false)
+        #expect(disabled.top_k == 40)
+        let enabled = try convert(#""thinking": {"type": "enabled", "budget_tokens": 2048},"#)
+        #expect(enabled.enable_thinking == true)
+        #expect(try convert(#""thinking": {"type": "adaptive"},"#).enable_thinking == nil)
+        #expect(try convert("").enable_thinking == nil)
+    }
+
     @Test func convertAnthropicToolsToOpenAI() throws {
         let json = """
             {

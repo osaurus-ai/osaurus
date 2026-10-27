@@ -30,6 +30,11 @@ struct AnthropicMessagesRequest: Codable, Sendable {
     /// decode path and existing construction sites are unaffected; the
     /// synthesized Codable omits the key when nil.
     var cache_control: AnthropicCacheControl? = nil
+    /// Extended thinking (`{"type": "enabled", "budget_tokens": N}` / `{"type": "disabled"}` /
+    /// `{"type": "adaptive"}`). `enabled` / `disabled` switch the model's thinking rail the same way
+    /// `enable_thinking` does on chat completions; `adaptive` or no field keeps the model default.
+    /// The budget is accepted for wire compatibility; local models do not cap thinking by tokens.
+    var thinking: AnthropicThinkingConfig? = nil
 }
 
 /// `{"type": "ephemeral", "ttl": "1h"?}` cache-control marker. Only
@@ -37,6 +42,12 @@ struct AnthropicMessagesRequest: Codable, Sendable {
 /// 5-minute cache (write billed 1.25x input) and `"1h"` for the one-hour
 /// cache (write billed 2x input); both are refreshed on every hit and read
 /// at 0.1x. See `AnthropicCacheControl.forConversation(lastMessageRole:)`.
+/// Anthropic `thinking` request field.
+struct AnthropicThinkingConfig: Codable, Sendable, Equatable {
+    let type: String
+    var budget_tokens: Int? = nil
+}
+
 struct AnthropicCacheControl: Codable, Sendable, Equatable {
     let type: String
     var ttl: String? = nil
@@ -1105,7 +1116,7 @@ extension AnthropicMessagesRequest {
             }
         }
 
-        return ChatCompletionRequest(
+        var request = ChatCompletionRequest(
             model: model,
             messages: openAIMessages,
             temperature: temperature.map { Float($0) },
@@ -1120,6 +1131,13 @@ extension AnthropicMessagesRequest {
             tool_choice: openAIToolChoice,
             session_id: nil
         )
+        request.top_k = top_k
+        switch thinking?.type {
+        case "enabled": request.enable_thinking = true
+        case "disabled": request.enable_thinking = false
+        default: break
+        }
+        return request
     }
 }
 
