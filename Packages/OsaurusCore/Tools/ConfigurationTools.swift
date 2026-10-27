@@ -1299,6 +1299,23 @@ extension OsaurusInspectTool {
     }
 
     fileprivate func describeItem(scope: String, idStr: String) async -> String {
+        // INVARIANT: a known text configuration value must not enumerate image bundles.
+        if scope == "models", idStr.caseInsensitiveCompare("foundation") == .orderedSame {
+            // Observed dead end: a "switch to foundation" ask gets
+            // verified against installed models, comes back empty,
+            // and the model refuses a perfectly valid setting.
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "\"foundation\" is the built-in Apple Foundation on-device model, "
+                    + "not an installed model entry. It is always available as a model "
+                    + "VALUE: apply it directly (e.g. default_agent.model: foundation "
+                    + "or agents[].model: foundation).",
+                field: "id",
+                tool: name
+            )
+        }
+
         // Skills and knowledge collections load from disk off the main
         // actor; resolve those scopes before the MainActor hop below.
         switch scope {
@@ -1400,21 +1417,6 @@ extension OsaurusInspectTool {
                     payload = nil
                 }
             case "models":
-                if idStr.caseInsensitiveCompare("foundation") == .orderedSame {
-                    // Observed dead end: a "switch to foundation" ask gets
-                    // verified against installed models, comes back empty,
-                    // and the model refuses a perfectly valid setting.
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message:
-                            "\"foundation\" is the built-in Apple Foundation on-device model, "
-                            + "not an installed model entry. It is always available as a model "
-                            + "VALUE: apply it directly (e.g. default_agent.model: foundation "
-                            + "or agents[].model: foundation).",
-                        field: "id",
-                        tool: name
-                    )
-                }
                 if let model = ModelManager.shared.availableModels.first(where: {
                     $0.id == idStr || $0.name.caseInsensitiveCompare(idStr) == .orderedSame
                 })
