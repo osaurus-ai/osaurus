@@ -1143,12 +1143,15 @@ struct MLXBatchAdapter {
     /// Downscale CIImage attachments to a sane upper bound before tokenization.
     /// Pre-existing `URL` / `array` cases pass through untouched.
     ///
-    /// Preserves media plus `reasoningContent`, `toolCalls`, and `toolCallId`
-    /// through the rebuild. Dropping any of these fields silently unwinds the
-    /// structured handoff set up by `ModelRuntime.mapOpenAIChatToMLX`: ZAYA,
-    /// Nemotron-H/Omni, MiniMax, and DSV4 templates read
+    /// Preserves media plus `reasoningContent`, `toolCalls`, `toolCallId`, and
+    /// `contentParts` through the rebuild. Dropping any of these fields silently
+    /// unwinds the structured handoff set up by `ModelRuntime.mapOpenAIChatToMLX`:
+    /// ZAYA, Nemotron-H/Omni, MiniMax, and DSV4 templates read
     /// `message.reasoning_content`; MiniMax and other templates read
-    /// `message.tool_calls[i]`; omni/VL processors read media arrays.
+    /// `message.tool_calls[i]`; omni/VL processors read media arrays; the
+    /// DeepSeek-V4.1 vision prompt and MiMo V2.6 read `contentParts` to keep
+    /// text and media in the order the client sent them (without it they put
+    /// every image before the text).
     private static func preprocessImages(in chat: [MLXLMCommon.Chat.Message]) -> [MLXLMCommon.Chat.Message] {
         chat.map { message in
             let processedImages = message.images.map { userInputImage -> UserInput.Image in
@@ -1167,7 +1170,8 @@ struct MLXBatchAdapter {
                 audios: message.audios,
                 reasoningContent: message.reasoningContent,
                 toolCalls: message.toolCalls,
-                toolCallId: message.toolCallId
+                toolCallId: message.toolCallId,
+                contentParts: message.contentParts
             )
         }
     }
