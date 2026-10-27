@@ -50,8 +50,11 @@ public struct PullCommand: Command {
 
         print("Pulling \(modelId) ...")
 
-        // Resolve the local destination: ~/.osaurus/models/<org>/<name>
-        let destination = resolveLocalDirectory(for: modelId)
+        // Use the same model root as the app and installation diagnostics.
+        guard let destination = resolveLocalDirectory(for: modelId) else {
+            fputs("Invalid or escaping model identifier: \(modelId)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
 
         do {
             try FileManager.default.createDirectory(
@@ -140,25 +143,25 @@ public struct PullCommand: Command {
 
     // MARK: - Local directory resolution
 
-    /// Resolve the local storage directory for a model.
-    /// Attempts to read the Osaurus shared defaults for the user-configured models path,
-    /// falling back to ~/.osaurus/models.
-    private static func resolveLocalDirectory(for modelId: String) -> URL {
-        let baseDir: URL
-        if let shared = UserDefaults(suiteName: "group.com.osaurus.shared"),
-            let storedPath = shared.string(forKey: "modelsDirectoryPath"),
-            !storedPath.isEmpty
-        {
-            baseDir = URL(fileURLWithPath: storedPath, isDirectory: true)
-        } else {
-            baseDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".osaurus/models", isDirectory: true)
-        }
-        // Decompose "org/model" into nested path components
-        let components = modelId.split(separator: "/").map(String.init)
-        return components.reduce(baseDir) { partial, component in
-            partial.appendingPathComponent(component, isDirectory: true)
-        }
+    /// Resolve the model root through the shared configuration contract, then
+    /// contain the repository path before creating directories or requesting files.
+    static func resolveLocalDirectory(
+        for modelId: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        appDefaults: UserDefaults? = UserDefaults(suiteName: "com.dinoki.osaurus"),
+        sharedDefaults: UserDefaults? = UserDefaults(suiteName: "group.com.osaurus.shared"),
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL? {
+        let base = Configuration.resolveModelsDirectoryWithSource(
+            environment: environment,
+            appDefaults: appDefaults,
+            sharedDefaults: sharedDefaults,
+            home: home
+        ).url
+        guard let destination = destinationURL(forRemotePath: modelId, under: base),
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) == nil
+        else { return nil }
+        return destination
     }
 
     // MARK: - Remote path containment
