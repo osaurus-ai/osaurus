@@ -5663,6 +5663,9 @@ public actor ModelRuntime {
         if isDSV4CacheTopology {
             tags.append("layers=deepseekV4")
             tags.append("prefix=hybrid-pool-disk")
+            // Legacy tag: no current decode behavior backs it. Kept verbatim for cache
+            // compatibility; removing or renaming it would change the cache identity and
+            // orphan every stored DSV4 entry.
             tags.append("decode=max-rp110")
             // Activation-QAT changes every attention/cache activation from
             // token zero. Its stored SWA/CSA/HSA state is therefore not valid
