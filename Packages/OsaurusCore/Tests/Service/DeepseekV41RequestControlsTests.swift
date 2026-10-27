@@ -150,16 +150,24 @@ struct DeepseekV41RequestControlsTests {
         #expect(MLXBatchAdapter.requiresSoloLease(maxBatchSize: 1, draftStrategy: nil))
     }
 
+    /// A local V4.1 bundle for the bundle-backed checks below: set
+    /// `OSAURUS_DSV41_TEST_MODEL` to its directory. Nil (the checks are skipped)
+    /// when it is unset or the directory lacks `file`.
+    private static func localV41Bundle(containing file: String) -> URL? {
+        guard let path = ProcessInfo.processInfo.environment["OSAURUS_DSV41_TEST_MODEL"],
+            !path.isEmpty
+        else { return nil }
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: url.appendingPathComponent(file).path) else {
+            return nil
+        }
+        return url
+    }
+
     /// Renders through the V4.1 bundle's own tokenizer (no weights are loaded).
-    /// Skipped when the bundle is absent.
+    /// Skipped unless `OSAURUS_DSV41_TEST_MODEL` names a V4.1 bundle.
     @Test func v41TokenizerRendersChatRailWhenThinkingIsOff() async throws {
-        let defaultPath = "/Users/eric/models/\(Self.v41Model)"
-        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV41_TEST_MODEL"] ?? defaultPath
-        let modelURL = URL(fileURLWithPath: modelPath)
-        guard
-            FileManager.default.fileExists(
-                atPath: modelURL.appendingPathComponent("tokenizer.json").path)
-        else { return }
+        guard let modelURL = Self.localV41Bundle(containing: "tokenizer.json") else { return }
 
         let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
         let messages: [[String: any Sendable]] = [["role": "user", "content": "Say ok."]]
@@ -183,11 +191,10 @@ struct DeepseekV41RequestControlsTests {
     }
 
     /// V4.1 affine JANG takes the admitted generation allocator window (prefill
-    /// scratch); 0731's fact is untouched. Skipped when the bundle is absent.
+    /// scratch); 0731's fact is untouched. Skipped unless `OSAURUS_DSV41_TEST_MODEL`
+    /// names a V4.1 affine JANG bundle.
     @Test func v41BundleQualifiesForTheGenerationAllocatorWindow() {
-        let url = URL(fileURLWithPath: "/Users/eric/models/\(Self.v41Model)")
-        guard FileManager.default.fileExists(atPath: url.appendingPathComponent("config.json").path)
-        else { return }
+        guard let url = Self.localV41Bundle(containing: "config.json") else { return }
         let facts = LoadBundleFacts.inspect(bundleURL: url)
         #expect(facts.isDeepseekV41AffineJANG)
         #expect(!facts.isPlainDeepseekV4AffineJANG)
