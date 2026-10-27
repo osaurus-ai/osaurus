@@ -89,6 +89,35 @@ struct HTTPStreamingWriterTests {
         _ = try channel.finish()
     }
 
+    /// A local prefix-cache hit becomes Anthropic's `cache_read_input_tokens` in the final usage,
+    /// split out of `input_tokens` (Anthropic's total input is the sum of the two).
+    @Test func anthropicFinalUsageReportsCacheReadTokens() throws {
+        let channel = EmbeddedChannel()
+        let context = try channel.embeddedContext()
+        let writer = AnthropicSSEResponseWriter()
+        writer.writeMessageStart(messageId: "msg_cached", model: "test", inputTokens: nil,
+                                 context: context, deferUntilInput: true)
+        writer.setInputTokens(6012, context: context)
+        writer.writeTextDelta("ok", context: context)
+        writer.setOutputTokens(2)
+        writer.setCachedInputTokens(6000)
+        writer.writeFinish(stopReason: "end_turn", context: context)
+        var body = ""
+        while let part = try channel.readOutbound(as: HTTPServerResponsePart.self) {
+            if case .body(.byteBuffer(var buffer)) = part {
+                body += buffer.readString(length: buffer.readableBytes) ?? ""
+            }
+        }
+        let frames = body.components(separatedBy: .newlines).filter { $0.hasPrefix("data: ") }.compactMap {
+            (try? JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8))) as? [String: Any]
+        }
+        let finalUsage = frames.first { $0["type"] as? String == "message_delta" }?["usage"] as? [String: Any]
+        #expect(finalUsage?["input_tokens"] as? Int == 12)
+        #expect(finalUsage?["cache_read_input_tokens"] as? Int == 6000)
+        #expect(finalUsage?["output_tokens"] as? Int == 2)
+        _ = try channel.finish()
+    }
+
     @Test func anthropicErrorBeforePreparationDoesNotInventAStartOrUsage() throws {
         let channel = EmbeddedChannel()
         let context = try channel.embeddedContext()

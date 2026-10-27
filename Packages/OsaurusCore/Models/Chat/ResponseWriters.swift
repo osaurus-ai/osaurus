@@ -928,6 +928,9 @@ final class AnthropicSSEResponseWriter {
     private var messageStartConfigured = false
     private var hasStartedMessage = false
     private var outputTokens: Int?
+    /// Prompt tokens served from the prefix cache, known only at completion;
+    /// reported in the final `message_delta` as `cache_read_input_tokens`.
+    private var cachedInputTokens: Int?
     private var currentBlockIndex: Int = 0
     private var hasStartedTextBlock: Bool = false
     private var hasStartedThinkingBlock: Bool = false
@@ -961,6 +964,7 @@ final class AnthropicSSEResponseWriter {
         self.model = model
         self.inputTokens = inputTokens
         self.outputTokens = nil
+        self.cachedInputTokens = nil
         self.currentBlockIndex = 0
         self.hasStartedTextBlock = false
         self.hasStartedThinkingBlock = false
@@ -1094,6 +1098,10 @@ final class AnthropicSSEResponseWriter {
         outputTokens = max(0, tokenCount)
     }
 
+    func setCachedInputTokens(_ count: Int?) {
+        cachedInputTokens = count.map { max(0, $0) }
+    }
+
     /// Write tool_use block start
     func writeToolUseBlockStart(
         toolId: String,
@@ -1125,7 +1133,12 @@ final class AnthropicSSEResponseWriter {
             writeError("Anthropic compatibility requires reported input and output token counts.", context: context)
             return
         }
-        let event = MessageDeltaEvent(stopReason: stopReason, outputTokens: outputTokens, inputTokens: inputTokens)
+        // `message_start` carried the full prompt count before the cache hit was known; the final
+        // usage splits the cached prefix out of `input_tokens` the way Anthropic reports it.
+        let split = AnthropicUsage.split(promptTokens: inputTokens, cachedPromptTokens: cachedInputTokens)
+        let event = MessageDeltaEvent(
+            stopReason: stopReason, outputTokens: outputTokens, inputTokens: split.input,
+            cacheReadInputTokens: split.cacheRead)
         writeSSEEvent("message_delta", payload: event, context: context)
     }
 
