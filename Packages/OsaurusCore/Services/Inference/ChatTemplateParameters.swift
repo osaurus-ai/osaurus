@@ -4,15 +4,25 @@ import Foundation
 enum ChatTemplateParameters {
     /// Internal app-to-tokenizer signal, removed before rendering.
     static let explicitContextKey = "_osaurus_explicit_template_parameters"
+    /// These are the exact specialTokenAttributes populated by the vendored
+    /// tokenizer after additionalContext. Configured values would silently
+    /// replace a caller's values; missing/null config would let the caller
+    /// invent token delimiters. Both cases belong to the tokenizer contract.
+    private static let tokenizerOwnedKeys: Set<String> = [
+        "bos_token", "eos_token", "unk_token", "sep_token", "pad_token",
+        "cls_token", "mask_token", "additional_special_tokens",
+    ]
+
     struct InvalidParameter: Error, LocalizedError {
         let key: String
         var errorDescription: String? {
-            "chat_template_kwargs.\(key) cannot replace the request's conversation, tools or generation-prompt flag."
+            "chat_template_kwargs.\(key) is managed by the request or tokenizer and cannot be overridden."
         }
     }
 
     static func validate(_ values: [String: JSONValue]?) throws {
-        for key in ["messages", "tools", "add_generation_prompt", explicitContextKey] where values?[key] != nil {
+        let reserved = tokenizerOwnedKeys.union(["messages", "tools", "add_generation_prompt", explicitContextKey])
+        for key in reserved.sorted() where values?[key] != nil {
             throw InvalidParameter(key: key)
         }
     }
