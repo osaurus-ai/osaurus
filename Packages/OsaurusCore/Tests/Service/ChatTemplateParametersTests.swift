@@ -1,18 +1,17 @@
 import Foundation
 import MLXLMCommon
-import VMLXTokenizers
 import Testing
 
 @testable import OsaurusCore
 
 struct ChatTemplateParametersTests {
-    private let kwargs: [String: JSONValue] = [
+    private let kwargs: [String: OsaurusCore.JSONValue] = [
         "template": .object(["name": .string("string"), "optional": .null]),
         "examples": .array([.object(["input": .string("Ada"), "output": .null]), .null]),
         "strict": .bool(false), "threshold": .number(0), "label": .string("extract")
     ]
 
-    private func chat(_ kwargs: [String: JSONValue]) throws -> ChatCompletionRequest {
+    private func chat(_ kwargs: [String: OsaurusCore.JSONValue]) throws -> ChatCompletionRequest {
         let data = try JSONSerialization.data(withJSONObject: [
             "model": "extractor", "messages": [["role": "user", "content": "Ada"]],
             "chat_template_kwargs": kwargs.mapValues(\.anyValue)
@@ -131,7 +130,7 @@ struct ChatTemplateParametersTests {
         }
         let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: directory)
         let messages: [[String: any Sendable]] = [["role": "user", "content": "Ada"]]
-        func render(_ values: [String: JSONValue], thinking: Bool, offeredTools: Bool) throws -> [Int] {
+        func render(_ values: [String: OsaurusCore.JSONValue], thinking: Bool, offeredTools: Bool) throws -> [Int] {
             var context = values.mapValues(\.templateContextValue)
             context["enable_thinking"] = thinking
             let tools: [[String: any Sendable]]? = offeredTools
