@@ -5,7 +5,7 @@ import Foundation
 /// hard lines with paragraph spacing in the native text view. Chat keeps
 /// its existing newline policy; fenced code, tables and math stay intact.
 func parseDocumentBlocks(_ input: String) -> [MessageBlock] {
-    parseBlocks(input).map { block in
+    parseBlocks(input, preserveBlockquoteHardBreaks: true).map { block in
         let kind: MessageBlock.Kind
         switch block.kind {
         case .paragraph(let text): kind = .paragraph(reflowDocumentParagraph(text))

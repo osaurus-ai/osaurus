@@ -65,6 +65,14 @@ struct MarkdownDocumentWrappingTests {
         )
     }
 
+    @Test func explicitQuotedHardBreakSurvivesSourceWrapReflow() {
+        #expect(
+            parseDocumentBlocks("> First line  \n> deliberate break\n> source wrap.").map(\.kind) == [
+                .blockquote("First line  \ndeliberate break source wrap.")
+            ]
+        )
+    }
+
     @Test func windowsLineEndingsAndContinuationIndentationReflow() {
         #expect(
             parseDocumentBlocks("First source\r\n  wrap.\r\n\r\nNext.").map(\.kind) == [
