@@ -820,7 +820,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "a05a5eef8dd3953075bfd47391b59ce900d3ed80"
+        let expectedRuntimeHardenedRevision = "c6fee283f57de30befe26577f986ac455a963133"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -830,7 +830,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the proven vmlx-swift revision: vmlx-swift main a05a5eef (#667 SSD restore retries + #665 + #666 + the native-MTP failure propagation fix 78106597): repeatable sampled dSpark seeds, the resident-head prefill cap and the V4.1 indexer chunk evaluation. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the proven vmlx-swift revision: vmlx-swift main c6fee283 (#668 V4.1 split decode attention + dSpark governor ratio of EMAs, #670 V4.1 SSD restore past 16,384 tokens, on top of #667 SSD restore retries + #665 + #666 + the native-MTP failure propagation fix 78106597). An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))

@@ -337,7 +337,7 @@ let package = Package(
         // vmlx-swift#661: JANGHT bundles keep their F32 hyper-connection / sink / router-bias parameters.
         // Preserve native MTP verifier failures and reject failed generated-state publication.
         // vmlx-swift#662: every DeepSeek-V4.1 bundle (JANG_2K included) keeps its F32 control parameters.
-        // vmlx-swift#666 + #665 (now with #667, the pinned main a05a5eef): V4.1 indexer evaluates each query chunk before the
+        // vmlx-swift#666 + #665 (with #667, main a05a5eef): V4.1 indexer evaluates each query chunk before the
         // next (1M prefill peak -3.4 GiB), a fixed seed repeats under sampled dSpark, the resident dSpark head's
         // 1024-token prefill cap wins over a wider server step.
         // vmlx-swift#667: SSD restore retries, capacity estimates and nested vision configuration.
