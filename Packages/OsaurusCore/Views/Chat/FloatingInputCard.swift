@@ -24,6 +24,7 @@ struct FloatingInputCard: View {
     @Binding var showVoiceOverlay: Bool
     let pickerItems: [ModelPickerItem]
     @Binding var activeModelOptions: [String: ModelOptionValue]
+    var turnOverrides: Binding<ChatTurnOverrides>? = nil
     let isStreaming: Bool
     /// True while the Privacy Filter redaction review sheet is actually
     /// on screen. In this window we hide the Stop button — its target
@@ -2816,6 +2817,10 @@ extension FloatingInputCard {
     @ViewBuilder
     private func toggleChipCluster(compact: Bool) -> some View {
         HStack(spacing: 6) {
+            if let turnOverrides, !isRemoteAgentRun {
+                NextTurnControlsButton(overrides: turnOverrides, model: selectedModel,
+                    reasoningCapabilities: inlineEffortCapabilities)
+            }
             if autoSpeakAssistant {
                 autoSpeakToggleChip(compact: compact)
             }

@@ -78,6 +78,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// session replays the exact wire bytes of every past turn and the
     /// disk-backed prefix cache can still hit. Nil for non-user turns and
     /// legacy sessions.
+    var generationControls: ChatTurnGenerationControls? = nil
     public var injectedContextPrefix: String?
 
     public init(
@@ -177,6 +178,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         modelContextExcluded =
             try container.decodeIfPresent(Bool.self, forKey: .modelContextExcluded) ?? false
         routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
+        generationControls = try container.decodeIfPresent(ChatTurnGenerationControls.self, forKey: .generationControls)
         injectedContextPrefix = try container.decodeIfPresent(String.self, forKey: .injectedContextPrefix)
 
         if let unified = try container.decodeIfPresent([Attachment].self, forKey: .attachments) {
@@ -229,6 +231,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
             try container.encode(true, forKey: .modelContextExcluded)
         }
         try container.encodeIfPresent(routerBilling, forKey: .routerBilling)
+        try container.encodeIfPresent(generationControls, forKey: .generationControls)
         try container.encodeIfPresent(injectedContextPrefix, forKey: .injectedContextPrefix)
     }
 
@@ -245,7 +248,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case inputTokenCount, cachedInputTokenCount
         case modelContextExcluded
         case routerBilling
-        case injectedContextPrefix
+        case injectedContextPrefix, generationControls
     }
 }
 
@@ -298,6 +301,7 @@ extension ChatTurnData {
         self.modelContextExcluded = turn.modelContextExcluded
         self.routerBilling = turn.routerBilling
         self.injectedContextPrefix = turn.injectedContextPrefix
+        self.generationControls = turn.generationControls
     }
 }
 
@@ -339,5 +343,6 @@ extension ChatTurn {
         self.modelContextExcluded = data.modelContextExcluded
         self.routerBilling = data.routerBilling
         self.injectedContextPrefix = data.injectedContextPrefix
+        self.generationControls = data.generationControls
     }
 }

@@ -37,6 +37,8 @@ public struct DispatchRequest: Sendable {
     /// Optional original-task provenance when `prompt` contains app-authored
     /// wrappers. Nil means the prompt itself is the caller's task.
     public let taskIntent: ChatTaskIntent?
+    /// Explicit one-run controls; omitted values inherit the selected agent/model.
+    public let generationOverrides: ChatTurnOverrides?
     /// Host-only execution provenance; never persisted or supplied by a model
     /// or an HTTP payload. Delegation explicitly carries it across queued work.
     var inferenceSourceOverride: RequestSource? = nil
@@ -163,11 +165,13 @@ public struct DispatchRequest: Sendable {
         delegationContextPositionCap: Int? = nil,
         delegationAssistantTurnCap: Int? = nil,
         delegationModel: String? = nil,
-        taskIntent: ChatTaskIntent? = nil
+        taskIntent: ChatTaskIntent? = nil,
+        generationOverrides: ChatTurnOverrides? = nil
     ) {
         self.id = id
         self.prompt = prompt
         self.taskIntent = taskIntent
+        self.generationOverrides = generationOverrides
         self.target = target ?? agentId.map(AgentDispatchTarget.local)
         self.title = title
         self.parameters = parameters

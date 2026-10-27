@@ -999,6 +999,12 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
+        do { try request.generationOverrides?.validate() }
+        catch {
+            print("[BackgroundTaskManager] Invalid generation controls: \(error.localizedDescription)")
+            return nil
+        }
+
         // A teammate's shared workspace agent runs on THEIR Mac: the local
         // built-in-agent guard, per-agent tool grants and DB run logging
         // don't apply, and the run must be refused up front (offline host,
@@ -1252,7 +1258,7 @@ public final class BackgroundTaskManager: ObservableObject {
                                 await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
                                     await residencyContext.run {
                                         await ChatExecutionContext.$inferenceSourceOverride.withValue(request.inferenceSourceOverride) {
-                                            await context.start(prompt: request.prompt, taskIntent: request.taskIntent)
+                                            await context.start(prompt: request.prompt, taskIntent: request.taskIntent, generationOverrides: request.generationOverrides)
                                         }
                                     }
                                 }

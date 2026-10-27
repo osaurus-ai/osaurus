@@ -463,6 +463,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Tokens generated per second (GPU-timed for MLX, UI-estimated for
     /// remote APIs). Persisted as displayed; do not recompute it from a
     /// wall-clock interval that includes prefill or cache finalization.
+    /// Frozen request controls owned by this user turn; used for regenerate/retry.
+    var generationControls: ChatTurnGenerationControls?
     var generationTokensPerSecond: Double?
     /// Total tokens generated in this turn. Persisted with the turn.
     var generationTokenCount: Int?
@@ -723,6 +725,7 @@ extension ChatTurn {
         var anthropicThinkingBlocks: [JSONValue]? = nil
         var inputTokenCount: Int? = nil
         var cachedInputTokenCount: Int? = nil
+        var generationControls: ChatTurnGenerationControls? = nil
     }
 
     /// Converts this turn to a persistable representation
@@ -742,7 +745,8 @@ extension ChatTurn {
             responsesOutputItems: responsesOutputItems.isEmpty ? nil : responsesOutputItems,
             anthropicThinkingBlocks: anthropicThinkingBlocks.isEmpty ? nil : anthropicThinkingBlocks,
             inputTokenCount: inputTokenCount,
-            cachedInputTokenCount: cachedInputTokenCount
+            cachedInputTokenCount: cachedInputTokenCount,
+            generationControls: generationControls
         )
     }
 
@@ -771,6 +775,7 @@ extension ChatTurn {
         turn.anthropicThinkingBlocks = p.anthropicThinkingBlocks ?? []
         turn.inputTokenCount = p.inputTokenCount
         turn.cachedInputTokenCount = p.cachedInputTokenCount
+        turn.generationControls = p.generationControls
 
         return turn
     }

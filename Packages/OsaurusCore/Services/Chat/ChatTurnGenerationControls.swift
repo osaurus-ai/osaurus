@@ -11,11 +11,18 @@
 
 import Foundation
 
-struct ChatTurnGenerationControls: Sendable, Equatable {
+struct ChatTurnGenerationControls: Sendable, Equatable, Codable {
     let modelOptions: [String: ModelOptionValue]?
     let enableThinking: Bool?
+    var overrides = ChatTurnOverrides()
+    /// Defaults are captured once before asynchronous dispatch, not on retries.
+    var temperature: Float? = nil
+    var topP: Float? = nil
+    var topK: Int? = nil
+    var hasResolvedReasoning = false
+    var storedExplicitOptions: [String: ModelOptionValue]? = nil
 
-    var reasoningEffort: String? { modelOptions?["reasoningEffort"]?.stringValue }
+    var reasoningEffort: String? { overrides.reasoningEffort ?? modelOptions?["reasoningEffort"]?.stringValue }
 
     static func capture(
         activeModelOptions: [String: ModelOptionValue]
@@ -74,11 +81,22 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
         request.modelOptions = modelOptions
         request.enable_thinking = enableThinking
         request.reasoning_effort = reasoningEffort
+        request.temperature = overrides.temperature ?? temperature
+        request.top_p = overrides.topP ?? topP
+        request.top_k = overrides.topK ?? topK
+        if let enabled = overrides.enableThinking { request.enable_thinking = enabled }
+        request.chat_template_kwargs = overrides.templateKwargs
     }
 
     func apply(to request: inout ResponsesInferenceRequest) {
-        request.context.modelOptions = modelOptions
+        // Explicit empty freezes absence and prevents the engine from re-reading
+        // model-scoped UI preferences on a later tool step.
+        request.context.modelOptions = modelOptions ?? [:]
+        request.generation.temperature = temperature
+        request.generation.topP = topP
+        request.generation.topK = topK
         request.generation.enableThinking = enableThinking
         request.generation.reasoningEffort = reasoningEffort
+        overrides.apply(to: &request)
     }
 }

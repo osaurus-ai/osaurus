@@ -36,6 +36,7 @@ struct QueuedSend: Equatable {
     var oneOffSkillId: UUID?
     var taskIntent: ChatTaskIntent? = nil
     var inferenceSourceOverride: RequestSource? = nil
+    var generationControls: ChatTurnGenerationControls? = nil
 }
 
 /// A manual model change made after a conversation already has content.
@@ -321,6 +322,7 @@ final class ChatSession: ObservableObject {
     /// puts the text back in the input field so the user can edit and
     /// resend without retyping. Cleared on the next successful send.
     var savedDraftOnCancel: (text: String, attachments: [Attachment])? = nil
+    private var savedTurnOverridesOnCancel: ChatTurnOverrides? = nil
 
     /// Single-slot FIFO queue for in-chat prompt overlays (secrets,
     /// clarify, …). Both prompt types share the same on-screen real
@@ -396,6 +398,18 @@ final class ChatSession: ObservableObject {
     let warmupController = ChatWarmupController()
     @Published var pickerItems: [ModelPickerItem] = []
     @Published var activeModelOptions: [String: ModelOptionValue] = [:]
+    @Published var nextTurnOverrides = ChatTurnOverrides()
+    @Published var turnParametersError: String?
+
+    func captureGenerationControls(overrides: ChatTurnOverrides? = nil) -> ChatTurnGenerationControls {
+        var controls = ChatTurnGenerationControls.capture(activeModelOptions: activeModelOptions)
+        controls.temperature = AgentManager.shared.effectiveTemperature(for: agentId ?? Agent.defaultId)
+        controls.topP = ChatConfigurationStore.load().topPOverride
+        controls.overrides = overrides ?? nextTurnOverrides
+        controls.storedExplicitOptions = selectedModel.flatMap { ModelOptionsStore.shared.storedExplicitOptions(for: $0) }
+        return controls
+    }
+
     @Published var imageComposerSettings = ImageComposerSettings()
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
@@ -2637,6 +2651,8 @@ final class ChatSession: ObservableObject {
     }
 
     func sendCurrent(directUserSend: Bool = false) {
+        do { try nextTurnOverrides.validate(); turnParametersError = nil }
+        catch { turnParametersError = error.localizedDescription; return }
         // A normal UI send can arrive before SwiftUI has redrawn the composer
         // into its queue/Stop state. Preserve that draft in the existing
         // single-slot queue instead of clearing it and dropping it behind the
@@ -2820,12 +2836,16 @@ final class ChatSession: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         guard hasContent else { return }
+        do { try nextTurnOverrides.validate(); turnParametersError = nil }
+        catch { turnParametersError = error.localizedDescription; return }
         queuedSend = QueuedSend(
             text: trimmed,
             attachments: attachments,
             oneOffSkillId: pendingOneOffSkillId,
-            inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride
+            inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride,
+            generationControls: captureGenerationControls()
         )
+        nextTurnOverrides = ChatTurnOverrides()
         input = ""
         pendingAttachments = []
         pendingOneOffSkillId = nil
@@ -2856,6 +2876,7 @@ final class ChatSession: ObservableObject {
         if let pending = queuedSend,
             pending.attachments.isEmpty,
             pending.oneOffSkillId == nil,
+            pending.generationControls?.overrides.isEmpty != false,
             !pending.text.isEmpty
         {
             queuedSend = nil
@@ -2919,7 +2940,7 @@ final class ChatSession: ObservableObject {
             pendingOneOffSkillId = skillId
         }
         ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
-            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent, generationControls: pending.generationControls)
         }
     }
 
@@ -3110,6 +3131,9 @@ final class ChatSession: ObservableObject {
     }
 
     func reset() {
+        nextTurnOverrides = ChatTurnOverrides()
+        turnParametersError = nil
+        savedTurnOverridesOnCancel = nil
         stashDraft()
         stop()
         lastManualModelSelection = nil
@@ -3664,6 +3688,8 @@ final class ChatSession: ObservableObject {
 
     /// Load session from persisted data
     func load(from data: ChatSessionData) {
+        nextTurnOverrides = ChatTurnOverrides()
+        turnParametersError = nil
         stashDraft()
         // Switching sessions discards the current thread's UI, so suppress the
         // outgoing-session block rebuild that `stop()` would trigger. Cleared
@@ -4875,7 +4901,7 @@ final class ChatSession: ObservableObject {
             pendingOneOffSkillId = skillId
         }
         ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
-            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent, generationControls: pending.generationControls)
         }
     }
 
@@ -4891,7 +4917,7 @@ final class ChatSession: ObservableObject {
             pendingOneOffSkillId = skillId
         }
         ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
-            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent)
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent, generationControls: pending.generationControls)
         }
     }
 
@@ -6358,7 +6384,9 @@ final class ChatSession: ObservableObject {
         _ text: String,
         attachments: [Attachment] = [],
         directUserSend: Bool = false,
-        taskIntent: ChatTaskIntent? = nil
+        taskIntent: ChatTaskIntent? = nil,
+        generationControls: ChatTurnGenerationControls? = nil,
+        turnOverrides: ChatTurnOverrides? = nil
     ) {
         let alignmentRepairModel = directUserSend && source == .chat && !isRemoteAgentTarget
             ? selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id } : nil
@@ -6387,7 +6415,8 @@ final class ChatSession: ObservableObject {
         // the phone's run in this chat too; a message is held, not lost.
         if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
             if hasContent {
-                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId, taskIntent: resolvedTaskIntent, inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride)
+                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId, taskIntent: resolvedTaskIntent, inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride, generationControls: generationControls ?? captureGenerationControls(overrides: turnOverrides))
+                nextTurnOverrides = ChatTurnOverrides()
             }
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
@@ -6402,6 +6431,16 @@ final class ChatSession: ObservableObject {
             windowState?.showLocalModelBusyAlert = true
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
+        }
+
+        let controls = generationControls
+            ?? (isRegeneration ? turns.last(where: { $0.role == .user })?.generationControls : nil)
+            ?? captureGenerationControls(overrides: turnOverrides)
+        do { try controls.overrides.validate(); turnParametersError = nil }
+        catch { turnParametersError = error.localizedDescription; return }
+        let storedTurnOptions = controls.storedExplicitOptions
+        if hasContent, generationControls == nil, turnOverrides == nil {
+            nextTurnOverrides = ChatTurnOverrides()
         }
 
         // A new send supersedes the previous turn's follow-up suggestions:
@@ -6442,7 +6481,9 @@ final class ChatSession: ObservableObject {
                 attachments: attachments,
                 hasContent: hasContent,
                 sendRequestedAt: sendRequestedAt,
-                alignmentRepairModel: alignmentRepairModel
+                alignmentRepairModel: alignmentRepairModel,
+                generationControls: controls,
+                storedTurnOptions: storedTurnOptions
             )
             return
         }
@@ -6457,6 +6498,7 @@ final class ChatSession: ObservableObject {
         if hasContent {
             preAppendIntroducedFirstTurn = turns.isEmpty
             let turn = ChatTurn(role: .user, content: trimmed, attachments: attachments)
+            turn.generationControls = controls
             turns.append(turn)
             preAppendedUserTurn = turn
         }
@@ -6491,7 +6533,9 @@ final class ChatSession: ObservableObject {
                 expectedPreSendHandshakeEpoch: handshakeEpoch,
                 sendRequestedAt: sendRequestedAt,
                 awaitedPreSendHandshake: true,
-                alignmentRepairModel: alignmentRepairModel
+                alignmentRepairModel: alignmentRepairModel,
+                generationControls: controls,
+                storedTurnOptions: storedTurnOptions
             )
         }
     }
@@ -6509,7 +6553,9 @@ final class ChatSession: ObservableObject {
         expectedPreSendHandshakeEpoch: UInt64? = nil,
         sendRequestedAt: Date = Date(),
         awaitedPreSendHandshake: Bool = false,
-        alignmentRepairModel: String? = nil
+        alignmentRepairModel: String? = nil,
+        generationControls: ChatTurnGenerationControls,
+        storedTurnOptions: [String: ModelOptionValue]?
     ) {
         // The pre-send task already checks this after its await. Keep the same
         // guard at the dispatch boundary so future refactors cannot restore
@@ -6592,7 +6638,9 @@ final class ChatSession: ObservableObject {
             if let pre = preAppendedUserTurn {
                 if preAppendedTurnPresent == false { turns.append(pre) }
             } else {
-                turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
+                let userTurn = ChatTurn(role: .user, content: trimmed, attachments: attachments)
+                userTurn.generationControls = generationControls
+                turns.append(userTurn)
             }
             appendedUserTurnForCurrentRun = true
             // Stash the draft so we can put it back if the user cancels
@@ -6601,6 +6649,7 @@ final class ChatSession: ObservableObject {
             // own send animation) so we have to capture them here at
             // the only point where we still know what they were.
             savedDraftOnCancel = (text: trimmed, attachments: attachments)
+            savedTurnOverridesOnCancel = generationControls.overrides
             isDirty = true
             rebuildVisibleBlocks()
 
@@ -6660,10 +6709,8 @@ final class ChatSession: ObservableObject {
         let turnSupportsAudio = selectedModelSupportsAudio
         let turnSupportsVideo = selectedModelSupportsVideo
         let imageSettings = imageComposerSettings
-        let turnModelOptions = activeModelOptions
-        let storedTurnModelOptions = turnModelId.flatMap {
-            ModelOptionsStore.shared.storedExplicitOptions(for: $0)
-        }
+        let turnModelOptions = generationControls.modelOptions ?? [:]
+        let storedTurnModelOptions = storedTurnOptions
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -6672,14 +6719,24 @@ final class ChatSession: ObservableObject {
             // explicit Thinking choice that launch-time cold-cache
             // normalization may have provisionally hidden. No default is
             // synthesized: absent choices still defer to the bundle.
-            let turnGenerationControls = await ChatTurnGenerationControls.captureForSend(
-                modelId: turnModelId,
-                activeModelOptions: turnModelOptions,
-                storedExplicitOptions: storedTurnModelOptions
-            ) { modelId in
-                _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
+            var turnGenerationControls = generationControls
+            if !generationControls.hasResolvedReasoning {
+                turnGenerationControls = await ChatTurnGenerationControls.captureForSend(
+                    modelId: turnModelId,
+                    activeModelOptions: turnModelOptions,
+                    storedExplicitOptions: storedTurnModelOptions
+                ) { modelId in
+                    _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
+                }
             }
+            turnGenerationControls.hasResolvedReasoning = true
             guard self.isRunActive(runId) else { return }
+            turnGenerationControls.temperature = generationControls.temperature
+            turnGenerationControls.topP = generationControls.topP
+            turnGenerationControls.topK = generationControls.topK
+            turnGenerationControls.overrides = generationControls.overrides
+            turnGenerationControls.storedExplicitOptions = generationControls.storedExplicitOptions
+            self.turns.last(where: { $0.role == .user })?.generationControls = turnGenerationControls
             if let turnModelId,
                 self.selectedModel == turnModelId,
                 self.activeModelOptions == turnModelOptions,
@@ -7297,9 +7354,7 @@ final class ChatSession: ObservableObject {
                     // unrelated future failures get a fresh budget.
                     let maxTransientRetries = 2
                     var transientRetries = 0
-                                        let effectiveTemp = AgentManager.shared.effectiveTemperature(
-                                            for: effectiveAgentId
-                                        )
+                                        let effectiveTemp = turnGenerationControls.temperature
 
                     ttftTrace?.mark("pre_ttft_done")
 
@@ -8173,7 +8228,7 @@ final class ChatSession: ObservableObject {
                                 generation: ResponsesGenerationOptions(
                                     temperature: effectiveTemp,
                                     maxOutputTokens: effectiveMaxTokensForAgent,
-                                    topP: chatCfg.topPOverride
+                                    topP: turnGenerationControls.topP
                                 ),
                                 tools: iterationToolSpecs.isEmpty ? nil : iterationToolSpecs,
                                 toolChoice: requestedToolChoice,
@@ -8735,7 +8790,7 @@ final class ChatSession: ObservableObject {
                                 generation: ResponsesGenerationOptions(
                                     temperature: effectiveTemp,
                                     maxOutputTokens: effectiveMaxTokensForAgent,
-                                    topP: chatCfg.topPOverride
+                                    topP: turnGenerationControls.topP
                                 ),
                                 tools: nil,
                                 toolChoice: nil,
@@ -9004,7 +9059,9 @@ final class ChatSession: ObservableObject {
         if let draft = savedDraftOnCancel {
             input = draft.text
             pendingAttachments = draft.attachments
+            if let savedTurnOverridesOnCancel { nextTurnOverrides = savedTurnOverridesOnCancel }
         }
+        savedTurnOverridesOnCancel = nil
         savedDraftOnCancel = nil
         persistAfterCancelledBeforeFirstDelta()
     }
@@ -9029,6 +9086,7 @@ final class ChatSession: ObservableObject {
         if let draft, input.isEmpty, pendingAttachments.isEmpty {
             input = draft.text
             pendingAttachments = draft.attachments
+            if let controls = turn.generationControls { nextTurnOverrides = controls.overrides }
         }
     }
 
@@ -10251,6 +10309,10 @@ struct ChatView: View {
                             // from the paired iPhone): nothing can be sent there, and the
                             // notice above says where it continues.
                             if !isReadOnlyConversation {
+                                if let error = observedSession.turnParametersError {
+                                    Text(error).font(.caption).foregroundStyle(.red)
+                                        .padding(.horizontal, Self.composerHorizontalInset)
+                                }
                                 FloatingInputCard(
                                     text: $observedSession.input,
                                     selectedModel: $observedSession.selectedModel,
@@ -10260,6 +10322,7 @@ struct ChatView: View {
                                     showVoiceOverlay: $observedSession.showVoiceOverlay,
                                     pickerItems: filteredPickerItems,
                                     activeModelOptions: $observedSession.activeModelOptions,
+                                    turnOverrides: $observedSession.nextTurnOverrides,
                                     isStreaming: observedSession.isSendActiveForComposer,
                                     // Hide Stop ONLY while the redaction review
                                     // sheet is actually on screen (the sheet owns
