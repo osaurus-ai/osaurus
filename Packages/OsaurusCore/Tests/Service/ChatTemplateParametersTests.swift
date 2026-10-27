@@ -150,4 +150,28 @@ struct ChatTemplateParametersTests {
         #expect(try render(kwargs, thinking: true, offeredTools: false) == first)
     }
 
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OSAURUS_NUEXTRACT3_TOKENIZER_DIR"] != nil))
+    func actualNuExtractTemplateChangesAcrossExtractionTurnsAndReplaysExactly() async throws {
+        let path = try #require(ProcessInfo.processInfo.environment["OSAURUS_NUEXTRACT3_TOKENIZER_DIR"])
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: URL(fileURLWithPath: path))
+        let messages: [[String: any Sendable]] = [["role": "user", "content": "Ada Lovelace was born in 1815."]]
+        func tokens(template: String, instruction: String, thinking: Bool) throws -> [Int] {
+            let parameters = GenerationParameters(temperature: nil, maxTokens: 64,
+                templateKwargs: ["template": .string(template), "mode": .string("structured"),
+                    "instructions": .string(instruction), "enable_thinking": .bool(thinking)])
+            return try tokenizer.applyChatTemplate(messages: messages, tools: nil,
+                additionalContext: MLXBatchAdapter.additionalContext(for: parameters, modelName: "numind/NuExtract3"))
+        }
+        let schema = #"{"name":"verbatim-string","born":"integer"}"#
+        let first = try tokens(template: schema, instruction: "Use the full name.", thinking: true)
+        let visible = tokenizer.decode(tokenIds: first)
+        #expect(visible.contains("【task】structured"))
+        #expect(visible.contains("【template_start】" + schema + "【template_end】"))
+        #expect(visible.contains("【instructions_start】Use the full name.【instructions_end】"))
+        let second = try tokens(template: #"{"birth_year":"integer"}"#, instruction: "Only the year.", thinking: false)
+        #expect(second != first)
+        #expect(tokenizer.decode(tokenIds: second).contains("birth_year"))
+        #expect(try tokens(template: schema, instruction: "Use the full name.", thinking: true) == first)
+    }
+
 }
