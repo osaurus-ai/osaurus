@@ -34,39 +34,39 @@ struct NextTurnControlsButton: View {
             validationError = nil
             isPresented = true
         } label: {
-            Label(overrides.isEmpty ? "Next turn" : "Next turn •", systemImage: "slider.horizontal.3")
+            Label(overrides.isEmpty ? L("Next turn") : L("Next turn •"), systemImage: "slider.horizontal.3")
                 .font(.caption)
         }
         .buttonStyle(.borderless)
-        .help("Override generation parameters for the next submitted turn")
+        .localizedHelp("Override generation parameters for the next submitted turn")
         .popover(isPresented: $isPresented) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Next turn").font(.headline)
-                Text("Blank fields inherit your existing defaults. Changes apply to one submitted turn, including its tool steps and retries.")
+                Text(localized: "Next turn").font(.headline)
+                Text(localized: "Blank fields inherit your existing defaults. Changes apply to one submitted turn, including its tool steps and retries.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    numberField("Temperature", text: $temperature)
-                    numberField("Top P", text: $topP)
-                    numberField("Top K", text: $topK)
+                    numberField(L("Temperature"), text: $temperature)
+                    numberField(L("Top P"), text: $topP)
+                    numberField(L("Top K"), text: $topK)
                 }
                 if let model, ModelProfileRegistry.profile(for: model)?.thinkingOption != nil {
-                    Picker("Thinking", selection: $thinking) {
-                        Text("Inherit").tag("inherit")
-                        Text("On").tag("on")
-                        Text("Off").tag("off")
+                    Picker(L("Thinking"), selection: $thinking) {
+                        Text(localized: "Inherit").tag("inherit")
+                        Text(localized: "On").tag("on")
+                        Text(localized: "Off").tag("off")
                     }
                 }
                 if !effortLevels.isEmpty {
-                    Picker("Reasoning effort", selection: $effort) {
-                        Text("Inherit").tag("")
+                    Picker(L("Reasoning effort"), selection: $effort) {
+                        Text(localized: "Inherit").tag("")
                         ForEach(effortLevels) { level in Text(level.label).tag(level.id) }
                     }
                 }
-                DisclosureGroup("Template parameters (JSON)") {
+                DisclosureGroup(L("Template parameters (JSON)")) {
                     TextEditor(text: $kwargs).font(.system(.caption, design: .monospaced))
                         .frame(height: 105)
-                    Text("A JSON object of parameters for the model’s chat template. Blank inherits; nested null values are preserved.")
+                    Text(localized: "A JSON object of parameters for the model’s chat template. Blank inherits; nested null values are preserved.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let validationError {
@@ -74,13 +74,13 @@ struct NextTurnControlsButton: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
-                    Button("Reset to inherited") {
+                    Button(localized: "Reset to inherited") {
                         overrides = ChatTurnOverrides()
                         isPresented = false
                     }
                     Spacer()
-                    Button("Cancel") { isPresented = false }
-                    Button("Apply") { apply() }.keyboardShortcut(.defaultAction)
+                    Button(localized: "Cancel") { isPresented = false }
+                    Button(localized: "Apply") { apply() }.keyboardShortcut(.defaultAction)
                 }
             }.padding(16).frame(width: 410)
         }
@@ -89,7 +89,7 @@ struct NextTurnControlsButton: View {
     private func numberField(_ title: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading) {
             Text(title).font(.caption)
-            TextField("Inherit", text: text).textFieldStyle(.roundedBorder)
+            TextField(L("Inherit"), text: text).textFieldStyle(.roundedBorder)
         }
     }
 
