@@ -338,7 +338,7 @@ let package = Package(
         // Preserve native MTP verifier failures and reject failed generated-state publication.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "781065971ec2f0b84117d344e15210ba4e5ea77e"
+            revision: "ec414c50553b2b604673ddb5cd3bd5ce4ea5edd1"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

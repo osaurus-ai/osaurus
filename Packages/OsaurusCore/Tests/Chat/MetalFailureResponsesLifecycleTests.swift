@@ -181,7 +181,7 @@ struct MetalFailureResponsesLifecycleTests {
             events: AsyncStream(unfolding: { await source.next() }, onCancel: { sourceProbe.cancel() }),
             modelName: model, promptTokenCount: 73, suppressProgressUI: true,
             onConsumerCancellation: { sourceProbe.cancel() },
-            reportFailure: { value, _, prompt, generated in
+            reportFailure: { value, _, prompt, generated, _ in
                 sourceProbe.report(value, prompt: prompt, generated: generated)
             })
         let failing = ResponsesGenerationStream.native(mapped, waitForProducerDrain: {

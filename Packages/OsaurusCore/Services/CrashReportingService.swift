@@ -202,11 +202,12 @@ public final class CrashReportingService {
     /// Limits and occupancy are sampled when terminal info arrives. Producer
     /// drain may still be in progress; this is neither peak nor at-fault policy.
     nonisolated static func recordHandledGPUFailure(
-        _ failure: GenerationFailure, modelName: String, promptTokens: Int, generatedTokens: Int
+        _ failure: GenerationFailure, modelName: String, promptTokens: Int, generatedTokens: Int,
+        context: HandledGPUFailureContext = HandledGPUFailureContext()
     ) {
         guard SentrySDK.isEnabled,
             let report = HandledGPUFailureReport(failure: failure, modelName: modelName,
-                promptTokens: promptTokens, generatedTokens: generatedTokens)
+                promptTokens: promptTokens, generatedTokens: generatedTokens, context: context)
         else { return }
         let saved = ServerRuntimeSettingsStore.snapshot().memorySafety
         let status = MemoryStatus.snapshot()

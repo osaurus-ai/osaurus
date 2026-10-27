@@ -445,6 +445,11 @@ public actor ModelRuntime {
         /// Saved cache contract used to create this holder's coordinator.
         /// Notices must not replay its old quota after a settings change.
         var cacheSettings: VMLXServerCacheSettings?
+        /// The coarse kind of volume the bundle was loaded from
+        /// (`HandledGPUFailureReport.volumeKind(of:)`): attached to a
+        /// handled GPU failure so a slow restore on a removable or external
+        /// volume can be told from one on the internal SSD. Never the path.
+        let modelVolumeKind: String?
         init(
             name: String,
             container: ModelContainer,
@@ -460,10 +465,12 @@ public actor ModelRuntime {
             allocatorCacheLimitBytes: Int? = nil,
             admittedWorkingSetBytes: UInt64? = nil,
             admittedLoadBudgetBytes: UInt64? = nil,
-            requiresAdmittedMLXAllocatorCeiling: Bool = false
+            requiresAdmittedMLXAllocatorCeiling: Bool = false,
+            modelVolumeKind: String? = nil
         ) {
             self.name = name
             self.container = container
+            self.modelVolumeKind = modelVolumeKind
             self.generationDefaults = generationDefaults
             self.weightsSizeBytes = weightsSizeBytes
             self.weightsFingerprint = weightsFingerprint
@@ -5212,7 +5219,8 @@ public actor ModelRuntime {
                 // every chunk (reference serving: 4 GB pool 475 pp/s, 16 GB 769).
                 requiresAdmittedMLXAllocatorCeiling:
                     loadBundleFacts.isPlainDeepseekV4AffineJANG
-                    || loadBundleFacts.isDeepseekV41AffineJANG
+                    || loadBundleFacts.isDeepseekV41AffineJANG,
+                modelVolumeKind: HandledGPUFailureReport.volumeKind(of: localURL)
             )
 
             // Install the cache coordinator before the coalesced load task
@@ -6163,6 +6171,16 @@ public actor ModelRuntime {
             // Background housekeeping (follow-up suggestions, titles) must not
             // stomp the user's turn in the speculative-decoding readout.
             recordMTPLastRun: parameters.loadIntent == .interactive,
+            // What a handled Metal failure report says about THIS request:
+            // the decode path it was resolved to (AR / native_mtp:dN /
+            // dflash2), its configured depth, and the bundle's volume kind.
+            // The disk-fetch sample stays unset until the vmlx pin exposes
+            // `DiskCacheStats.lastFetchPayloadBytes` / `lastFetchMs`.
+            failureRequestContext: GenerationEventMapper.FailureRequestContext(
+                decodePath: Self.describeDraftStrategy(requestStrategy),
+                configuredDepth: Self.nativeMTPDepth(requestStrategy),
+                modelVolumeKind: holder.modelVolumeKind
+            ),
             onConsumerCancellation: {
                 // Cancel this exact generation wrapper, not every request
                 // using the same model. The wrapper drains the direct vmlx

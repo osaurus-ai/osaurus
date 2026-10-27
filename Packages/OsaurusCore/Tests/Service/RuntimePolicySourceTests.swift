@@ -820,7 +820,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "781065971ec2f0b84117d344e15210ba4e5ea77e"
+        let expectedRuntimeHardenedRevision = "ec414c50553b2b604673ddb5cd3bd5ce4ea5edd1"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -4044,4 +4044,21 @@ struct RuntimePolicySourceTests {
             "Blocked bundles must not advertise selectable Adaptive chips."
         )
     }
+
+    @Test("SSD capacity provider is installed once and reads the background cache")
+    func diskCapacityProviderWiring() throws {
+        let app = try Self.source("AppDelegate.swift")
+        let bridge = try Self.source("Utils/VolumeAvailableCapacityCache+DiskCache.swift")
+        let invocation = "VolumeAvailableCapacityCache.installAsDiskCacheFreeSpaceProvider()"
+        #expect(app.components(separatedBy: invocation).count == 2,
+                "The runtime must receive the shared capacity provider exactly once at launch")
+        let recovery = try #require(app.range(of: "MLXErrorRecovery.installGlobalHandler()"))
+        let provider = try #require(app.range(of: invocation))
+        #expect(recovery.upperBound < provider.lowerBound)
+        #expect(bridge.contains("DiskCacheVolumeSnapshot.setPurgeableInclusiveFreeBytesProvider"))
+        #expect(bridge.contains("shared.cachedBytes(forPath: path)"))
+        #expect(!bridge.contains("volumeAvailableCapacityForImportantUsageKey"),
+                "The runtime callback must not issue the blocking volume query")
+    }
+
 }
