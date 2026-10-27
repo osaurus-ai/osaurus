@@ -2136,8 +2136,7 @@ enum ConfigPlanner {
         _ desired: [String], prune: Bool,
         into actions: inout [ConfigPlanAction], notes: inout [String]
     ) {
-        let installed = Set(
-            ModelManager.shared.availableModels.filter { $0.isDownloaded }.map { $0.id })
+        let installed = Set(ModelManager.shared.installedModels().map { $0.id })
         for id in desired where !installed.contains(id) {
             actions.append(
                 ConfigPlanAction(

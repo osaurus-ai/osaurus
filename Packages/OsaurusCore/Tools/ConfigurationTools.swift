@@ -508,7 +508,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             }
 
             let availableModels = ModelManager.shared.availableModels
-            let installedModels = availableModels.filter { $0.isDownloaded }
+            let installedModels = ModelManager.shared.installedModels()
             let downloadingModels = availableModels.filter { model in
                 if case .downloading = ModelManager.shared.effectiveDownloadState(for: model) {
                     return true
@@ -841,7 +841,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                 let filtered: [MLXModel]
                 switch filter {
                 case "installed", "":
-                    filtered = all.filter { $0.isDownloaded }
+                    filtered = ModelManager.shared.installedModels()
                 case "downloading":
                     filtered = all.filter {
                         if case .downloading = ModelManager.shared.effectiveDownloadState(for: $0) {
@@ -854,7 +854,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                 case "recommended":
                     filtered = Array(all.prefix(10))
                 default:
-                    filtered = all.filter { $0.isDownloaded }
+                    filtered = ModelManager.shared.installedModels()
                 }
                 let items = filtered.map { model -> [String: Any] in
                     var dict: [String: Any] = [

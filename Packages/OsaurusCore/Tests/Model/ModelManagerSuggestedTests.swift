@@ -240,6 +240,53 @@ struct ModelManagerSuggestedTests {
         }
     }
 
+    /// The reported Mac: six installed OsaurusAI bundles, a sidebar count of
+    /// 1 and spawn setup checks that "cannot find" the model. The org fetch
+    /// landed before the local scan, so the scan's exact-id hit refreshed the
+    /// suggestion and skipped the installed inventory.
+    @Test @MainActor func installedOrgModelKnownOnlyAsSuggestionJoinsTheInstalledInventory() async {
+        await withIsolatedModelSizeCache {
+            let manager = ModelManager()
+            let id = "OsaurusAI/Inventory-Probe-125B-A6B-JANGH2"
+            let fetched = MLXModel(
+                id: id,
+                name: "Inventory Probe",
+                description: "From OsaurusAI on Hugging Face.",
+                downloadURL: "https://huggingface.co/\(id)"
+            )
+            manager.applyOsaurusOrgFetch(autoFetched: [fetched])
+            #expect(!manager.availableModels.contains { $0.id == id })
+
+            let local = MLXModel(id: id, name: "Inventory-Probe", description: "", downloadURL: "")
+            manager.mergeAvailable(with: [local], refreshLocalInstallationMetadata: true)
+            #expect(manager.availableModels.filter { $0.id == id }.count == 1)
+            #expect(manager.availableModels.first { $0.id == id }?.description == fetched.description)
+
+            // A rescan neither duplicates it nor changes what the page lists.
+            manager.mergeAvailable(with: [local], refreshLocalInstallationMetadata: true)
+            #expect(manager.availableModels.filter { $0.id == id }.count == 1)
+            #expect(manager.deduplicatedModels().filter { $0.id == id }.count == 1)
+        }
+    }
+
+    /// Registry and Hub merges carry no installation evidence and must not
+    /// move a suggestion into the installed inventory.
+    @Test @MainActor func nonLocalMergeLeavesASuggestionOutOfTheInstalledInventory() async {
+        await withIsolatedModelSizeCache {
+            let manager = ModelManager()
+            let id = "OsaurusAI/Inventory-Probe-Remote-Only"
+            let fetched = MLXModel(
+                id: id,
+                name: "Remote Only",
+                description: "From OsaurusAI on Hugging Face.",
+                downloadURL: "https://huggingface.co/\(id)"
+            )
+            manager.applyOsaurusOrgFetch(autoFetched: [fetched])
+            manager.mergeAvailable(with: [fetched])
+            #expect(!manager.availableModels.contains { $0.id == id })
+        }
+    }
+
     @Test @MainActor func applyOsaurusOrgFetch_curatedEntryWinsOnDuplicateId() async {
         await withIsolatedModelSizeCache {
             let manager = ModelManager()

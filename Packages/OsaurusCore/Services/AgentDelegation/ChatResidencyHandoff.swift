@@ -245,16 +245,27 @@ enum ChatResidencyHandoff {
         }
     }
 
-    /// Best-effort on-disk size (bytes) of an installed chat model, used as the
-    /// spawn-model `requiredBytes` for the text/spawn RAM preflight. Falls back to
-    /// summing the model directory when the catalog has no size estimate (e.g. a
-    /// manually-placed bundle). Returns 0 when unknown → the preflight is skipped.
+    /// Best-effort size (bytes) of the weights an installed chat model keeps
+    /// resident, used as the spawn-model `requiredBytes` for the text/spawn RAM
+    /// preflight: the download minus SSD-resident tables, the same figure the
+    /// model cards' memory estimate uses. Allosaurus downloads 94.6 GB but keeps
+    /// ~57 GB of n-gram tables on SSD; sizing it by download refused it on a
+    /// 96 GB Mac. Falls back to summing the model directory when the catalog has
+    /// no size estimate (e.g. a manually-placed bundle). Returns 0 when unknown
+    /// → the preflight is skipped.
     static func estimatedChatModelBytes(named name: String) -> Int64 {
         let models = ModelManager.discoverLocalModels()
         guard let model = models.first(where: { $0.name == name || $0.id == name }) else {
             return 0
         }
-        if let bytes = model.totalSizeEstimateBytes { return bytes }
+        return requiredResidentBytes(for: model)
+    }
+
+    static func requiredResidentBytes(for model: MLXModel) -> Int64 {
+        // INVARIANT: price resident weights rather than SSD-backed tables;
+        // unknown sizes retain the existing directory fallback and admission
+        // policy. Guarded by ChatResidencyHandoffPreflightSizingTests.
+        if let bytes = model.residentWeightEstimateBytes { return bytes }
         return directorySizeBytes(model.localDirectory)
     }
 

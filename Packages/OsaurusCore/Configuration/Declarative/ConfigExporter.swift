@@ -374,8 +374,7 @@ enum ConfigExporter {
     // MARK: - Models / Plugins
 
     private static func exportModels() -> [String] {
-        ModelManager.shared.availableModels
-            .filter { $0.isDownloaded }
+        ModelManager.shared.installedModels()
             .map { $0.id }
             .sorted()
     }

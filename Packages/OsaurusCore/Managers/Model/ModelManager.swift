@@ -319,10 +319,12 @@ public final class ModelManager: NSObject, ObservableObject {
         // stays main-actor isolated so `self` never crosses actor boundaries.
         Task { [weak self] in
             let localModels = await Self.discoverLocalModelsOffMain()
-            self?.mergeAvailable(
+            guard let self else { return }
+            self.mergeAvailable(
                 with: localModels,
                 refreshLocalInstallationMetadata: true
             )
+            self.refreshTotalDownloadedSize()
         }
 
         isLoadingModels = false
@@ -371,7 +373,17 @@ public final class ModelManager: NSObject, ObservableObject {
                 refreshLocalInstallationMetadata: true
             )
             self.checkForDeprecatedModels()
+            self.refreshTotalDownloadedSize()
         }
+    }
+
+    /// Re-sum the on-disk size of the installed inventory. Runs after every
+    /// local-discovery merge (launch scan, `.localModelsChanged`) so the
+    /// Models page header sizes exactly the set it counts beside it. The
+    /// candidates are captured here on the main actor; the probe and the
+    /// directory walk run off it inside the service.
+    func refreshTotalDownloadedSize() {
+        downloadService.refreshTotalDownloadedSize(inventoryCandidates: deduplicatedModels())
     }
 
     /// Fetch MLX-compatible models from Hugging Face and merge into availableModels.
@@ -681,7 +693,8 @@ public final class ModelManager: NSObject, ObservableObject {
         set { downloadService.downloadAlert = newValue }
     }
 
-    /// Deduplicated merge of suggestedModels + availableModels, preferring curated descriptions.
+    /// Deduplicated merge of suggestedModels + availableModels: one entry per
+    /// lowercased id, preferring curated descriptions.
     ///
     /// Order is deterministic: rows keep the insertion order of `combined`
     /// (suggestedModels first, then availableModels). Earlier this returned
@@ -689,20 +702,38 @@ public final class ModelManager: NSObject, ObservableObject {
     /// between calls — so any view that recomputed on a tick (e.g. the
     /// onboarding picker observing `SystemMonitorService`'s 2s timer) saw the
     /// rows jump around. Preserving insertion order keeps the list stable.
+    ///
+    /// On an id collision the representative is the entry that carries
+    /// installation evidence (see `deduplicatedModels(suggested:available:)`).
     func deduplicatedModels() -> [MLXModel] {
-        let combined = suggestedModels + availableModels
+        Self.deduplicatedModels(suggested: suggestedModels, available: availableModels)
+    }
+
+    /// Pure form of `deduplicatedModels()` so the inventory contract is
+    /// testable without a manager and callable off the main actor.
+    ///
+    /// The first occurrence of an id keeps its slot. When a later occurrence
+    /// carries installation evidence (`bundleDirectory` / `rootDirectory` /
+    /// `externalSource`) and the one in the slot does not, the slot takes the
+    /// first entry's editorial fields merged with the later entry's
+    /// installation metadata. Before this, the suggestion always won, so an
+    /// externally installed bundle whose id was also a curated or org
+    /// suggestion was represented by a card that probed the managed models
+    /// directory and reported not-downloaded: the Models page header, the
+    /// On Device tab and the Catalog cards undercounted while the sidebar
+    /// badge, picker and spawn checks (built from `availableModels`) did not.
+    nonisolated static func deduplicatedModels(
+        suggested: [MLXModel],
+        available: [MLXModel]
+    ) -> [MLXModel] {
         var ordered: [MLXModel] = []
         var indexByLowerId: [String: Int] = [:]
-        for m in combined {
+        for m in suggested + available {
             let key = m.id.lowercased()
             if let existingIndex = indexByLowerId[key] {
-                let existingIsDiscovered =
-                    ordered[existingIndex].description == "Discovered on Hugging Face"
-                let currentIsDiscovered = m.description == "Discovered on Hugging Face"
-                // Swap a richer (curated) entry into the slot a discovered
-                // placeholder already occupies, keeping the original position.
-                if existingIsDiscovered && !currentIsDiscovered {
-                    ordered[existingIndex] = m
+                let existing = ordered[existingIndex]
+                if m.hasLocalInstallationEvidence && !existing.hasLocalInstallationEvidence {
+                    ordered[existingIndex] = existing.mergingLocalInstallationMetadata(from: m)
                 }
             } else {
                 indexByLowerId[key] = ordered.count
@@ -710,6 +741,37 @@ public final class ModelManager: NSObject, ObservableObject {
             }
         }
         return ordered
+    }
+
+    // MARK: - Installed inventory
+
+    /// THE installed-models inventory: every known model (suggested or
+    /// available), one entry per id, that is complete on disk. The sidebar
+    /// Local Models badge, the Models page header count and size, the On
+    /// Device tab, the config catalog/planner/applier/exporter, `osaurus_inspect`
+    /// and onboarding all read this, so they cannot disagree with each other.
+    ///
+    /// `isDownloaded` probes the disk on a cache miss; callers on the main
+    /// actor that cannot afford that (the badge store) capture
+    /// `deduplicatedModels()` here and run `installedModels(among:)` off main.
+    func installedModels() -> [MLXModel] {
+        Self.installedModels(among: deduplicatedModels())
+    }
+
+    var installedModelCount: Int { installedModels().count }
+
+    /// `!installedModels().isEmpty`, stopping at the first installed entry
+    /// instead of probing every candidate.
+    var hasInstalledModels: Bool { deduplicatedModels().contains { $0.isDownloaded } }
+
+    /// The installed subset of an inventory candidate list (the output of
+    /// `deduplicatedModels()`), computed wherever the caller is. Pure over
+    /// its input so a background task can run it on a main-actor snapshot.
+    nonisolated static func installedModels(among candidates: [MLXModel]) -> [MLXModel] {
+        // INVARIANT: UI, configuration and setup checks share this installed
+        // subset; catalog refresh preserves local evidence. Guarded by
+        // InstalledModelInventoryTests (landing orders and surface counts).
+        candidates.filter { $0.isDownloaded }
     }
 
     // MARK: - Private Methods
@@ -1720,7 +1782,7 @@ extension ModelManager {
         return nil
     }
 
-    fileprivate func mergeAvailable(
+    func mergeAvailable(
         with newModels: [MLXModel],
         refreshLocalInstallationMetadata: Bool = false
     ) {
@@ -1762,6 +1824,18 @@ extension ModelManager {
                             .mergingLocalInstallationMetadata(from: m)
                         availableModels[idx] = merged
                         refreshedExactMatch = true
+                    } else if !appended.contains(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }), let suggested = suggestedModels.first(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }) {
+                        // Installed, but known only as a suggestion: an
+                        // OsaurusAI org auto-fetch can land before the local
+                        // scan. `availableModels` is the installed inventory
+                        // for the sidebar count, the config catalog and spawn
+                        // setup checks, so the bundle joins it here, keeping
+                        // the suggestion's editorial fields.
+                        appended.append(suggested.mergingLocalInstallationMetadata(from: m))
                     }
                     if let idx = suggestedModels.firstIndex(where: {
                         $0.id.caseInsensitiveCompare(m.id) == .orderedSame
@@ -1987,6 +2061,20 @@ extension ModelManager {
             .filter { !Self.panelOwnedOrgIds.contains($0.id.lowercased()) }
             .map(enrich)
 
+        // Installation evidence is sticky across a refresh. The curated and
+        // org entries built above are fresh structs that resolve to the
+        // managed models directory; the entries they replace may already
+        // carry the `bundleDirectory` / provenance a local-discovery merge
+        // folded in. The org fetch carries editorial data and must never
+        // erase on-disk evidence, otherwise every externally installed bundle
+        // whose id is also a suggestion flipped to not-downloaded on the
+        // Models page each time the listing landed.
+        var installedByLowerId: [String: MLXModel] = [:]
+        for model in suggestedModels + availableModels where model.hasLocalInstallationEvidence {
+            let key = model.id.lowercased()
+            if installedByLowerId[key] == nil { installedByLowerId[key] = model }
+        }
+
         // Drop previous OsaurusAI auto-fetched entries, keeping curated and
         // any non-OsaurusAI entries other code may have injected.
         let preserved = suggestedModels.filter { model in
@@ -2002,6 +2090,11 @@ extension ModelManager {
             if seen.insert(key).inserted {
                 merged.append(model)
             }
+        }
+
+        merged = merged.map { model in
+            guard let installed = installedByLowerId[model.id.lowercased()] else { return model }
+            return model.mergingLocalInstallationMetadata(from: installed)
         }
 
         suggestedModels = merged

@@ -210,17 +210,25 @@ public enum OsaurusPaths {
 
     // MARK: - Volume free-space query
     //
-    // Prefer the cheap POSIX filesystem query. On some external/APFS volumes
-    // `.volumeAvailableCapacityForImportantUsageKey` enters CacheDelete and can
-    // block model load for minutes before any weights are mapped. The URL-keyed
-    // query remains a fallback for volumes where legacy `.systemFreeSize` is
-    // missing or reports zero under sandbox/container pressure.
+    // Two figures exist. The strict `.systemFreeSize` excludes purgeable space
+    // (APFS local snapshots, purgeable caches); on a Mac with a large purgeable
+    // pool it reads as nearly full (18 GB vs 1.44 TB on one 8 TB drive).
+    // `.volumeAvailableCapacityForImportantUsageKey` includes it and is what
+    // Finder and System Settings show, but on some external/APFS volumes it
+    // enters CacheDelete and can block for minutes. So the strict query runs
+    // inline and the purgeable-inclusive one comes from
+    // `VolumeAvailableCapacityCache`, which refreshes it in the background.
+    // The inline URL-keyed query remains the fallback for volumes where the
+    // strict figure is missing or zero under sandbox/container pressure.
 
-    /// Returns the free byte count on the volume that hosts `path`. Uses the
-    /// legacy filesystem attribute first to avoid CacheDelete stalls, then falls
-    /// back to `.volumeAvailableCapacityForImportantUsageKey` when needed.
+    /// Returns the free byte count on the volume that hosts `path`: the larger
+    /// of the strict filesystem figure and the cached purgeable-inclusive
+    /// figure. Never waits on CacheDelete while the strict figure is positive.
     /// Returns `nil` if both queries fail — callers should treat `nil` as
     /// "unknown, render 'unknown'" rather than coercing to zero.
+    // INVARIANT: known purgeable capacity may increase strict free space, but
+    // the slow query must not block the positive-strict path. Guarded by
+    // ModelDownloadServiceStorageTests and VolumeAvailableCapacityCacheTests.
     public static func volumeFreeBytes(forPath path: String) -> Int64? {
         var legacyFree: Int64?
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
@@ -229,7 +237,10 @@ public enum OsaurusPaths {
             legacyFree = free
         }
         if let legacyFree, legacyFree > 0 {
-            return legacyFree
+            return resolvedVolumeFreeBytes(
+                importantCapacity: VolumeAvailableCapacityCache.shared.cachedBytes(forPath: path),
+                legacyFree: legacyFree
+            )
         }
 
         let url = URL(fileURLWithPath: path)
@@ -251,6 +262,10 @@ public enum OsaurusPaths {
         legacyFree: Int64?
     ) -> Int64? {
         if let legacyFree, legacyFree > 0 {
+            // Purgeable space counts: macOS frees it for any real write.
+            if let importantCapacity, importantCapacity > legacyFree {
+                return importantCapacity
+            }
             return legacyFree
         }
         if let importantCapacity, importantCapacity > 0 {
