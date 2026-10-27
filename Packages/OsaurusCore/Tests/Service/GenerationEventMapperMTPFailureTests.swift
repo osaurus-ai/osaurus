@@ -99,7 +99,7 @@ struct GenerationEventMapperMTPFailureTests {
                     .info(completion(stats: partial, failure: failure)),
                 ]),
                 modelName: model,
-                reportFailure: { report.record($0, model: $1, prompt: $2, generated: $3) }
+                reportFailure: { report.record($0, model: $1, prompt: $2, generated: $3, context: $4) }
             ) {
                 if case .reasoning(let text) = event { reasoning += text }
                 if case .completionInfo = event { completed = true }
@@ -121,6 +121,8 @@ struct GenerationEventMapperMTPFailureTests {
         #expect(reports.first?.model == model)
         #expect(reports.first?.prompt == 72)
         #expect(reports.first?.generated == 11)
+        #expect(reports.first?.context.restoredTokens == nil)
+        #expect(reports.first?.context.lastPrefillOperation == nil)
     }
 
     @Test(arguments: [GenerationFailure.Stage.preparation, .decoding])
@@ -134,7 +136,7 @@ struct GenerationEventMapperMTPFailureTests {
             for try await event in GenerationEventMapper.map(
                 events: stream([.info(completion(failure: failure))]),
                 modelName: model,
-                reportFailure: { _, _, _, _ in }
+                reportFailure: { _, _, _, _, _ in }
             ) {
                 if case .completionInfo = event { Issue.record("Failure cannot become completion") }
             }
@@ -158,7 +160,7 @@ struct GenerationEventMapperMTPFailureTests {
         for try await event in GenerationEventMapper.map(
             events: stream([.info(completion(stats: hasStats ? partial : nil))]),
             modelName: model,
-            reportFailure: { report.record($0, model: $1, prompt: $2, generated: $3) }
+            reportFailure: { report.record($0, model: $1, prompt: $2, generated: $3, context: $4) }
         ) {
             if case .completionInfo(let count, _, _, let reason, _, let stats) = event {
                 terminalCount += 1
@@ -195,7 +197,7 @@ struct GenerationEventMapperMTPFailureTests {
                 #expect(stats == nil)
                 await cleared.signal()
             },
-            reportFailure: { report.record($0, model: $1, prompt: $2, generated: $3) }
+            reportFailure: { report.record($0, model: $1, prompt: $2, generated: $3, context: $4) }
         )
         let consumer = Task { () throws -> (String, Int) in
             var reasoning = ""
@@ -271,7 +273,7 @@ struct GenerationEventMapperMTPFailureTests {
                 modelName: model,
                 suppressProgressUI: suppressProgress,
                 recordMTPLastRun: suppressProgress,
-                reportFailure: { _, _, _, _ in }
+                reportFailure: { _, _, _, _, _ in }
             ) {}
             Issue.record("Expected the originating failure")
         } catch let caught as GenerationFailure {
@@ -295,7 +297,7 @@ struct GenerationEventMapperMTPFailureTests {
             for try await _ in GenerationEventMapper.map(
                 events: AsyncStream(unfolding: { await source.next() }),
                 modelName: model,
-                reportFailure: { report.record($0, model: $1, prompt: $2, generated: $3) }
+                reportFailure: { report.record($0, model: $1, prompt: $2, generated: $3, context: $4) }
             ) {}
             Issue.record("Expected the originating failure")
         } catch let caught as GenerationFailure {
@@ -342,12 +344,13 @@ struct GenerationEventMapperMTPFailureTests {
             let model: String
             let prompt: Int
             let generated: Int
+            let context: HandledGPUFailureContext
         }
         private let lock = NSLock()
         private var entries: [Entry] = []
-        func record(_ failure: GenerationFailure, model: String, prompt: Int, generated: Int) {
+        func record(_ failure: GenerationFailure, model: String, prompt: Int, generated: Int, context: HandledGPUFailureContext) {
             lock.lock(); defer { lock.unlock() }
-            entries.append(.init(failure: failure, model: model, prompt: prompt, generated: generated))
+            entries.append(.init(failure: failure, model: model, prompt: prompt, generated: generated, context: context))
         }
         func snapshot() -> [Entry] {
             lock.lock(); defer { lock.unlock() }

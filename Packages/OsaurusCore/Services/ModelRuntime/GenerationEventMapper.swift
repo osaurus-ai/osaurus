@@ -30,6 +30,32 @@ private let mapperLog = Logger(subsystem: "ai.osaurus", category: "Generation")
 
 enum GenerationEventMapper {
 
+    /// Per-request facts the mapper cannot observe from the event stream
+    /// but a handled GPU failure report needs: the decode path the request
+    /// was resolved to, and where the model bundle lives. Identifiers only.
+    struct FailureRequestContext: Sendable {
+        /// `ModelRuntime.describeDraftStrategy` of the request's strategy.
+        var decodePath: String? = nil
+        /// The native-MTP depth the request asked for, when it is one.
+        var configuredDepth: Int? = nil
+        /// `HandledGPUFailureReport.volumeKind(of:)` of the bundle directory.
+        var modelVolumeKind: String? = nil
+        /// Request-correlated disk-fetch figures, if available. A process-wide
+        /// latest sample cannot be assigned to this request without identity.
+        var diskRestoreSample: (@Sendable () -> (bytes: Int64, ms: Double)?)? = nil
+
+        init(
+            decodePath: String? = nil, configuredDepth: Int? = nil,
+            modelVolumeKind: String? = nil,
+            diskRestoreSample: (@Sendable () -> (bytes: Int64, ms: Double)?)? = nil
+        ) {
+            self.decodePath = decodePath
+            self.configuredDepth = configuredDepth
+            self.modelVolumeKind = modelVolumeKind
+            self.diskRestoreSample = diskRestoreSample
+        }
+    }
+
     /// Map a `Generation` stream into the typed `ModelRuntimeEvent` stream
     /// callers (HTTP handlers, ChatView, plugin runners) consume.
     ///
@@ -51,14 +77,17 @@ enum GenerationEventMapper {
         /// seconds after the user's real turn and would silently overwrite
         /// the exact adaptive-downshift readout the panel exists to show.
         recordMTPLastRun: Bool = true,
+        /// What a failure report should say about this request beyond what
+        /// the event stream shows (decode path, model volume).
+        failureRequestContext: FailureRequestContext = FailureRequestContext(),
         onConsumerCancellation: @escaping @Sendable () -> Void = {},
         /// Fired exactly once, at the FIRST real output event (chunk,
         /// reasoning, tool call, or tool-call progress). This is the
         /// boundary the swap-attribution window closes on: prefill and
         /// TTFT work happen before it, decode after.
         onFirstModelOutput: @escaping @Sendable () -> Void = {},
-        /// Fired when vmlx emits its authoritative terminal stats. Cache
-        /// persistence may still be draining after this boundary.
+        /// Fired when this mapper consumes authoritative terminal stats. The
+        /// MLX adapter holds them until producer drain; direct streams may differ.
         onCompletionInfo: @escaping @Sendable () -> Void = {},
         /// Injectable diagnostic sink. The default writes only this model's
         /// actual stats (or removes its stale value when stats are unavailable).
@@ -68,9 +97,9 @@ enum GenerationEventMapper {
         },
         /// Injectable sink; the default reports only whitelisted native GPU
         /// failures and obeys the existing crash-reporting consent gate.
-        reportFailure: @escaping @Sendable (GenerationFailure, String, Int, Int) -> Void = {
+        reportFailure: @escaping @Sendable (GenerationFailure, String, Int, Int, HandledGPUFailureContext) -> Void = {
             CrashReportingService.recordHandledGPUFailure(
-                $0, modelName: $1, promptTokens: $2, generatedTokens: $3)
+                $0, modelName: $1, promptTokens: $2, generatedTokens: $3, context: $4)
         }
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
@@ -95,6 +124,14 @@ enum GenerationEventMapper {
             // cacheRestore→prefill split (how many tokens were restored from
             // cache vs freshly processed) without a line per progress tick.
             var lastPrefillStage: String?
+            var lastPrefillOperation: String?
+            // The last progress figures and the restore's wall time, for a
+            // handled GPU failure report: the same preparation-stage facts a
+            // Sentry event could not say (`HandledGPUFailureContext`).
+            var lastPrefillCompleted: Int?
+            var lastPrefillTotal: Int?
+            var cacheLookupAt: CFAbsoluteTime?
+            var cacheRestoreMs: Int?
             // Decode diagnostics: first-output wall-clock + whether this step
             // ended in a tool call. Tool-call steps tear down the stream before
             // vmlx emits `.info`, so STEP-STATS never fires for them — the
@@ -104,9 +141,34 @@ enum GenerationEventMapper {
             // What the runtime's `.cacheRestore` event reported for this
             // request. Zero restored tokens is a cold request.
             var cacheRestoredTokens = 0
+            var cacheRestoreCountKnown = false
             var cacheRestoreDetail: String?
             var prefillPromptTokens = max(0, promptTokenCount ?? 0)
             var recordedCacheRestore = false
+
+            // Everything the handled-failure report can say about this
+            // request at the moment the failure arrives. Counts and
+            // identifiers only; a figure that was never observed is nil.
+            func failureContext() -> HandledGPUFailureContext {
+                let sample = failureRequestContext.diskRestoreSample?()
+                return HandledGPUFailureContext(
+                    decodePath: failureRequestContext.decodePath,
+                    configuredDepth: failureRequestContext.configuredDepth,
+                    lastPrefillStage: lastPrefillStage,
+                    lastPrefillOperation: lastPrefillOperation,
+                    prefillCompletedUnits: lastPrefillCompleted,
+                    prefillTotalUnits: lastPrefillTotal,
+                    // Lookup start does not distinguish an eventual cold miss
+                    // from a failure inside restore. Only a restore report or
+                    // the initial cold-prefill event establishes the count.
+                    restoredTokens: cacheRestoreCountKnown ? cacheRestoredTokens : nil,
+                    restoreDetail: cacheRestoredTokens > 0 ? cacheRestoreDetail : nil,
+                    cacheRestoreMs: cacheRestoreMs,
+                    diskRestoreBytes: sample?.bytes,
+                    diskRestoreMs: sample.map { Int($0.ms.rounded()) },
+                    modelVolumeKind: failureRequestContext.modelVolumeKind,
+                    promptTokens: promptTokenCount.flatMap { $0 >= 0 ? $0 : nil })
+            }
 
             // Park the restore where a Settings poll can read it, once per
             // request: at the first output, when prefill is over and the
@@ -172,7 +234,9 @@ enum GenerationEventMapper {
                     if let failure = info.generationFailure {
                         if !reportedFailure {
                             reportedFailure = true
-                            reportFailure(failure, modelName, info.promptTokenCount, info.generationTokenCount)
+                            reportFailure(
+                                failure, modelName, info.promptTokenCount, info.generationTokenCount,
+                                failureContext())
                         }
                         // Preserve the engine's originating diagnostic. A
                         // preparation error is not an empty user cancellation.
@@ -255,9 +319,26 @@ enum GenerationEventMapper {
                         WarmupProgressHub.shared.prefillDidUpdate(model: modelName, state: state)
                     }
                     prefillPromptTokens = max(prefillPromptTokens, state.totalUnitCount)
-                    if state.stage == .cacheRestore, state.completedUnitCount > 0 {
+                    lastPrefillCompleted = state.completedUnitCount
+                    lastPrefillTotal = state.totalUnitCount
+                    lastPrefillOperation = HandledGPUFailureReport.whitelistedPrefillOperation(state.detail)
+                    if state.stage == .cacheLookup, cacheLookupAt == nil {
+                        cacheLookupAt = CFAbsoluteTimeGetCurrent()
+                    }
+                    if state.stage == .cacheRestore {
+                        cacheRestoreCountKnown = true
                         cacheRestoredTokens = max(cacheRestoredTokens, state.completedUnitCount)
+                        // Preserve the normal cache readout. The failure
+                        // report applies its own export-only allowlist.
                         cacheRestoreDetail = state.detail
+                        // The runtime reports the restore AFTER its eval, so
+                        // lookup -> restore is the read plus the restore.
+                        if cacheRestoreMs == nil, let cacheLookupAt {
+                            cacheRestoreMs = Int(((CFAbsoluteTimeGetCurrent() - cacheLookupAt) * 1000).rounded())
+                        }
+                    }
+                    if state.stage == .prefill, state.completedUnitCount == 0, !cacheRestoreCountKnown {
+                        cacheRestoreCountKnown = true
                     }
                     if state.stage.rawValue != lastPrefillStage {
                         lastPrefillStage = state.stage.rawValue
