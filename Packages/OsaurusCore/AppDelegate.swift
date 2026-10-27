@@ -2117,6 +2117,9 @@ extension AppDelegate {
     fileprivate static let controlToolsReloadNotification = Notification.Name(
         "com.dinoki.osaurus.control.toolsReload"
     )
+    static let controlModelsReloadNotification = Notification.Name(
+        "com.dinoki.osaurus.control.modelsReload"
+    )
     fileprivate static let controlServeNotification = Notification.Name(
         "com.dinoki.osaurus.control.serve"
     )
@@ -2151,6 +2154,12 @@ extension AppDelegate {
             self,
             selector: #selector(handleToolsReloadCommand(_:)),
             name: Self.controlToolsReloadNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleModelsReloadCommand(_:)),
+            name: Self.controlModelsReloadNotification,
             object: nil
         )
     }
@@ -2253,6 +2262,21 @@ extension AppDelegate {
         Task { @MainActor in
             await PluginManager.shared.loadAll(forceReload: true)
         }
+    }
+
+    @objc private func handleModelsReloadCommand(_ note: Notification) {
+        Task { @MainActor in
+            Self.reloadLocalModelsAfterCLIInstall()
+        }
+    }
+
+    /// Local process notification only: no HTTP server or access key required.
+    static func reloadLocalModelsAfterCLIInstall(
+        invalidateCache: () -> Void = { ModelManager.invalidateLocalModelsCache() },
+        notifications: NotificationCenter = .default
+    ) {
+        invalidateCache()
+        notifications.post(name: .localModelsChanged, object: nil)
     }
 }
 
