@@ -66,7 +66,11 @@ struct ChatTemplateParametersTests {
         let examples = try #require(context["examples"] as? [any Sendable])
         #expect(examples[1] is NSNull)
         #expect(context["strict"] as? Bool == false)
-        #expect(context["threshold"] as? Double == 0)
+        #expect(context["threshold"] as? Int == 0)
+        #expect(OsaurusCore.JSONValue.number(2).templateContextValue as? Int == 2)
+        #expect(OsaurusCore.JSONValue.number(2.5).templateContextValue as? Double == 2.5)
+        #expect(OsaurusCore.JSONValue.number(Double.greatestFiniteMagnitude).templateContextValue as? Double
+            == Double.greatestFiniteMagnitude)
     }
 
     @Test func realAdapterContextKeepsExtractionVariablesAndTypedControlsWin() throws {

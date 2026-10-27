@@ -25,7 +25,11 @@ extension JSONValue {
         switch self {
         case .null: return NSNull()
         case .bool(let value): return value
-        case .number(let value): return value
+        case .number(let value):
+            // JSON integers must remain integers for Jinja range/index helpers.
+            // Conversion is exact and bounds-checked; fractional values stay Double.
+            if let integer = Int(exactly: value) { return integer }
+            return value
         case .string(let value): return value
         case .array(let values): return values.map(\.templateContextValue)
         case .object(let values): return values.mapValues(\.templateContextValue)
