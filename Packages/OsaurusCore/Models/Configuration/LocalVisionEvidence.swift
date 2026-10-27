@@ -116,9 +116,7 @@ enum LocalVisionEvidence {
     static var deepseekV41VisionRuntimeAvailable: Bool {
         let type: Any.Type = DeepseekV4Model.self
         guard type is ModalityBearing.Type else { return false }
-        let flag = (ProcessInfo.processInfo.environment["VMLX_DSV41_VL"] ?? "")
-            .trimmingCharacters(in: .whitespaces).lowercased()
-        return !["0", "false", "off", "no"].contains(flag)
+        return DeepseekV41VisionConfiguration.enabled()
     }
 
     private static func object(_ url: URL) -> [String: Any]? {
