@@ -1405,13 +1405,18 @@ struct MLXBatchAdapter {
                 return context
             }
             if let normalizedReasoningEffort {
-                if let effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort) {
+                // V4.1 accepts the full low/medium/high/xhigh/max ladder; 0731 only low/high/max.
+                let effort =
+                    ModelFamilyNames.isDSV41Family(modelName)
+                    ? DSV41ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                    : DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                if let effort {
                     switch effort {
-                    case "low", "high", "max":
+                    case "instruct":
+                        context["enable_thinking"] = false
+                    default:
                         context["enable_thinking"] = true
                         context["reasoning_effort"] = effort
-                    default:
-                        context["enable_thinking"] = false
                     }
                 } else {
                     // Preserve invalid explicit values so vmlx's DSV4 policy

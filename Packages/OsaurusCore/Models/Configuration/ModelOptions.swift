@@ -223,6 +223,8 @@ enum ModelProfileRegistry {
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
         LagunaThinkingProfile.self,
+        // DeepSeek-V4.1 names also match the broader DSV4 matcher; first match wins.
+        DSV41ReasoningProfile.self,
         DSV4ReasoningProfile.self,
         Hy3ReasoningProfile.self,
         LingRuntimeProfile.self,
@@ -435,10 +437,13 @@ enum ModelProfileRegistry {
 // MARK: - DSV4 Reasoning Profile
 
 /// DeepSeek-V4 / DSV4 Flash JANG bundles use vmlx's dedicated DSV4 encoder
-/// rather than a generic `enable_thinking`-only Jinja path. The runtime has
-/// four intentional modes:
+/// rather than a generic `enable_thinking`-only Jinja path. For DSV4-0731 the
+/// runtime has four intentional modes:
 /// - instruct: compatibility id for the direct/off rail (`enable_thinking=false`)
 /// - low/high/max: exact 0731 reasoning-effort values passed through to vmlx
+///
+/// DeepSeek-V4.1 names match ``DSV41ReasoningProfile`` first (registered
+/// ahead of this profile), which offers V4.1's full effort ladder.
 ///
 /// The bundle default is low. The default below is display-only; Osaurus does
 /// not synthesize it into requests, so bundle metadata remains authoritative.
@@ -475,6 +480,55 @@ struct DSV4ReasoningProfile: ModelProfile {
             return value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         default:
             return nil
+        }
+    }
+}
+
+/// DeepSeek-V4.1 bundles (`model_type=deepseek_v41`) render a numeric
+/// `Reasoning Effort: N` line, and vmlx's encoder
+/// (`DeepseekV4ChatEncoder.reasoningBudget`) maps the named ladder onto it:
+/// low 50, medium 62, high 75, xhigh 88, max 100 (`minimal` 25). Off is the
+/// direct chat rail (`enable_thinking=false`, no effort line), stored as
+/// `instruct` like DSV4-0731 so saved choices keep working; `none` and the
+/// other off aliases normalize to it. The V4.1 default budget is 50 (low);
+/// the default below is display-only and never synthesized into requests.
+struct DSV41ReasoningProfile: ModelProfile {
+    static let displayName = "DeepSeek-V4.1 Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        ModelFamilyNames.isDSV41Family(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Mode"),
+            icon: "brain.head.profile",
+            kind: .segmented([
+                ModelOptionSegment(id: "instruct", label: L("Off")),
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "xhigh", label: L("Extra High")),
+                ModelOptionSegment(id: "max", label: L("Max")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("low")
+    ]
+
+    /// The V4.1 named efforts, plus the shared off aliases mapped to
+    /// `instruct`. Nil for anything else (numeric budgets, `minimal`), which
+    /// the adapter forwards unchanged for vmlx's encoder to resolve.
+    static func normalizedEffort(_ value: String) -> String? {
+        let lowered = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch lowered {
+        case "low", "medium", "high", "xhigh", "max":
+            return lowered
+        default:
+            return DSV4ReasoningProfile.normalizedEffort(lowered) == "instruct" ? "instruct" : nil
         }
     }
 }

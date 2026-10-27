@@ -555,6 +555,61 @@ struct ModelProfileRegistryTests {
         }
     }
 
+    @Test("DeepSeek-V4.1 bundles expose off plus the full low…max effort ladder")
+    func dsv41_matchesFullEffortLadder() {
+        for id in [
+            "DeepSeek-V4.1-Flash-1017-JANG",
+            "JANGQ-AI/DeepSeek-V4.1-Flash-JANG",
+            "dsv41-flash",
+            "dsv4.1-flash",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName == DSV41ReasoningProfile.displayName, "\(id)")
+            #expect(ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)["reasoningEffort"] == nil)
+            #expect(ModelProfileRegistry.defaults(for: id)["reasoningEffort"] == .string("low"))
+            guard case .segmented(let segments)? = ModelProfileRegistry.options(for: id).first?.kind else {
+                Issue.record("V4.1 should expose segmented reasoning modes: \(id)")
+                continue
+            }
+            #expect(segments.map(\.id) == ["instruct", "low", "medium", "high", "xhigh", "max"])
+            for effort in ["medium", "xhigh"] {
+                let kept = ModelProfileRegistry.normalizedOptions(
+                    for: id, persisted: ["reasoningEffort": .string(effort)])
+                #expect(kept["reasoningEffort"]?.stringValue == effort)
+            }
+        }
+        // 0731 keeps its own options.
+        #expect(
+            ModelProfileRegistry.profile(for: "DeepSeek-V4-Flash-0731-JANG")?.displayName
+                == DSV4ReasoningProfile.displayName)
+
+        #expect(DSV41ReasoningProfile.normalizedEffort(" XHigh ") == "xhigh")
+        #expect(DSV41ReasoningProfile.normalizedEffort("none") == "instruct")
+        #expect(DSV41ReasoningProfile.normalizedEffort("off") == "instruct")
+        #expect(DSV41ReasoningProfile.normalizedEffort("minimal") == nil)
+        #expect(DSV4ReasoningProfile.normalizedEffort("medium") == nil)
+    }
+
+    @Test("DeepSeek-V4.1 medium/xhigh render the thinking rail with that effort; none stays off")
+    func dsv41_adapterForwardsLadderEfforts() {
+        let model = "DeepSeek-V4.1-Flash-1017-JANG"
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let context = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil, maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string(effort)]),
+                modelName: model)
+            #expect(context["enable_thinking"] as? Bool == true)
+            #expect(context["reasoning_effort"] as? String == effort)
+        }
+        let off = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil, maxTokens: 16, modelOptions: ["reasoningEffort": .string("none")]),
+            modelName: model)
+        #expect(off["enable_thinking"] as? Bool == false)
+        #expect(off["reasoning_effort"] == nil)
+    }
+
     // MARK: - Dynamic (catalog-driven) reasoning capabilities
 
     /// Provider-published capabilities must outrank the static
