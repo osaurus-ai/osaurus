@@ -16,7 +16,7 @@ struct ExternalModelLocatorAvailabilityTests {
     }
 
     private func isolated(
-        _ body: @Sendable (URL, URL) throws -> Void
+        _ body: @Sendable (URL, URL) async throws -> Void
     ) async throws {
         try await OsaurusTestGlobals.withPathsLock {
             let temporary = FileManager.default.temporaryDirectory
@@ -34,7 +34,7 @@ struct ExternalModelLocatorAvailabilityTests {
                 ExternalModelLocator.invalidateInMemory()
                 try? FileManager.default.removeItem(at: temporary)
             }
-            try body(temporary, root)
+            try await body(temporary, root)
         }
     }
 
@@ -183,6 +183,7 @@ struct ExternalModelLocatorAvailabilityTests {
             #expect(ExternalModelLocator.path(forId: id) == nil)
             #expect(!ExternalModelLocator.pruneMissing())
             _ = ExternalModelLocator.rescan()
+            #expect(ExternalModelLocator.models().allSatisfy { $0.id != id })
             #expect(try manifestIDs() == [id])
         }
     }
@@ -262,6 +263,70 @@ struct ExternalModelLocatorAvailabilityTests {
                 return .missingDirectory
             }
             #expect(try manifestIDs().isEmpty)
+        }
+    }
+
+    @Test
+    func unchangedIdentityRefreshClearsReadinessAndPickerAcrossOutageAndRecovery() async throws {
+        try await isolated { temporary, root in
+            try await RemoteProviderTestLock.shared.run {
+                let previousScan = ModelManager.scanLocalModelsOverrideForTests
+                defer {
+                    ModelManager.scanLocalModelsOverrideForTests = previousScan
+                    ModelManager.invalidateLocalModelsCache()
+                }
+                ModelManager.scanLocalModelsOverrideForTests = { _ in [] }
+                ModelManager.invalidateLocalModelsCache()
+                await ModelManager.awaitLocalModelsCacheReadyForDispatch()
+                let bundle = root.appendingPathComponent(id, isDirectory: true)
+                try writeBundle(bundle)
+                _ = ExternalModelLocator.rescan()
+                let before = try Data(contentsOf: OsaurusPaths.externalModelsManifestFile())
+                let model = try #require(ExternalModelLocator.models().first { $0.id == id })
+                #expect(model.isDownloaded)
+                #expect(ModelManager.findInstalledModelFromCache(named: id)?.id == id)
+                let warmItems = await ModelPickerItemCache.shared.buildModelPickerItems()
+                #expect(warmItems.contains { $0.id == id })
+
+                let offline = temporary.appendingPathComponent("offline-library", isDirectory: true)
+                try FileManager.default.moveItem(at: root, to: offline)
+                let beforeOutage = ExternalModelLocator.catalogGeneration()
+                #expect(!ExternalModelLocator.pruneMissing())
+                #expect(ExternalModelLocator.catalogGeneration() != beforeOutage)
+                #expect(!model.isDownloaded)
+                #expect(ExternalModelLocator.models().allSatisfy { $0.id != id })
+                #expect(ModelManager.findInstalledModelFromCache(named: id) == nil)
+                let offlineItems = await ModelPickerItemCache.shared.buildModelPickerItems()
+                #expect(!offlineItems.contains { $0.id == id })
+                #expect(try Data(contentsOf: OsaurusPaths.externalModelsManifestFile()) == before)
+
+                // Warm the negative result, then restore the exact same identity.
+                #expect(!model.isDownloaded)
+                try FileManager.default.moveItem(at: offline, to: root)
+                let beforeRecovery = ExternalModelLocator.catalogGeneration()
+                _ = ExternalModelLocator.rescan()
+                #expect(ExternalModelLocator.catalogGeneration() != beforeRecovery)
+                #expect(model.isDownloaded)
+                #expect(ModelManager.findInstalledModelFromCache(named: id)?.id == id)
+                let recoveredItems = await ModelPickerItemCache.shared.buildModelPickerItems()
+                #expect(recoveredItems.contains { $0.id == id })
+                #expect(try Data(contentsOf: OsaurusPaths.externalModelsManifestFile()) == before)
+            }
+        }
+    }
+
+    @Test
+    func unchangedHealthyRefreshInvalidatesAvailabilityWithoutRewritingManifest() async throws {
+        try await isolated { _, root in
+            let bundle = root.appendingPathComponent(id, isDirectory: true)
+            try writeBundle(bundle)
+            _ = ExternalModelLocator.rescan()
+            let before = try Data(contentsOf: OsaurusPaths.externalModelsManifestFile())
+            let generation = ExternalModelLocator.catalogGeneration()
+            #expect(!ExternalModelLocator.pruneMissing())
+            #expect(ExternalModelLocator.catalogGeneration() != generation)
+            #expect(ExternalModelLocator.models().map(\.id) == [id])
+            #expect(try Data(contentsOf: OsaurusPaths.externalModelsManifestFile()) == before)
         }
     }
 

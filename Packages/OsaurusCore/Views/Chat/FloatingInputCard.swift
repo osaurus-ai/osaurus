@@ -3241,6 +3241,8 @@ extension FloatingInputCard {
                 Task {
                     await RemoteProviderManager.shared.refreshConnectedProviders()
                     await ModelPickerItemCache.shared.buildModelPickerItems()
+                    // Refresh external availability through the shared catalog;
+                    // retained registrations alone do not make a model ready.
                     _ = await Task.detached(priority: .utility) {
                         ExternalModelLocator.pruneMissing()
                     }.value
