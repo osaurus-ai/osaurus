@@ -124,7 +124,11 @@ public final class KnowledgeManager: ObservableObject {
         // Adopting a folder that is already a git repo: remember its
         // `origin` so the card shows the link and Sync can pull/push.
         // A repo without a remote stays local-only (gitRemoteURL nil).
-        if collection.isGitRepository {
+        // `isGitRepository` calls FileManager.fileExists (lstat) which can
+        // block on slow/network volumes. Run it off the main actor so the UI
+        // is never stalled. KnowledgeCollection is a value type, so the
+        // capture is safe.
+        if await Task.detached(priority: .userInitiated) { collection.isGitRepository }.value {
             collection.gitRemoteURL = await KnowledgeGitSyncService.shared.remoteURL(of: collection.folderURL)
         }
         KnowledgeCollectionStore.save(collection)
