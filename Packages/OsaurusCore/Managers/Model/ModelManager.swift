@@ -1720,7 +1720,7 @@ extension ModelManager {
         return nil
     }
 
-    fileprivate func mergeAvailable(
+    func mergeAvailable(
         with newModels: [MLXModel],
         refreshLocalInstallationMetadata: Bool = false
     ) {
@@ -1762,6 +1762,18 @@ extension ModelManager {
                             .mergingLocalInstallationMetadata(from: m)
                         availableModels[idx] = merged
                         refreshedExactMatch = true
+                    } else if !appended.contains(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }), let suggested = suggestedModels.first(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }) {
+                        // Installed, but known only as a suggestion: an
+                        // OsaurusAI org auto-fetch can land before the local
+                        // scan. `availableModels` is the installed inventory
+                        // for the sidebar count, the config catalog and spawn
+                        // setup checks, so the bundle joins it here, keeping
+                        // the suggestion's editorial fields.
+                        appended.append(suggested.mergingLocalInstallationMetadata(from: m))
                     }
                     if let idx = suggestedModels.firstIndex(where: {
                         $0.id.caseInsensitiveCompare(m.id) == .orderedSame
