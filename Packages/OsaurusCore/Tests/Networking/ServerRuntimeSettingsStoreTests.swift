@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import os
 @preconcurrency import MLXLMCommon
 import Testing
 
@@ -914,6 +915,195 @@ struct ServerRuntimeSettingsStoreTests {
         )
 
         #expect(projected.genTopP == ServerConfiguration.default.genTopP)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    @MainActor func delayedColdReadCannotOverwriteANewerSave(
+        viaSnapshot: Bool,
+        needsNormalization: Bool
+    ) async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            let defaults = UserDefaults.standard
+            let choiceKeys = [NativeMTPSelectionDefault.userChoseKey, NativeMTPSelectionDefault.familyDefaultKey]
+            let previousChoices = choiceKeys.map { defaults.object(forKey: $0) }
+            defer { for (key, value) in zip(choiceKeys, previousChoices) { defaults.set(value, forKey: key) } }
+
+            var initial = VMLXServerRuntimeSettings()
+            initial.network.port = 1200
+            ServerRuntimeSettingsStore.save(initial)
+            initial = try #require(ServerRuntimeSettingsStore.load())
+            if needsNormalization {
+                initial.memorySafety.customDefaultMaxKVSize = 4096
+                try writeSettings(initial, to: dir)
+            }
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let readReady = AsyncStream<Void>.makeStream()
+            let releaseRead = DispatchSemaphore(value: 0)
+            let reader = Task.detached {
+                let pause: @Sendable () -> Void = {
+                    readReady.continuation.yield(())
+                    readReady.continuation.finish()
+                    releaseRead.wait()
+                }
+                return viaSnapshot
+                    ? ServerRuntimeSettingsStore.snapshot(afterReading: pause)
+                    : ServerRuntimeSettingsStore.load(afterReading: pause)
+            }
+            defer { releaseRead.signal() }
+            for await _ in readReady.stream { break }
+            var selected = initial
+            selected.network.port = 1338
+            selected.cache.defaultMaxKVSize = 8192
+            selected.memorySafety.customDefaultMaxKVSize = nil
+            selected.memorySafety.customAllocatorCacheBytes = 536_870_912
+            selected.cache.blockDisk.maxSizeGB = 3
+            selected.cache.blockDisk.maxSizePercent = nil
+            selected.mtp.mode = .off
+            ServerRuntimeSettingsStore.save(selected)
+            let expected = ServerRuntimeSettingsStore.snapshot()
+            releaseRead.signal()
+            let observed = await reader.value
+            let disk = try JSONDecoder().decode(
+                VMLXServerRuntimeSettings.self,
+                from: Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
+            )
+            #expect(observed == expected)
+            #expect(disk == expected)
+            #expect(ServerRuntimeSettingsStore.snapshot() == expected)
+            #expect(disk.network.port == 1338)
+            #expect(disk.cache.defaultMaxKVSize == 8192)
+            #expect(disk.memorySafety.customAllocatorCacheBytes == 536_870_912)
+            #expect(disk.mtp.mode == .off)
+        }
+    }
+
+    @Test @MainActor func outgoingFixtureReadCannotPublishIntoANewDirectory() async throws {
+        let first = try makeTempDirectory()
+        let second = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: second) }
+        try await withOverriddenDirectory(first) {
+            let defaults = UserDefaults.standard
+            let choiceKeys = [NativeMTPSelectionDefault.userChoseKey, NativeMTPSelectionDefault.familyDefaultKey]
+            let previousChoices = choiceKeys.map { defaults.object(forKey: $0) }
+            defer { for (key, value) in zip(choiceKeys, previousChoices) { defaults.set(value, forKey: key) } }
+
+            var original = VMLXServerRuntimeSettings()
+            original.network.port = 1200
+            original.memorySafety.customDefaultMaxKVSize = 4096
+            try writeSettings(original, to: first)
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let readReady = AsyncStream<Void>.makeStream()
+            let releaseRead = DispatchSemaphore(value: 0)
+            let reader = Task.detached {
+                ServerRuntimeSettingsStore.load(afterReading: {
+                    readReady.continuation.yield(())
+                    readReady.continuation.finish()
+                    releaseRead.wait()
+                })
+            }
+            defer { releaseRead.signal() }
+            for await _ in readReady.stream { break }
+            ServerRuntimeSettingsStore.overrideDirectory = second
+            var newer = VMLXServerRuntimeSettings()
+            newer.network.port = 2444
+            ServerRuntimeSettingsStore.save(newer)
+            let expected = ServerRuntimeSettingsStore.snapshot()
+            releaseRead.signal()
+            #expect(await reader.value == expected)
+            let firstDisk = try JSONDecoder().decode(
+                VMLXServerRuntimeSettings.self,
+                from: Data(contentsOf: first.appendingPathComponent("server-runtime.json"))
+            )
+            let secondDisk = try JSONDecoder().decode(
+                VMLXServerRuntimeSettings.self,
+                from: Data(contentsOf: second.appendingPathComponent("server-runtime.json"))
+            )
+            #expect(firstDisk == original)
+            #expect(secondDisk == expected)
+            #expect(ServerRuntimeSettingsStore.snapshot() == expected)
+        }
+    }
+
+    @Test @MainActor func inMemoryOverrideWinsOverAnAlreadyCapturedDiskRead() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            let defaults = UserDefaults.standard
+            let choiceKeys = [NativeMTPSelectionDefault.userChoseKey, NativeMTPSelectionDefault.familyDefaultKey]
+            let previousChoices = choiceKeys.map { defaults.object(forKey: $0) }
+            defer { for (key, value) in zip(choiceKeys, previousChoices) { defaults.set(value, forKey: key) } }
+
+            var original = VMLXServerRuntimeSettings()
+            original.network.port = 1200
+            ServerRuntimeSettingsStore.save(original)
+            // Establish the canonical disk baseline before testing a process-only
+            // override. A legitimate pending cold reader may otherwise finish
+            // the initial one-time migrations after the raw save's byte capture.
+            _ = try #require(ServerRuntimeSettingsStore.load())
+            let persisted = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let readReady = AsyncStream<Void>.makeStream()
+            let releaseRead = DispatchSemaphore(value: 0)
+            let reader = Task.detached {
+                ServerRuntimeSettingsStore.snapshot(afterReading: {
+                    readReady.continuation.yield(())
+                    readReady.continuation.finish()
+                    releaseRead.wait()
+                })
+            }
+            defer { releaseRead.signal() }
+            for await _ in readReady.stream { break }
+            var overridden = original
+            overridden.network.port = 3555
+            ServerRuntimeSettingsStore.overrideSnapshotInMemory(overridden)
+            releaseRead.signal()
+            #expect(await reader.value == overridden)
+            #expect(ServerRuntimeSettingsStore.snapshot() == overridden)
+            #expect(try Data(contentsOf: dir.appendingPathComponent("server-runtime.json")) == persisted)
+        }
+    }
+
+    @Test @MainActor func failedSaveKeepsTheLastPublishedSnapshot() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var original = VMLXServerRuntimeSettings()
+            original.network.port = 1200
+            ServerRuntimeSettingsStore.save(original)
+            let expected = ServerRuntimeSettingsStore.snapshot()
+            let url = dir.appendingPathComponent("server-runtime.json")
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+            var changed = original
+            changed.network.port = 1338
+            ServerRuntimeSettingsStore.save(changed)
+            #expect(ServerRuntimeSettingsStore.snapshot() == expected)
+        }
+    }
+
+    @Test @MainActor func saveObserversCanCompleteACrossThreadReadBeforeReturning() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            ServerRuntimeSettingsStore.save(VMLXServerRuntimeSettings())
+            var selected = try #require(ServerRuntimeSettingsStore.load())
+            let finished = DispatchSemaphore(value: 0)
+            let observerReadCompleted = OSAllocatedUnfairLock(initialState: false)
+            let token = NotificationCenter.default.addObserver(
+                forName: ServerRuntimeSettingsStore.didSaveNotification,
+                object: nil,
+                queue: nil
+            ) { _ in
+                DispatchQueue.global().async {
+                    _ = ServerRuntimeSettingsStore.load()
+                    finished.signal()
+                }
+                let completed = finished.wait(timeout: .now() + 10) == .success
+                observerReadCompleted.withLock { $0 = completed }
+            }
+            defer { NotificationCenter.default.removeObserver(token) }
+            selected.network.port = 1338
+            ServerRuntimeSettingsStore.save(selected)
+            #expect(observerReadCompleted.withLock { $0 })
+        }
     }
 
     // MARK: - Helpers

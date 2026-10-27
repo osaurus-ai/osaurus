@@ -25,6 +25,7 @@
 //
 
 import Foundation
+import Darwin
 
 enum ExternalModelLocator {
     /// One discovered external bundle.
@@ -38,6 +39,16 @@ enum ExternalModelLocator {
         /// Human-readable provenance ("Hugging Face cache", "LM Studio",
         /// "Custom model folder").
         let source: String
+        /// Configured scan root, before symlink resolution. Optional for older manifests.
+        let scanRootPath: String?
+
+        init(id: String, bundlePath: String, revision: String?, source: String, scanRootPath: String? = nil) {
+            self.id = id
+            self.bundlePath = bundlePath
+            self.revision = revision
+            self.source = source
+            self.scanRootPath = scanRootPath
+        }
     }
 
     /// Validation or scan reason for a bundle that was not registered.
@@ -134,13 +145,11 @@ enum ExternalModelLocator {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var registry: [String: Discovered]?
     nonisolated(unsafe) private static var lastReport: ScanReport?
-    /// Bumped on every `registry` mutation so read-side memo caches (e.g.
-    /// `ModelManager`'s name-match memo) can invalidate without observing
-    /// notifications.
+    /// Bumped on registry mutation and explicit availability refresh so read-side
+    /// memo caches invalidate even when outage/recovery leaves identity unchanged.
     nonisolated(unsafe) private static var registryGen: UInt64 = 0
 
-    /// Monotonic version of the registry contents. Two equal values guarantee
-    /// `models()` would return the same set.
+    /// Monotonic version of registry contents and refreshed availability.
     static func registryGeneration() -> UInt64 {
         lock.lock()
         defer { lock.unlock() }
@@ -240,7 +249,9 @@ enum ExternalModelLocator {
         return stale
     }
 
-    /// Catalog entries for every registered external model.
+    /// Available catalog entries, materialized off-main by discovery/refresh.
+    /// The registry may retain unavailable identities; consumers of this list
+    /// (including the picker) treat every returned entry as installed.
     static func models() -> [MLXModel] {
         lock.lock()
         // Load first: the lazy first-load inside `loadedLocked()` bumps
@@ -253,8 +264,15 @@ enum ExternalModelLocator {
         }
         lock.unlock()
         beforeModelsBuildForTests?()
-        let built = entries.map { entry in
+        let built = entries.compactMap { entry -> MLXModel? in
             let bundleDirectory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
+            let candidate = MLXModel(
+                id: entry.id, name: "", description: "", downloadURL: "", bundleDirectory: bundleDirectory)
+            // Recheck only when materializing a new catalog, never in a view
+            // getter. A retained registration is not evidence of readiness.
+            let ready = bundlePresence(at: bundleDirectory) == .present && candidate.computeIsDownloadedFromDisk()
+            MLXModelDownloadCache.set(ready, for: candidate.downloadCacheKey)
+            guard ready else { return nil }
             return MLXModel(
                 id: entry.id,
                 name: ModelMetadataParser.friendlyName(from: entry.id),
@@ -313,39 +331,69 @@ enum ExternalModelLocator {
         }
     }
 
-    /// Drop registry entries whose bundle no longer exists on disk — e.g. the
-    /// user deleted an external model's files directly in Finder. Cheap: just
-    /// a `config.json` existence check per entry (no directory walk), so it's
-    /// safe to call whenever a model list is about to be shown. Persists the
-    /// trimmed manifest and posts `.localModelsChanged` if anything was
-    /// removed, which rebuilds the picker cache and refreshes the Models grid.
-    ///
-    /// This exists because the in-memory `registry` (and the manifest) are
-    /// loaded once and only fully re-derived by `rescan()` at launch. Closing
-    /// and reopening the window reuses the cached registry, so a model deleted
-    /// out from under us would otherwise linger in the UI until the next quit.
+    /// Explicit discovery boundaries refresh availability even when the registry
+    /// is unchanged. Publish one completion event after the off-main materialized
+    /// catalog is current; ordinary getters keep their existing memoized path.
     @discardableResult
-    static func pruneMissing() -> Bool {
-        // Snapshot under the lock, then do the `fileExists` probes UNLOCKED.
-        // Holding the lock across filesystem I/O would block any concurrent
-        // (possibly main-thread) `models()` / `path(forId:)` caller for the
-        // duration of the scan — the same reason `path` and `rescan` keep
-        // their I/O outside the lock. Callers must still invoke this off the
-        // main thread.
+    private static func refreshAvailability() -> [MLXModel] {
+        lock.lock()
+        registryGen &+= 1
+        lock.unlock()
+        MLXModelDownloadCache.invalidateAll()
+        let available = models()
+        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+        return available
+    }
+
+    enum BundlePresence: Equatable {
+        case present
+        case missingConfig
+        case missingDirectory
+        case unavailable
+    }
+
+    /// Keep uncertainty distinct from deletion. Opening the bundle first means
+    /// ENOENT for config.json is evidence about a reachable directory, not an
+    /// unplugged volume or an inaccessible ancestor. Do not follow a config
+    /// symlink's absent target as deletion: it may live on an unavailable source.
+    static func bundlePresence(at directory: URL) -> BundlePresence {
+        let descriptor = Darwin.open(directory.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            return errno == ENOENT || errno == ENOTDIR ? .missingDirectory : .unavailable
+        }
+        defer { _ = Darwin.close(descriptor) }
+        var info = stat()
+        if fstatat(descriptor, "config.json", &info, AT_SYMLINK_NOFOLLOW) == 0 {
+            if info.st_mode & mode_t(S_IFMT) == mode_t(S_IFLNK),
+                fstatat(descriptor, "config.json", &info, 0) != 0
+            {
+                return .unavailable
+            }
+            return .present
+        }
+        return errno == ENOENT ? .missingConfig : .unavailable
+    }
+
+    /// Remove a positively missing config in a reachable bundle. A whole missing
+    /// directory is indeterminate here; a healthy source rescan handles actual
+    /// directory deletions. Temporary access failures never erase the manifest.
+    @discardableResult
+    static func pruneMissing(
+        probe: (URL) -> BundlePresence = { bundlePresence(at: $0) }
+    ) -> Bool {
         lock.lock()
         let snapshot = loadedLocked()
         lock.unlock()
 
-        let fm = FileManager.default
-        var missing: [String: String] = [:]  // key -> probed bundlePath
+        var missing: [String: String] = [:]
         for (key, entry) in snapshot {
-            let configPath = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
-                .appendingPathComponent("config.json").path
-            if !fm.fileExists(atPath: configPath) {
-                missing[key] = entry.bundlePath
-            }
+            let directory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
+            if probe(directory) == .missingConfig { missing[key] = entry.bundlePath }
         }
-        guard !missing.isEmpty else { return false }
+        guard !missing.isEmpty else {
+            refreshAvailability()
+            return false
+        }
 
         // Re-acquire briefly to apply. Only drop the exact entry we probed:
         // a concurrent `rescan()` may have re-registered the id at a new,
@@ -363,10 +411,8 @@ enum ExternalModelLocator {
         }
         lock.unlock()
 
-        if removed {
-            persist(map)
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-        }
+        if removed { persist(map) }
+        refreshAvailability()
         return removed
     }
 
@@ -376,25 +422,97 @@ enum ExternalModelLocator {
     /// manifest, and post `.localModelsChanged` if the set changed. Safe to
     /// call from a background task; performs filesystem I/O.
     @discardableResult
-    static func rescan() -> [MLXModel] {
+    static func rescan(
+        probe: (URL) -> BundlePresence = { bundlePresence(at: $0) }
+    ) -> [MLXModel] {
+        lock.lock()
+        let previous = loadedLocked()
+        lock.unlock()
         let report = scanEnabledSources()
-        var discovered: [String: Discovered] = [:]
-        for entry in report.discovered {
-            discovered[entry.id.lowercased()] = entry
-        }
+        var discovered = reconciledRegistry(
+            previous: previous, report: report, configuredRoots: configuredSourceRoots(), probe: probe)
 
         lock.lock()
-        let changed = registry == nil || registry! != discovered
+        let current = loadedLocked()
+        let foundIds = Set(report.discovered.map { $0.id.lowercased() })
+        // A retained old entry must not resurrect a concurrent explicit forget,
+        // or replace an id that was rebound while its filesystem probe ran.
+        for (key, entry) in previous where !foundIds.contains(key) && discovered[key] == entry {
+            if current[key] != entry { discovered[key] = current[key] }
+        }
+        let changed = current != discovered
         registry = discovered
         if changed { registryGen &+= 1 }
         lastReport = report
         lock.unlock()
 
-        if changed {
-            persist(discovered)
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+        if changed { persist(discovered) }
+        return refreshAvailability()
+    }
+
+    /// A failed or partial scan cannot prove deletion. Retention preserves only
+    /// registry identity; path(forId:) and isDownloaded still require live files.
+    static func reconciledRegistry(
+        previous: [String: Discovered],
+        report: ScanReport,
+        configuredRoots: [(root: URL, source: Source)],
+        probe: (URL) -> BundlePresence = { bundlePresence(at: $0) }
+    ) -> [String: Discovered] {
+        var result: [String: Discovered] = [:]
+        for entry in report.discovered { result[entry.id.lowercased()] = entry }
+        for (key, entry) in previous where result[key] == nil {
+            let enabled = configuredRoots.filter { $0.source.rawValue == entry.source }
+            guard !enabled.isEmpty else { continue } // Explicitly disabled sources stay removed without probing.
+            if let recorded = entry.scanRootPath,
+                !enabled.contains(where: { $0.root.standardizedFileURL.path == recorded })
+            {
+                continue // An explicit root replacement must not retain or probe the old root.
+            }
+            let directory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
+            let presence = probe(directory)
+            if presence == .missingConfig { continue }
+            func owns(_ root: URL) -> Bool {
+                if let recorded = entry.scanRootPath {
+                    return URL(fileURLWithPath: recorded).standardizedFileURL.path == root.standardizedFileURL.path
+                }
+                return isContained(directory, in: root)
+            }
+            let owners = enabled.filter { owns($0.root) }
+            if owners.isEmpty {
+                // Old manifests have no root provenance. An unavailable legacy
+                // path cannot safely be assigned to a different healthy root.
+                if entry.scanRootPath == nil, presence == .unavailable || presence == .missingDirectory {
+                    result[key] = entry
+                }
+                continue
+            }
+            let scans = report.sources.filter { scan in
+                scan.source.rawValue == entry.source
+                    && owners.contains { $0.root.standardizedFileURL.path == scan.rootPath }
+            }
+            let incomplete = scans.isEmpty || scans.contains { scan in
+                scan.skipped.contains { skipped in
+                    skipped.reason == .unreadableRoot
+                        && (skipped.path == scan.rootPath
+                            || isContained(directory, in: URL(fileURLWithPath: skipped.path, isDirectory: true)))
+                }
+            }
+            if presence == .unavailable || incomplete { result[key] = entry }
         }
-        return models()
+        return result
+    }
+
+    private static func configuredSourceRoots() -> [(root: URL, source: Source)] {
+        if let overrides = testRootsOverride { return overrides }
+        var roots: [(root: URL, source: Source)] = []
+        if isHFCacheImportEnabled {
+            roots += huggingFaceCacheRoots(fileExists: { _ in true }).map { ($0, .huggingFaceCache) }
+            roots += customModelFolderRoots(fileExists: { _ in true }).map { ($0, .customModelFolder) }
+        }
+        if isLMStudioImportEnabled {
+            roots += lmStudioRoots(requireExisting: false).map { ($0, .lmStudio) }
+        }
+        return roots
     }
 
     static func scanEnabledSources() -> ScanReport {
@@ -501,13 +619,13 @@ enum ExternalModelLocator {
         )
     }
 
-    private static func lmStudioRoots() -> [URL] {
+    private static func lmStudioRoots(requireExisting: Bool = true) -> [URL] {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         return [
             home.appendingPathComponent(".lmstudio/models", isDirectory: true),
             home.appendingPathComponent(".cache/lm-studio/models", isDirectory: true),
-        ].filter { fm.fileExists(atPath: $0.path) }
+        ].filter { !requireExisting || fm.fileExists(atPath: $0.path) }
     }
 
     // MARK: - Hugging Face cache scanner
@@ -596,7 +714,8 @@ enum ExternalModelLocator {
                     id: repoId,
                     bundlePath: snapshotDir.standardizedFileURL.path,
                     revision: revision,
-                    source: Source.huggingFaceCache.rawValue
+                    source: Source.huggingFaceCache.rawValue,
+                    scanRootPath: root.standardizedFileURL.path
                 )
             )
         }
@@ -668,7 +787,8 @@ enum ExternalModelLocator {
                         id: root.lastPathComponent,
                         bundlePath: root.standardizedFileURL.path,
                         revision: nil,
-                        source: Source.customModelFolder.rawValue
+                        source: Source.customModelFolder.rawValue,
+                        scanRootPath: root.standardizedFileURL.path
                     )
                 ],
                 skipped: []
@@ -748,7 +868,8 @@ enum ExternalModelLocator {
                             id: id,
                             bundlePath: resolved.standardizedFileURL.path,
                             revision: nil,
-                            source: source.rawValue
+                            source: source.rawValue,
+                            scanRootPath: root.standardizedFileURL.path
                         )
                     )
                     continue  // a bundle dir doesn't itself contain bundles

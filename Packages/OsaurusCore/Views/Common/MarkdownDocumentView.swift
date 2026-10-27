@@ -66,7 +66,8 @@ private struct MarkdownDocumentRepresentable: NSViewRepresentable {
             width: width,
             theme: theme,
             cacheKey: nil,
-            isStreaming: false
+            isStreaming: false,
+            reflowParagraphs: true
         )
         propagateHeight(nsView.measuredHeight(for: width))
     }
