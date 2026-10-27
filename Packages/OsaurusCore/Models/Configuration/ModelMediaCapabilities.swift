@@ -270,6 +270,9 @@ public enum ModelMediaCapabilities {
         // entry the bundle's own `has_video: true` is overruled here and video
         // requests are rejected as unsupported.
         "muse_glimmer",
+        // LFM3-VL / LFM3-Omni: Qwen-VL temporal patching (temporal_patch_size 2) with
+        // timestamped frame groups; verified end to end on a clip and its reverse.
+        "lfm3_vl", "lfm3_omni",
     ]
 
     private static func buildDescriptor(

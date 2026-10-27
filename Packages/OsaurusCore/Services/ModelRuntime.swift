@@ -5934,6 +5934,11 @@ public actor ModelRuntime {
         ) != nil {
             return true
         }
+        // LFM3 (lfm3 / lfm3_vl / lfm3_audio / lfm3_omni): LFM2's short-conv layers
+        // (MambaCache) interleaved with full and sliding-window attention.
+        if lower.range(of: #"(^|/)lfm3([\-_].*)?$"#, options: .regularExpression) != nil {
+            return true
+        }
         return false
     }
 

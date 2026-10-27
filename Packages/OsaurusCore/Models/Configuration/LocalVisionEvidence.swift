@@ -237,6 +237,14 @@ enum LocalVisionEvidence {
                 && (processor["video_end_token_id"] as? Int ?? -1) >= 0
                 && ((config["vision_config"] as? [String: Any])?["temporal_patch_size"] as? Int ?? 0) > 0
         }
+        if modelType == "lfm3_audio" || modelType == "lfm3_omni" {
+            // LFM3 speech input: the mel downsampler, its LFM2 trunk and the projector into the
+            // decoder. The speech generator (depth decoder) is not part of the input lane.
+            nativeAudio = ["audio_tower.downsample.conv_in.weight",
+                "audio_tower.downsample.lin_out.weight", "audio_tower.lfm.embedding_norm.weight",
+                "audio_projector.linear_1.weight", "audio_projector.linear_2.weight"]
+                .allSatisfy(names.contains)
+        }
         // Retain independent audio tensor evidence even when this configured
         // multimodal architecture has no vision tower. Gemma supports optional
         // vision and audio components; one missing modality must not hide another.
@@ -285,6 +293,20 @@ enum LocalVisionEvidence {
                 return result(false, "The unified vision embedder is missing configured component weights.")
             }
             return result(true, "Image input is backed by the installed unified vision configuration and embedder weights.")
+        }
+        if modelType == "lfm3_vl" || modelType == "lfm3_omni" {
+            // LFM3's tower embeds patches with `patchifier` (no patch_embed), which the generic
+            // input check below does not recognise: require the patch embedding, every declared
+            // tower layer and both projector layers instead.
+            guard let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth),
+                ["vision_tower.patchifier.weight", "vision_tower.embedding_norm.weight",
+                    "multi_modal_projector.linear_1.weight", "multi_modal_projector.linear_2.weight"]
+                    .allSatisfy(names.contains),
+                (0..<depth).allSatisfy({ names.contains("vision_tower.layers.\($0).feed_forward.w1.weight") })
+            else {
+                return result(false, "The LFM3 vision tower is missing patch, layer or projector weights.")
+            }
+            return result(true, "Image input is backed by the installed LFM3 vision tower and projector weights.")
         }
         let weights = names.filter { $0.hasSuffix(".weight") || $0.hasSuffix(".weights") }
         let visionWeights = weights.filter { key in
