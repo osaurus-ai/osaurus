@@ -119,6 +119,17 @@ struct MLXModel: Identifiable, Codable {
         )
     }
 
+    /// True when this entry came out of local or external bundle discovery:
+    /// it knows where its bundle lives (`bundleDirectory`), is pinned to a
+    /// root (`rootDirectory`), or carries external provenance. A catalog
+    /// suggestion for the same id has none of these and resolves to the
+    /// managed models directory, where an externally installed bundle is
+    /// not. Pure structural evidence, no disk probe: `isDownloaded` still
+    /// decides whether the bundle is complete.
+    var hasLocalInstallationEvidence: Bool {
+        bundleDirectory != nil || rootDirectory != nil || externalSource != nil
+    }
+
     /// Preserve catalog/editorial metadata while folding in authoritative
     /// facts from a bundle that is actually present on disk. This keeps a
     /// curated card's name, description, release data, and use-case badge,
@@ -127,18 +138,25 @@ struct MLXModel: Identifiable, Codable {
     /// The caller must pass output from local/external bundle discovery; this
     /// intentionally does not consult `isDownloaded`, whose process cache may
     /// have been populated before the background scan completed.
+    ///
+    /// Only the byte count is gated on the bundle having a readable size.
+    /// The directory and provenance carry regardless: a bundle whose weight
+    /// size could not be read (no index, unusual shard names) is still the
+    /// installed copy, and dropping its path here made the installed entry
+    /// resolve to the managed directory and report not-downloaded.
     func mergingLocalInstallationMetadata(from local: MLXModel) -> MLXModel {
-        guard id.caseInsensitiveCompare(local.id) == .orderedSame,
-              let localBytes = local.downloadSizeBytes,
-              localBytes > 0
-        else { return self }
+        guard id.caseInsensitiveCompare(local.id) == .orderedSame else { return self }
+        let localBytes: Int64? = {
+            guard let bytes = local.downloadSizeBytes, bytes > 0 else { return nil }
+            return bytes
+        }()
         return MLXModel(
             id: id,
             name: name,
             description: description,
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
-            downloadSizeBytes: localBytes,
+            downloadSizeBytes: localBytes ?? downloadSizeBytes,
             ssdResidentBytes: local.ssdResidentBytes ?? ssdResidentBytes,
             modelType: local.modelType ?? modelType,
             releasedAt: releasedAt,

@@ -1765,9 +1765,11 @@ struct ModelDownloadView: View {
             }
         }
         func computeDownloadedList() -> [MLXModel] {
+            // The On Device tab lists the installed inventory, the same set
+            // the header counts and the sidebar badge shows.
             let all = input.deduplicatedModels
             let active = all.filter(isActive)
-            let completed = all.filter { $0.isDownloaded }
+            let completed = ModelManager.installedModels(among: all)
             var seen: Set<String> = []
             var merged: [MLXModel] = []
             for m in active + completed {
@@ -1795,13 +1797,31 @@ struct ModelDownloadView: View {
         // Computer Use → Models instead; the On Device tab still lists an
         // installed one so it stays deletable from here.
         let hasQuery = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        // A Catalog card for an installed id must be the installed entry.
+        // `suggestedModels` is listed before `availableModels` below, so a
+        // curated/org suggestion used to front the card for a bundle the user
+        // installed externally, probe the managed models directory, and offer
+        // a Download button for a model already on disk. Swap in the inventory
+        // representative (`deduplicatedModels()`, evidence-first: the
+        // suggestion's editorial fields merged with the bundle's path) only
+        // when it carries installation evidence, so cards for models that are
+        // not installed are exactly what they were.
+        var inventoryByLowerId: [String: MLXModel] = [:]
+        for model in input.deduplicatedModels where model.hasLocalInstallationEvidence {
+            inventoryByLowerId[model.id.lowercased()] = model
+        }
+        func installedRepresentative(_ model: MLXModel) -> MLXModel {
+            inventoryByLowerId[model.id.lowercased()] ?? model
+        }
+
         let allTabBase = input.availableModels.filter { model in
             guard !AppleScriptModelCatalog.isAppleScriptModel(id: model.id) else { return false }
             return isOsaurusAI(model) || isUserModel(model) || hasQuery
-        }
+        }.map(installedRepresentative)
         let osaurusSuggested = input.suggestedModels.filter {
             isOsaurusAI($0) && !AppleScriptModelCatalog.isAppleScriptModel(id: $0.id)
-        }
+        }.map(installedRepresentative)
 
         let availSearched = SearchService.filterModels(allTabBase, with: searchText)
         let availFiltered = filterState.apply(to: availSearched, totalMemoryGB: mem)
@@ -2042,7 +2062,7 @@ struct ModelDownloadView: View {
         }
 
         let hasOwnModels =
-            modelManager.deduplicatedModels().contains { $0.isDownloaded }
+            modelManager.hasInstalledModels
             || modelManager.activeDownloadsCount > 0
         selectedTab = hasOwnModels ? .downloaded : .all
     }
@@ -2051,9 +2071,11 @@ struct ModelDownloadView: View {
         model.id.lowercased().hasPrefix("osaurusai/")
     }
 
-    /// Count of completed (on-disk) downloaded models respecting current search and filters
+    /// Count of installed models respecting current search and filters. Reads
+    /// the installed inventory (`installedModels()`), the set the sidebar
+    /// badge counts and `totalDownloadedSizeString` beside it sums.
     private var completedDownloadedModelsCount: Int {
-        let completed = modelManager.deduplicatedModels().filter { $0.isDownloaded }
+        let completed = modelManager.installedModels()
         let searched = SearchService.filterModels(Array(completed), with: debouncedSearchText)
         let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
         return filtered.count

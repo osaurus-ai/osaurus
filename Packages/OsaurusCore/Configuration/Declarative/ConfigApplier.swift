@@ -1734,7 +1734,7 @@ enum ConfigApplier {
     private static func applyModels(_ desired: [String], prune: Bool) async -> [ConfigApplyResult] {
         var results: [ConfigApplyResult] = []
         let installed = await MainActor.run {
-            Set(ModelManager.shared.availableModels.filter { $0.isDownloaded }.map { $0.id })
+            Set(ModelManager.shared.installedModels().map { $0.id })
         }
 
         // Defense-in-depth: validation rejects duplicate ids, but never start
