@@ -119,6 +119,14 @@ struct OpenAIReasoningSummaryTests {
             == "none")
         #expect(RemoteReasoningPolicy.dsv4Effort(host: "api.openai.com", model: "gpt-5.6-sol", effort: "none").effort
             == "none")
+        #expect(RemoteReasoningPolicy.dsv4Effort(host: "api.openai.com", model: "gpt-6-sol", effort: "none").effort
+            == "none")
+        #expect(RemoteReasoningPolicy.dsv4Effort(host: "api.openai.com", model: "gpt-5.5", effort: "none").effort
+            == "none", "GPT-5.5 defaults to medium, so dropping none keeps reasoning on")
+        #expect(RemoteReasoningPolicy.dsv4Effort(host: "api.openai.com", model: "gpt-5.1", effort: "none").effort
+            == "none")
+        #expect(RemoteReasoningPolicy.dsv4Effort(host: "api.openai.com", model: "o3", effort: "none").effort
+            == nil)
         #expect(RemoteReasoningPolicy.dsv4Effort(host: "api.openai.com", model: "gpt-6-astra", effort: "none").effort
             == nil)
         #expect(RemoteReasoningPolicy.dsv4Effort(host: "api.openai.com", model: "gpt-6.1-sol", effort: "none").effort

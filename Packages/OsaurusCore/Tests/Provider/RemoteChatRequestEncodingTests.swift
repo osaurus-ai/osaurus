@@ -3629,11 +3629,15 @@ struct RemoteChatRequestEncodingTests {
     @Test func dsv4RemoteEffort_stripsDirectRailAliasesForAllRemoteModels() throws {
         // Direct/off aliases are local runtime controls. Public remote schemas
         // reject them as `reasoning_effort` values, even when the model is not
-        // a local DSV4 bundle.
-        for effort in ["instruct", "none", "no_think", "off", "disabled", "false"] {
+        // a local DSV4 bundle. (`none` is a real OpenAI effort on GPT-5.1+,
+        // so it is checked against a model that rejects it.)
+        for (model, effort) in [
+            ("gpt-5.5", "instruct"), ("o3", "none"), ("gpt-5.5", "no_think"),
+            ("gpt-5.5", "off"), ("gpt-5.5", "disabled"), ("gpt-5.5", "false"),
+        ] {
             let nonDSV4 = RemoteProviderService.dsv4RemoteEffort(
                 host: "api.openai.com",
-                model: "gpt-5.5",
+                model: model,
                 effort: effort
             )
             #expect(nonDSV4.effort == nil)

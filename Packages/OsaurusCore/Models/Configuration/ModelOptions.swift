@@ -143,7 +143,7 @@ struct ModelReasoningCapabilities: Sendable, Equatable, Hashable {
     )
 
     /// Documented contract for the GPT-6 models that do accept `none`
-    /// (`gpt-6.1-terra`, `gpt-6-luna`): `none` through `max`, defaulting to
+    /// (`gpt-6.1-terra`, `gpt-6-luna`, `gpt-6-sol`): `none` through `max`, defaulting to
     /// `medium`. Same official-host scoping as the Astra profile.
     static let officialOpenAIGPT6WithNone = ModelReasoningCapabilities(
         levels: ["none", "low", "medium", "high", "xhigh", "max"].map { Level(id: $0) },
@@ -591,8 +591,8 @@ struct MuseGlimmerReasoningProfile: ModelProfile {
 ///   .officialOpenAIGPT56`) and the live Codex catalog; on custom
 ///   OpenAI-compatible hosts it falls through to the 5.2+ static set, which
 ///   is never assumed to include `max`.
-/// - gpt-6: Astra and Sol `low` through `max`, no `none`
-///   (`officialOpenAIGPT6Astra`); Terra and Luna `none` through `max`
+/// - gpt-6: Astra and 6.1 Sol `low` through `max`, no `none`
+///   (`officialOpenAIGPT6Astra`); 6 Sol, Terra and Luna `none` through `max`
 ///   (`officialOpenAIGPT6WithNone`). Both are official-route profiles beside
 ///   the live Codex catalog; the static `OpenAIGPT6ReasoningProfile` offers
 ///   `low` through `xhigh` on custom hosts.

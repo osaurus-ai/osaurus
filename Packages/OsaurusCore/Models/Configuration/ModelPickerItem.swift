@@ -374,16 +374,26 @@ extension ModelPickerItem {
         return nil
     }
 
-    /// GPT-6 models whose documented effort range starts at `none`. Every
+    /// GPT-6 models whose effort range starts at `none` (verified live). Every
     /// other GPT-6 slug (`gpt-6-astra`, `gpt-6.1-sol`, unknown snapshots)
     /// gets the `low`-floored profile, which never sends a value the model
     /// rejects.
-    private static let officialOpenAIGPT6NoneModels = ["gpt-6.1-terra", "gpt-6-luna"]
+    private static let officialOpenAIGPT6NoneModels = ["gpt-6.1-terra", "gpt-6-luna", "gpt-6-sol"]
 
-    /// Whether the official API documents `none` as a real effort for the
-    /// model, so it must reach the wire instead of being stripped.
+    /// Whether the official API accepts `none` as a real effort for the
+    /// model, so it must reach the wire instead of being stripped. Families
+    /// without a documented profile (GPT-5.1 … 5.5) answer from the static
+    /// profile that offers them `none`; dropping it would fall back to the
+    /// API default (`medium` on GPT-5.5) and keep reasoning on.
     static func officialOpenAIAcceptsNoneEffort(modelId: String) -> Bool {
-        officialOpenAIReasoningCapabilities(forModelId: modelId)?.levels.contains { $0.id == "none" } == true
+        if let capabilities = officialOpenAIReasoningCapabilities(forModelId: modelId) {
+            return capabilities.levels.contains { $0.id == "none" }
+        }
+        guard let profile = ModelProfileRegistry.profile(for: modelId),
+            let option = profile.options.first(where: { $0.id == "reasoningEffort" }),
+            case .segmented(let segments) = option.kind
+        else { return false }
+        return segments.contains { $0.id == "none" }
     }
 
     /// Context window (tokens) for known `api.openai.com` model families,

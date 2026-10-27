@@ -406,13 +406,14 @@ struct ModelPickerItemCacheTests {
     }
 
     /// GPT-6 effort ranges differ per model on the official route: Astra and
-    /// Sol start at `low`; Terra and Luna also accept `none`.
+    /// 6.1 Sol start at `low`; 6 Sol, Terra and Luna also accept `none`.
     @Test func officialOpenAIGPT6EffortTableIsPerModel() {
         let withNone = ["none", "low", "medium", "high", "xhigh", "max"]
         let lowFloored = ["low", "medium", "high", "xhigh", "max"]
         let cases: [(String, [String])] = [
             ("gpt-6-astra", lowFloored),
             ("openai/gpt-6.1-sol", lowFloored),
+            ("gpt-6-sol", withNone),
             ("gpt-6.1-terra", withNone),
             ("gpt-6-luna-2026-10-01", withNone),
             ("gpt-6.2-unknown", lowFloored),
@@ -425,7 +426,10 @@ struct ModelPickerItemCacheTests {
         #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-6.1-terra"))
         #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.6-sol"))
         #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-6-astra"))
-        #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.5"))
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.5"))
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.1"))
+        #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "o3"))
+        #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5-mini"))
     }
 
     /// A catalog refetch that changes metadata while model ids stay identical
