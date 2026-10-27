@@ -830,7 +830,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the proven vmlx-swift revision with atomic heal-on-load for dtype-misaligned safetensors, serialized evaluated host reads through backing-buffer copies, schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix and growing tool-loop SSD cache boundaries, Nanbeige 4.2 looped-transformer runtime support, Qwen3.5 B-wide position correctness, and requested/architecture/effective BatchEngine capacity provenance. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the proven vmlx-swift revision: the vmlx-swift#662 merge (085c1c57), where every DeepSeek-V4.1 bundle keeps its F32 control parameters (hyper-connection, attention sink, router bias). An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
