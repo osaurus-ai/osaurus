@@ -342,7 +342,7 @@ let package = Package(
         // 1024-token prefill cap wins over a wider server step.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "781065971ec2f0b84117d344e15210ba4e5ea77e"
+            revision: "92b0cf1f081e5bd56a6f514250f4bd89f653971b"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
