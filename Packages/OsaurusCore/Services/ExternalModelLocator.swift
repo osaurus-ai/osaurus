@@ -145,13 +145,11 @@ enum ExternalModelLocator {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var registry: [String: Discovered]?
     nonisolated(unsafe) private static var lastReport: ScanReport?
-    /// Bumped on every `registry` mutation so read-side memo caches (e.g.
-    /// `ModelManager`'s name-match memo) can invalidate without observing
-    /// notifications.
+    /// Bumped on registry mutation and explicit availability refresh so read-side
+    /// memo caches invalidate even when outage/recovery leaves identity unchanged.
     nonisolated(unsafe) private static var registryGen: UInt64 = 0
 
-    /// Monotonic version of the registry contents. Two equal values guarantee
-    /// `models()` would return the same set.
+    /// Monotonic version of registry contents and refreshed availability.
     static func registryGeneration() -> UInt64 {
         lock.lock()
         defer { lock.unlock() }
@@ -251,7 +249,9 @@ enum ExternalModelLocator {
         return stale
     }
 
-    /// Catalog entries for every registered external model.
+    /// Available catalog entries, materialized off-main by discovery/refresh.
+    /// The registry may retain unavailable identities; consumers of this list
+    /// (including the picker) treat every returned entry as installed.
     static func models() -> [MLXModel] {
         lock.lock()
         // Load first: the lazy first-load inside `loadedLocked()` bumps
@@ -264,8 +264,15 @@ enum ExternalModelLocator {
         }
         lock.unlock()
         beforeModelsBuildForTests?()
-        let built = entries.map { entry in
+        let built = entries.compactMap { entry -> MLXModel? in
             let bundleDirectory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
+            let candidate = MLXModel(
+                id: entry.id, name: "", description: "", downloadURL: "", bundleDirectory: bundleDirectory)
+            // Recheck only when materializing a new catalog, never in a view
+            // getter. A retained registration is not evidence of readiness.
+            let ready = bundlePresence(at: bundleDirectory) == .present && candidate.computeIsDownloadedFromDisk()
+            MLXModelDownloadCache.set(ready, for: candidate.downloadCacheKey)
+            guard ready else { return nil }
             return MLXModel(
                 id: entry.id,
                 name: ModelMetadataParser.friendlyName(from: entry.id),
@@ -324,6 +331,20 @@ enum ExternalModelLocator {
         }
     }
 
+    /// Explicit discovery boundaries refresh availability even when the registry
+    /// is unchanged. Publish one completion event after the off-main materialized
+    /// catalog is current; ordinary getters keep their existing memoized path.
+    @discardableResult
+    private static func refreshAvailability() -> [MLXModel] {
+        lock.lock()
+        registryGen &+= 1
+        lock.unlock()
+        MLXModelDownloadCache.invalidateAll()
+        let available = models()
+        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+        return available
+    }
+
     enum BundlePresence: Equatable {
         case present
         case missingConfig
@@ -369,7 +390,10 @@ enum ExternalModelLocator {
             let directory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
             if probe(directory) == .missingConfig { missing[key] = entry.bundlePath }
         }
-        guard !missing.isEmpty else { return false }
+        guard !missing.isEmpty else {
+            refreshAvailability()
+            return false
+        }
 
         // Re-acquire briefly to apply. Only drop the exact entry we probed:
         // a concurrent `rescan()` may have re-registered the id at a new,
@@ -387,10 +411,8 @@ enum ExternalModelLocator {
         }
         lock.unlock()
 
-        if removed {
-            persist(map)
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-        }
+        if removed { persist(map) }
+        refreshAvailability()
         return removed
     }
 
@@ -424,11 +446,8 @@ enum ExternalModelLocator {
         lastReport = report
         lock.unlock()
 
-        if changed {
-            persist(discovered)
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-        }
-        return models()
+        if changed { persist(discovered) }
+        return refreshAvailability()
     }
 
     /// A failed or partial scan cannot prove deletion. Retention preserves only

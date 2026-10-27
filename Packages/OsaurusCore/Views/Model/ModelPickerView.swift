@@ -514,9 +514,9 @@ struct ModelPickerView: View {
 
             // Drop external models (HF cache, LM Studio) the user deleted on
             // disk while the app stayed running — the picker cache is built
-            // once and only rebuilds on `.localModelsChanged`, which this
-            // posts when something went missing. Cheap existence check; no-op
-            // when nothing changed. Runs last since it's the lowest priority.
+            // once and rebuilds on `.localModelsChanged`. This also refreshes
+            // availability for retained registrations after source loss or
+            // recovery. Runs off-main and last since it's lowest priority.
             _ = await Task.detached(priority: .utility) {
                 ExternalModelLocator.pruneMissing()
             }.value

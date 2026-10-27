@@ -2677,8 +2677,8 @@ extension AppDelegate {
             // Reopening a reused window doesn't rebuild the SwiftUI graph, so
             // the Models grid wouldn't otherwise notice external models the
             // user deleted on disk while the app stayed running. Prune them
-            // off the main thread; it posts `.localModelsChanged` only when
-            // something actually went missing.
+            // off the main thread; the same refresh also invalidates cached
+            // availability when an external source disappears or returns.
             Task.detached(priority: .utility) {
                 ExternalModelLocator.pruneMissing()
             }
