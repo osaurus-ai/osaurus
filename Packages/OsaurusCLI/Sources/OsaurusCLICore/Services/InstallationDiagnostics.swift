@@ -442,9 +442,9 @@ public enum InstallationDiagnostics {
         guard legacy.resolvingSymlinksInPath().standardizedFileURL
             != activeRoot.resolvingSymlinksInPath().standardizedFileURL
         else { return nil }
-        let inventory = countModelBundles(in: legacy, maximumEntries: maximumEntries)
-        guard inventory.count > 0 else { return nil }
-        return .init(path: legacy.path, count: inventory.count, complete: inventory.complete)
+        let (modelCount, scanComplete) = countModelBundles(in: legacy, maximumEntries: maximumEntries)
+        guard modelCount > 0 else { return nil }
+        return .init(path: legacy.path, count: modelCount, complete: scanComplete)
     }
 
     nonisolated static func countModelBundles(
