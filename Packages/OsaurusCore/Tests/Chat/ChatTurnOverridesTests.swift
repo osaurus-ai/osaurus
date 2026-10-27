@@ -130,7 +130,11 @@ struct ChatTurnOverridesTests {
             session.enqueueSend("Queued hello", attachments: [])
             session.nextTurnOverrides = .init(temperature: 1.2, topK: 5)
             await engine.releaseFirst()
-            while session.isSendActiveForComposer || session.queuedSend != nil {
+            // Queue removal precedes asynchronous request construction. Wait
+            // for the actual second dispatch and terminal run ownership, not
+            // the brief UI-idle interval between those two stages.
+            while await engine.requests.count < 2 || !session.isAvailableForDispatchReattachment
+                || session.queuedSend != nil {
                 if ContinuousClock.now >= deadline { throw NSError(domain: "ChatTurnOverridesTests", code: 3) }
                 try await Task.sleep(for: .milliseconds(10))
             }
