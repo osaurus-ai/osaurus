@@ -85,7 +85,8 @@ public struct PullCommand: Command {
 
         for file in files {
             guard let dest = destinationURL(forRemotePath: file.path, under: destination) else {
-                continue
+                fputs("Invalid remote path for file: \(file.path)\n", stderr)
+                exit(EXIT_FAILURE)
             }
             let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
             let existingSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
@@ -97,6 +98,10 @@ public struct PullCommand: Command {
         }
 
         if filesToDownload.isEmpty {
+            guard notifyAppIfPullComplete(files: files, destination: destination) else {
+                fputs("Model files are incomplete or changed while checking the download.\n", stderr)
+                exit(EXIT_FAILURE)
+            }
             print("Model '\(modelId)' is already up to date.")
             exit(EXIT_SUCCESS)
         }
@@ -114,7 +119,7 @@ public struct PullCommand: Command {
                 let fileDest = destinationURL(forRemotePath: file.path, under: destination)
             else {
                 fputs("Invalid remote path for file: \(file.path)\n", stderr)
-                continue
+                exit(EXIT_FAILURE)
             }
 
             // Create intermediate subdirectories if needed (e.g. for sharded weights)
@@ -137,8 +142,35 @@ public struct PullCommand: Command {
             }
         }
 
+        guard notifyAppIfPullComplete(files: files, destination: destination) else {
+            fputs("Model files are incomplete or changed while checking the download.\n", stderr)
+            exit(EXIT_FAILURE)
+        }
         print("\nDone. Model saved to: \(destination.path)")
         exit(EXIT_SUCCESS)
+    }
+
+    /// Refresh a running app only after every expected file is present at its
+    /// final size. This also covers the already-up-to-date path without using
+    /// the HTTP API (which may require an access key).
+    static func notifyAppIfPullComplete(
+        files: [(path: String, size: Int64)],
+        destination: URL,
+        postNotification: (String, [AnyHashable: Any]) -> Void = { name, payload in
+            AppControl.postDistributedNotification(name: name, userInfo: payload)
+        }
+    ) -> Bool {
+        guard !files.isEmpty else { return false }
+        for file in files {
+            guard file.size > 0,
+                let url = destinationURL(forRemotePath: file.path, under: destination),
+                let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                attributes[.type] as? FileAttributeType == .typeRegular,
+                (attributes[.size] as? NSNumber)?.int64Value == file.size
+            else { return false }
+        }
+        postNotification("com.dinoki.osaurus.control.modelsReload", [:])
+        return true
     }
 
     // MARK: - Local directory resolution
