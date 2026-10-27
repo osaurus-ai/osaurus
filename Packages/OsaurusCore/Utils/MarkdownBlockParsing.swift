@@ -118,7 +118,7 @@ private struct LineIterator: IteratorProtocol {
     }
 }
 
-func parseBlocks(_ input: String) -> [MessageBlock] {
+func parseBlocks(_ input: String, preserveBlockquoteHardBreaks: Bool = false) -> [MessageBlock] {
     var blocks: [MessageBlock] = []
     var currentParagraphLines: [Substring] = []
     var currentBlockquoteLines: [Substring] = []
@@ -324,7 +324,11 @@ func parseBlocks(_ input: String) -> [MessageBlock] {
         if trimmed.hasPrefix(">") {
             flushParagraph()
             flushList()
-            let quoteContent = trimmed.dropFirst().trimmingWhitespace()
+            // Static documents need the original trailing spaces to distinguish
+            // an explicit Markdown hard break from a source-only soft wrap.
+            let quoteContent = preserveBlockquoteHardBreaks
+                ? line.drop(while: { $0 == " " || $0 == "\t" }).dropFirst().drop(while: { $0 == " " || $0 == "\t" })
+                : trimmed.dropFirst().trimmingWhitespace()
             currentBlockquoteLines.append(quoteContent)
             i += 1
             continue
