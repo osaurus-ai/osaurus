@@ -32,7 +32,7 @@ struct ChatTurnOverridesTests {
             .init(templateKwargs: ["add_generation_prompt": .bool(false)])] {
             #expect(throws: (any Error).self) { try controls.validate() }
         }
-        try ChatTurnOverrides(templateKwargs: ["bos_token": .string("explicit"), "eos_token": .null]).validate()
+        try ChatTurnOverrides(templateKwargs: ["model_hint": .string("explicit"), "optional_value": .null]).validate()
     }
 
     @Test func rebuiltToolStepsAndCompatibilityUseFrozenControls() throws {

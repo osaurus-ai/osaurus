@@ -44,6 +44,7 @@ struct NextTurnControlsButton: View {
                 Text("Next turn").font(.headline)
                 Text("Blank fields inherit your existing defaults. Changes apply to one submitted turn, including its tool steps and retries.")
                     .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     numberField("Temperature", text: $temperature)
                     numberField("Top P", text: $topP)
@@ -68,7 +69,10 @@ struct NextTurnControlsButton: View {
                     Text("A JSON object of parameters for the model’s chat template. Blank inherits; nested null values are preserved.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if let validationError { Text(validationError).font(.caption).foregroundStyle(.red) }
+                if let validationError {
+                    Text(validationError).font(.caption).foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     Button("Reset to inherited") {
                         overrides = ChatTurnOverrides()
