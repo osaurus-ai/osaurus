@@ -91,10 +91,11 @@ struct MLXBatchAdapter {
     /// keyed by model. Completion-time (unlike `EffectiveGenerationSettings`,
     /// which is submit-time) so it can show what the ADAPTIVE controller
     /// actually settled on — e.g. a request that asked for depth 3 but ran
-    /// depth 1 because acceptance collapsed. Called only for turns that
-    /// produced native-MTP tokens; every other decode path leaves the readout
-    /// unchanged.
-    static func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) async {
+    /// depth 1 because acceptance collapsed. Captured for turns that
+    /// produced native-MTP tokens. A failed/cancelled turn without stats clears
+    /// only its own model's stale readout. Successful non-MTP and background
+    /// turns leave it unchanged.
+    static func recordLastMTPStats(modelName: String, stats: MTPStatsSummary?) async {
         await Registry.shared.recordLastMTPStats(modelName: modelName, stats: stats)
     }
 
@@ -432,8 +433,8 @@ struct MLXBatchAdapter {
         private var lastEffectiveGenerationSettings: [String: EffectiveGenerationSettings] = [:]
         /// Last native-MTP runtime stats per model, captured at completion.
         /// Populated only for turns the native-MTP iterator produced, so a
-        /// non-MTP family never appears here and the readout for an MTP model
-        /// reflects its most recent speculative turn.
+        /// non-MTP family never appears here. A failed/cancelled turn without
+        /// stats removes that model's previous value rather than misattributing it.
         private var lastMTPStats: [String: MTPStatsSummary] = [:]
         /// Cache restore of the most recent real request, across models.
         private var lastCacheRestore: CacheRestoreSummary?
@@ -561,7 +562,7 @@ struct MLXBatchAdapter {
             lastEffectiveGenerationSettings
         }
 
-        func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) {
+        func recordLastMTPStats(modelName: String, stats: MTPStatsSummary?) {
             lastMTPStats[modelName] = stats
         }
 
