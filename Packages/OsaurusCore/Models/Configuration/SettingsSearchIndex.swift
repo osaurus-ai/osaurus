@@ -1917,9 +1917,22 @@ public enum SettingsSearchIndex {
             tab: .agents,
             section: "Claude Code Options",
             title: "Claude model",
-            keywords: ["claude code model", "sonnet", "opus", "haiku", "model alias"],
+            keywords: ["claude code model", "sonnet", "opus", "fable", "haiku", "model alias"],
             disambiguation:
                 "Shown only when the agent's runtime is Claude Code. The Claude Code column of the chat model picker sets the same value. Declarative key: `claude_code.model`.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.claudeCode.effort",
+            tab: .agents,
+            section: "Claude Code Options",
+            title: "Claude effort",
+            keywords: [
+                "claude code effort", "effort", "thinking effort", "reasoning effort", "thinking level",
+                "extra high", "xhigh", "max effort", "--effort",
+            ],
+            disambiguation:
+                "Shown only when the agent's runtime is Claude Code. Passed to the CLI as `--effort`; Default leaves Claude Code on its own per-model default. Not the chat composer's reasoning control for built-in-loop models. Declarative key: `claude_code.effort`.",
             declarativeSection: "agents"
         ),
         .init(

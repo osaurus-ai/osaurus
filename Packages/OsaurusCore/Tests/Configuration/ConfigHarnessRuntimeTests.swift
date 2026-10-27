@@ -127,7 +127,32 @@ struct ConfigHarnessRuntimeTests {
             document = OsaurusConfigDocument()
             document.defaultAgent = section
             #expect(issues(document).contains { $0.contains("default_agent.claude_code.mode") })
+
+            var badEffort = AgentClaudeCodeEntry()
+            badEffort.effort = "turbo"
+            section.claudeCode = badEffort
+            document.defaultAgent = section
+            #expect(issues(document).contains { $0.contains("default_agent.claude_code.effort") })
         }
+    }
+
+    @Test func effortPatchesClearsAndPlans() {
+        var config = ClaudeCodeAgentConfig.default
+        var entry = AgentClaudeCodeEntry()
+        entry.effort = "XHigh"
+        #expect(ConfigHarness.changes(entry, current: config, prefix: "claude_code") == ["claude_code.effort: default -> xhigh"])
+        ConfigHarness.patch(&config, from: entry)
+        #expect(config.resolvedEffort == .xhigh)
+        #expect(ConfigHarness.export(config, includeConfigWrites: false).effort == "xhigh")
+
+        entry.effort = "default"
+        ConfigHarness.patch(&config, from: entry)
+        #expect(config.effort == nil)
+        #expect(ConfigHarness.export(config, includeConfigWrites: false).effort == "default")
+
+        entry.effort = "turbo"
+        ConfigHarness.patch(&config, from: entry)
+        #expect(config.effort == nil, "an unknown value never reaches the agent")
     }
 
     @Test func planFlagsLaunchCommandsAndHarnessMoves() async throws {
@@ -160,6 +185,7 @@ struct ConfigHarnessRuntimeTests {
         try await isolated {
             var claudeCode = AgentClaudeCodeEntry()
             claudeCode.model = "opus"
+            claudeCode.effort = "max"
             claudeCode.allowWrites = true
             var section = DefaultAgentSection()
             section.runtime = "Spotlight"
@@ -181,10 +207,12 @@ struct ConfigHarnessRuntimeTests {
             #expect(stored.runtime == .harness(runtime.id))
             #expect(stored.claudeCode?.model == "opus")
             #expect(stored.claudeCode?.allowWrites == true)
+            #expect(stored.claudeCode?.resolvedEffort == .max)
 
             let exported = ConfigExporter.export(sections: [.harnessRuntimes, .defaultAgent])
             #expect(exported.defaultAgent?.runtime == "Spotlight")
             #expect(exported.defaultAgent?.claudeCode?.model == "opus")
+            #expect(exported.defaultAgent?.claudeCode?.effort == "max")
             #expect(exported.harnessRuntimes?.first { $0.name == "Spotlight" }?.kind == "pi_rpc")
             let replan = try ConfigPlanner.plan(document: exported, prune: false)
             #expect(replan.actions.isEmpty, "\(replan.actions)")

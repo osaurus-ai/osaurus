@@ -51,6 +51,13 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
             "--strict-mcp-config",
             "--model", config.resolvedModel,
         ]
+        if let effort = config.resolvedEffort {
+            arguments += ["--effort", effort.rawValue]
+        }
+        // Non-interactive runs ignore the `showThinkingSummaries` setting and
+        // stream empty thinking deltas; only the explicit flag requests
+        // summaries, so the reasoning panel has text to show.
+        arguments += ["--thinking-display", "summarized"]
 
         let sessionId = context.chatId.uuidString.lowercased()
         let environmentForLookup = runtime.environment

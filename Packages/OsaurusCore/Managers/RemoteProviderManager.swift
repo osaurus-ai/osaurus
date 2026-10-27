@@ -550,6 +550,7 @@ public final class RemoteProviderManager: ObservableObject {
         }
         mediaModelCatalogs.removeValue(forKey: providerId)
         customProviderContextLengths.removeValue(forKey: providerId)
+        AnthropicModelCatalog.remove(providerId: providerId)
 
         if let provider = configuration.provider(id: providerId) {
             if provider.providerType == .osaurusRouter {
@@ -1924,6 +1925,7 @@ public final class RemoteProviderManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: OsaurusRouter.enabledDefaultsKey)
         osaurusRouterModelCatalog = [:]
         customProviderContextLengths = [:]
+        AnthropicModelCatalog.removeAll()
         testFetchModelsOverride = nil
         testConnectionTransportOverride = nil
         testIdentityExistsOverride = nil

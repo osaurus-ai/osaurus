@@ -35,12 +35,14 @@ public enum ClaudeCodeMode: String, Codable, Sendable, CaseIterable {
 public enum ClaudeCodeModel: String, CaseIterable, Sendable {
     case sonnet
     case opus
+    case fable
     case haiku
 
     public var displayName: String {
         switch self {
         case .sonnet: return "Claude Code (Sonnet)"
         case .opus: return "Claude Code (Opus)"
+        case .fable: return "Claude Code (Fable)"
         case .haiku: return "Claude Code (Haiku)"
         }
     }
@@ -51,6 +53,26 @@ public enum ClaudeCodeModel: String, CaseIterable, Sendable {
         guard trimmed.hasPrefix(ClaudeCodeConfiguration.modelPrefix) else { return nil }
         let alias = String(trimmed.dropFirst(ClaudeCodeConfiguration.modelPrefix.count))
         return ClaudeCodeModel(rawValue: alias.lowercased())
+    }
+}
+
+/// `--effort` levels. Unset leaves the CLI on its own per-model default; a
+/// level the selected model doesn't support is the CLI's call to downgrade.
+public enum ClaudeCodeEffort: String, CaseIterable, Sendable {
+    case low
+    case medium
+    case high
+    case xhigh
+    case max
+
+    public var displayName: String {
+        switch self {
+        case .low: return L("Low")
+        case .medium: return L("Medium")
+        case .high: return L("High")
+        case .xhigh: return L("Extra High")
+        case .max: return L("Max")
+        }
     }
 }
 

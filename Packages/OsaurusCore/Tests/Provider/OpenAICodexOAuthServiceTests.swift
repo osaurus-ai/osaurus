@@ -311,6 +311,23 @@ struct OpenAICodexOAuthServiceTests {
         #expect(legacy.supportsImageInput)
     }
 
+    @Test func decodeModelCatalog_preservesReasoningSummarySupport() throws {
+        let payload = """
+            {"models":[
+                {"slug":"gpt-6.1-terra","visibility":"list","priority":1,
+                 "shell_type":"shell_command","supports_reasoning_summaries":true},
+                {"slug":"gpt-5.2-codex-mini","visibility":"list","priority":2,
+                 "shell_type":"shell_command","supports_reasoning_summaries":false},
+                {"slug":"gpt-5.5","visibility":"list","priority":3,"shell_type":"shell_command"}
+            ]}
+            """
+        let (_, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
+
+        #expect(summary.modelMetadata["gpt-6.1-terra"]?.supportsReasoningSummaries == true)
+        #expect(summary.modelMetadata["gpt-5.2-codex-mini"]?.supportsReasoningSummaries == false)
+        #expect(summary.modelMetadata["gpt-5.5"]?.supportsReasoningSummaries == nil)
+    }
+
     @Test func decodeModelCatalog_throwsTypedErrorForUnreadablePayload() {
         #expect(throws: OpenAICodexOAuthError.self) {
             _ = try OpenAICodexOAuthService.decodeModelCatalog(Data(#"{"models":"unexpected"}"#.utf8))

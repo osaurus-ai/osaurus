@@ -1481,8 +1481,8 @@ struct ModelPickerView: View {
                         source: .remote(providerName: "OpenAI", providerId: openAIId)
                     ),
                     ModelPickerItem(
-                        id: "anthropic/claude-opus-4",
-                        displayName: "claude-opus-4",
+                        id: "anthropic/claude-opus-5-5",
+                        displayName: "claude-opus-5-5",
                         source: .remote(providerName: "Anthropic", providerId: anthropicId)
                     ),
                 ]

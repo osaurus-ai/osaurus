@@ -727,7 +727,10 @@ public enum ConfigManifest {
         var keys = [
             ConfigKeySpec(
                 "model", .scalar(.string, example: "sonnet"),
-                comment: "sonnet | opus | haiku | a full model id"),
+                comment: "sonnet | opus | fable | haiku | a full model id"),
+            ConfigKeySpec(
+                "effort", .scalar(.string, example: "default", allowed: ConfigHarness.effortKeys),
+                comment: "default | low | medium | high | xhigh | max"),
             ConfigKeySpec(
                 "mode", .scalar(.string, example: "agent", allowed: ConfigHarness.modeKeys),
                 comment: "agent | text_only"),

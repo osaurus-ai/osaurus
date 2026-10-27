@@ -197,6 +197,43 @@ struct ClaudeCodeHarnessAdapterTests {
         #expect(plan.temporaryFiles.isEmpty)
     }
 
+    /// `--print` runs ignore the `showThinkingSummaries` setting and stream
+    /// empty thinking; only the explicit flag returns summaries.
+    @Test func everyLaunchRequestsThinkingSummaries() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-thinking")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for config in [ClaudeCodeAgentConfig.default, ClaudeCodeAgentConfig(mode: .textOnly)] {
+            let (plan, _) = try plan(config, in: directory)
+            defer { cleanup(plan) }
+            #expect(value(after: "--thinking-display", in: plan.spec.arguments) == "summarized")
+            #expect(!plan.spec.arguments.contains("--settings"), "the user's own settings stay untouched")
+        }
+    }
+
+    @Test func effortIsPassedOnlyWhenSet() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-effort")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (defaultPlan, _) = try plan(in: directory)
+        let (xhighPlan, _) = try plan(ClaudeCodeAgentConfig(model: "fable", effort: " XHigh "), in: directory)
+        let (bogusPlan, _) = try plan(ClaudeCodeAgentConfig(effort: "turbo"), in: directory)
+        defer { [defaultPlan, xhighPlan, bogusPlan].forEach(cleanup) }
+
+        #expect(!defaultPlan.spec.arguments.contains("--effort"))
+        #expect(value(after: "--effort", in: xhighPlan.spec.arguments) == "xhigh")
+        #expect(value(after: "--model", in: xhighPlan.spec.arguments) == "fable")
+        #expect(!bogusPlan.spec.arguments.contains("--effort"))
+    }
+
+    @Test func effortSurvivesAgentRoundTripAndOldAgentsDecode() throws {
+        let config = ClaudeCodeAgentConfig(model: "opus", effort: "max")
+        let decoded = try JSONDecoder().decode(ClaudeCodeAgentConfig.self, from: JSONEncoder().encode(config))
+        #expect(decoded.resolvedEffort == .max)
+
+        let legacy = try JSONDecoder().decode(ClaudeCodeAgentConfig.self, from: Data(#"{"model":"opus"}"#.utf8))
+        #expect(legacy.effort == nil)
+        #expect(legacy.resolvedEffort == nil)
+    }
+
     @Test func osaurusToolsAttachThroughATokenInAPrivateMCPConfig() throws {
         let directory = try HarnessFixtures.temporaryDirectory("claude-mcp")
         defer { try? FileManager.default.removeItem(at: directory) }

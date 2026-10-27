@@ -2009,6 +2009,28 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
     /// - Azure OpenAI Foundry: same OpenAI request schema.
     /// - OpenRouter: forwards `prompt_cache_key` to OpenAI-backed models and
     ///   ignores it elsewhere.
+    /// Whether a Responses request should ask for `reasoning.summary` even
+    /// when no effort was picked. Without it the Responses API returns only
+    /// encrypted reasoning and the reasoning panel stays empty at the model's
+    /// default effort. ChatGPT/Codex follows the live catalog's
+    /// `supports_reasoning_summaries`; the official API covers its reasoning
+    /// model families. Custom hosts never get it.
+    static func requestsReasoningSummary(providerType: RemoteProviderType, host: String, model: String) -> Bool {
+        switch providerType {
+        case .openAICodex:
+            return OpenAICodexOAuthService.modelMetadata(forSlug: model)?.supportsReasoningSummaries
+                ?? OpenAIReasoningProfile.matches(modelId: model)
+        case .openResponses:
+            let normalizedHost = host.lowercased()
+            // `gpt-5-chat-latest` and friends share the prefix but don't reason.
+            return (normalizedHost == "api.openai.com" || normalizedHost.hasSuffix(".openai.com"))
+                && OpenAIReasoningProfile.matches(modelId: model)
+                && !model.lowercased().contains("-chat")
+        default:
+            return false
+        }
+    }
+
     static func supportsPromptCacheKey(providerType: RemoteProviderType, host: String) -> Bool {
         switch providerType {
         case .osaurusRouter, .azureOpenAI:
@@ -3390,12 +3412,32 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         let reasoningOff = reasoningPolicy.reasoningOffControls(
             disableThinking: RemoteReasoningPolicy.requestsReasoningOff(parameters.modelOptions))
         let thinking = effortThinking ?? reasoningOff.thinking
+        let isAgentRun = parameters.runAsRemoteAgent
+        let maxTokens = Self.remoteChatMaxTokens(providerType: provider.providerType, parameters: parameters)
+        // Native Anthropic: the provider's Models API contract decides the
+        // `thinking` / `output_config.effort` fields (see
+        // `AnthropicReasoningContract`). Read the raw picker value because the
+        // generic effort translation strips the Off (`none`) id.
+        let anthropicReasoning: AnthropicReasoningContract.WireControls? =
+            provider.providerType == .anthropic && !isAgentRun
+            ? AnthropicReasoningContract.wireControls(
+                capabilities: AnthropicModelCatalog.info(providerId: provider.id, modelId: model)?.capabilities,
+                effort: RemoteReasoningPolicy.requestsReasoningOff(parameters.modelOptions)
+                    ? AnthropicReasoningContract.offLevelId
+                    : parameters.modelOptions["reasoningEffort"]?.stringValue,
+                maxTokens: maxTokens ?? RemoteChatRequest.anthropicFallbackMaxTokens
+            )
+            : nil
         // DeepSeek thinking mode rejects forced tool choices (HTTP 400
         // "Thinking mode does not support this tool_choice"); downgrade
         // `.required`/`.function` to `.auto` there. See
         // `RemoteReasoningPolicy.sanitizedToolChoice`.
         let wireToolChoice = parameters.responsesProviderOptions?.toolChoice.map(RemoteResponsesCapabilityFallback.portableChoice)
-            ?? reasoningPolicy.sanitizedToolChoice(toolChoice, thinking: thinking)
+            ?? reasoningPolicy.sanitizedToolChoice(
+                toolChoice,
+                thinking: thinking,
+                manualAnthropicThinking: anthropicReasoning?.isManualThinking == true
+            )
         if let toolChoice, wireToolChoice != toolChoice {
             debugLog(
                 "[RemoteProviderService] tool_choice \(toolChoice) downgraded to "
@@ -3432,19 +3474,13 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         // defaults and silently overrides the agent's native
         // `generation_config.json` (faithfulness regression). `model` is passed
         // through for Mode 1 and for local reasoning-profile checks only.
-        let isAgentRun = parameters.runAsRemoteAgent
         var request = RemoteChatRequest(
             model: model,
             messages: messages,
             // Reasoning models (o1, gpt-5) forbid temperature/top_p when reasoning is active as inferred from
             // https://community.openai.com/t/gpt-5-nano-accepted-parameters/1355086/2
             temperature: isAgentRun ? nil : (isReasoningModel ? nil : parameters.temperature),
-            max_completion_tokens: isAgentRun
-                ? nil
-                : Self.remoteChatMaxTokens(
-                    providerType: provider.providerType,
-                    parameters: parameters
-                ),
+            max_completion_tokens: isAgentRun ? nil : maxTokens,
             stream: stream,
             top_p: isAgentRun ? nil : (isReasoningModel ? nil : parameters.topPOverride),
             // Forward the raw OpenAI penalties — most upstream OpenAI-
@@ -3483,6 +3519,11 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         // 2. The agent's own billing preference (Settings → Workspaces), keyed by
         //    the send-turn TaskLocal agent id.
         // Turns with neither bill the personal wallet as before.
+        request.anthropicReasoning = anthropicReasoning
+        request.requestsReasoningSummary =
+            !isAgentRun
+            && Self.requestsReasoningSummary(providerType: provider.providerType, host: provider.host, model: model)
+
         if provider.providerType == .osaurusRouter {
             if let bound = ChatExecutionContext.workspaceBillingContext {
                 request.workspaceContext = bound
@@ -5018,6 +5059,16 @@ struct RemoteChatRequest: Encodable {
     var opencodeSessionKey: String? = nil
     /// Responses-native options are encoded only by the Responses builder.
     var responsesProviderOptions: ResponsesProviderOptions? = nil
+    /// Native Anthropic `thinking` / `output_config.effort`, resolved from the
+    /// provider's Models API capabilities in `buildChatRequest`. Encoded only
+    /// by `toAnthropicRequest`; absent from `CodingKeys`.
+    var anthropicReasoning: AnthropicReasoningContract.WireControls? = nil
+    /// Responses-only: send `reasoning.summary` even without an effort. Set
+    /// by `buildChatRequest`; absent from `CodingKeys`.
+    var requestsReasoningSummary: Bool = false
+
+    /// `max_tokens` sent to the Messages API when the caller set no cap.
+    static let anthropicFallbackMaxTokens = 4096
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream
@@ -5318,13 +5369,18 @@ struct RemoteChatRequest: Encodable {
             // Anthropic key is available.
             "claude-opus-5",
         ]
-        let deprecatesSamplerKnobs = knobDeprecatingClaudePrefixes.contains {
-            bareModel.hasPrefix($0)
-        }
+        // Thinking is incompatible with temperature/top_k changes on every
+        // Claude model, so an active thinking config drops the knobs too.
+        let thinkingActive = ["adaptive", "enabled"].contains(anthropicReasoning?.thinking?.type ?? "")
+        let deprecatesSamplerKnobs =
+            thinkingActive
+            || knobDeprecatingClaudePrefixes.contains {
+                bareModel.hasPrefix($0)
+            }
 
         return AnthropicMessagesRequest(
             model: model,
-            max_tokens: max_completion_tokens ?? 4096,
+            max_tokens: max_completion_tokens ?? Self.anthropicFallbackMaxTokens,
             system: systemContent,
             messages: anthropicMessages,
             stream: stream,
@@ -5344,7 +5400,9 @@ struct RemoteChatRequest: Encodable {
             // requests below the model's minimum cacheable length are simply
             // processed uncached. TTL: 1h after a human turn (gap likely),
             // 5m after a tool result (tight loop) — see `forConversation`.
-            cache_control: AnthropicCacheControl.forConversation(lastMessageRole: messages.last?.role)
+            cache_control: AnthropicCacheControl.forConversation(lastMessageRole: messages.last?.role),
+            thinking: anthropicReasoning?.thinking,
+            output_config: anthropicReasoning?.effort.map { AnthropicOutputConfig(effort: $0) }
         )
     }
 
@@ -6001,13 +6059,14 @@ struct RemoteChatRequest: Encodable {
             input = .items(inputItems)
         }
 
-        let reasoning =
-            reasoning_effort
-            .map {
-                OpenResponsesReasoningConfig(
-                    effort: $0,
-                    summary: "auto"
-                )
+        // A summary-only config leaves effort to the server default.
+        let reasoning: OpenResponsesReasoningConfig? =
+            if let reasoning_effort {
+                OpenResponsesReasoningConfig(effort: reasoning_effort, summary: "auto")
+            } else if requestsReasoningSummary {
+                OpenResponsesReasoningConfig(effort: nil, summary: "auto")
+            } else {
+                nil
             }
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
         let responseText =
@@ -6403,6 +6462,21 @@ extension RemoteProviderService {
         if provider.providerType == .openAICodex {
             let models = try await fetchModels(from: provider)
             return (models, OpenAICodexOAuthService.lastContextWindows)
+        }
+        // Anthropic's Models API publishes per-model thinking/effort
+        // capabilities and `max_input_tokens`; keep both for the picker and
+        // the request builder instead of falling back to 128k / no reasoning.
+        if provider.providerType == .anthropic {
+            guard let baseURL = provider.url(for: "/models") else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            let infos = try await fetchAnthropicModelInfos(
+                baseURL: baseURL,
+                headers: await provider.resolvedHeadersOffMainActor(),
+                timeout: min(provider.timeout, 30)
+            )
+            AnthropicModelCatalog.replace(providerId: provider.id, models: infos)
+            return (infos.map(\.id), AnthropicModelCatalog.contextLengths(of: infos))
         }
         // Grok/SuperGrok sign-in models have no live catalog to read windows
         // from (the OAuth token 403s on `/models`), so surface the
@@ -7162,7 +7236,7 @@ extension RemoteProviderService {
         return models
     }
 
-    /// Fetch all models from the Anthropic `/v1/models` endpoint, handling pagination.
+    /// Fetch all model ids from the Anthropic `/v1/models` endpoint, handling pagination.
     ///
     /// Shared between `fetchModels(from:)` and `RemoteProviderManager.testAnthropicConnection`.
     static func fetchAnthropicModels(
@@ -7170,7 +7244,17 @@ extension RemoteProviderService {
         headers: [String: String],
         timeout: TimeInterval = 30
     ) async throws -> [String] {
-        var allModels: [String] = []
+        try await fetchAnthropicModelInfos(baseURL: baseURL, headers: headers, timeout: timeout).map(\.id)
+    }
+
+    /// Like `fetchAnthropicModels` but keeps each entry's capability, context,
+    /// and lifecycle metadata.
+    static func fetchAnthropicModelInfos(
+        baseURL: URL,
+        headers: [String: String],
+        timeout: TimeInterval = 30
+    ) async throws -> [AnthropicModelInfo] {
+        var allModels: [AnthropicModelInfo] = []
         var afterId: String?
 
         while true {
@@ -7201,7 +7285,7 @@ extension RemoteProviderService {
             }
 
             let modelsResponse = try JSONDecoder().decode(AnthropicModelsResponse.self, from: data)
-            allModels.append(contentsOf: modelsResponse.data.map { $0.id })
+            allModels.append(contentsOf: modelsResponse.data)
 
             if modelsResponse.has_more, let lastId = modelsResponse.last_id {
                 afterId = lastId

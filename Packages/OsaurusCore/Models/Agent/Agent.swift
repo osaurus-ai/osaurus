@@ -638,9 +638,11 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
     /// *change* configuration (agents, providers, models, plugins). Defaults
     /// `false`, so the grant starts read-only like every other switch here.
     public var allowOsaurusConfigWrites: Bool
-    /// `--model` value: an alias (`sonnet`, `opus`, `haiku`) or a full model
-    /// id. Nil = `sonnet`.
+    /// `--model` value: an alias (`sonnet`, `opus`, `fable`, `haiku`) or a
+    /// full model id. Nil = `sonnet`.
     public var model: String?
+    /// `--effort` value (`ClaudeCodeEffort`). Nil = the CLI's per-model default.
+    public var effort: String?
 
     public init(
         mode: ClaudeCodeMode = .agent,
@@ -648,7 +650,8 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
         allowShell: Bool = false,
         allowOsaurusTools: Bool = false,
         allowOsaurusConfigWrites: Bool = false,
-        model: String? = nil
+        model: String? = nil,
+        effort: String? = nil
     ) {
         self.mode = mode
         self.allowWrites = allowWrites
@@ -656,6 +659,7 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
         self.allowOsaurusTools = allowOsaurusTools
         self.allowOsaurusConfigWrites = allowOsaurusConfigWrites
         self.model = model
+        self.effort = effort
     }
 
     public static let `default` = ClaudeCodeAgentConfig()
@@ -666,8 +670,13 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
         return trimmed.isEmpty ? ClaudeCodeModel.sonnet.rawValue : trimmed
     }
 
+    /// The `--effort` value to launch with, or nil to leave the CLI default.
+    public var resolvedEffort: ClaudeCodeEffort? {
+        effort.flatMap { ClaudeCodeEffort(rawValue: $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case mode, allowWrites, allowShell, allowOsaurusTools, allowOsaurusConfigWrites, model
+        case mode, allowWrites, allowShell, allowOsaurusTools, allowOsaurusConfigWrites, model, effort
     }
 
     /// Custom decode so a missing key — or a `mode` written by a future build
@@ -686,6 +695,7 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
         allowOsaurusConfigWrites =
             try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusConfigWrites) ?? false
         model = try c.decodeIfPresent(String.self, forKey: .model)
+        effort = try? c.decodeIfPresent(String.self, forKey: .effort)
     }
 }
 

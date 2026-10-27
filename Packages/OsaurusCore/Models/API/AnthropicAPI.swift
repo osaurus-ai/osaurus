@@ -35,6 +35,14 @@ struct AnthropicMessagesRequest: Codable, Sendable {
     /// `enable_thinking` does on chat completions; `adaptive` or no field keeps the model default.
     /// The budget is accepted for wire compatibility; local models do not cap thinking by tokens.
     var thinking: AnthropicThinkingConfig? = nil
+    /// `{"effort": "low" | "medium" | "high" | "xhigh" | "max"}`. Effort lives here, not inside
+    /// `thinking`. Omitted when nil so the model applies its own default effort.
+    var output_config: AnthropicOutputConfig? = nil
+}
+
+/// Anthropic `output_config` request field. Unknown keys (e.g. `format`) are ignored on decode.
+struct AnthropicOutputConfig: Codable, Sendable, Equatable {
+    var effort: String? = nil
 }
 
 /// `{"type": "ephemeral", "ttl": "1h"?}` cache-control marker. Only
@@ -46,6 +54,10 @@ struct AnthropicMessagesRequest: Codable, Sendable {
 struct AnthropicThinkingConfig: Codable, Sendable, Equatable {
     let type: String
     var budget_tokens: Int? = nil
+    /// `"summarized"` returns readable thinking text; `"omitted"` (the default on
+    /// Opus 4.7+ and the 5.x models) returns empty thinking blocks. Invalid with
+    /// `disabled` and `between_tools`.
+    var display: String? = nil
 }
 
 struct AnthropicCacheControl: Codable, Sendable, Equatable {
@@ -1194,4 +1206,96 @@ struct AnthropicModelInfo: Codable, Sendable {
     let display_name: String
     let created_at: String
     let type: String
+    /// Per-model capability contract. Nil when the host (e.g. a proxy) omits
+    /// it or publishes a shape this build can't read.
+    var capabilities: AnthropicModelCapabilities? = nil
+    /// Maximum input context window in tokens.
+    var max_input_tokens: Int? = nil
+    /// Maximum accepted `max_tokens` value.
+    var max_tokens: Int? = nil
+    /// `active`, `deprecated`, or `retired`.
+    var lifecycle: String? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case id, display_name, created_at, type, capabilities, max_input_tokens, max_tokens, lifecycle
+    }
+
+    init(
+        id: String,
+        display_name: String,
+        created_at: String,
+        type: String = "model",
+        capabilities: AnthropicModelCapabilities? = nil,
+        max_input_tokens: Int? = nil,
+        max_tokens: Int? = nil,
+        lifecycle: String? = nil
+    ) {
+        self.id = id
+        self.display_name = display_name
+        self.created_at = created_at
+        self.type = type
+        self.capabilities = capabilities
+        self.max_input_tokens = max_input_tokens
+        self.max_tokens = max_tokens
+        self.lifecycle = lifecycle
+    }
+
+    /// Optional metadata decodes leniently: a malformed capability object
+    /// drops that metadata instead of failing the whole model list.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        display_name = try c.decode(String.self, forKey: .display_name)
+        created_at = try c.decode(String.self, forKey: .created_at)
+        type = try c.decode(String.self, forKey: .type)
+        capabilities = try? c.decodeIfPresent(AnthropicModelCapabilities.self, forKey: .capabilities)
+        max_input_tokens = (try? c.decodeIfPresent(Int.self, forKey: .max_input_tokens)) ?? nil
+        max_tokens = (try? c.decodeIfPresent(Int.self, forKey: .max_tokens)) ?? nil
+        lifecycle = (try? c.decodeIfPresent(String.self, forKey: .lifecycle)) ?? nil
+    }
+
+    var isDeprecated: Bool { lifecycle?.lowercased() == "deprecated" }
+}
+
+/// `{"supported": Bool}` leaf of the Models API capability object.
+struct AnthropicCapabilitySupport: Codable, Sendable, Equatable, Hashable {
+    var supported: Bool? = nil
+
+    var isSupported: Bool { supported == true }
+}
+
+/// The subset of the Models API `capabilities` object Osaurus reads.
+struct AnthropicModelCapabilities: Codable, Sendable, Equatable, Hashable {
+    struct ThinkingTypes: Codable, Sendable, Equatable, Hashable {
+        var adaptive: AnthropicCapabilitySupport? = nil
+        var enabled: AnthropicCapabilitySupport? = nil
+        var disabled: AnthropicCapabilitySupport? = nil
+        var between_tools: AnthropicCapabilitySupport? = nil
+    }
+
+    struct Thinking: Codable, Sendable, Equatable, Hashable {
+        var supported: Bool? = nil
+        var types: ThinkingTypes? = nil
+    }
+
+    struct Effort: Codable, Sendable, Equatable, Hashable {
+        var supported: Bool? = nil
+        var low: AnthropicCapabilitySupport? = nil
+        var medium: AnthropicCapabilitySupport? = nil
+        var high: AnthropicCapabilitySupport? = nil
+        var xhigh: AnthropicCapabilitySupport? = nil
+        var max: AnthropicCapabilitySupport? = nil
+
+        /// Supported effort ids, lowest to highest.
+        var supportedLevels: [String] {
+            guard supported == true else { return [] }
+            let ladder: [(String, AnthropicCapabilitySupport?)] = [
+                ("low", low), ("medium", medium), ("high", high), ("xhigh", xhigh), ("max", max),
+            ]
+            return ladder.compactMap { $0.1?.isSupported == true ? $0.0 : nil }
+        }
+    }
+
+    var thinking: Thinking? = nil
+    var effort: Effort? = nil
 }

@@ -284,12 +284,15 @@ extension ModelPickerItem {
         providerName: String,
         providerId: UUID,
         contextLength: Int? = nil,
-        reasoningCapabilities: ModelReasoningCapabilities? = nil
+        reasoningCapabilities: ModelReasoningCapabilities? = nil,
+        displayName catalogDisplayName: String? = nil,
+        description: String? = nil
     ) -> ModelPickerItem {
         ModelPickerItem(
             id: modelId,
-            displayName: displayName(fromModelId: modelId),
+            displayName: catalogDisplayName ?? displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId),
+            description: description,
             contextLength: contextLength,
             reasoningCapabilities: reasoningCapabilities
         )
@@ -362,9 +365,25 @@ extension ModelPickerItem {
     /// by model family. Nil for families without a documented profile (they
     /// fall through to the static `ModelProfile` registry).
     static func officialOpenAIReasoningCapabilities(forModelId modelId: String) -> ModelReasoningCapabilities? {
-        if isPublicGPT6ModelId(modelId) { return .officialOpenAIGPT6Astra }
+        if isPublicGPT6ModelId(modelId) {
+            let bare = (modelId.split(separator: "/").last.map(String.init) ?? modelId).lowercased()
+            let acceptsNone = officialOpenAIGPT6NoneModels.contains { bare.hasPrefix($0) }
+            return acceptsNone ? .officialOpenAIGPT6WithNone : .officialOpenAIGPT6Astra
+        }
         if isPublicGPT56ModelId(modelId) { return .officialOpenAIGPT56 }
         return nil
+    }
+
+    /// GPT-6 models whose documented effort range starts at `none`. Every
+    /// other GPT-6 slug (`gpt-6-astra`, `gpt-6.1-sol`, unknown snapshots)
+    /// gets the `low`-floored profile, which never sends a value the model
+    /// rejects.
+    private static let officialOpenAIGPT6NoneModels = ["gpt-6.1-terra", "gpt-6-luna"]
+
+    /// Whether the official API documents `none` as a real effort for the
+    /// model, so it must reach the wire instead of being stripped.
+    static func officialOpenAIAcceptsNoneEffort(modelId: String) -> Bool {
+        officialOpenAIReasoningCapabilities(forModelId: modelId)?.levels.contains { $0.id == "none" } == true
     }
 
     /// Context window (tokens) for known `api.openai.com` model families,
@@ -376,8 +395,11 @@ extension ModelPickerItem {
     /// `developers.openai.com/api/docs/models/<slug>`; update when OpenAI ships
     /// a new family. Scoped to the official host only — never applied to
     /// OpenAI-compatible proxies, whose `id` values aren't OpenAI's to trust.
+    /// GPT-6 uses the documented maximum *input* (922,000): its 1.05M window
+    /// includes output, and prompts budgeted against the full window are
+    /// rejected before compaction kicks in.
     private static let officialOpenAIContextWindows: [(prefix: String, tokens: Int)] = [
-        ("gpt-6", 1_050_000),
+        ("gpt-6", 922_000),
         ("gpt-5.6", 1_050_000),
         ("gpt-5.5", 1_050_000),
         ("gpt-5.4", 1_050_000),
@@ -1081,9 +1103,9 @@ extension Array where Element == ModelPickerItem {
             // remote models (Anthropic-like provider)
             let anthropicProviderId = UUID()
             let anthropicModels = [
-                ("claude-opus-4", "Most capable Claude model", false),
-                ("claude-sonnet-3.5", "Balanced performance and speed", false),
-                ("claude-haiku-3.5", "Fast and efficient", false),
+                ("claude-opus-5-5", "Most capable Claude model", false),
+                ("claude-sonnet-5-5", "Balanced performance and speed", false),
+                ("claude-haiku-5-5", "Fast and efficient", false),
             ]
 
             for (modelId, desc, isVLM) in anthropicModels {

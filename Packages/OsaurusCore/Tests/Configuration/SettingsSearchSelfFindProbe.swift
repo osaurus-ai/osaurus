@@ -85,6 +85,7 @@ struct SettingsSearchSelfFindProbe {
             ("Runs on", "agents.runtime"),
             ("Manage Runtimes", "agents.runtime"),
             ("Claude model", "agents.claudeCode.model"),
+            ("Claude effort", "agents.claudeCode.effort"),
             ("Allow file changes", "agents.claudeCode"),
             ("Allow shell commands", "agents.claudeCode"),
             ("Allow Osaurus read tools", "agents.claudeCode"),

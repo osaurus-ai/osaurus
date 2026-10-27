@@ -19,9 +19,9 @@ struct ChatHarnessPickerOptionTests {
 
     @Test func claudeCodeListsEachAliasAndPiListsOneRow() {
         let claudeRows = ChatHarnessPickerOption.options(for: claude)
-        #expect(claudeRows.map(\.claudeModel) == ["sonnet", "opus", "haiku"])
-        #expect(claudeRows.map(\.title) == ["Sonnet", "Opus", "Haiku"])
-        #expect(Set(claudeRows.map(\.id)).count == 3)
+        #expect(claudeRows.map(\.claudeModel) == ["sonnet", "opus", "fable", "haiku"])
+        #expect(claudeRows.map(\.title) == ["Sonnet", "Opus", "Fable", "Haiku"])
+        #expect(Set(claudeRows.map(\.id)).count == 4)
 
         let piRows = ChatHarnessPickerOption.options(for: pi)
         #expect(piRows.count == 1)
@@ -31,9 +31,9 @@ struct ChatHarnessPickerOptionTests {
 
     @Test func aFullClaudeModelIdGetsItsOwnRowSoItShowsSelected() {
         let rows = ChatHarnessPickerOption.options(for: claude, currentClaudeModel: "claude-opus-4-1")
-        #expect(rows.map(\.claudeModel) == ["sonnet", "opus", "haiku", "claude-opus-4-1"])
+        #expect(rows.map(\.claudeModel) == ["sonnet", "opus", "fable", "haiku", "claude-opus-4-1"])
         let alias = ChatHarnessPickerOption.options(for: claude, currentClaudeModel: "opus")
-        #expect(alias.count == 3)
+        #expect(alias.count == 4)
     }
 
     @Test func selectedIdFollowsRuntimeAndClaudeModel() {
@@ -59,15 +59,15 @@ struct ChatHarnessPickerOptionTests {
         let claudeColumn = groups[1]
         #expect(claudeColumn.isActive && claudeColumn.isHarness)
         #expect(claudeColumn.models.isEmpty, "harness rows never become routable model ids")
-        #expect(claudeColumn.rowCount == 3)
+        #expect(claudeColumn.rowCount == 4)
     }
 
     @Test func onlyTheCurrentRuntimeGetsTheExtraModelRow() {
         let harnesses = ChatModelPickerProvider.harnessProviders(
             runtimes: [claude, HarnessRuntime(name: "Work Claude", kind: .claudeCode)],
             current: (runtimeId: claude.id, claudeModel: "claude-sonnet-4-5"))
-        #expect(harnesses[0].harnessOptions.count == 4)
-        #expect(harnesses[1].harnessOptions.count == 3)
+        #expect(harnesses[0].harnessOptions.count == 5)
+        #expect(harnesses[1].harnessOptions.count == 4)
     }
 
     @Test func initialSizeOpensOnTheSelectedHarnessColumn() {

@@ -3221,6 +3221,20 @@ struct AgentDetailView: View {
                 .settingsLandingAnchor("agents.claudeCode.model")
 
                 Picker(
+                    L("Claude effort"),
+                    selection: Binding(
+                        get: { claudeCodeConfig.resolvedEffort?.rawValue ?? "" },
+                        set: { effort in updateClaudeCodeConfig { $0.effort = effort.isEmpty ? nil : effort } }
+                    )
+                ) {
+                    Text("Default", bundle: .module).tag("")
+                    ForEach(ClaudeCodeEffort.allCases, id: \.rawValue) { effort in
+                        Text(verbatim: effort.displayName).tag(effort.rawValue)
+                    }
+                }
+                .settingsLandingAnchor("agents.claudeCode.effort")
+
+                Picker(
                     L("Execution mode"),
                     selection: Binding(
                         get: { claudeCodeConfig.mode },

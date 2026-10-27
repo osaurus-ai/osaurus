@@ -16,7 +16,7 @@ Settings → Agents → **Runtimes** → **Add Runtime**:
 | Arguments | One per line. Placeholders are substituted per launch (below) |
 | Environment | Extra `KEY=value` lines. Stored unencrypted in `~/.osaurus/config/harness-runtimes.json`, so don't put secrets here. `OSAURUS_*` names are reserved |
 
-Then pick the runtime from the chat's model picker (each runtime is a column; Claude Code lists Sonnet, Opus, and Haiku) or in the agent's Configure tab under **Runtime → Runs on**. Both set the same per-agent runtime; picking a model row moves the agent back to Osaurus's own loop. **Test** starts the runtime once: a Pi runtime must answer `get_state`, and a Claude Code runtime must report its sign-in with `claude auth status`.
+Then pick the runtime from the chat's model picker (each runtime is a column; Claude Code lists Sonnet, Opus, Fable, and Haiku) or in the agent's Configure tab under **Runtime → Runs on**. Both set the same per-agent runtime; picking a model row moves the agent back to Osaurus's own loop. **Test** starts the runtime once: a Pi runtime must answer `get_state`, and a Claude Code runtime must report its sign-in with `claude auth status`.
 
 ### From a configuration document
 
@@ -147,9 +147,12 @@ The runtime launches:
 ```
 claude --print --input-format stream-json --output-format stream-json --verbose
        --include-partial-messages --strict-mcp-config --model <alias>
+       [--effort <level>] --thinking-display summarized
        (--session-id | --resume) <chat id> <permission flags>
        [--mcp-config <file>] [--append-system-prompt-file <file>] <runtime arguments>
 ```
+
+- **Effort and thinking.** `--effort` is passed only when the agent's **Claude effort** is set; Default leaves Claude Code on its own per-model default. `--thinking-display summarized` makes Claude Code stream thinking summaries. In `--print` mode it ignores the `showThinkingSummaries` setting and sends empty thinking, so the flag is required.
 
 - **Execution mode.** *Agent* runs with `--permission-mode dontAsk` and an allow list: `Read`, `Grep`, and `Glob`; `Edit(//<real folder path>/**)` when **Allow file changes** is on (symlinks resolved, so `/tmp/x` becomes `//private/tmp/x`); `Bash` when **Allow shell commands** is on; and the Osaurus MCP tools when **Allow Osaurus read tools** is on. *Text only* disables every tool.
 - **Writes and shell.** File edits are limited to the chat's folder. Shell commands can't be confined.

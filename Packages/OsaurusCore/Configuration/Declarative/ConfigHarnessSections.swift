@@ -32,8 +32,10 @@ public struct HarnessRuntimeEntry: Codable, Equatable, Sendable {
 /// Claude Code options for an agent whose runtime is a Claude Code harness.
 /// Only provided keys change.
 public struct AgentClaudeCodeEntry: Codable, Equatable, Sendable {
-    /// `--model`: `sonnet`, `opus`, `haiku`, or a full model id.
+    /// `--model`: `sonnet`, `opus`, `fable`, `haiku`, or a full model id.
     public var model: String?
+    /// `--effort`: `low` … `max`, or `default` for the CLI's own default.
+    public var effort: String?
     /// `agent` | `text_only`.
     public var mode: String?
     public var allowWrites: Bool?
@@ -45,7 +47,7 @@ public struct AgentClaudeCodeEntry: Codable, Equatable, Sendable {
     public init() {}
 
     enum CodingKeys: String, CodingKey {
-        case model, mode
+        case model, effort, mode
         case allowWrites = "allow_writes"
         case allowShell = "allow_shell"
         case allowOsaurusTools = "allow_osaurus_tools"
@@ -59,6 +61,16 @@ enum ConfigHarness {
 
     static let kindKeys = ["claude_code", "pi_rpc"]
     static let modeKeys = ["agent", "text_only"]
+    /// `claude_code.effort` value that clears the override.
+    static let defaultEffortKey = "default"
+    static let effortKeys = [defaultEffortKey] + ClaudeCodeEffort.allCases.map(\.rawValue)
+
+    /// `.some(nil)` clears the override; nil is an unknown value.
+    static func effort(forKey raw: String) -> ClaudeCodeEffort?? {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if key.isEmpty || key == defaultEffortKey { return .some(nil) }
+        return ClaudeCodeEffort(rawValue: key).map { .some($0) }
+    }
 
     static func kind(forKey raw: String) -> HarnessKind? {
         switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
@@ -129,6 +141,7 @@ enum ConfigHarness {
     static func export(_ config: ClaudeCodeAgentConfig, includeConfigWrites: Bool) -> AgentClaudeCodeEntry {
         var entry = AgentClaudeCodeEntry()
         entry.model = config.resolvedModel
+        entry.effort = config.resolvedEffort?.rawValue ?? defaultEffortKey
         entry.mode = key(for: config.mode)
         entry.allowWrites = config.allowWrites
         entry.allowShell = config.allowShell
@@ -142,6 +155,7 @@ enum ConfigHarness {
             let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
             config.model = trimmed.isEmpty ? nil : trimmed
         }
+        if let raw = entry.effort, let effort = effort(forKey: raw) { config.effort = effort?.rawValue }
         if let raw = entry.mode, let mode = mode(forKey: raw) { config.mode = mode }
         if let v = entry.allowWrites { config.allowWrites = v }
         if let v = entry.allowShell { config.allowShell = v }
@@ -158,6 +172,11 @@ enum ConfigHarness {
         var out: [String] = []
         if desired.resolvedModel != current.resolvedModel {
             out.append("\(prefix).model: \(current.resolvedModel) -> \(desired.resolvedModel)")
+        }
+        if desired.resolvedEffort != current.resolvedEffort {
+            let old = current.resolvedEffort?.rawValue ?? defaultEffortKey
+            let new = desired.resolvedEffort?.rawValue ?? defaultEffortKey
+            out.append("\(prefix).effort: \(old) -> \(new)")
         }
         if desired.mode != current.mode {
             out.append("\(prefix).mode: \(key(for: current.mode)) -> \(key(for: desired.mode))")
