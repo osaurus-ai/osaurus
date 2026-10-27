@@ -55,6 +55,7 @@ extension HTTPHandler {
     }
 
     private static func isRequestParameterError(_ error: Error) -> Bool {
+        if error is ChatTemplateParameters.InvalidParameter { return true }
         if let providerError = error as? RemoteProviderServiceError,
             case .unsupportedParameter = providerError { return true }
         guard let error = error as? ChatEngine.EngineError else { return false }

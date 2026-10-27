@@ -255,4 +255,65 @@ struct RepetitionSeedCarrierTests {
         #expect(HTTPHandler.localRuntimeHTTPStatus(for: CancellationError()).code == 499)
     }
 
+
+    @Test func canonicalReservedTemplateErrorIsTypedBadRequestBeforeDispatch() async throws {
+        let capture = Capture()
+        var request = try responses().toResponsesInferenceRequest()
+        request.generation.templateKwargs = ["messages": .array([])]
+        do {
+            _ = try await engine(capture).streamResponses(request: request)
+            Issue.record("Canonical reserved template key reached the inference service")
+        } catch let error as ChatTemplateParameters.InvalidParameter {
+            #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 400)
+            #expect(HTTPHandler.openAIErrorType(for: error) == "invalid_request_error")
+            #expect(HTTPHandler.openResponsesErrorCode(for: error) == "invalid_request_error")
+            #expect(HTTPHandler.anthropicErrorType(for: error) == "invalid_request_error")
+            #expect(HTTPHandler.ollamaErrorType(for: error) == "invalid_request_error")
+        }
+        #expect(await capture.values().isEmpty)
+        // The mapping must not turn arbitrary NSError(code:400) into client errors.
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: NSError(domain: "unrelated", code: 400)).code == 500)
+    }
+
+    @Test(arguments: [true, false])
+    func realHTTPChannelsRejectInvalidParametersBeforeStreamingOrInference(streaming: Bool) async throws {
+        let capture = Capture()
+        let server = try await startChatStreamingTestServer(with: engine(capture), trustLoopback: true)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        do {
+            for path in ["/v1/chat/completions", "/v1/responses"] {
+                for invalidField in ["repetition_penalty", "chat_template_kwargs"] {
+                    var body: [String: Any] = ["model": "carrier", "stream": streaming, "seed": 0]
+                    if path.hasSuffix("responses") { body["input"] = "fixture" }
+                    else { body["messages"] = [["role": "user", "content": "fixture"]] }
+                    if invalidField == "repetition_penalty" { body[invalidField] = 0 }
+                    else { body[invalidField] = ["messages": []] as [String: [String]] }
+                    var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)\(path)")!)
+                    request.httpMethod = "POST"
+                    request.timeoutInterval = 10
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue("false", forHTTPHeaderField: "X-Persist")
+                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                    let (data, response) = try await session.data(for: request)
+                    let http = try #require(response as? HTTPURLResponse)
+                    #expect(http.statusCode == 400, "\(path) \(invalidField) stream=\(streaming)")
+                    #expect(http.value(forHTTPHeaderField: "Content-Type")?.contains("application/json") == true)
+                    let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                    let error = try #require(object["error"] as? [String: Any])
+                    #expect(error[path.hasSuffix("responses") ? "code" : "type"] as? String == "invalid_request_error")
+                    #expect((error["message"] as? String)?.contains(invalidField) == true)
+                    let text = String(decoding: data, as: UTF8.self)
+                    #expect(!text.contains("data: ") && !text.contains("response.completed"))
+                    #expect(!text.contains("[DONE]"))
+                    #expect(await capture.values().isEmpty)
+                }
+            }
+        } catch {
+            await server.shutdown()
+            throw error
+        }
+        await server.shutdown()
+    }
+
 }
