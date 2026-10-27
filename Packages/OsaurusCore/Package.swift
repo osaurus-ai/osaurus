@@ -341,9 +341,11 @@ let package = Package(
         // next (1M prefill peak -3.4 GiB), a fixed seed repeats under sampled dSpark, the resident dSpark head's
         // 1024-token prefill cap wins over a wider server step.
         // vmlx-swift#667: SSD restore retries, capacity estimates and nested vision configuration.
+        // vmlx-swift#668: DeepSeek-V4.1 split-by-keys decode attention; dSpark governor cost as a ratio of EMAs.
+        // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "a05a5eef8dd3953075bfd47391b59ce900d3ed80"
+            revision: "c6fee283f57de30befe26577f986ac455a963133"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
