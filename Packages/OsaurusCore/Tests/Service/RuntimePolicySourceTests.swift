@@ -1683,7 +1683,7 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("MLXBatchAdapter image preprocessing preserves media, reasoning, and tool metadata")
+    @Test("MLXBatchAdapter image preprocessing preserves media, content order, reasoning, and tool metadata")
     func mlxBatchAdapterPreprocessingPreservesMediaReasoningAndToolMetadata() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
         guard let rebuildRange = adapter.range(of: "return MLXLMCommon.Chat.Message(") else {
@@ -1705,6 +1705,10 @@ struct RuntimePolicySourceTests {
         )
         #expect(rebuild.contains("toolCalls: message.toolCalls"))
         #expect(rebuild.contains("toolCallId: message.toolCallId"))
+        #expect(
+            rebuild.contains("contentParts: message.contentParts"),
+            "preprocessImages must not drop the text/media order that DeepSeek-V4.1 vision and MiMo V2.6 render from"
+        )
     }
 
     @Test("HTTP typed streams preserve usage; legacy boundaries decode stats before filtering sentinels")
