@@ -19,8 +19,8 @@ struct DirectoryPickerCLIBridgeTests {
         init() throws {
             let id = UUID().uuidString
             root = FileManager.default.temporaryDirectory
-                .appendingPathComponent("directory-cli-\(id)", isDirectory: true)
                 .resolvingSymlinksInPath()
+                .appendingPathComponent("directory-cli-\(id)", isDirectory: true)
             let appName = "test.osaurus.directory.app.\(id)"
             let sharedName = "test.osaurus.directory.shared.\(id)"
             appDomain = appName
