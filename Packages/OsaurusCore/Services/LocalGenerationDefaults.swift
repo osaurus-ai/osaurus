@@ -67,6 +67,21 @@ enum LocalGenerationDefaults {
         var frequencyPenalty: Float?
         var doSample: Bool?
 
+        /// Optional bundle-owned overlay for thinking turns. Keep the complete
+        /// sampling object so selecting a mode cannot drop one of its fields.
+        var thinkingSamplingData: Data?
+        var defaultThinkingEnabled: Bool?
+
+        func resolvingThinking(_ enabled: Bool?) -> Defaults {
+            guard enabled == true, let data = thinkingSamplingData,
+                let sampling = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return self }
+            return LocalGenerationDefaults.merge(
+                primary: LocalGenerationDefaults.extractSamplingFields(from: sampling),
+                fallback: self
+            )
+        }
+
         static let empty = Defaults()
     }
 
@@ -593,12 +608,22 @@ enum LocalGenerationDefaults {
     /// sampling overlay.
     static func parseJangConfig(data: Data) -> Defaults {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let chat = root["chat"] as? [String: Any],
-            let sampling = chat["sampling_defaults"] as? [String: Any]
+            let chat = root["chat"] as? [String: Any]
         else {
             return .empty
         }
-        return extractSamplingFields(from: sampling)
+        var defaults = extractSamplingFields(from: chat["sampling_defaults"] as? [String: Any] ?? [:])
+        if let thinking = chat["sampling_thinking"] as? [String: Any] {
+            defaults.thinkingSamplingData = try? JSONSerialization.data(withJSONObject: thinking)
+            let reasoning = chat["reasoning"] as? [String: Any]
+            let splitThinking = chat["thinking"] as? [String: Any]
+            let templateDefaults = chat["template_kwargs_defaults"] as? [String: Any]
+            defaults.defaultThinkingEnabled =
+                templateDefaults?["enable_thinking"] as? Bool
+                ?? reasoning?["default_enabled"] as? Bool
+                ?? splitThinking?["default"] as? Bool
+        }
+        return defaults
     }
 
     /// Merge two `Defaults` values field-by-field, preferring `primary` for
@@ -617,6 +642,8 @@ enum LocalGenerationDefaults {
         if out.presencePenalty == nil { out.presencePenalty = fallback.presencePenalty }
         if out.frequencyPenalty == nil { out.frequencyPenalty = fallback.frequencyPenalty }
         if out.doSample == nil { out.doSample = fallback.doSample }
+        if out.thinkingSamplingData == nil { out.thinkingSamplingData = fallback.thinkingSamplingData }
+        if out.defaultThinkingEnabled == nil { out.defaultThinkingEnabled = fallback.defaultThinkingEnabled }
         return out
     }
 
