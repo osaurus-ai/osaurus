@@ -55,7 +55,7 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - Each agent can have its own theme (activating the agent applies it), avatar, greeting, quick actions, and voice.
 - Custom agents are stored as JSON under `~/.osaurus/agents/<uuid>.json`. The Orchestrator's own settings (name, persona, temperature, max tokens, delegation helpers) live in Settings → Orchestrator, or ask the assistant to change them.
 
-## Generation defaults for each custom agent
+## Generation overrides for each custom agent
 
 Use Create Agent → Advanced Settings, or open an existing custom agent → General → Configure → Advanced Settings → Generation Overrides. Each field can inherit existing defaults or use a custom value. Temperature and Max Tokens keep their existing saved fields; Top P, Top K, Min P, repetition/frequency/presence penalties, seed, stop sequences and template parameters are saved with the same agent.
 
