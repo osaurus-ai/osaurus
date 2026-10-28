@@ -139,6 +139,24 @@ enum ConfigRisk {
     static func deleteSearchProvider(_ id: String) -> String {
         "Removes search provider `\(id)` and its stored key (prune)."
     }
+    static func harnessCommand(_ name: String, _ commandLine: String) -> String {
+        "Harness runtime `\(name)` launches a local program for every chat of an agent on it: \(commandLine)"
+    }
+    static func harnessEnvironment(_ name: String) -> String {
+        "Changes the environment harness runtime `\(name)` launches with."
+    }
+    static func deleteHarnessRuntime(_ name: String) -> String {
+        "Removes harness runtime `\(name)` (prune); agents on it stop running until they get another runtime."
+    }
+    static func agentOnHarness(_ agent: String, _ runtime: String) -> String {
+        "Agent `\(agent)` runs on harness `\(runtime)`: a local program with its own tools, outside the Osaurus sandbox."
+    }
+    static func claudeCodeShell(_ agent: String) -> String {
+        "Lets Claude Code run shell commands for agent `\(agent)`, unconfined on this Mac."
+    }
+    static func claudeCodeConfigWrites(_ agent: String) -> String {
+        "Lets Claude Code change Osaurus configuration for agent `\(agent)`."
+    }
 }
 
 @MainActor
@@ -163,6 +181,9 @@ enum ConfigPlanner {
 
         if let section = document.memory {
             planMemory(section, current: current.memory, into: &actions)
+        }
+        if let entries = document.harnessRuntimes {
+            planHarnessRuntimes(entries, prune: prune, into: &actions)
         }
         if let section = document.defaultAgent {
             planDefaultAgent(section, current: current.defaultAgent, into: &actions)
@@ -391,9 +412,13 @@ enum ConfigPlanner {
                 issues.append("memory.retention_days: must be in 0...3650 (0 = forever).")
             }
         }
+        validateHarnessRuntimes(document: document, prune: prune, into: &issues)
         if let section = document.defaultAgent {
             checkRange(section.temperature, 0.0...2.0, "default_agent.temperature", &issues)
             checkRange(section.maxTokens, 1...10_000_000, "default_agent.max_tokens", &issues)
+            checkRuntimeReference(
+                section.runtime, claudeCode: section.claudeCode, label: "default_agent",
+                document: document, prune: prune, into: &issues)
         }
 
         if let agents = document.agents {
@@ -414,12 +439,30 @@ enum ConfigPlanner {
                 }
                 checkRange(entry.temperature, 0.0...2.0, "agents[\(entry.name)].temperature", &issues)
                 checkRange(entry.maxTokens, 1...10_000_000, "agents[\(entry.name)].max_tokens", &issues)
+                do { try entry.generationSettings.valueOrNil?.validate() }
+                catch { issues.append("agents[\(entry.name)].generation_settings: \(error.localizedDescription)") }
+                checkRuntimeReference(
+                    entry.runtime, claudeCode: entry.claudeCode, label: "agents[\(entry.name)]",
+                    document: document, prune: prune, into: &issues)
+                if entry.claudeCode?.allowOsaurusConfigWrites != nil {
+                    issues.append(
+                        "agents[\(entry.name)].claude_code.allow_osaurus_config_writes: only the "
+                            + "Default agent can change Osaurus configuration.")
+                }
                 if let ids = entry.capabilities?.knowledgeCollectionIds {
                     for raw in ids where UUID(uuidString: raw) == nil {
                         issues.append(
                             "agents[\(entry.name)].capabilities.knowledge_collection_ids: "
                                 + "`\(raw)` is not a UUID.")
                     }
+                }
+                if let mode = entry.tools?.mode, ToolSelectionMode(rawValue: mode) == nil {
+                    issues.append(
+                        "agents[\(entry.name)].tools.mode: must be `auto` or `manual` (got `\(mode)`).")
+                }
+                if let v = entry.sandbox?.maxCommandsPerTurn, !(1...500).contains(v) {
+                    issues.append(
+                        "agents[\(entry.name)].sandbox.max_commands_per_turn: must be in 1...500.")
                 }
                 if let apps = entry.capabilities?.appleApps {
                     for raw in apps where AppleApp.parse(raw) == nil {
@@ -705,6 +748,20 @@ enum ConfigPlanner {
                                     + "interactively — token_ref only fits bearer auth.")
                         }
                     }
+                    if let refs = entry.secretHeaderRefs {
+                        for (header, raw) in refs.sorted(by: { $0.key < $1.key }) {
+                            if header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                issues.append(
+                                    "mcp_servers[\(entry.name)].secret_header_refs: header names "
+                                        + "must be non-empty.")
+                                continue
+                            }
+                            validateSecretRef(
+                                raw,
+                                label: "mcp_servers[\(entry.name)].secret_header_refs[\(header)]",
+                                into: &issues)
+                        }
+                    }
                 case .stdio:
                     if current == nil,
                         (entry.command ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -719,10 +776,12 @@ enum ConfigPlanner {
                         issues.append(
                             "mcp_servers[\(entry.name)].execution_host: must be sandbox or host.")
                     }
-                    if entry.url != nil || entry.auth != nil || entry.tokenRef != nil {
+                    if entry.url != nil || entry.auth != nil || entry.tokenRef != nil
+                        || entry.secretHeaderRefs != nil
+                    {
                         issues.append(
-                            "mcp_servers[\(entry.name)]: url/auth/token_ref only apply to "
-                                + "transport: http.")
+                            "mcp_servers[\(entry.name)]: url/auth/token_ref/secret_header_refs only "
+                                + "apply to transport: http.")
                     }
                     if let refs = entry.secretEnvRefs {
                         for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
@@ -1123,10 +1182,41 @@ enum ConfigPlanner {
         diff(
             "system_prompt", desired: desired.systemPrompt,
             current: current.systemPrompt, into: &changes)
+        var risks: [String] = []
+        let stored = DefaultAgentConfigurationStore.load()
+        diffRuntime(
+            desired.runtime, claudeCode: desired.claudeCode,
+            currentRuntime: stored.runtime, currentClaudeCode: stored.claudeCode ?? .default,
+            agent: "default", into: &changes, risks: &risks)
         guard !changes.isEmpty else { return }
         actions.append(
             ConfigPlanAction(
-                section: "default_agent", target: "default_agent", kind: .update, changes: changes))
+                section: "default_agent", target: "default_agent", kind: .update,
+                changes: changes, risks: risks))
+    }
+
+    /// Plan lines and risks for an agent's `runtime` and `claude_code` keys.
+    @MainActor
+    private static func diffRuntime(
+        _ runtime: String?, claudeCode: AgentClaudeCodeEntry?,
+        currentRuntime: AgentRuntime?, currentClaudeCode: ClaudeCodeAgentConfig,
+        agent: String, into changes: inout [String], risks: inout [String]
+    ) {
+        if let runtime {
+            let currentKey = ConfigHarness.runtimeKey(for: currentRuntime)
+            let desiredKey = ConfigHarness.normalizedName(runtime)
+            if currentKey.map(ConfigHarness.normalizedName) != desiredKey {
+                changes.append("runtime: \(currentKey ?? "(deleted runtime)") -> \(runtime)")
+                if desiredKey != ConfigHarness.builtInRuntimeKey {
+                    risks.append(ConfigRisk.agentOnHarness(agent, runtime))
+                }
+            }
+        }
+        if let claudeCode {
+            changes.append(
+                contentsOf: ConfigHarness.changes(claudeCode, current: currentClaudeCode, prefix: "claude_code"))
+            risks.append(contentsOf: ConfigHarness.risks(claudeCode, current: currentClaudeCode, agent: agent))
+        }
     }
 
     private static func planActiveAgent(
@@ -1140,6 +1230,153 @@ enum ConfigPlanner {
     }
 
     // MARK: - Agents
+
+    /// Plan lines for the portable per-agent keys (tools, groups, sandbox,
+    /// subagents, working folder) on an existing agent. Group membership is
+    /// compared by NAME against the local registry, so a document written
+    /// on another machine reads as a change only when it would actually
+    /// alter this agent.
+    @MainActor
+    private static func diffPortableSettings(
+        _ entry: AgentEntry, agent: Agent, into changes: inout [String]
+    ) {
+        if let tools = entry.tools {
+            let currentMode = (agent.toolSelectionMode ?? .auto).rawValue
+            diff("tools.mode", desired: tools.mode, current: currentMode, into: &changes)
+            if let enabled = tools.enabled {
+                let groups = ToolRegistry.shared.portableToolGroups()
+                let current = AgentToolSelectionResolver.export(
+                    manualToolNames: agent.manualToolNames ?? [], groups: groups)
+                if Set(enabled) != Set(current.toolNames) {
+                    changes.append("tools.enabled: \(enabled.count) tool(s)")
+                }
+            }
+        }
+        if let mcp = entry.mcpServers {
+            let groups = ToolRegistry.shared.portableToolGroups()
+            let current = AgentToolSelectionResolver.export(
+                manualToolNames: agent.manualToolNames ?? [], groups: groups)
+            diffGroupList(
+                "mcp_servers", desired: mcp,
+                currentEnabled: current.enabledMCPServers, into: &changes)
+        }
+        if let plugins = entry.plugins {
+            let groups = ToolRegistry.shared.portableToolGroups()
+            let current = AgentToolSelectionResolver.export(
+                manualToolNames: agent.manualToolNames ?? [], groups: groups)
+            diffGroupList(
+                "plugins", desired: plugins,
+                currentEnabled: current.enabledPlugins, into: &changes)
+        }
+        switch entry.skills {
+        case .absent:
+            break
+        case .null:
+            if agent.skillNames != nil { changes.append("skills: every installed skill") }
+        case .value(let names):
+            let desired = Set(names.map { Skill.agentSkillsSlug(for: $0) })
+            let current = agent.skillNames.map { Set($0.map { Skill.agentSkillsSlug(for: $0) }) }
+            if current != desired {
+                changes.append("skills: \(names.isEmpty ? "none" : names.joined(separator: ", "))")
+            }
+        }
+        if let instructions = entry.pluginInstructions {
+            diffMap(
+                "plugin_instructions", desired: instructions,
+                current: agent.pluginInstructions, defaultValue: "", into: &changes)
+        }
+        if let sandbox = entry.sandbox {
+            let exec =
+                agent.autonomousExec
+                ?? AgentManager.shared.effectiveAutonomousExec(for: agent.id)
+                ?? AutonomousExecConfig.default
+            let effectiveOn = AgentManager.shared.effectiveAutonomousExec(for: agent.id)?.enabled ?? false
+            diff("sandbox.enabled", desired: sandbox.enabled, current: effectiveOn, into: &changes)
+            diff(
+                "sandbox.network_enabled", desired: sandbox.networkEnabled,
+                current: exec.sandboxNetworkEnabled, into: &changes)
+            if let domains = sandbox.allowedDomains,
+                Set(domains) != Set(exec.sandboxAllowedDomains ?? [])
+            {
+                changes.append("sandbox.allowed_domains: \(domains.count) domain(s)")
+            }
+            diff(
+                "sandbox.max_commands_per_turn", desired: sandbox.maxCommandsPerTurn,
+                current: exec.maxCommandsPerTurn, into: &changes)
+            diff(
+                "sandbox.background_process_enabled", desired: sandbox.backgroundProcessEnabled,
+                current: exec.backgroundProcessEnabled, into: &changes)
+            diff("sandbox.plugin_create", desired: sandbox.pluginCreate, current: exec.pluginCreate, into: &changes)
+        }
+        if let subagents = entry.subagents {
+            diff(
+                "subagents.enabled", desired: subagents.enabled,
+                current: agent.settings.spawnDelegationEnabled, into: &changes)
+            if let names = subagents.agents {
+                let currentNames = agent.settings.spawnableAgentIDs.compactMap { id in
+                    AgentManager.shared.agents.first { $0.id == id }?.name.lowercased()
+                }
+                if Set(names.map { $0.lowercased() }) != Set(currentNames) {
+                    changes.append("subagents.agents: \(names.count) agent(s)")
+                }
+            }
+        }
+        diff("source_template", desired: entry.sourceTemplate, current: agent.sourceTemplateName, into: &changes)
+        switch entry.workingFolder {
+        case .absent:
+            break
+        case .null:
+            if agent.workingFolderPath != nil || agent.workingFolderBookmark != nil {
+                changes.append("working_folder: \(display(agent.workingFolderPath)) -> null")
+            }
+        case .value(let raw):
+            let expanded = (raw as NSString).expandingTildeInPath
+            let current = agent.workingFolderPath.map { ($0 as NSString).expandingTildeInPath }
+            if current != expanded || agent.workingFolderBookmark == nil {
+                changes.append("working_folder: \(display(agent.workingFolderPath)) -> \(raw)")
+            }
+        }
+    }
+
+    private static func diffGroupList(
+        _ key: String, desired: AgentToolGroupsEntry, currentEnabled: [String],
+        into changes: inout [String]
+    ) {
+        let current = Set(currentEnabled.map { $0.lowercased() })
+        let turnOn = (desired.enabled ?? []).filter { !current.contains($0.lowercased()) }
+        let turnOff = (desired.disabled ?? []).filter { current.contains($0.lowercased()) }
+        if !turnOn.isEmpty { changes.append("\(key).enabled: +\(turnOn.joined(separator: ", "))") }
+        if !turnOff.isEmpty { changes.append("\(key).disabled: -\(turnOff.joined(separator: ", "))") }
+    }
+
+    /// Create-time summary of the portable keys, so the approval card shows
+    /// what the new agent will be able to reach.
+    private static func summarizePortableSettings(_ entry: AgentEntry, into changes: inout [String]) {
+        if entry.generationSettings.valueOrNil != nil { changes.append("generation_settings: configured") }
+        if let tools = entry.tools {
+            if let mode = tools.mode { changes.append("tools.mode: \(mode)") }
+            if let enabled = tools.enabled, !enabled.isEmpty {
+                changes.append("tools: \(enabled.joined(separator: ", "))")
+            }
+        }
+        if let on = entry.mcpServers?.enabled, !on.isEmpty {
+            changes.append("mcp_servers: \(on.joined(separator: ", "))")
+        }
+        if let on = entry.plugins?.enabled, !on.isEmpty {
+            changes.append("plugins: \(on.joined(separator: ", "))")
+        }
+        if let sandbox = entry.sandbox, let on = sandbox.enabled {
+            changes.append("sandbox: \(on ? "on" : "off")")
+        }
+        if let subagents = entry.subagents, subagents.enabled == true {
+            let targets = subagents.agents ?? []
+            changes.append(
+                "subagents: on" + (targets.isEmpty ? "" : " (\(targets.joined(separator: ", ")))"))
+        }
+        if let folder = entry.workingFolder.valueOrNil {
+            changes.append("working_folder: \(folder)")
+        }
+    }
 
     private static func planAgents(
         _ entries: [AgentEntry], prune: Bool,
@@ -1169,9 +1406,17 @@ enum ConfigPlanner {
                 diff(
                     "max_tokens", desired: entry.maxTokens,
                     current: agent.maxTokens.map { ConfigField.value($0) } ?? .null, into: &changes)
+                diff(
+                    "generation_settings", desired: entry.generationSettings,
+                    current: agent.generationSettings.map { ConfigField.value($0) } ?? .null, into: &changes)
                 if let caps = entry.capabilities {
                     diffCapabilities(caps, agent: agent, into: &changes, risks: &risks)
                 }
+                diffPortableSettings(entry, agent: agent, into: &changes)
+                diffRuntime(
+                    entry.runtime, claudeCode: entry.claudeCode,
+                    currentRuntime: agent.runtime, currentClaudeCode: agent.claudeCode ?? .default,
+                    agent: entry.name, into: &changes, risks: &risks)
                 if changes.isEmpty {
                     unchanged += 1
                 } else {
@@ -1197,6 +1442,14 @@ enum ConfigPlanner {
                         risks.append(contentsOf: ConfigRisk.appleAppRisks(entry.name, current: [], desired: apps))
                     }
                 }
+                summarizePortableSettings(entry, into: &changes)
+                if entry.orchestratorSpawnable == false {
+                    changes.append("not added to the Orchestrator's delegation list")
+                }
+                diffRuntime(
+                    entry.runtime, claudeCode: entry.claudeCode,
+                    currentRuntime: nil, currentClaudeCode: .default,
+                    agent: entry.name, into: &changes, risks: &risks)
                 actions.append(
                     ConfigPlanAction(
                         section: "agents", target: entry.name, kind: .create,
@@ -1613,6 +1866,144 @@ enum ConfigPlanner {
         }
     }
 
+    // MARK: - Harness runtimes
+
+    @MainActor
+    private static func validateHarnessRuntimes(
+        document: OsaurusConfigDocument, prune: Bool, into issues: inout [String]
+    ) {
+        guard let entries = document.harnessRuntimes else { return }
+        var seen = Set<String>()
+        for entry in entries {
+            let key = ConfigHarness.normalizedName(entry.name)
+            let label = "harness_runtimes[\(entry.name)]"
+            if key.isEmpty {
+                issues.append("harness_runtimes[]: every runtime needs a non-empty name.")
+                continue
+            }
+            if key == ConfigHarness.builtInRuntimeKey {
+                issues.append("\(label): `builtin` is reserved for Osaurus's own loop.")
+            }
+            if !seen.insert(key).inserted {
+                issues.append("\(label): duplicate runtime name in document.")
+            }
+            let current = ConfigHarness.runtime(named: entry.name)
+            if let raw = entry.kind {
+                if let kind = ConfigHarness.kind(forKey: raw) {
+                    if let current, current.kind != kind {
+                        issues.append(
+                            "\(label).kind: immutable after create — remove and re-add the runtime "
+                                + "to change its protocol.")
+                    }
+                } else {
+                    issues.append(
+                        "\(label).kind: must be one of: \(ConfigHarness.kindKeys.joined(separator: ", ")).")
+                }
+            } else if current == nil {
+                issues.append("\(label): `kind` is required to add a new runtime.")
+            }
+            if let executable = entry.executable,
+                executable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                issues.append("\(label).executable: must not be empty.")
+            }
+            for name in (entry.environment ?? [:]).keys
+            where name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append("\(label).environment: variable names must not be empty.")
+            }
+        }
+    }
+
+    /// `runtime` must name Osaurus's own loop or a runtime that exists after
+    /// apply. Never falls back to the built-in loop: an agent the document
+    /// meant for a harness would silently run somewhere else.
+    @MainActor
+    private static func checkRuntimeReference(
+        _ runtime: String?, claudeCode: AgentClaudeCodeEntry?, label: String,
+        document: OsaurusConfigDocument, prune: Bool, into issues: inout [String]
+    ) {
+        if let runtime {
+            let key = ConfigHarness.normalizedName(runtime)
+            if key != ConfigHarness.builtInRuntimeKey,
+                !ConfigHarness.effectiveRuntimeNames(document: document, prune: prune).contains(key)
+            {
+                issues.append(
+                    "\(label).runtime: runtime `\(runtime)` is not registered; add it under "
+                        + "harness_runtimes, or use `builtin`.")
+            }
+        }
+        if let raw = claudeCode?.mode, ConfigHarness.mode(forKey: raw) == nil {
+            issues.append(
+                "\(label).claude_code.mode: must be one of: \(ConfigHarness.modeKeys.joined(separator: ", ")).")
+        }
+        if let raw = claudeCode?.effort, ConfigHarness.effort(forKey: raw) == nil {
+            issues.append(
+                "\(label).claude_code.effort: must be one of: \(ConfigHarness.effortKeys.joined(separator: ", ")).")
+        }
+    }
+
+    @MainActor
+    private static func planHarnessRuntimes(
+        _ entries: [HarnessRuntimeEntry], prune: Bool, into actions: inout [ConfigPlanAction]
+    ) {
+        let existing = HarnessRuntimeStore.shared.all()
+        var matched = Set<UUID>()
+
+        for entry in entries {
+            let key = ConfigHarness.normalizedName(entry.name)
+            if let runtime = existing.first(where: { ConfigHarness.normalizedName($0.displayName) == key }) {
+                matched.insert(runtime.id)
+                var changes: [String] = []
+                var risks: [String] = []
+                let executable = entry.executable ?? runtime.executable
+                let arguments = entry.arguments ?? runtime.arguments
+                if executable != runtime.executable {
+                    changes.append("executable: \(runtime.executable) -> \(executable)")
+                }
+                if arguments != runtime.arguments {
+                    changes.append("arguments: \(display(runtime.arguments)) -> \(display(arguments))")
+                }
+                if executable != runtime.executable || arguments != runtime.arguments {
+                    risks.append(
+                        ConfigRisk.harnessCommand(entry.name, ([executable] + arguments).joined(separator: " ")))
+                }
+                let envBefore = changes.count
+                diffMap("environment", desired: entry.environment, current: runtime.environment, into: &changes)
+                if changes.count > envBefore { risks.append(ConfigRisk.harnessEnvironment(entry.name)) }
+                if !changes.isEmpty {
+                    actions.append(
+                        ConfigPlanAction(
+                            section: "harness_runtimes", target: entry.name, kind: .update,
+                            changes: changes, risks: risks))
+                }
+            } else {
+                // Validation guarantees a kind for new runtimes.
+                let kind = entry.kind.flatMap(ConfigHarness.kind(forKey:)) ?? .piRPC
+                let executable = entry.executable ?? kind.defaultExecutable
+                let arguments = entry.arguments ?? kind.defaultArguments
+                let commandLine = ([executable] + arguments).joined(separator: " ")
+                var changes = ["add \(ConfigHarness.key(for: kind)) runtime running: \(commandLine)"]
+                for (name, value) in (entry.environment ?? [:]).sorted(by: { $0.key < $1.key }) {
+                    changes.append("environment[\(name)]: \(value)")
+                }
+                actions.append(
+                    ConfigPlanAction(
+                        section: "harness_runtimes", target: entry.name, kind: .create,
+                        changes: changes, risks: [ConfigRisk.harnessCommand(entry.name, commandLine)]))
+            }
+        }
+
+        if prune {
+            for runtime in existing where !matched.contains(runtime.id) {
+                actions.append(
+                    ConfigPlanAction(
+                        section: "harness_runtimes", target: runtime.displayName, kind: .delete,
+                        changes: ["remove runtime \(runtime.executable)"],
+                        risks: [ConfigRisk.deleteHarnessRuntime(runtime.displayName)]))
+            }
+        }
+    }
+
     private static func planMCPServers(
         _ entries: [MCPServerEntry], prune: Bool, into actions: inout [ConfigPlanAction]
     ) {
@@ -1672,6 +2063,12 @@ enum ConfigPlanner {
                 {
                     changes.append("token: store from \(ref.display)")
                 }
+                if provider.transport == .http, let refs = entry.secretHeaderRefs {
+                    for (header, raw) in refs.sorted(by: { $0.key < $1.key }) {
+                        guard case .success(let ref) = ConfigSecretRef.parse(raw) else { continue }
+                        changes.append("secret header \(header): store from \(ref.display)")
+                    }
+                }
                 if provider.transport == .stdio, let refs = entry.secretEnvRefs {
                     for (envKey, raw) in refs.sorted(by: { $0.key < $1.key }) {
                         guard case .success(let ref) = ConfigSecretRef.parse(raw) else { continue }
@@ -1722,6 +2119,10 @@ enum ConfigPlanner {
                         "auth: \(ConfigMCPAuth.key(for: auth)) — finish sign-in in "
                             + "Settings → Tools & MCP → Services (secrets never travel through the document)")
                 }
+                for (header, raw) in (entry.secretHeaderRefs ?? [:]).sorted(by: { $0.key < $1.key }) {
+                    guard case .success(let ref) = ConfigSecretRef.parse(raw) else { continue }
+                    changes.append("secret header \(header): store from \(ref.display)")
+                }
                 actions.append(
                     ConfigPlanAction(
                         section: "mcp_servers", target: entry.name, kind: .create,
@@ -1748,8 +2149,7 @@ enum ConfigPlanner {
         _ desired: [String], prune: Bool,
         into actions: inout [ConfigPlanAction], notes: inout [String]
     ) {
-        let installed = Set(
-            ModelManager.shared.availableModels.filter { $0.isDownloaded }.map { $0.id })
+        let installed = Set(ModelManager.shared.installedModels().map { $0.id })
         for id in desired where !installed.contains(id) {
             actions.append(
                 ConfigPlanAction(

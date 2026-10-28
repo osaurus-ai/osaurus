@@ -9,7 +9,8 @@
 //
 //  Security notes:
 //   - The endpoints are loopback-only on the server side; this command
-//     always targets 127.0.0.1.
+//     always targets 127.0.0.1. When the server requires a key from local
+//     callers, it is read via `AccessKeyResolver`.
 //   - High-risk applies (prune deletions, screen/browser grants, channel
 //     write enables, new MCP endpoints, ...) are rejected by the server
 //     with the risk list until re-sent with confirmation — the CLI
@@ -29,16 +30,17 @@ public struct ConfigCommand: Command {
             printUsage()
             exit(EXIT_FAILURE)
         }
-        let rest = Array(args.dropFirst())
+        let credential = AccessKeyResolver.resolve(args: Array(args.dropFirst()))
+        let rest = AccessKeyResolver.removingAccessKeyOptions(from: Array(args.dropFirst()))
         switch sub {
         case "export":
-            await runExport(rest)
+            await runExport(rest, credential: credential)
         case "schema":
-            await runSchema(rest)
+            await runSchema(rest, credential: credential)
         case "plan":
-            await runPlanOrApply(rest, apply: false)
+            await runPlanOrApply(rest, apply: false, credential: credential)
         case "apply":
-            await runPlanOrApply(rest, apply: true)
+            await runPlanOrApply(rest, apply: true, credential: credential)
         case "help", "-h", "--help":
             printUsage()
             exit(EXIT_SUCCESS)
@@ -51,7 +53,7 @@ public struct ConfigCommand: Command {
 
     // MARK: - export
 
-    private static func runExport(_ args: [String]) async {
+    private static func runExport(_ args: [String], credential: AccessKeyCredential?) async {
         var outputPath: String?
         var format = "yaml"
         var index = 0
@@ -81,7 +83,7 @@ public struct ConfigCommand: Command {
 
         let port = await ServerControl.ensureServerReadyOrExit()
         let response = await request(
-            port: port, path: "/admin/config/export?format=\(format)", body: nil)
+            port: port, path: "/admin/config/export?format=\(format)", body: nil, credential: credential)
         guard let document = response[format] as? String else {
             failFromResponse(response)
         }
@@ -102,7 +104,7 @@ public struct ConfigCommand: Command {
 
     // MARK: - schema
 
-    private static func runSchema(_ args: [String]) async {
+    private static func runSchema(_ args: [String], credential: AccessKeyCredential?) async {
         var format = "yaml"
         var index = 0
         while index < args.count {
@@ -124,7 +126,7 @@ public struct ConfigCommand: Command {
 
         let port = await ServerControl.ensureServerReadyOrExit()
         let response = await request(
-            port: port, path: "/admin/config/schema?format=\(format)", body: nil)
+            port: port, path: "/admin/config/schema?format=\(format)", body: nil, credential: credential)
         if format == "json" {
             guard let schema = response["json_schema"] as? [String: Any],
                 let data = try? JSONSerialization.data(
@@ -144,7 +146,7 @@ public struct ConfigCommand: Command {
 
     // MARK: - plan / apply
 
-    private static func runPlanOrApply(_ args: [String], apply: Bool) async {
+    private static func runPlanOrApply(_ args: [String], apply: Bool, credential: AccessKeyCredential?) async {
         var filePath: String?
         var prune = false
         var confirm = false
@@ -197,7 +199,7 @@ public struct ConfigCommand: Command {
         var body: [String: Any] = ["yaml": yaml, "prune": prune]
         if apply && confirm { body["confirm_high_risk"] = true }
         let path = apply ? "/admin/config/apply" : "/admin/config/plan"
-        let response = await request(port: port, path: path, body: body)
+        let response = await request(port: port, path: path, body: body, credential: credential)
 
         if let error = response["error"] as? [String: Any] {
             if let message = error["message"] as? String { fputs("\(message)\n", stderr) }
@@ -271,13 +273,16 @@ public struct ConfigCommand: Command {
     /// endpoint, returning the parsed JSON object. Exits on transport
     /// errors; HTTP-level errors are returned for the caller to render.
     private static func request(
-        port: Int, path: String, body: [String: Any]?
+        port: Int, path: String, body: [String: Any]?, credential: AccessKeyCredential?
     ) async -> [String: Any] {
         guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else {
             fputs("Invalid URL\n", stderr)
             exit(EXIT_FAILURE)
         }
         var request = URLRequest(url: url)
+        if let credential {
+            request.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
+        }
         if let body {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -290,7 +295,21 @@ public struct ConfigCommand: Command {
         request.timeoutInterval = 600
 
         do {
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if (response as? HTTPURLResponse)?.statusCode == 401 {
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                if let message = (object?["error"] as? [String: Any])?["message"] as? String {
+                    fputs("\(message)\n", stderr)
+                }
+                if let credential {
+                    fputs("The access key from \(credential.source) was rejected.\n", stderr)
+                } else {
+                    fputs(
+                        "This server requires an access key. Pass --access-key KEY or set OSAURUS_API_KEY.\n",
+                        stderr)
+                }
+                exit(EXIT_FAILURE)
+            }
             guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else {
                 fputs("Unexpected response from server\n", stderr)
@@ -339,6 +358,10 @@ public struct ConfigCommand: Command {
 
             Documents are merge-by-default: keys absent from the document are left
             unchanged; explicit null clears an override. Entities match by name.
+
+            Access key: when Server > Authentication > Require Access Key for Local
+            Admin Routes (or network exposure) is on, pass --access-key KEY or set
+            OSAURUS_API_KEY (also OSAURUS_ACCESS_KEY, OSAURUS_MCP_ACCESS_KEY).
 
             Exit codes (apply): 0 = fully applied; 1 = a change failed or was
             cancelled; 3 = applied, but a step must be finished in the Osaurus

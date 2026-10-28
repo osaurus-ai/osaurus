@@ -2,8 +2,8 @@
 //  ClaudeCodeConfigurationTests.swift
 //  osaurusTests
 //
-//  Argument-vector, model-id, and PATH-resolution coverage for the Claude
-//  Code backend. Token-free — no subprocess, no network.
+//  Model-id, PATH-resolution, setup-state, and Osaurus-tool coverage for the
+//  Claude Code runtime. Token-free — only fake `claude` scripts are spawned.
 //
 
 import Foundation
@@ -16,190 +16,17 @@ struct ClaudeCodeConfigurationTests {
 
     // MARK: - Model ids
 
-    @Test func pickerIdsRoundTrip() {
-        for model in ClaudeCodeModel.allCases {
-            #expect(ClaudeCodeModel.fromPickerId(model.pickerId) == model)
-        }
+    @Test func legacyPickerIdsMapToModels() {
+        #expect(ClaudeCodeModel.fromPickerId("claude-code/sonnet") == .sonnet)
+        #expect(ClaudeCodeModel.fromPickerId("claude-code/opus") == .opus)
+        #expect(ClaudeCodeModel.fromPickerId("claude-code/haiku") == .haiku)
     }
 
     @Test func foreignModelIdsAreRejected() {
-        #expect(ClaudeCodeModel.fromPickerId("mlx-community/Qwen3-8B") == nil)
-        #expect(ClaudeCodeModel.fromPickerId("openai/gpt-5") == nil)
-        #expect(ClaudeCodeModel.fromPickerId("") == nil)
-        // Right prefix, unknown alias.
-        #expect(ClaudeCodeModel.fromPickerId("claude-code/nonexistent") == nil)
-    }
-
-    /// The service must not claim the empty / "default" model the way
-    /// `FoundationModelService` does — installing Claude Code should never
-    /// silently take over the system default.
-    @Test func serviceOnlyClaimsItsOwnIds() {
-        let service = ClaudeCodeService()
-        #expect(service.handles(requestedModel: "claude-code/sonnet"))
-        #expect(!service.handles(requestedModel: nil))
-        #expect(!service.handles(requestedModel: ""))
-        #expect(!service.handles(requestedModel: "default"))
-        #expect(!service.handles(requestedModel: "foundation"))
-    }
-
-    // MARK: - Argument vector
-
-    @Test func agentModeIsFailClosedByDefault() {
-        let args = ClaudeCodeConfiguration.arguments(
-            model: .sonnet,
-            mode: .agent,
-            allowedTools: ClaudeCodeConfiguration.allowedTools(allowWrites: false, allowShell: false),
-            systemPrompt: nil
-        )
-        // `dontAsk` is what makes an un-allowlisted tool a denial rather than a
-        // silent approval in a non-interactive run.
-        #expect(args.contains("--permission-mode"))
-        #expect(args.contains("dontAsk"))
-
-        guard let allowedIndex = args.firstIndex(of: "--allowedTools") else {
-            Issue.record("expected an --allowedTools flag in \(args)")
-            return
-        }
-        let allowed = args[allowedIndex + 1]
-        #expect(allowed.contains("Read"))
-        #expect(!allowed.contains("Bash"))
-        #expect(!allowed.contains("Write"))
-    }
-
-    @Test func optingIntoWritesAndShellWidensTheAllowlist() {
-        let args = ClaudeCodeConfiguration.arguments(
-            model: .opus,
-            mode: .agent,
-            allowedTools: ClaudeCodeConfiguration.allowedTools(allowWrites: true, allowShell: true),
-            systemPrompt: nil
-        )
-        guard let allowedIndex = args.firstIndex(of: "--allowedTools") else {
-            Issue.record("expected an --allowedTools flag in \(args)")
-            return
-        }
-        let allowed = args[allowedIndex + 1]
-        #expect(allowed.contains("Read"))
-        #expect(allowed.contains("Write"))
-        #expect(allowed.contains("Bash"))
-    }
-
-    /// `--tools ""` is the CLI's documented "disable every built-in" form.
-    @Test func textOnlyModeDisablesEveryBuiltinTool() {
-        let args = ClaudeCodeConfiguration.arguments(
-            model: .haiku,
-            mode: .textOnly,
-            allowedTools: ["Read", "Bash"],
-            systemPrompt: nil
-        )
-        guard let toolsIndex = args.firstIndex(of: "--tools") else {
-            Issue.record("expected a --tools flag in \(args)")
-            return
-        }
-        #expect(args[toolsIndex + 1].isEmpty)
-        // Permission mode is meaningless with no tools, and an allowlist would
-        // contradict the disable.
-        #expect(!args.contains("--allowedTools"))
-        #expect(!args.contains("--permission-mode"))
-    }
-
-    @Test func everyRunIsStatelessAndIgnoresUserMCPServers() {
-        let args = ClaudeCodeConfiguration.arguments(
-            model: .sonnet,
-            mode: .agent,
-            allowedTools: [],
-            systemPrompt: nil
-        )
-        // Without this the CLI writes into the user's ~/.claude history.
-        #expect(args.contains("--no-session-persistence"))
-        // Without this the CLI silently inherits whatever MCP servers the user
-        // configured for their own terminal sessions.
-        #expect(args.contains("--strict-mcp-config"))
-        // Without this the chat sits blank and paints the whole answer at once.
-        #expect(args.contains("--include-partial-messages"))
-        #expect(args.contains("--print"))
-
-        guard let formatIndex = args.firstIndex(of: "--output-format") else {
-            Issue.record("expected an --output-format flag in \(args)")
-            return
-        }
-        #expect(args[formatIndex + 1] == "stream-json")
-    }
-
-    @Test func modelAliasIsPassedThrough() {
-        let args = ClaudeCodeConfiguration.arguments(
-            model: .opus,
-            mode: .agent,
-            allowedTools: [],
-            systemPrompt: nil
-        )
-        guard let modelIndex = args.firstIndex(of: "--model") else {
-            Issue.record("expected a --model flag in \(args)")
-            return
-        }
-        #expect(args[modelIndex + 1] == "opus")
-    }
-
-    /// Appending rather than replacing keeps Claude Code's own tool contract
-    /// intact.
-    @Test func systemPromptIsAppendedNotReplaced() {
-        let args = ClaudeCodeConfiguration.arguments(
-            model: .sonnet,
-            mode: .agent,
-            allowedTools: [],
-            systemPrompt: "You are terse."
-        )
-        #expect(args.contains("--append-system-prompt"))
-        #expect(args.contains("You are terse."))
-        #expect(!args.contains("--system-prompt"))
-    }
-
-    @Test func blankSystemPromptIsOmitted() {
-        let args = ClaudeCodeConfiguration.arguments(
-            model: .sonnet,
-            mode: .agent,
-            allowedTools: [],
-            systemPrompt: "   \n "
-        )
-        #expect(!args.contains("--append-system-prompt"))
-    }
-
-    // MARK: - Prompt rendering
-
-    private func message(_ role: String, _ content: String) -> ChatMessage {
-        ChatMessage(role: role, content: content)
-    }
-
-    @Test func singleUserTurnIsSentBare() {
-        let rendered = ClaudeCodeService.renderPrompt(messages: [message("user", "hi there")])
-        #expect(rendered.prompt == "hi there")
-        #expect(rendered.systemPrompt == nil)
-    }
-
-    @Test func systemMessagesAreHoistedOutOfTheTranscript() {
-        let rendered = ClaudeCodeService.renderPrompt(messages: [
-            message("system", "Be brief."),
-            message("user", "hi"),
-        ])
-        #expect(rendered.systemPrompt == "Be brief.")
-        #expect(rendered.prompt == "hi")
-    }
-
-    @Test func priorTurnsAreRenderedAsALabeledTranscript() {
-        let rendered = ClaudeCodeService.renderPrompt(messages: [
-            message("user", "one"),
-            message("assistant", "two"),
-            message("user", "three"),
-        ])
-        #expect(rendered.prompt == "User: one\n\nAssistant: two\n\nUser: three")
-    }
-
-    @Test func emptyMessagesAreSkipped() {
-        let rendered = ClaudeCodeService.renderPrompt(messages: [
-            message("system", "   "),
-            message("user", "only this"),
-        ])
-        #expect(rendered.systemPrompt == nil)
-        #expect(rendered.prompt == "only this")
+        #expect(ClaudeCodeModel.fromPickerId("sonnet") == nil)
+        #expect(ClaudeCodeModel.fromPickerId("claude-code/") == nil)
+        #expect(ClaudeCodeModel.fromPickerId("claude-code/gpt-5") == nil)
+        #expect(ClaudeCodeModel.fromPickerId("anthropic/claude-sonnet-4") == nil)
     }
 
     // MARK: - Executable resolution
@@ -386,51 +213,19 @@ struct ClaudeCodeConfigurationTests {
         #expect(result.exitCode != 0)
     }
 
-    @Test func generationPromptUsesStdinInsteadOfArgv() async throws {
-        let directory = try makeFakeClaude(
-            """
-            if [ "$#" -ne 0 ]; then
-              printf 'prompt leaked into argv' >&2
-              exit 2
-            fi
-            prompt="$(cat)"
-            if [ "$prompt" = "private prompt" ]; then
-              text="stdin-ok"
-            else
-              text="stdin-missing"
-            fi
-            printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\\n' "$text"
-            printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"usage":{"output_tokens":1}}\\n'
-            """
-        )
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let events = ClaudeCodeProcessRunner.stream(
-            executable: directory.appendingPathComponent("claude").path,
-            arguments: [],
-            prompt: "private prompt",
-            workingDirectory: directory
-        )
-        var text = ""
-        for try await event in events {
-            if case .text(let delta) = event { text += delta }
-        }
-        #expect(text == "stdin-ok")
-    }
-
     @Test func processRegistryTerminatesChildrenForAppShutdown() async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", "sleep 5"]
         try process.run()
 
-        let registry = ClaudeCodeProcessRegistry()
-        await registry.register(UUID(), terminator: ProcessTerminator(process: process))
-        #expect(await registry.liveCount() == 1)
+        let registry = HarnessProcessRegistry()
+        registry.register(UUID(), terminator: ProcessTerminator(process: process))
+        #expect(registry.liveCount() == 1)
 
         await registry.terminateAll()
         #expect(!process.isRunning)
-        #expect(await registry.liveCount() == 0)
+        #expect(registry.liveCount() == 0)
     }
 
     @Test func oldCLIWithoutAuthJSONUsesManualStatusPath() async throws {
@@ -446,7 +241,7 @@ struct ClaudeCodeConfigurationTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let state = await ClaudeCodeConfiguration.setupState(
-            env: ["PATH": directory.path]
+            command: directory.appendingPathComponent("claude").path
         )
         #expect(state == .statusUnavailable(cliVersion: "2.1.37 (Claude Code)"))
     }
@@ -464,30 +259,9 @@ struct ClaudeCodeConfigurationTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let state = await ClaudeCodeConfiguration.setupState(
-            env: ["PATH": directory.path]
+            command: directory.appendingPathComponent("claude").path
         )
         #expect(state == .signedOut)
-    }
-
-    @Test func resultFailuresMapToTypedErrors() {
-        #expect(
-            ClaudeCodeProcessRunner.error(forFailureDetail: "authentication required")
-                == .notAuthenticated(detail: "authentication required")
-        )
-        #expect(
-            ClaudeCodeProcessRunner.error(forFailureDetail: "usage limit reached")
-                == .rateLimited(detail: "usage limit reached")
-        )
-        #expect(
-            ClaudeCodeProcessRunner.error(forFailureDetail: "upstream exploded")
-                == .turnFailed("upstream exploded")
-        )
-    }
-
-    @Test func coreModelNeverRetriesClaudeCodeFailures() {
-        #expect(!CoreModelService.isRetryable(ClaudeCodeError.rateLimited(detail: "limit")))
-        #expect(!CoreModelService.isRetryable(ClaudeCodeError.notAuthenticated(detail: "login")))
-        #expect(!CoreModelService.isRetryable(ClaudeCodeError.turnFailed("failed")))
     }
 
     private func makeFakeClaude(_ body: String) throws -> URL {
@@ -505,25 +279,23 @@ struct ClaudeCodeConfigurationTests {
 
     // MARK: - Osaurus MCP bridge
 
-    /// The dispatch tool must never be reachable: it can queue agent runs, and
-    /// a queued run can start another Claude Code subprocess.
-    @Test func scheduleToolIsNeverExposed() {
-        let readOnly = ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: false)
-        let full = ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: true)
-
-        #expect(!readOnly.contains("osaurus_schedule"))
-        #expect(!full.contains("osaurus_schedule"))
-        #expect(ClaudeCodeConfiguration.osaurusExcludedTools.contains("osaurus_schedule"))
-    }
-
     @Test func configWritesAreOptIn() {
         let readOnly = ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: false)
         let full = ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: true)
 
-        #expect(readOnly.contains("osaurus_status"))
-        #expect(!readOnly.contains("osaurus_agent"))
-        #expect(full.contains("osaurus_agent"))
-        #expect(full.count > readOnly.count)
+        #expect(readOnly == ["osaurus_inspect", "osaurus_help"])
+        #expect(full == ["osaurus_inspect", "osaurus_help", "osaurus_config"])
+    }
+
+    /// Every name handed to the CLI must be a tool the Osaurus registry
+    /// actually serves; a stale name is silently never callable.
+    @MainActor
+    @Test func exposedNamesAreRealRegistryTools() {
+        let registered = Set(ToolRegistry.shared.listTools().map(\.name))
+            .union(ConfigDeclarativeDomain.domain.tools.map(\.name))
+        for name in ClaudeCodeConfiguration.osaurusToolPatterns(allowConfigWrites: true) {
+            #expect(registered.contains(name), "\(name) is not a registered tool")
+        }
     }
 
     /// Claude Code addresses MCP tools as `mcp__<server>__<tool>`; the bare
@@ -531,22 +303,8 @@ struct ClaudeCodeConfigurationTests {
     @Test func allowedNamesUseClaudeCodeMCPNamespace() {
         let names = ClaudeCodeConfiguration.osaurusAllowedToolNames(allowConfigWrites: false)
 
-        #expect(names.contains("mcp__osaurus__osaurus_status"))
+        #expect(names == ["mcp__osaurus__osaurus_inspect", "mcp__osaurus__osaurus_help"])
         #expect(names.allSatisfy { $0.hasPrefix("mcp__osaurus__") })
-    }
-
-    @Test func osaurusToolsJoinTheAllowlistOnlyWhenGranted() {
-        let without = ClaudeCodeConfiguration.allowedTools(allowWrites: false, allowShell: false)
-        let with = ClaudeCodeConfiguration.allowedTools(
-            allowWrites: false,
-            allowShell: false,
-            allowOsaurusTools: true
-        )
-
-        #expect(!without.contains { $0.hasPrefix("mcp__") })
-        #expect(with.contains("mcp__osaurus__osaurus_status"))
-        // The read-only built-ins survive either way.
-        #expect(with.contains("Read"))
     }
 
     @Test func mcpConfigPointsAtTheGivenCLIWithAFilter() throws {
@@ -568,66 +326,8 @@ struct ClaudeCodeConfigurationTests {
         #expect(args.contains("--tools"))
         // The filter must be applied at the proxy, not left to the client.
         let patterns = try #require(args.last)
-        #expect(patterns.contains("osaurus_status"))
-        #expect(!patterns.contains("osaurus_schedule"))
-        #expect(!patterns.contains("osaurus_agent"))
-    }
-
-    @Test func mcpConfigIsOnlyAttachedInAgentModeWithACLI() {
-        let base = ClaudeCodeRunOptions(
-            mode: .agent,
-            allowOsaurusTools: true,
-            osaurusCLIPath: "/tmp/osaurus"
-        )
-        #expect(base.attachesOsaurusMCP)
-
-        var textOnly = base
-        textOnly.mode = .textOnly
-        #expect(!textOnly.attachesOsaurusMCP)
-
-        var noGrant = base
-        noGrant.allowOsaurusTools = false
-        #expect(!noGrant.attachesOsaurusMCP)
-
-        var noCLI = base
-        noCLI.osaurusCLIPath = nil
-        #expect(!noCLI.attachesOsaurusMCP)
-    }
-
-    @Test func mcpConfigFlagOnlyAppearsWhenPathGiven() {
-        let without = ClaudeCodeConfiguration.arguments(
-            model: .sonnet,
-            mode: .agent,
-            allowedTools: ["Read"],
-            systemPrompt: nil
-        )
-        #expect(!without.contains("--mcp-config"))
-
-        let with = ClaudeCodeConfiguration.arguments(
-            model: .sonnet,
-            mode: .agent,
-            allowedTools: ["Read"],
-            systemPrompt: nil,
-            mcpConfigPath: "/tmp/mcp.json"
-        )
-        #expect(with.contains("--mcp-config"))
-        #expect(with.contains("/tmp/mcp.json"))
-        // `--strict-mcp-config` must still be present, or the CLI would also
-        // load whatever the user configured for their terminal sessions.
-        #expect(with.contains("--strict-mcp-config"))
-    }
-
-    /// Text-only mode disables every tool, so an MCP config there would be
-    /// dead weight at best and misleading at worst.
-    @Test func textOnlyModeNeverAttachesMCP() {
-        let args = ClaudeCodeConfiguration.arguments(
-            model: .sonnet,
-            mode: .textOnly,
-            allowedTools: ["Read"],
-            systemPrompt: nil,
-            mcpConfigPath: "/tmp/mcp.json"
-        )
-        #expect(!args.contains("--mcp-config"))
+        #expect(patterns.contains("osaurus_inspect"))
+        #expect(!patterns.contains("osaurus_config"))
     }
 
     // MARK: - Capability note
@@ -641,7 +341,8 @@ struct ClaudeCodeConfigurationTests {
         )
 
         #expect(note.contains("NOT"))
-        #expect(note.contains("osaurus_status"))
+        #expect(note.contains("osaurus_inspect"))
+        #expect(note.contains("Allow Osaurus read tools"))
         // Must steer away from the exact failure mode observed in the wild.
         #expect(note.lowercased().contains("permission"))
     }
@@ -674,10 +375,10 @@ struct ClaudeCodeConfigurationTests {
             allowConfigWrites: false
         )
 
-        #expect(note.contains("osaurus_status"))
-        // Un-granted and excluded tools must not be advertised.
-        #expect(!note.contains("osaurus_agent"))
-        #expect(!note.contains("osaurus_schedule"))
+        #expect(note.contains("osaurus_inspect"))
+        #expect(note.contains("osaurus_help"))
+        // Un-granted tools must not be advertised.
+        #expect(!note.contains("osaurus_config"))
         #expect(note.lowercased().contains("read-only"))
     }
 
@@ -687,10 +388,8 @@ struct ClaudeCodeConfigurationTests {
             allowConfigWrites: true
         )
 
-        #expect(note.contains("osaurus_agent"))
+        #expect(note.contains("osaurus_config"))
         #expect(!note.lowercased().contains("read-only"))
-        // Still never the dispatch tool.
-        #expect(!note.contains("osaurus_schedule"))
     }
 
     @Test func displayPlanNormalizesWhitespaceAndEmpty() {

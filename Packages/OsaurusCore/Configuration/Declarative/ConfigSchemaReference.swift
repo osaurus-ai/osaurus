@@ -30,20 +30,24 @@ enum ConfigSchemaReference {
         Semantics
         - Merge-by-default: a key ABSENT from the document is left unchanged.
         - Explicit `null` clears an optional override back to its default.
-        - Entities (agents, mcp_servers, providers, schedules, watchers) match
-          existing ones by `name` (case-insensitive): unmatched entries are
-          created, matched ones are patched.
+        - Entities (agents, harness_runtimes, mcp_servers, providers,
+          schedules, watchers) match existing ones by `name`
+          (case-insensitive): unmatched entries are created, matched ones are
+          patched.
         - `models` and `plugins` are plain desired-state lists of ids.
         - apply with `prune: true` additionally DELETES entries not listed in
           the sections the document declares. Never prunes undeclared sections.
         - Secrets NEVER appear in the document. Write-only `*_ref` keys
-          (api_key_ref, token_ref, secret_env_refs, bot_token_ref,
-          app_token_ref) accept `env:VAR_NAME` or `keychain:SERVICE/ACCOUNT`;
+          (api_key_ref, token_ref, secret_env_refs, secret_header_refs,
+          bot_token_ref, app_token_ref) accept `env:VAR_NAME` or `keychain:SERVICE/ACCOUNT`;
           the credential is read from there during apply and stored in the
           Keychain, and refs are never exported. Without a ref, creating a
           cloud provider opens the native credential sheet during apply, and
           keyed MCP/search providers are registered for the user to finish
           auth in Settings.
+        - harness_runtimes apply before agents, so `runtime:` may name a
+          runtime the same document adds. An unknown runtime name is an error,
+          never a fallback to `builtin`.
         """
 
     static let footer = """
@@ -56,8 +60,9 @@ enum ConfigSchemaReference {
         generation model selection, tool auto-approval grants, telemetry/crash
         toggles, identity/pairing keys, storage encryption, custom channel
         connections/per-room routes, WhatsApp/iMessage pairing, hotkeys,
-        endpoint changes on existing providers (create-only), skills, custom
-        search definitions. Per-agent capability toggles (including
+        endpoint changes on existing providers (create-only), skill content
+        (installing skills; an agent's allow-list is `agents[].skills`),
+        custom search definitions. Per-agent capability toggles (including
         computer_use_enabled, browser_use_enabled and the built-in Apple app
         tools under `apple_apps`) stay under `agents[].capabilities`. Apple
         app access (Calendar, Reminders, Contacts, Notes, Mail, Messages,

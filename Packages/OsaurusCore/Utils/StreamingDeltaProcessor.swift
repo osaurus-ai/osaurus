@@ -168,6 +168,10 @@ final class StreamingDeltaProcessor {
     /// happens here, so partial `<think>` fragments cannot leak.
     func receiveReasoning(_ text: String) {
         guard !text.isEmpty else { return }
+        // A later reasoning phase must not be closed by an older visible
+        // delta still sitting in the smooth-reveal buffer. Preserve channel
+        // order before starting that new phase.
+        flush()
         appendThinking(text)
         let now = Date()
         syncIfNeeded(now: now)
@@ -219,6 +223,16 @@ final class StreamingDeltaProcessor {
             stopPacingTimer()
             appendContent(consume(pendingCount))
         }
+        syncToTurn()
+    }
+
+    /// Finish an interrupted/erroring consumer without leaving scheduled
+    /// reveal work writing into a finalized turn. Every received character
+    /// is retained; only the decorative pacing delay is skipped.
+    func finishImmediately() {
+        flush()
+        stopPacingTimer()
+        resumePacingDoneIfNeeded()
         syncToTurn()
     }
 

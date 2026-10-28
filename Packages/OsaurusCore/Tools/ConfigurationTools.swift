@@ -216,13 +216,41 @@ enum ConfigurationReadNextStep {
             """,
     ]
 
-    static func semanticsHeader(forScope scope: String) -> String {
+    /// The agents-scope capability line. Unlike the static ones this is
+    /// built per call, because it names the user's own orchestrator-visible
+    /// templates — and because with no templates there is nothing to say.
+    ///
+    /// It exists to counter `writeContract`, which rides on every read and
+    /// says to compose YAML and apply. Taken alone that steers the model
+    /// into hand-writing an agent (inheriting whatever it saw on some other
+    /// agent) even when a template covers the request exactly.
+    static func agentTemplateCapabilityLine(templateNames: [String]) -> String? {
+        guard !templateNames.isEmpty else { return nil }
+        let names = templateNames.joined(separator: ", ")
+        return """
+            # AGENT TEMPLATES are available to you: \(names). To CREATE an agent, \
+            PREFER a template over hand-writing one: osaurus_config {action: 'plan', \
+            template: '<name>', overrides: {name: ..., system_prompt: ...}}, then apply. \
+            A template fixes the model, tools, MCP servers, sandbox and subagents, so \
+            the new agent gets exactly that set instead of inheriting everything. Call \
+            osaurus_config {action: 'templates'} to read what each one is for. \
+            Hand-write an agent only when no template fits, and say which you ruled \
+            out. An agent the user describes as "local", "cloud", or "small"/"sub" \
+            almost always names a TEMPLATE, NOT an existing agent that happens to be \
+            called that.
+            """
+    }
+
+    static func semanticsHeader(forScope scope: String, agentTemplateNames: [String] = []) -> String {
         var header = shapeSemanticsHeader
         if secretScopes.contains(scope) {
             header += "\n" + secretScopeSemantics
         }
         if let capability = scopeCapabilityLines[scope] {
             header += "\n" + capability
+        }
+        if scope == "agents", let templates = agentTemplateCapabilityLine(templateNames: agentTemplateNames) {
+            header += "\n" + templates
         }
         return header
     }
@@ -250,15 +278,21 @@ enum ConfigurationReadNextStep {
         case "default_agent": return [.defaultAgent]
         case "tools": return [.tools]
         case "delegation": return [.delegation]
+        case "harness_runtimes": return [.harnessRuntimes]
         default: return nil
         }
     }
 
-    static func success(tool: String, result: [String: Any], scope: String? = nil) -> String {
+    static func success(
+        tool: String,
+        result: [String: Any],
+        scope: String? = nil,
+        agentTemplateNames: [String] = []
+    ) -> String {
         var result = result
         if let scope, let sections = shapeSections(forScope: scope) {
             result["yaml_shape"] =
-                semanticsHeader(forScope: scope) + "\n"
+                semanticsHeader(forScope: scope, agentTemplateNames: agentTemplateNames) + "\n"
                 + ConfigManifest.renderedSchemaSections(only: sections)
             result["next_step"] = hint(hasShape: true)
         } else {
@@ -364,11 +398,12 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     .string("server"), .string("chat"), .string("app"),
                     .string("memory"), .string("default_agent"),
                     .string("new_chat_agent"), .string("active_agent"), .string("tools"),
-                    .string("delegation"),
+                    .string("delegation"), .string("harness_runtimes"),
                 ]),
                 "description": .string(
                     "Configuration scope. Required for list and describe. memory, "
-                        + "default_agent, new_chat_agent (alias active_agent), tools, and delegation are settings "
+                        + "default_agent, new_chat_agent (alias active_agent), tools, delegation, and "
+                        + "harness_runtimes are settings "
                         + "document sections — list/describe returns the section's current "
                         + "values (change them with osaurus_config apply). server, chat, and "
                         + "app are Settings-UI-only."),
@@ -473,7 +508,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             }
 
             let availableModels = ModelManager.shared.availableModels
-            let installedModels = availableModels.filter { $0.isDownloaded }
+            let installedModels = ModelManager.shared.installedModels()
             let downloadingModels = availableModels.filter { model in
                 if case .downloading = ModelManager.shared.effectiveDownloadState(for: model) {
                     return true
@@ -806,7 +841,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                 let filtered: [MLXModel]
                 switch filter {
                 case "installed", "":
-                    filtered = all.filter { $0.isDownloaded }
+                    filtered = ModelManager.shared.installedModels()
                 case "downloading":
                     filtered = all.filter {
                         if case .downloading = ModelManager.shared.effectiveDownloadState(for: $0) {
@@ -819,7 +854,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                 case "recommended":
                     filtered = Array(all.prefix(10))
                 default:
-                    filtered = all.filter { $0.isDownloaded }
+                    filtered = ModelManager.shared.installedModels()
                 }
                 let items = filtered.map { model -> [String: Any] in
                     var dict: [String: Any] = [
@@ -1024,7 +1059,10 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             default:
                 return Self.unknownScopeFailure(scope: scope, tool: name)
             }
-            return ConfigurationReadNextStep.success(tool: name, result: payload, scope: scope)
+            return ConfigurationReadNextStep.success(
+                tool: name, result: payload, scope: scope,
+                agentTemplateNames: Self.visibleAgentTemplateNames(forScope: scope)
+            )
         }
         return envelope
     }
@@ -1261,6 +1299,23 @@ extension OsaurusInspectTool {
     }
 
     fileprivate func describeItem(scope: String, idStr: String) async -> String {
+        // INVARIANT: a known text configuration value must not enumerate image bundles.
+        if scope == "models", idStr.caseInsensitiveCompare("foundation") == .orderedSame {
+            // Observed dead end: a "switch to foundation" ask gets
+            // verified against installed models, comes back empty,
+            // and the model refuses a perfectly valid setting.
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "\"foundation\" is the built-in Apple Foundation on-device model, "
+                    + "not an installed model entry. It is always available as a model "
+                    + "VALUE: apply it directly (e.g. default_agent.model: foundation "
+                    + "or agents[].model: foundation).",
+                field: "id",
+                tool: name
+            )
+        }
+
         // Skills and knowledge collections load from disk off the main
         // actor; resolve those scopes before the MainActor hop below.
         switch scope {
@@ -1362,21 +1417,6 @@ extension OsaurusInspectTool {
                     payload = nil
                 }
             case "models":
-                if idStr.caseInsensitiveCompare("foundation") == .orderedSame {
-                    // Observed dead end: a "switch to foundation" ask gets
-                    // verified against installed models, comes back empty,
-                    // and the model refuses a perfectly valid setting.
-                    return ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message:
-                            "\"foundation\" is the built-in Apple Foundation on-device model, "
-                            + "not an installed model entry. It is always available as a model "
-                            + "VALUE: apply it directly (e.g. default_agent.model: foundation "
-                            + "or agents[].model: foundation).",
-                        field: "id",
-                        tool: name
-                    )
-                }
                 if let model = ModelManager.shared.availableModels.first(where: {
                     $0.id == idStr || $0.name.caseInsensitiveCompare(idStr) == .orderedSame
                 })
@@ -1624,9 +1664,21 @@ extension OsaurusInspectTool {
             }
             var result = payload
             result["scope"] = scope
-            return ConfigurationReadNextStep.success(tool: name, result: result, scope: scope)
+            return ConfigurationReadNextStep.success(
+                tool: name, result: result, scope: scope,
+                agentTemplateNames: Self.visibleAgentTemplateNames(forScope: scope)
+            )
         }
         return envelope
+    }
+
+    /// Names of the agent templates the user flagged for the orchestrator,
+    /// for the agents-scope read hint. Empty for every other scope, and for
+    /// a user who has hidden them all.
+    @MainActor
+    static func visibleAgentTemplateNames(forScope scope: String) -> [String] {
+        guard scope == "agents" else { return [] }
+        return TemplateStore.shared.orchestratorVisible(kind: .agent).map(\.name)
     }
 
     private static func notFoundFailure(scope: String, id: String, tool: String) -> String {

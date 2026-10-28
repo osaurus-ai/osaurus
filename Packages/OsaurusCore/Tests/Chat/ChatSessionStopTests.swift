@@ -44,23 +44,88 @@ struct ChatSessionStopTests {
         }
     }
 
-    @Test
-    func stopAfterPreparedInputDoesNotRetainMetadataAsAnAnswer() async throws {
+    @Test(arguments: [false, true])
+    func stopAfterPreparedInputDoesNotRetainMetadataAsAnAnswer(nativeTyped: Bool) async throws {
         try await ChatHistoryTestStorage.run {
             enableDefaultAgentTools(warmModelsOnLoad: false)
             let session = ChatSession()
             session.toolsDisabledForTestingOverride = true
             session.forceChatEngineRouteForTests = true
             session.selectedModel = "input-metadata-ui-test"
-            let engine = InputMetadataChatEngine()
+            let engine = InputMetadataChatEngine(nativeTyped: nativeTyped)
             session.chatEngineFactory = { _ in engine }
             session.send("Describe the image.")
             try await waitUntil(timeout: Self.asyncTimeout) { session.turns.last?.inputTokenCount == 2072 }
+            let sendTask = try #require(session.currentSendTaskForTesting)
             session.stop()
+            // Stop unlocks the composer synchronously; await the task that
+            // could still overwrite its cancelled row with a terminal error.
+            await sendTask.value
             await engine.finishAnswer()
-            try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
-            #expect(session.turns.filter { $0.role == .assistant }.allSatisfy { $0.contentIsEmpty })
+            let assistantContents = session.turns.filter { $0.role == .assistant }.map(\.content)
+            #expect(assistantContents.allSatisfy { $0.isEmpty }, "Actual assistant contents after Stop: \(assistantContents)")
+            #expect(session.lastStreamError == nil)
+            #expect(session.turns.last?.terminalStopReason == "cancelled")
+            #expect(!session.isSendActiveForComposer)
             #expect(session.turns.allSatisfy { !$0.content.contains("\u{FFFE}") })
+
+            // A real subsequent request must still complete in this session;
+            // the old task has fully unwound before it gets ownership.
+            session.send("Explain that answer.")
+            try await waitUntil(timeout: Self.asyncTimeout) { session.turns.last?.inputTokenCount == 2072 }
+            let followupTask = try #require(session.currentSendTaskForTesting)
+            await engine.finishAnswer()
+            await followupTask.value
+            #expect(session.turns.last?.content == "The image contains a red square.")
+            #expect(session.turns.last?.terminalStopReason == "stop")
+            #expect(await engine.requestText.count == 2)
+            #expect(session.lastStreamError == nil)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func stopRetainsReceivedOutputButRejectsLateAnswer(nativeTyped: Bool) async throws {
+        try await ChatHistoryTestStorage.run {
+            enableDefaultAgentTools(warmModelsOnLoad: false)
+            let session = ChatSession()
+            session.toolsDisabledForTestingOverride = true
+            session.forceChatEngineRouteForTests = true
+            session.selectedModel = "input-metadata-ui-test"
+            let engine = InputMetadataChatEngine(nativeTyped: nativeTyped)
+            session.chatEngineFactory = { _ in engine }
+            session.send("Describe the image.")
+            try await waitUntil(timeout: Self.asyncTimeout) { session.turns.last?.inputTokenCount == 2072 }
+            await engine.emitPartialAnswer("Received before Stop.")
+            try await waitUntil(timeout: Self.asyncTimeout) { session.turns.last?.lastOutputAt != nil }
+            let sendTask = try #require(session.currentSendTaskForTesting)
+            session.stop()
+            await sendTask.value
+            await engine.finishAnswer()
+            let answer = try #require(session.turns.last(where: { $0.role == .assistant }))
+            #expect(answer.content == "Received before Stop.", "Actual assistant content after Stop: \(answer.content)")
+            #expect(answer.terminalStopReason == "cancelled")
+            #expect(session.lastStreamError == nil)
+        }
+    }
+
+    @Test
+    func activeTypedStreamMissingCompletionStillSurfacesActualProtocolError() async throws {
+        try await ChatHistoryTestStorage.run {
+            enableDefaultAgentTools(warmModelsOnLoad: false)
+            let session = ChatSession()
+            session.toolsDisabledForTestingOverride = true
+            session.forceChatEngineRouteForTests = true
+            session.selectedModel = "input-metadata-ui-test"
+            let engine = InputMetadataChatEngine(nativeTyped: true)
+            session.chatEngineFactory = { _ in engine }
+            session.send("Describe the image.")
+            try await waitUntil(timeout: Self.asyncTimeout) { session.turns.last?.inputTokenCount == 2072 }
+            let sendTask = try #require(session.currentSendTaskForTesting)
+            await engine.finishWithoutCompletion()
+            await sendTask.value
+            let error = ResponsesGenerationResult.CollectionError.missingCompletion
+            #expect(session.lastStreamError == error.localizedDescription)
+            #expect(session.turns.last?.content == ChatErrorMessages.assistantMessage(for: error))
         }
     }
 
@@ -471,7 +536,22 @@ struct ChatSessionStopTests {
 
 private actor InputMetadataChatEngine: ChatEngineProtocol {
     private var continuation: AsyncThrowingStream<String, Error>.Continuation?
+    private var typedContinuation: AsyncThrowingStream<ResponsesGenerationEvent, Error>.Continuation?
+    private let nativeTyped: Bool
     private(set) var requestText: [String] = []
+
+    init(nativeTyped: Bool = false) { self.nativeTyped = nativeTyped }
+
+    func streamResponses(request: ResponsesInferenceRequest) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+        guard nativeTyped else {
+            return ResponsesGenerationStream.compatibility(try await streamChat(request: request.chatCompletionsCompatibilityRequest()))
+        }
+        requestText.append(request.input.compactMap(\.content).joined(separator: "\n"))
+        let (stream, continuation) = AsyncThrowingStream<ResponsesGenerationEvent, Error>.makeStream()
+        typedContinuation = continuation
+        continuation.yield(.inputTokenCount(2072))
+        return stream
+    }
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
         requestText.append(request.messages.compactMap(\.content).joined(separator: "\n"))
@@ -488,6 +568,22 @@ private actor InputMetadataChatEngine: ChatEngineProtocol {
         continuation?.yield(StreamingStatsHint.encode(tokenCount: 9, tokensPerSecond: 18, stopReason: "stop"))
         continuation?.finish()
         continuation = nil
+        typedContinuation?.yield(.outputTextDelta("The image contains a red square."))
+        typedContinuation?.yield(.responseCompleted(.init(responseID: "resp_input_metadata", status: .completed,
+            functionCalls: [], tokenCount: 9, tokensPerSecond: 18, unclosedReasoning: false,
+            stopReason: "stop", promptTokensPerSecond: nil, mtp: nil)))
+        typedContinuation?.finish()
+        typedContinuation = nil
+    }
+
+    func emitPartialAnswer(_ text: String) {
+        continuation?.yield(text)
+        typedContinuation?.yield(.outputTextDelta(text))
+    }
+
+    func finishWithoutCompletion() {
+        typedContinuation?.finish()
+        typedContinuation = nil
     }
 
     func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {

@@ -63,6 +63,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Provider-native Responses output Items retained for exact stateless
     /// replay. Empty for legacy sessions and non-Responses providers.
     public var responsesOutputItems: [JSONValue]
+    public var anthropicThinkingBlocks: [JSONValue] = []
     public var inputTokenCount: Int?
     public var cachedInputTokenCount: Int?
     /// An abandoned reasoning/protocol attempt can remain visible in the
@@ -77,6 +78,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// session replays the exact wire bytes of every past turn and the
     /// disk-backed prefix cache can still hit. Nil for non-user turns and
     /// legacy sessions.
+    var generationControls: ChatTurnGenerationControls? = nil
     public var injectedContextPrefix: String?
 
     public init(
@@ -169,12 +171,14 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
         responsesOutputItems =
             try container.decodeIfPresent([JSONValue].self, forKey: .responsesOutputItems) ?? []
+        anthropicThinkingBlocks = try container.decodeIfPresent([JSONValue].self, forKey: .anthropicThinkingBlocks) ?? []
         inputTokenCount = try container.decodeIfPresent(Int.self, forKey: .inputTokenCount)
         cachedInputTokenCount =
             try container.decodeIfPresent(Int.self, forKey: .cachedInputTokenCount)
         modelContextExcluded =
             try container.decodeIfPresent(Bool.self, forKey: .modelContextExcluded) ?? false
         routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
+        generationControls = try container.decodeIfPresent(ChatTurnGenerationControls.self, forKey: .generationControls)
         injectedContextPrefix = try container.decodeIfPresent(String.self, forKey: .injectedContextPrefix)
 
         if let unified = try container.decodeIfPresent([Attachment].self, forKey: .attachments) {
@@ -220,12 +224,14 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         if !responsesOutputItems.isEmpty {
             try container.encode(responsesOutputItems, forKey: .responsesOutputItems)
         }
+        if !anthropicThinkingBlocks.isEmpty { try container.encode(anthropicThinkingBlocks, forKey: .anthropicThinkingBlocks) }
         try container.encodeIfPresent(inputTokenCount, forKey: .inputTokenCount)
         try container.encodeIfPresent(cachedInputTokenCount, forKey: .cachedInputTokenCount)
         if modelContextExcluded {
             try container.encode(true, forKey: .modelContextExcluded)
         }
         try container.encodeIfPresent(routerBilling, forKey: .routerBilling)
+        try container.encodeIfPresent(generationControls, forKey: .generationControls)
         try container.encodeIfPresent(injectedContextPrefix, forKey: .injectedContextPrefix)
     }
 
@@ -238,11 +244,11 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case createdAt, completedAt, lastOutputAt, generationTokenCount, timeToFirstToken
         case generationTokensPerSecond, modelLoadSeconds, requestedAt
         case terminalStopReason
-        case reasoningItemId, reasoningEncrypted, responsesOutputItems
+        case reasoningItemId, reasoningEncrypted, responsesOutputItems, anthropicThinkingBlocks
         case inputTokenCount, cachedInputTokenCount
         case modelContextExcluded
         case routerBilling
-        case injectedContextPrefix
+        case injectedContextPrefix, generationControls
     }
 }
 
@@ -289,11 +295,13 @@ extension ChatTurnData {
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
         self.responsesOutputItems = turn.responsesOutputItems
+        self.anthropicThinkingBlocks = turn.anthropicThinkingBlocks
         self.inputTokenCount = turn.inputTokenCount
         self.cachedInputTokenCount = turn.cachedInputTokenCount
         self.modelContextExcluded = turn.modelContextExcluded
         self.routerBilling = turn.routerBilling
         self.injectedContextPrefix = turn.injectedContextPrefix
+        self.generationControls = turn.generationControls
     }
 }
 
@@ -329,10 +337,12 @@ extension ChatTurn {
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted
         self.responsesOutputItems = data.responsesOutputItems
+        self.anthropicThinkingBlocks = data.anthropicThinkingBlocks
         self.inputTokenCount = data.inputTokenCount
         self.cachedInputTokenCount = data.cachedInputTokenCount
         self.modelContextExcluded = data.modelContextExcluded
         self.routerBilling = data.routerBilling
         self.injectedContextPrefix = data.injectedContextPrefix
+        self.generationControls = data.generationControls
     }
 }

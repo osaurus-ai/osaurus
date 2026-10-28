@@ -50,8 +50,11 @@ public struct PullCommand: Command {
 
         print("Pulling \(modelId) ...")
 
-        // Resolve the local destination: ~/.osaurus/models/<org>/<name>
-        let destination = resolveLocalDirectory(for: modelId)
+        // Use the same model root as the app and installation diagnostics.
+        guard let destination = resolveLocalDirectory(for: modelId) else {
+            fputs("Invalid or escaping model identifier: \(modelId)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
 
         do {
             try FileManager.default.createDirectory(
@@ -82,7 +85,8 @@ public struct PullCommand: Command {
 
         for file in files {
             guard let dest = destinationURL(forRemotePath: file.path, under: destination) else {
-                continue
+                fputs("Invalid remote path for file: \(file.path)\n", stderr)
+                exit(EXIT_FAILURE)
             }
             let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
             let existingSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
@@ -94,6 +98,10 @@ public struct PullCommand: Command {
         }
 
         if filesToDownload.isEmpty {
+            guard notifyAppIfPullComplete(files: files, destination: destination) else {
+                fputs("Model files are incomplete or changed while checking the download.\n", stderr)
+                exit(EXIT_FAILURE)
+            }
             print("Model '\(modelId)' is already up to date.")
             exit(EXIT_SUCCESS)
         }
@@ -111,7 +119,7 @@ public struct PullCommand: Command {
                 let fileDest = destinationURL(forRemotePath: file.path, under: destination)
             else {
                 fputs("Invalid remote path for file: \(file.path)\n", stderr)
-                continue
+                exit(EXIT_FAILURE)
             }
 
             // Create intermediate subdirectories if needed (e.g. for sharded weights)
@@ -134,31 +142,58 @@ public struct PullCommand: Command {
             }
         }
 
+        guard notifyAppIfPullComplete(files: files, destination: destination) else {
+            fputs("Model files are incomplete or changed while checking the download.\n", stderr)
+            exit(EXIT_FAILURE)
+        }
         print("\nDone. Model saved to: \(destination.path)")
         exit(EXIT_SUCCESS)
     }
 
+    /// Refresh a running app only after every expected file is present at its
+    /// final size. This also covers the already-up-to-date path without using
+    /// the HTTP API (which may require an access key).
+    static func notifyAppIfPullComplete(
+        files: [(path: String, size: Int64)],
+        destination: URL,
+        postNotification: (String, [AnyHashable: Any]) -> Void = { name, payload in
+            AppControl.postDistributedNotification(name: name, userInfo: payload)
+        }
+    ) -> Bool {
+        guard !files.isEmpty else { return false }
+        for file in files {
+            guard file.size > 0,
+                let url = destinationURL(forRemotePath: file.path, under: destination),
+                let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                attributes[.type] as? FileAttributeType == .typeRegular,
+                (attributes[.size] as? NSNumber)?.int64Value == file.size
+            else { return false }
+        }
+        postNotification("com.dinoki.osaurus.control.modelsReload", [:])
+        return true
+    }
+
     // MARK: - Local directory resolution
 
-    /// Resolve the local storage directory for a model.
-    /// Attempts to read the Osaurus shared defaults for the user-configured models path,
-    /// falling back to ~/.osaurus/models.
-    private static func resolveLocalDirectory(for modelId: String) -> URL {
-        let baseDir: URL
-        if let shared = UserDefaults(suiteName: "group.com.osaurus.shared"),
-            let storedPath = shared.string(forKey: "modelsDirectoryPath"),
-            !storedPath.isEmpty
-        {
-            baseDir = URL(fileURLWithPath: storedPath, isDirectory: true)
-        } else {
-            baseDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".osaurus/models", isDirectory: true)
-        }
-        // Decompose "org/model" into nested path components
-        let components = modelId.split(separator: "/").map(String.init)
-        return components.reduce(baseDir) { partial, component in
-            partial.appendingPathComponent(component, isDirectory: true)
-        }
+    /// Resolve the model root through the shared configuration contract, then
+    /// contain the repository path before creating directories or requesting files.
+    static func resolveLocalDirectory(
+        for modelId: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        appDefaults: UserDefaults? = UserDefaults(suiteName: "com.dinoki.osaurus"),
+        sharedDefaults: UserDefaults? = UserDefaults(suiteName: "group.com.osaurus.shared"),
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL? {
+        let base = Configuration.resolveModelsDirectoryWithSource(
+            environment: environment,
+            appDefaults: appDefaults,
+            sharedDefaults: sharedDefaults,
+            home: home
+        ).url
+        guard let destination = destinationURL(forRemotePath: modelId, under: base),
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) == nil
+        else { return nil }
+        return destination
     }
 
     // MARK: - Remote path containment

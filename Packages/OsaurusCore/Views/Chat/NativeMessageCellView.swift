@@ -1713,10 +1713,9 @@ final class NativeStatsView: NSView {
                 parts.append(String(format: L("TTFT %.2fs"), ttft))
             }
         }
-        // A cold container load is time the user waited but it is NOT the
-        // engine being slow, so it gets its own chip instead of being folded
-        // into TTFT. Suppressed entirely when the model was already resident,
-        // which is the common case — this must not add noise to every turn.
+        // Retain separately recorded load data on older persisted turns.
+        // New typed turns do not fabricate this attribution from global
+        // activity; their TTFT includes the complete request-step wait.
         if let modelLoad, modelLoad >= 0.05 {
             parts.append(String(format: L("+%@ model load"), Self.formatLoad(modelLoad)))
         }
@@ -2099,7 +2098,7 @@ final class NativeMessageCellView: NSTableCellView {
             )
 
         case let .typingIndicator(phase):
-            configureAsTypingIndicator(phase: phase, context: context, sameKind: sameKind)
+            configureAsTypingIndicator(phase: phase, prefillProgress: block.prefillProgress, context: context, sameKind: sameKind)
 
         case let .sharedArtifact(artifact):
             configureAsArtifact(block: block, artifact: artifact, context: context, sameKind: sameKind)
@@ -3007,6 +3006,7 @@ final class NativeMessageCellView: NSTableCellView {
 
     private func configureAsTypingIndicator(
         phase: TypingIndicatorPhase,
+        prefillProgress: PrefillProgressState?,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -3023,7 +3023,7 @@ final class NativeMessageCellView: NSTableCellView {
             ])
             nativeTypingView = tv
         }
-        nativeTypingView?.configure(theme: context.theme, phase: phase)
+        nativeTypingView?.configure(theme: context.theme, phase: phase, prefillProgress: prefillProgress)
     }
 
     // MARK: - GenerationStats

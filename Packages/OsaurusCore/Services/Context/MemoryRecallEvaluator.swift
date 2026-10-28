@@ -18,7 +18,7 @@
 
 import Foundation
 
-/// One completed turn of a memory-recall run.
+/// One terminal turn of a memory-recall run, including diagnostic partial rows.
 public struct MemoryRecallTurn: Sendable, Codable {
     /// The visible answer for the turn.
     public let visibleText: String
@@ -28,17 +28,26 @@ public struct MemoryRecallTurn: Sendable, Codable {
     /// The injected memory section (for forensics on failing cases).
     public let memorySection: String?
 
-    public init(visibleText: String, memoryInjected: Bool, memorySection: String?) {
+    /// Authoritative runtime metrics; nil means the runtime did not report them.
+    public let tokenCount: Int?
+    public let decodeTokensPerSecond: Double?
+
+    public init(
+        visibleText: String, memoryInjected: Bool, memorySection: String?,
+        tokenCount: Int? = nil, decodeTokensPerSecond: Double? = nil
+    ) {
         self.visibleText = visibleText
         self.memoryInjected = memoryInjected
         self.memorySection = memorySection
+        self.tokenCount = tokenCount
+        self.decodeTokensPerSecond = decodeTokensPerSecond
     }
 }
 
 /// Result of a memory-recall run.
 public struct MemoryRecallTranscript: Sendable, Codable {
     public let turns: [MemoryRecallTurn]
-    /// Non-nil when a turn failed; completed turns are kept.
+    /// Non-nil when a turn failed; terminal diagnostic rows are retained.
     public let error: String?
 
     public init(turns: [MemoryRecallTurn], error: String? = nil) {
@@ -127,90 +136,54 @@ public enum MemoryRecallEvaluator {
     /// `assembleMemorySection` (gate + planner + budget) and prepend via
     /// `injectMemoryPrefix`, exactly like the chat surface.
     public static func run(
-        queries: [String],
-        agentId: String,
-        model: String? = nil,
-        maxTokens: Int = 512
+        queries: [String], agentId: String, model: String? = nil,
+        maxTokens: Int = 512, temperature: Float? = nil
     ) async -> MemoryRecallTranscript {
-        let resolvedModel =
-            model
-            ?? ChatConfigurationStore.load().coreModelIdentifier
-            ?? "foundation"
-        let engine = ChatEngine()
-        let sessionId = UUID().uuidString
+        let resolvedModel = model ?? ChatConfigurationStore.load().coreModelIdentifier ?? "foundation"
+        return await runConversation(
+            queries: queries, agentId: agentId, model: resolvedModel, maxTokens: maxTokens,
+            temperature: temperature, engine: ChatEngine()
+        )
+    }
 
+    static func runConversation(
+        queries: [String], agentId: String, model: String, maxTokens: Int,
+        temperature: Float? = nil, engine: any ResponsesEngineProtocol,
+        memorySectionProvider: @MainActor (String, String) async -> String? = { agentId, query in
+            await SystemPromptComposer.assembleMemorySection(agentId: agentId, query: query)
+        }
+    ) async -> MemoryRecallTranscript {
+        let sessionId = UUID().uuidString
         var history: [ChatMessage] = []
         var turns: [MemoryRecallTurn] = []
-
-        for query in queries {
+        for (index, query) in queries.enumerated() {
             history.append(ChatMessage(role: "user", content: query))
-
-            let memorySection = await SystemPromptComposer.assembleMemorySection(
-                agentId: agentId,
-                query: query
-            )
+            let memorySection = await memorySectionProvider(agentId, query)
             var messages = history
             SystemPromptComposer.injectMemoryPrefix(memorySection, into: &messages)
-
-            let request = ChatCompletionRequest(
-                model: resolvedModel,
-                messages: messages,
-                temperature: 0.0,
-                max_tokens: maxTokens,
-                stream: true,
-                top_p: nil,
-                frequency_penalty: nil,
-                presence_penalty: nil,
-                stop: nil,
-                n: nil,
-                tools: nil,
-                tool_choice: nil,
-                session_id: sessionId
+            let request = ResponsesInferenceRequest(
+                model: model, input: messages,
+                generation: ResponsesGenerationOptions(temperature: temperature, maxOutputTokens: maxTokens),
+                sessionID: sessionId
             )
-
-            var visible = ""
-            var reasoning = ""
             do {
-                let stream = try await engine.streamChat(request: request)
-                for try await delta in stream {
-                    if let fragment = StreamingReasoningHint.decode(delta) {
-                        reasoning += fragment
-                        continue
-                    }
-                    if StreamingStatsHint.decode(delta) != nil { continue }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    visible += delta
-                }
+                let result = try await engine.completeResponse(request: request, endAt: .streamEnd)
+                turns.append(MemoryRecallTurn(
+                    visibleText: result.text,
+                    memoryInjected: !(memorySection ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    memorySection: memorySection,
+                    tokenCount: result.completion.tokenCount,
+                    decodeTokensPerSecond: result.completion.tokensPerSecond
+                ))
+                // Memory injection is transient. Raw user text and the full
+                // Responses assistant Items persist in history between turns.
+                history.append(try result.completedAssistantInput())
             } catch {
                 return MemoryRecallTranscript(
-                    turns: turns,
-                    error: "turn \(turns.count + 1)/\(queries.count) failed: \(error)"
+                    turns: turns, error: "turn \(index + 1)/\(queries.count) failed: \(error)"
                 )
             }
-
-            turns.append(
-                MemoryRecallTurn(
-                    visibleText: visible,
-                    memoryInjected: !(memorySection ?? "").trimmingCharacters(
-                        in: .whitespacesAndNewlines
-                    ).isEmpty,
-                    memorySection: memorySection
-                )
-            )
-            // History keeps the RAW user text (memory prefix is per-turn,
-            // recomputed each send — matching the chat surface's frozen-
-            // prefix behavior closely enough for eval purposes).
-            history.append(
-                ChatMessage(
-                    role: "assistant",
-                    content: visible.isEmpty ? nil : visible,
-                    tool_calls: nil,
-                    tool_call_id: nil,
-                    reasoning_content: reasoning.isEmpty ? nil : reasoning
-                )
-            )
         }
-
         return MemoryRecallTranscript(turns: turns)
     }
 }

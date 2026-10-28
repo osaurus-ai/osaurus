@@ -314,16 +314,20 @@ public enum ToolEnvelope {
         }
 
         // MCP provider errors map to their honest kinds so the model can
-        // branch (retry on timeout, pivot on unavailable) instead of
-        // treating every remote failure as a generic execution error.
+        // branch instead of treating every remote failure as a generic
+        // execution error. A timeout is not retryable: cancellation is
+        // advisory in MCP, so the server may still be running the work and
+        // a blind retry would start it a second time.
         if let mcpErr = error as? MCPProviderError {
             switch mcpErr {
             case .timeout:
                 return failure(
                     kind: .timeout,
-                    message: "MCP provider call timed out.",
+                    message:
+                        "MCP provider call timed out. The server may still be running it, so do not call it "
+                        + "again unless the user asks. Use the provider's own status tool if it has one.",
                     tool: tool,
-                    retryable: true
+                    retryable: false
                 )
             case .notConnected, .providerDisabled, .providerNotFound, .invalidURL:
                 return failure(

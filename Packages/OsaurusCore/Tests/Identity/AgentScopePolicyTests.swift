@@ -87,6 +87,8 @@ struct AgentScopePolicyTests {
             (.GET, "/admin/cache-stats"),
             (.GET, "/admin/config/export"),
             (.POST, "/admin/config/agents"),
+            (.POST, "/admin/import/plan"),
+            (.POST, "/admin/import/apply"),
         ]
         for sharing in [false, true] {
             for (method, path) in closed {

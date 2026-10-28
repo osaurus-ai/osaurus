@@ -360,6 +360,32 @@ struct AnthropicAPITests {
         #expect(usage["output_tokens"] == 50)
     }
 
+    @Test func localCachedPromptBecomesCacheReadInputTokens() throws {
+        let cached = AnthropicUsage(promptTokens: 6012, outputTokens: 2, cachedPromptTokens: 6000)
+        #expect(cached.input_tokens == 12)
+        #expect(cached.cache_read_input_tokens == 6000)
+        #expect(cached.output_tokens == 2)
+
+        // A cold prompt keeps the full count in input_tokens and omits the cache field.
+        let cold = AnthropicUsage(promptTokens: 12, outputTokens: 2, cachedPromptTokens: nil)
+        #expect(cold.input_tokens == 12)
+        #expect(cold.cache_read_input_tokens == nil)
+        let json = String(decoding: try JSONEncoder().encode(cold), as: UTF8.self)
+        #expect(!json.contains("cache_read_input_tokens"))
+
+        // Over-reported hits clamp to the prompt.
+        let clamped = AnthropicUsage(promptTokens: 10, outputTokens: 1, cachedPromptTokens: 50)
+        #expect(clamped.input_tokens == 0 && clamped.cache_read_input_tokens == 10)
+
+        let delta = MessageDeltaEvent(
+            stopReason: "end_turn", outputTokens: 2, inputTokens: 12, cacheReadInputTokens: 6000)
+        let usage = try #require(
+            (try JSONSerialization.jsonObject(with: JSONEncoder().encode(delta)) as? [String: Any])?["usage"]
+                as? [String: Int])
+        #expect(usage["cache_read_input_tokens"] == 6000)
+        #expect(usage["input_tokens"] == 12)
+    }
+
     // MARK: - Conversion Tests
 
     @Test func convertAnthropicRequestToOpenAI() throws {
@@ -395,6 +421,24 @@ struct AnthropicAPITests {
         #expect(openAIReq.messages[2].content == "Hi there!")
         #expect(openAIReq.messages[3].role == "user")
         #expect(openAIReq.messages[3].content == "How are you?")
+    }
+
+    @Test func thinkingAndTopKReachTheChatRequest() throws {
+        func convert(_ thinking: String) throws -> ChatCompletionRequest {
+            let json = """
+                {"model": "m", "max_tokens": 16, "top_k": 40, \(thinking)
+                 "messages": [{"role": "user", "content": "Hi"}]}
+                """
+            return try JSONDecoder().decode(AnthropicMessagesRequest.self, from: Data(json.utf8))
+                .toChatCompletionRequest()
+        }
+        let disabled = try convert(#""thinking": {"type": "disabled"},"#)
+        #expect(disabled.enable_thinking == false)
+        #expect(disabled.top_k == 40)
+        let enabled = try convert(#""thinking": {"type": "enabled", "budget_tokens": 2048},"#)
+        #expect(enabled.enable_thinking == true)
+        #expect(try convert(#""thinking": {"type": "adaptive"},"#).enable_thinking == nil)
+        #expect(try convert("").enable_thinking == nil)
     }
 
     @Test func convertAnthropicToolsToOpenAI() throws {

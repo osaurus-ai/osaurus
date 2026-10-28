@@ -37,6 +37,34 @@ enum VisionBundleFixture {
         return root
     }
 
+    /// A DeepSeek-V4.1-Flash bundle: `vision_config` + `image_token_id` in config.json, the tower,
+    /// aligner and delimiters as top-level tensors next to the text weights, no processor file.
+    static func makeDeepseekV41(
+        omit: String? = nil, depth: Int = 2, imageTokenId: Int? = 129264
+    ) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var config: [String: Any] = [
+            "model_type": "deepseek_v41",
+            "quantization": ["group_size": 64, "bits": 8, "mode": "affine"],
+            "text_config": ["model_type": "deepseek_v41_text", "hidden_size": 64],
+            "vision_config": ["model_type": "deepseek_v41_vision", "num_hidden_layers": depth,
+                "hidden_size": 32, "num_attention_heads": 2, "intermediate_size": 24,
+                "patch_size": 14, "downsample_ratio": 3],
+        ]
+        if let imageTokenId { config["image_token_id"] = imageTokenId }
+        try writeJSON(config, to: root.appendingPathComponent("config.json"))
+        var names = ["embed.weight", "layers.0.ffn.gate.bias_vl", "vision.patch_embed.proj.weight",
+            "vision.norm.weight", "aligner.w1.weight", "aligner.w2.weight",
+            "image_start", "image_end", "image_newline"]
+        for i in 0..<2 {
+            names += ["vision.blocks.\(i).attn.wqkv.weight", "vision.blocks.\(i).mlp.w1.weight"]
+        }
+        if let omit { names.removeAll { $0.contains(omit) } }
+        try writeWeights(names, to: root.appendingPathComponent("model.safetensors"))
+        return root
+    }
+
     static func make(type: String = "qwen3_5", omit: String? = nil, indexed: Bool = false) throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

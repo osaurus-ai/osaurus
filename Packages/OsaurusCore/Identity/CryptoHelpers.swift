@@ -198,6 +198,14 @@ func signSecureChannelPayload(_ payload: Data, privateKey: Data) throws -> Data 
     try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Secure Channel")
 }
 
+/// Sign a template's content hash with an agent key. Distinct domain
+/// prefix so a template signature is never valid as any other token.
+let templateSignatureDomain = "Osaurus Signed Template"
+
+func signTemplatePayload(_ payload: Data, privateKey: Data) throws -> Data {
+    try signWithPrefix(payload, privateKey: privateKey, prefix: templateSignatureDomain)
+}
+
 /// EIP-191 personal_sign compatible signing.
 /// Produces `\x19Ethereum Signed Message:\n<len><message>` hash + secp256k1 recoverable signature.
 func signEIP191Message(_ message: String, privateKey: Data) throws -> Data {

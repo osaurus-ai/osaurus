@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MLXLMCommon
 import SwiftUI
 import os
 
@@ -118,6 +119,17 @@ struct MLXModel: Identifiable, Codable {
         )
     }
 
+    /// True when this entry came out of local or external bundle discovery:
+    /// it knows where its bundle lives (`bundleDirectory`), is pinned to a
+    /// root (`rootDirectory`), or carries external provenance. A catalog
+    /// suggestion for the same id has none of these and resolves to the
+    /// managed models directory, where an externally installed bundle is
+    /// not. Pure structural evidence, no disk probe: `isDownloaded` still
+    /// decides whether the bundle is complete.
+    var hasLocalInstallationEvidence: Bool {
+        bundleDirectory != nil || rootDirectory != nil || externalSource != nil
+    }
+
     /// Preserve catalog/editorial metadata while folding in authoritative
     /// facts from a bundle that is actually present on disk. This keeps a
     /// curated card's name, description, release data, and use-case badge,
@@ -126,18 +138,25 @@ struct MLXModel: Identifiable, Codable {
     /// The caller must pass output from local/external bundle discovery; this
     /// intentionally does not consult `isDownloaded`, whose process cache may
     /// have been populated before the background scan completed.
+    ///
+    /// Only the byte count is gated on the bundle having a readable size.
+    /// The directory and provenance carry regardless: a bundle whose weight
+    /// size could not be read (no index, unusual shard names) is still the
+    /// installed copy, and dropping its path here made the installed entry
+    /// resolve to the managed directory and report not-downloaded.
     func mergingLocalInstallationMetadata(from local: MLXModel) -> MLXModel {
-        guard id.caseInsensitiveCompare(local.id) == .orderedSame,
-              let localBytes = local.downloadSizeBytes,
-              localBytes > 0
-        else { return self }
+        guard id.caseInsensitiveCompare(local.id) == .orderedSame else { return self }
+        let localBytes: Int64? = {
+            guard let bytes = local.downloadSizeBytes, bytes > 0 else { return nil }
+            return bytes
+        }()
         return MLXModel(
             id: id,
             name: name,
             description: description,
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
-            downloadSizeBytes: localBytes,
+            downloadSizeBytes: localBytes ?? downloadSizeBytes,
             ssdResidentBytes: local.ssdResidentBytes ?? ssdResidentBytes,
             modelType: local.modelType ?? modelType,
             releasedAt: releasedAt,
@@ -640,6 +659,8 @@ struct MLXModel: Identifiable, Codable {
     /// the on-disk config.json; bundles that aren't on disk return false.
     /// Used to keep embedding repos imported from the HF cache / LM Studio
     /// out of chat surfaces while leaving them available to `/v1/embeddings`.
+    var isDecision: Bool { DecisionDetection.isDecision(at: localDirectory) }
+
     var isEmbedding: Bool {
         EmbeddingDetection.isEmbedding(at: localDirectory)
     }
@@ -916,4 +937,31 @@ enum DownloadState: Equatable {
     case paused(progress: Double)
     case completed
     case failed(error: String)
+}
+
+/// UI-only memoization. Runtime admission always revalidates the actual bundle.
+private enum DecisionDetection {
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var cache: [String: Bool] = [:]
+    private nonisolated(unsafe) static var epoch = 0
+    private nonisolated(unsafe) static var observed = false
+
+    static func isDecision(at directory: URL) -> Bool {
+        let key = directory.path
+        lock.lock()
+        if !observed {
+            observed = true
+            NotificationCenter.default.addObserver(forName: .localModelsChanged, object: nil, queue: nil) { _ in
+                lock.lock(); epoch += 1; cache.removeAll(keepingCapacity: true); lock.unlock()
+            }
+        }
+        let cached = cache[key], generation = epoch
+        lock.unlock()
+        if let cached { return cached }
+        let result = DecisionBundle.declaresDecisionModel(at: directory)
+        lock.lock()
+        if epoch == generation { cache[key] = result }
+        lock.unlock()
+        return result
+    }
 }

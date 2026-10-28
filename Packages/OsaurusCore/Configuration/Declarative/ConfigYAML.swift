@@ -150,7 +150,7 @@ public enum ConfigYAML {
         issues: inout [String]
     ) {
         switch spec {
-        case .scalar, .scalarList:
+        case .scalar, .scalarList, .nullableScalarList:
             return
 
         case .freeformMap(_, let allowedValues, _, _):
@@ -163,6 +163,14 @@ public enum ConfigYAML {
                 }
             }
 
+        case .jsonObject(let nullable):
+            if nullable, raw is NSNull { return }
+            if !(raw is [AnyHashable: Any]) {
+                issues.append("`\(displayPath)` must be a JSON object. Got \(typeName(of: raw)).")
+            }
+        case .nullableMapping(let keys):
+            if raw is NSNull { return }
+            walk(raw, spec: .mapping(keys), path: path, displayPath: displayPath, issues: &issues)
         case .mapping(let keys):
             guard let mapping = raw as? [AnyHashable: Any] else {
                 issues.append("`\(displayPath)` must be a YAML mapping. Got \(typeName(of: raw)).")

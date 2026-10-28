@@ -209,6 +209,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // the specific crash class this prevents.
         MLXErrorRecovery.installGlobalHandler()
 
+        // INVARIANT: SSD quota and storage UI share the nonblocking volume cache.
+        VolumeAvailableCapacityCache.installAsDiskCacheFreeSpaceProvider()
+
         // Register in-tree document format adapters before any file-ingress
         // path can run. Idempotent; safe if a future migration moves this.
         DocumentAdaptersBootstrap.registerBuiltIns()
@@ -428,6 +431,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             } else {
                 LaunchGuard.markStartupComplete()
             }
+        }
+
+        // Agents, skills and MCP servers an installer queued with
+        // `osaurus import` while the app was closed. Applied after the
+        // server binds so a large bundle never delays `/health`.
+        Task { @MainActor [shouldLoadPluginsAtStartup] in
+            await serverStartupTask.value
+            await PendingImportProcessor.shared.processAtLaunch(waitForPlugins: shouldLoadPluginsAtStartup)
         }
 
         // Only warm the storage key when the user opted in to encryption.
@@ -1546,7 +1557,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await LiveExecRegistry.shared.terminateAll()
             }
             await runWithDeadline(seconds: 2) {
-                await ClaudeCodeProcessRegistry.shared.terminateAll()
+                await HarnessProcessRegistry.shared.terminateAll()
             }
             await runWithDeadline(seconds: 2) {
                 await MCPProviderManager.shared.shutdownAllStdioRunners()
@@ -2106,6 +2117,9 @@ extension AppDelegate {
     fileprivate static let controlToolsReloadNotification = Notification.Name(
         "com.dinoki.osaurus.control.toolsReload"
     )
+    static let controlModelsReloadNotification = Notification.Name(
+        "com.dinoki.osaurus.control.modelsReload"
+    )
     fileprivate static let controlServeNotification = Notification.Name(
         "com.dinoki.osaurus.control.serve"
     )
@@ -2140,6 +2154,12 @@ extension AppDelegate {
             self,
             selector: #selector(handleToolsReloadCommand(_:)),
             name: Self.controlToolsReloadNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleModelsReloadCommand(_:)),
+            name: Self.controlModelsReloadNotification,
             object: nil
         )
     }
@@ -2242,6 +2262,21 @@ extension AppDelegate {
         Task { @MainActor in
             await PluginManager.shared.loadAll(forceReload: true)
         }
+    }
+
+    @objc private func handleModelsReloadCommand(_ note: Notification) {
+        Task { @MainActor in
+            Self.reloadLocalModelsAfterCLIInstall()
+        }
+    }
+
+    /// Local process notification only: no HTTP server or access key required.
+    static func reloadLocalModelsAfterCLIInstall(
+        invalidateCache: () -> Void = { ModelManager.invalidateLocalModelsCache() },
+        notifications: NotificationCenter = .default
+    ) {
+        invalidateCache()
+        notifications.post(name: .localModelsChanged, object: nil)
     }
 }
 
@@ -2666,8 +2701,8 @@ extension AppDelegate {
             // Reopening a reused window doesn't rebuild the SwiftUI graph, so
             // the Models grid wouldn't otherwise notice external models the
             // user deleted on disk while the app stayed running. Prune them
-            // off the main thread; it posts `.localModelsChanged` only when
-            // something actually went missing.
+            // off the main thread; the same refresh also invalidates cached
+            // availability when an external source disappears or returns.
             Task.detached(priority: .utility) {
                 ExternalModelLocator.pruneMissing()
             }

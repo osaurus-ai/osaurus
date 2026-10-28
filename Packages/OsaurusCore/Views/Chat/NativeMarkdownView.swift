@@ -99,6 +99,7 @@ final class NativeMarkdownView: NSView {
     private var lastWidth: CGFloat = 0
     private var lastThemeFingerprint: String = ""
     private var lastIsStreaming: Bool = false
+    private var lastReflowParagraphs: Bool = false
     private var parseTask: Task<Void, Never>?
     /// Cell-supplied original -> redaction map. Re-applied via
     /// `RedactionHighlighter` after every textStorage edit on the
@@ -524,11 +525,12 @@ final class NativeMarkdownView: NSView {
         width: CGFloat,
         theme: any ThemeProtocol,
         cacheKey: String?,
-        isStreaming: Bool
+        isStreaming: Bool,
+        reflowParagraphs: Bool = false
     ) {
         ChatPerfTrace.shared.count("markdown.configure.called")
         let themeFingerprint = makeThemeFingerprint(theme)
-        let textChanged = text != lastText
+        let textChanged = text != lastText || reflowParagraphs != lastReflowParagraphs
         let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeFingerprint != lastThemeFingerprint
         let streamingChanged = isStreaming != lastIsStreaming
@@ -555,11 +557,14 @@ final class NativeMarkdownView: NSView {
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
+        lastReflowParagraphs = reflowParagraphs
 
         // hide raw inline delimiters that haven't received their closer yet
         let parseInput = StreamingMarkdownBalancer.balance(text)
 
-        if let cached = ThreadCache.shared.markdown(for: parseInput) {
+        // Chat preserves authored newlines. Static documents reflow source
+        // wraps, so they must not read or populate the chat parse cache.
+        if !reflowParagraphs, let cached = ThreadCache.shared.markdown(for: parseInput) {
             applySegments(
                 cached.segments,
                 cacheKey: cacheKey,
@@ -573,9 +578,11 @@ final class NativeMarkdownView: NSView {
             return
         }
 
-        let blocks = parseBlocks(parseInput)
+        let blocks = reflowParagraphs ? parseDocumentBlocks(parseInput) : parseBlocks(parseInput)
         let segs = groupBlocksIntoSegments(blocks)
-        ThreadCache.shared.setMarkdown(blocks: blocks, segments: segs, for: parseInput)
+        if !reflowParagraphs {
+            ThreadCache.shared.setMarkdown(blocks: blocks, segments: segs, for: parseInput)
+        }
         applySegments(
             segs,
             cacheKey: cacheKey,

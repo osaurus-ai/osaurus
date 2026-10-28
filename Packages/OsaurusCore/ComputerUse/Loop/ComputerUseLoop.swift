@@ -435,6 +435,7 @@ public enum ComputerUseLoop {
             // repeatedly without re-deriving the (fixed) iteration messages.
             let stepMessages = input.messages
             let stepIndex = step
+            let responseAttempt = nextAction == nil ? DesktopResponsesAttempt() : nil
             let produce: @Sendable () async throws -> ModelStepResult = {
                 if let nextAction {
                     let stepInput = AgentStepInput(
@@ -449,20 +450,26 @@ public enum ComputerUseLoop {
                         sessionId: sessionId,
                         messages: stepMessages,
                         enableThinking: enableThinking,
-                        reasoningEffort: reasoningEffort
+                        reasoningEffort: reasoningEffort,
+                        attempt: responseAttempt
                     )
                 }
             }
             let parsed: ModelActionCall?
+            var completedAssistant: ChatMessage?
             do {
                 let stepResult = try await runModelStep(
                     produce,
                     timeout: limits.modelStepTimeoutSeconds,
                     maxRetries: limits.maxInferenceRetries,
                     feed: feed,
-                    step: step
+                    step: step,
+                    shouldRetry: { error in
+                        responseAttempt?.permitsRetry(error, isTimeout: error is ModelStepTimeout) ?? true
+                    }
                 )
-                metrics.modelTokens += stepResult.tokens
+                if let tokens = stepResult.tokens { metrics.modelTokens += tokens }
+                completedAssistant = stepResult.assistantMessage
                 metrics.recordDecodeTokensPerSecond(stepResult.tokensPerSecond)
                 parsed = stepResult.call
             } catch where isMissingRequiredAgentActionError(error) {
@@ -496,7 +503,7 @@ public enum ComputerUseLoop {
                 continue
             }
             let callId = call.id
-            let assistantMessage = ChatMessage(
+            let assistantMessage = completedAssistant ?? ChatMessage(
                 role: "assistant",
                 content: nil,
                 tool_calls: [
@@ -1655,73 +1662,53 @@ public enum ComputerUseLoop {
 
     // MARK: - Model step
 
-    /// One model step's result: the proposed call (nil when the model emitted
-    /// no usable tool call) plus the token usage that step cost. `Sendable` so
-    /// it can cross the timeout/retry task group; `tokens` is `0` for the
-    /// scripted seam, which makes no model call.
+    /// Sparse model usage and the exact assistant snapshot. Scripted providers
+    /// explicitly report zero tokens because they make no model call.
     struct ModelStepResult: Sendable {
         var call: ModelActionCall?
-        var tokens: Int = 0
-        /// Decode speed (tok/s) for this model step, read from the response
-        /// `usage.tokens_per_second`. `nil` for the scripted seam (no model
-        /// call) and for providers that don't report a rate. The loop folds
-        /// these into `metrics` so a model-driven CU run records real decode
-        /// telemetry (eval harness + diagnostics), not just a token count.
-        var tokensPerSecond: Double?
+        var tokens: Int? = nil
+        var tokensPerSecond: Double? = nil
+        var assistantMessage: ChatMessage? = nil
+        var inputTokenCount: Int? = nil
+        var outputTokenCount: Int? = nil
     }
 
-    /// One forced agent_action call. Returns the first matching tool call (or
-    /// nil when the model emitted no usable tool call) and the step's token
-    /// usage so the run can accumulate a real token total.
-    private static func modelStep(
-        engine: ChatEngine,
+    static func modelStep(
+        engine: any ResponsesEngineProtocol,
         modelId: String,
         sessionId: String,
         messages: [ChatMessage],
         enableThinking: Bool?,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        attempt: DesktopResponsesAttempt? = nil
     ) async throws -> ModelStepResult {
-        var req = ChatCompletionRequest(
-            model: modelId,
-            messages: messages,
-            temperature: nil,
-            max_tokens: nil,
-            stream: false,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: [AgentAction.toolSpec],
-            tool_choice: AgentAction.forcedToolChoice,
-            session_id: sessionId
-        )
-        req.samplingParametersAreImplicit = true
-        req.isAgentRequest = true
-        req.enable_thinking = enableThinking
-        req.reasoning_effort = reasoningEffort
+        var request = ResponsesInferenceRequest(model: modelId, input: messages)
+        request.tools = [AgentAction.toolSpec]
+        request.toolChoice = AgentAction.forcedToolChoice
+        request.sessionID = sessionId
+        request.context.samplingParametersAreImplicit = true
+        request.context.isAgentRequest = true
+        request.generation.enableThinking = enableThinking
+        request.generation.reasoningEffort = reasoningEffort
         let generateStarted = Date()
-        let response = try await engine.completeChat(request: req)
+        let response = try await DesktopResponsesModelStep.completeResponse(
+            engine: engine, request: request, attempt: attempt
+        )
         ComputerUseTraceLog.record(
-            request: req,
-            response: response,
+            request: request, response: response,
             elapsedSeconds: Date().timeIntervalSince(generateStarted)
         )
-        let tokens = response.usage.total_tokens
-        let tps = response.usage.tokens_per_second
-        guard let message = response.choices.first?.message else {
-            return ModelStepResult(call: nil, tokens: tokens, tokensPerSecond: tps)
+        let call = try DesktopResponsesModelStep.actionCall(
+            from: response, expectedTool: AgentAction.toolName, required: true
+        )
+        let total = response.inputTokenCount.flatMap { input in
+            response.completion.tokenCount.map { input + $0 }
         }
-        if let calls = message.tool_calls,
-            let call = calls.first(where: { $0.function.name == AgentAction.toolName }) ?? calls.first
-        {
-            return ModelStepResult(
-                call: ModelActionCall(id: call.id, arguments: call.function.arguments),
-                tokens: tokens,
-                tokensPerSecond: tps
-            )
-        }
-        return ModelStepResult(call: nil, tokens: tokens, tokensPerSecond: tps)
+        return ModelStepResult(
+            call: call, tokens: total, tokensPerSecond: response.completion.tokensPerSecond,
+            assistantMessage: try response.completedAssistantInput(),
+            inputTokenCount: response.inputTokenCount, outputTokenCount: response.completion.tokenCount
+        )
     }
 
     /// Project the internal conversation into the public, redacted turns an
@@ -1747,16 +1734,16 @@ public enum ComputerUseLoop {
         return nsError.domain == "OsaurusToolChoice" && nsError.code == 422
     }
 
-    /// Run one model step with a per-step timeout and bounded retries. A throw
-    /// or timeout is retried (with a short backoff) up to `maxRetries` times
-    /// before propagating, so a single transient inference failure or hang
-    /// doesn't sink the whole run.
-    private static func runModelStep<T: Sendable>(
+    /// Run one step with its explicit deadline/retry budget. Production retries
+    /// require a transient transport failure before any typed output; scripted
+    /// providers retain their explicit fixture retry policy.
+    static func runModelStep<T: Sendable>(
         _ produce: @escaping @Sendable () async throws -> T,
         timeout: TimeInterval,
         maxRetries: Int,
         feed: SubagentFeed,
-        step: Int
+        step: Int,
+        shouldRetry: (@Sendable (Error) -> Bool)? = nil
     ) async throws -> T {
         var attempt = 0
         while true {
@@ -1768,7 +1755,7 @@ public enum ComputerUseLoop {
                 if isMissingRequiredAgentActionError(error) {
                     throw error
                 }
-                if attempt >= maxRetries { throw error }
+                if attempt >= maxRetries || shouldRetry?(error) == false { throw error }
                 attempt += 1
                 feed.emit(
                     SubagentActivityEvent(

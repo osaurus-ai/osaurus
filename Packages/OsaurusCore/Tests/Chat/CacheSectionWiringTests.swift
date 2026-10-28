@@ -134,7 +134,7 @@ final class CacheSectionWiringTests: XCTestCase {
             src.contains("ModelRuntime.diskCacheCap("),
             "the readout does not use the resolver the coordinator uses"
         )
-        XCTAssertTrue(src.contains("result.limitedByHost"))
+        XCTAssertTrue(src.contains("diskCacheResolution = resolution"))
     }
 
     /// Diagnostics must not report `null` for a cache that has a real cap.
@@ -163,12 +163,9 @@ final class CacheSectionWiringTests: XCTestCase {
     /// The readout must show the cap the ENGINE enforces, not the share in
     /// isolation.
     ///
-    /// Caught live: with 10% of a 3.7 TB volume the share resolved to 372 GB,
-    /// but `applyHostAwareDiskCacheCeiling` additionally bounds the cap to a
-    /// quarter of free bytes, and only 969 GB was free — so the coordinator
-    /// enforced 242 GB. A label showing 372 would over-promise by 130 GB and
-    /// contradict the "Active" row a few lines below it in the same panel.
-    func testReadoutsApplyTheHostAwareCeiling() throws {
+    /// Both labels must use the same resolver as the live coordinator so
+    /// Automatic, explicit choices and unavailable volume readings agree.
+    func testReadoutsUseTheSharedQuotaResolver() throws {
         for path in [
             "Views/Settings/ServerSettings/CacheSection.swift",
             "Views/Chat/FloatingInputCard.swift",
@@ -176,21 +173,21 @@ final class CacheSectionWiringTests: XCTestCase {
             let src = try source(path)
             XCTAssertTrue(
                 src.contains("ModelRuntime.diskCacheCap("),
-                "\(path) reports the raw share and would over-promise on a full disk"
+                "\(path) bypasses the shared quota resolver"
             )
             XCTAssertTrue(
-                src.contains("ModelRuntime.cacheDiskDirectoryOverride("),
-                "\(path) never measures free space, so it cannot apply the ceiling"
+                src.contains("ModelRuntime.diskCacheDirectoryForDisplay("),
+                "\(path) does not resolve the selected cache volume"
             )
         }
     }
 
-    /// When the ceiling bites, the label has to say WHY. A user who set 10%
-    /// and sees a smaller number otherwise reads it as the setting being
-    /// ignored.
-    func testLimitedLabelNamesTheReason() throws {
+    /// An oversized explicit choice produces an advisory, not a hidden clamp.
+    func testUnavailableSpaceIsAnAdvisoryInsteadOfAHiddenCeiling() throws {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
-        XCTAssertTrue(src.contains("limited to 25%% of free space plus this cache"), "the lower cap is unexplained")
+        XCTAssertFalse(src.contains("limited to 25%%"))
+        XCTAssertTrue(src.contains("result.exceedsAvailableSpace"))
+        XCTAssertTrue(src.contains("hasDiskSpaceWarning ? theme.errorColor"))
     }
 
     /// The share field must not be formatted to one decimal place.

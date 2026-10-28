@@ -8,6 +8,7 @@
 import Foundation
 
 struct GenerationParameters: Sendable {
+    let responsesProviderOptions: ResponsesProviderOptions?
     let temperature: Float?
     let maxTokens: Int
     /// Whether `maxTokens` came from an explicit client request. When false,
@@ -21,11 +22,8 @@ struct GenerationParameters: Sendable {
     let topKOverride: Int?
     /// Optional per-request min_p override (falls back to model configuration when nil).
     let minPOverride: Float?
-    /// Optional repetition penalty (applies when supported by backend).
-    /// Mapped from OpenAI `frequency_penalty` only — `presence_penalty`
-    /// has no MLX analog. The raw OpenAI values below are kept on the
-    /// struct so remote services that natively support both can forward
-    /// them straight through.
+    /// Explicit multiplicative repetition penalty, independent of the additive
+    /// frequency/presence controls below. Nil preserves the bundle default.
     let repetitionPenalty: Float?
     /// True when sampling fields were filled from app/UI defaults rather than
     /// an explicit client request. Local MLX must treat these as defaults to
@@ -52,6 +50,8 @@ struct GenerationParameters: Sendable {
     let jsonSchema: String?
     /// Model-specific options resolved from the active `ModelProfile` (e.g. aspect ratio).
     let modelOptions: [String: ModelOptionValue]
+    /// JSON variables for the active chat template, scoped to this generation.
+    let templateKwargs: [String: JSONValue]?
     /// Session identifier for chat/history grouping. Not threaded into the
     /// MLX cache layer — vmlx's `CacheCoordinator` handles prefix reuse
     /// autonomously via content addressing.
@@ -121,15 +121,6 @@ struct GenerationParameters: Sendable {
             && !runAsRemoteAgent && !preserveExistingResidencyOwner
     }
 
-    /// Per-agent options for the Claude Code subprocess backend (mode +
-    /// tool opt-ins + working directory). Nil everywhere else; only
-    /// `ClaudeCodeService` reads it.
-    ///
-    /// Rides on `GenerationParameters` for the same reason `loadIntent` does:
-    /// it has to survive the whole ChatEngine → service path without every
-    /// layer re-plumbing an extra argument.
-    let claudeCode: ClaudeCodeRunOptions?
-
     /// Preserve a non-nil residency owner when this request reuses an already
     /// resident model. Nested subagents set this so using an API/plugin-owned
     /// resident cannot silently convert it into a chat-owned unload target.
@@ -171,6 +162,7 @@ struct GenerationParameters: Sendable {
         jsonMode: Bool = false,
         jsonSchema: String? = nil,
         modelOptions: [String: ModelOptionValue] = [:],
+        templateKwargs: [String: JSONValue]? = nil,
         sessionId: String? = nil,
         activityID: UUID = UUID(),
         activitySource: RequestSource? = nil,
@@ -185,12 +177,13 @@ struct GenerationParameters: Sendable {
         privacyReviewMode: PrivacyReviewMode = .interactive,
         loadIntent: ModelLoadIntent = .interactive,
         alignmentRepairModel: String? = nil,
-        claudeCode: ClaudeCodeRunOptions? = nil,
         preserveExistingResidencyOwner: Bool = false,
         auxiliaryCacheIntent: Bool = false,
         collectCompleteToolResponse: Bool = false,
-        requireCompleteOutput: Bool = false
+        requireCompleteOutput: Bool = false,
+        responsesProviderOptions: ResponsesProviderOptions? = nil
     ) {
+        self.responsesProviderOptions = responsesProviderOptions
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.maxTokensExplicit = maxTokensExplicit
@@ -206,6 +199,7 @@ struct GenerationParameters: Sendable {
         self.jsonMode = jsonMode
         self.jsonSchema = jsonSchema
         self.modelOptions = modelOptions
+        self.templateKwargs = templateKwargs
         self.sessionId = sessionId
         self.activityID = activityID
         self.activitySource = activitySource ?? requestSource
@@ -220,7 +214,6 @@ struct GenerationParameters: Sendable {
         self.privacyReviewMode = privacyReviewMode
         self.loadIntent = loadIntent
         self.alignmentRepairModel = alignmentRepairModel
-        self.claudeCode = claudeCode
         self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         self.auxiliaryCacheIntent = auxiliaryCacheIntent
         self.collectCompleteToolResponse = collectCompleteToolResponse
@@ -750,6 +743,19 @@ protocol ToolCapableService: ModelService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> AsyncThrowingStream<String, Error>
+}
+
+/// A service with an ordered typed Responses generation stream. Compatibility
+/// providers may continue implementing the legacy boundary during migration.
+protocol ResponsesGenerationService: ModelService {
+    func streamResponses(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        requestedModel: String?
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
 }
 
 /// Simple router that selects a service based on the request and environment.

@@ -222,6 +222,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var temperature: Float?
     /// Optional max tokens override
     public var maxTokens: Int?
+
+    /// Optional advanced generation defaults for this custom agent.
+    public var generationSettings: AgentGenerationSettings?
     /// Per-agent chat quick actions. nil = use defaults, empty = hidden, non-empty = custom list
     public var chatQuickActions: [AgentQuickAction]?
     /// User-authored override for the chat empty-state greeting line.
@@ -255,9 +258,11 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// sandbox backend is available; `enabled: false` is an explicit opt-out.
     /// The built-in Default agent is always hard-off at effective resolution.
     public var autonomousExec: AutonomousExecConfig?
-    /// Behavior of the Claude Code subprocess backend when this agent is on a
-    /// `claude-code/…` model. Nil = defaults (agent mode, read-only tools).
+    /// Claude Code options, consulted when `runtime` is a Claude Code harness.
+    /// Nil = defaults (agent mode, read-only tools).
     public var claudeCode: ClaudeCodeAgentConfig?
+    /// Which loop runs this agent's chats. Nil = Osaurus's built-in loop.
+    public var runtime: AgentRuntime?
     /// Per-agent plugin instruction overrides keyed by plugin ID
     public var pluginInstructions: [String: String]?
     /// Whether this agent is advertised via Bonjour on the local network
@@ -266,6 +271,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var toolSelectionMode: ToolSelectionMode?
     /// Tool names explicitly selected by the user when toolSelectionMode is .manual
     public var manualToolNames: [String]?
+    /// Skills this agent may see and load, by name (matched like
+    /// `SkillManager.skills(named:)`: display name or slug). `nil` means
+    /// every skill, which is what agents created before the allow-list get.
+    public var skillNames: [String]?
     /// Whether this agent may use tools / preflight context. Default true.
     /// Positive polarity (matches `AgentSettings.*Enabled`); the legacy
     /// negative `disableTools` key is read on decode for back-compat.
@@ -313,6 +322,14 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// fallback when the bookmark no longer resolves (the app is not
     /// App-Sandboxed, so a readable path works without a scope).
     public var workingFolderPath: String?
+    /// Name of the agent template this agent was created from (Use
+    /// Template, or an orchestrator apply based on a template). Display
+    /// provenance only; the template may have been renamed or deleted since.
+    /// Carried over by Duplicate.
+    public var sourceTemplateName: String?
+    /// Id of that template, so Save as Template on this agent saves a new
+    /// version of the same template instead of a fork.
+    public var sourceTemplateID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -325,6 +342,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         defaultModel: String? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
+        generationSettings: AgentGenerationSettings? = nil,
         chatQuickActions: [AgentQuickAction]? = nil,
         chatGreeting: String? = nil,
         chatSubtitle: String? = nil,
@@ -336,10 +354,12 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         agentDeviceScope: String? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
         claudeCode: ClaudeCodeAgentConfig? = nil,
+        runtime: AgentRuntime? = nil,
         pluginInstructions: [String: String]? = nil,
         bonjourEnabled: Bool = false,
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
+        skillNames: [String]? = nil,
         toolsEnabled: Bool = true,
         memoryEnabled: Bool = true,
         avatar: String? = nil,
@@ -349,7 +369,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         settings: AgentSettings = .defaultDisabled,
         order: Int? = nil,
         workingFolderBookmark: Data? = nil,
-        workingFolderPath: String? = nil
+        workingFolderPath: String? = nil,
+        sourceTemplateName: String? = nil,
+        sourceTemplateID: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -361,6 +383,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.defaultModel = defaultModel
         self.temperature = temperature
         self.maxTokens = maxTokens
+        self.generationSettings = generationSettings
         self.chatQuickActions = chatQuickActions
         self.chatGreeting = chatGreeting
         self.chatSubtitle = chatSubtitle
@@ -372,10 +395,12 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.agentDeviceScope = agentDeviceScope
         self.autonomousExec = autonomousExec
         self.claudeCode = claudeCode
+        self.runtime = runtime
         self.pluginInstructions = pluginInstructions
         self.bonjourEnabled = bonjourEnabled
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
+        self.skillNames = skillNames
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
         self.avatar = avatar
@@ -386,6 +411,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.order = order
         self.workingFolderBookmark = workingFolderBookmark
         self.workingFolderPath = workingFolderPath
+        self.sourceTemplateName = sourceTemplateName
+        self.sourceTemplateID = sourceTemplateID
     }
 
     // MARK: - Cryptographic identity
@@ -413,11 +440,16 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// holds it briefly and is cleared whenever the agent list changes, which
     /// is when an avatar is added or removed, so a newly set avatar still
     /// appears immediately.
+    ///
+    /// The filename component is appended with `isDirectory: false`. Without
+    /// it, Foundation probes the filesystem (`getattrlist`) on every call to
+    /// decide whether to add a trailing slash — an uncached, blocking syscall
+    /// that bypassed `AvatarExistenceCache` and hung the main thread.
     public var customAvatarURL: URL? {
         guard let name = customAvatarFilename, !name.isEmpty else { return nil }
         let url = OsaurusPaths.agents()
             .appendingPathComponent("avatars", isDirectory: true)
-            .appendingPathComponent(name)
+            .appendingPathComponent(name, isDirectory: false)
         return AvatarExistenceCache.shared.exists(atPath: url.path) ? url : nil
     }
 
@@ -522,6 +554,7 @@ extension Agent {
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
         temperature = try c.decodeIfPresent(Float.self, forKey: .temperature)
         maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens)
+        generationSettings = try c.decodeIfPresent(AgentGenerationSettings.self, forKey: .generationSettings)
         chatQuickActions = try c.decodeIfPresent([AgentQuickAction].self, forKey: .chatQuickActions)
         chatGreeting = try c.decodeIfPresent(String.self, forKey: .chatGreeting)
         chatSubtitle = try c.decodeIfPresent(String.self, forKey: .chatSubtitle)
@@ -536,12 +569,14 @@ extension Agent {
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
         // Added after initial release; absent in older agent JSON.
         claudeCode = try c.decodeIfPresent(ClaudeCodeAgentConfig.self, forKey: .claudeCode)
+        runtime = try? c.decodeIfPresent(AgentRuntime.self, forKey: .runtime)
         pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
         bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
-        // Legacy `manualSkillNames` keys are intentionally ignored: skills are
-        // universally available to custom agents.
+        // Legacy `manualSkillNames` keys are intentionally ignored; the
+        // allow-list uses its own key so those stale lists stay dead.
+        skillNames = try c.decodeIfPresent([String].self, forKey: .skillNames)
         // Positive polarity (`toolsEnabled` / `memoryEnabled`, default true).
         // Older agent JSON only has the negative `disableTools` /
         // `disableMemory` keys; read those from a legacy container and
@@ -574,16 +609,18 @@ extension Agent {
         workingFolderPath =
             try c.decodeIfPresent(String.self, forKey: .workingFolderPath)
             ?? legacy.decodeIfPresent(String.self, forKey: .hostWorkspacePath)
+        sourceTemplateName = try c.decodeIfPresent(String.self, forKey: .sourceTemplateName)
+        sourceTemplateID = try c.decodeIfPresent(UUID.self, forKey: .sourceTemplateID)
     }
 }
 
 // MARK: - Claude Code Configuration
 
-/// Per-agent behavior for the Claude Code subprocess backend.
+/// Per-agent behavior for the Claude Code harness runtime.
 ///
-/// Only consulted when the agent is running a `claude-code/…` model; agents on
-/// any other model ignore it entirely.
-public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable {
+/// Only consulted when the agent's runtime is a Claude Code harness; agents on
+/// the built-in loop or another harness ignore it entirely.
+public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
     /// Whether Claude Code runs its own agent loop and tools, or is reduced to
     /// a plain text generator.
     ///
@@ -607,25 +644,45 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable {
     /// *change* configuration (agents, providers, models, plugins). Defaults
     /// `false`, so the grant starts read-only like every other switch here.
     public var allowOsaurusConfigWrites: Bool
+    /// `--model` value: an alias (`sonnet`, `opus`, `fable`, `haiku`) or a
+    /// full model id. Nil = `sonnet`.
+    public var model: String?
+    /// `--effort` value (`ClaudeCodeEffort`). Nil = the CLI's per-model default.
+    public var effort: String?
 
     public init(
         mode: ClaudeCodeMode = .agent,
         allowWrites: Bool = false,
         allowShell: Bool = false,
         allowOsaurusTools: Bool = false,
-        allowOsaurusConfigWrites: Bool = false
+        allowOsaurusConfigWrites: Bool = false,
+        model: String? = nil,
+        effort: String? = nil
     ) {
         self.mode = mode
         self.allowWrites = allowWrites
         self.allowShell = allowShell
         self.allowOsaurusTools = allowOsaurusTools
         self.allowOsaurusConfigWrites = allowOsaurusConfigWrites
+        self.model = model
+        self.effort = effort
     }
 
     public static let `default` = ClaudeCodeAgentConfig()
 
+    /// The `--model` value to launch with.
+    public var resolvedModel: String {
+        let trimmed = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? ClaudeCodeModel.sonnet.rawValue : trimmed
+    }
+
+    /// The `--effort` value to launch with, or nil to leave the CLI default.
+    public var resolvedEffort: ClaudeCodeEffort? {
+        effort.flatMap { ClaudeCodeEffort(rawValue: $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case mode, allowWrites, allowShell, allowOsaurusTools, allowOsaurusConfigWrites
+        case mode, allowWrites, allowShell, allowOsaurusTools, allowOsaurusConfigWrites, model, effort
     }
 
     /// Custom decode so a missing key — or a `mode` written by a future build
@@ -643,6 +700,8 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable {
         allowOsaurusTools = try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusTools) ?? false
         allowOsaurusConfigWrites =
             try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusConfigWrites) ?? false
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        effort = try? c.decodeIfPresent(String.self, forKey: .effort)
     }
 }
 

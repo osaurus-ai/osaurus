@@ -120,6 +120,7 @@ public enum SettingsSearchIndex {
         "sandbox.overview",
         "insights.overview",
         "agents.overview",
+        "agentRuntimes.overview",
         "agents.configure",
         "agents.description",
         "agents.database",
@@ -645,6 +646,20 @@ public enum SettingsSearchIndex {
             subTab: "authentication"
         ),
         .init(
+            id: "server.localAccessKey",
+            tab: .server,
+            section: "Authentication",
+            title: "Require Access Key for Local Admin Routes",
+            keywords: [
+                "local access key", "local api key", "require key locally", "loopback auth", "localhost key",
+                "browser origin", "refuse browser", "protect sessions", "protect agents", "mcp key",
+                "admin config key", "local admin routes",
+            ],
+            subTab: "authentication",
+            disambiguation:
+                "Makes callers on this Mac send an access key to /sessions, /agents, /mcp/*, /admin/config/* and /admin/import/*, and refuses browser origins there unless listed by name in Allowed Origins (CORS). Not the access key list itself (Server → Overview) and not the CORS list (Server → Connection)."
+        ),
+        .init(
             id: "server.generation",
             tab: .server,
             section: "Sampling Defaults",
@@ -811,6 +826,16 @@ public enum SettingsSearchIndex {
             title: "Memory Safety",
             keywords: ["memory", "ram", "guard", "oom", "limits"],
             subTab: "memorySafety"
+        ),
+        .init(
+            id: "server.memorySafety.loadAllocatorCap",
+            tab: .server,
+            section: "Memory Safety",
+            title: "Load Allocator Cap",
+            keywords: ["load allocator", "inference reuse", "allocator cache", "freed buffers", "memory limit"],
+            subTab: "memorySafety",
+            disambiguation:
+                "Load-time freed-buffer reuse target. Inference has a separate process-wide target. An explicit Allocator Cache Cap bounds the selected target; occupancy can exceed it until the next allocation trims the pool."
         ),
         .init(
             id: "server.decode",
@@ -1843,6 +1868,17 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.templates",
+            tab: .agents,
+            title: "Templates",
+            keywords: [
+                "agent templates", "import agent template", "agent starter", "share agent", "osaurustemplate",
+                "save as template", "export template", "import template",
+            ],
+            disambiguation:
+                "Agents header → Templates. Import Template takes a .osaurustemplate file; Save as Template is in an agent card's … menu and the agent page's Share menu."
+        ),
+        .init(
             id: "agents.configure",
             tab: .agents,
             title: "Configure Agent",
@@ -1855,12 +1891,217 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.generation.temperature",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Temperature",
+            keywords: ["agent temperature", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.maxTokens",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Max Tokens",
+            keywords: ["agent max tokens", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.topP",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Top P",
+            keywords: ["agent top p", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.topK",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Top K",
+            keywords: ["agent top k", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.minP",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Min P",
+            keywords: ["agent min p", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.repetitionPenalty",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Repetition penalty",
+            keywords: ["agent repetition penalty", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.frequencyPenalty",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Frequency penalty",
+            keywords: ["agent frequency penalty", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.presencePenalty",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Presence penalty",
+            keywords: ["agent presence penalty", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.seed",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Seed",
+            keywords: ["agent seed", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.stop",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Stop sequences (JSON array)",
+            keywords: ["agent stop sequences (json array)", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.thinking",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Thinking",
+            keywords: ["agent thinking", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.reasoningEffort",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Reasoning effort",
+            keywords: ["agent reasoning effort", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.templateKwargs",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Template parameters (JSON)",
+            keywords: ["agent template parameters (json)", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
             id: "agents.description",
             tab: .agents,
             title: "Brief description (optional)",
             keywords: ["agent description", "purpose", "routing", "delegation", "auto-generated description", "generated description"],
             disambiguation: "Optional one-line summary shown to the orchestrator when it chooses a delegation target. Left blank, Osaurus generates one in the background from the agent's system prompt; typing your own overrides it.",
             declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.runtime",
+            tab: .agents,
+            section: "Runtime",
+            title: "Runs on",
+            keywords: [
+                "runtime", "agent runtime", "harness", "external harness", "claude code", "pi", "pi rpc",
+                "built-in loop", "osaurus built-in", "run agent on claude code", "spotlight", "splash",
+                "manage runtimes", "switch runtime", "switch to claude code", "model picker runtime",
+            ],
+            disambiguation:
+                "Per-agent choice between Osaurus's own loop and a registered harness (Configure tab → Runtime). The chat model picker lists the same runtimes as columns; picking one there changes this setting. Register or test harnesses under Agents → Runtimes. Declarative key: `runtime` (\"builtin\" or a harness_runtimes name) on agents[] and default_agent.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.claudeCode.model",
+            tab: .agents,
+            section: "Claude Code Options",
+            title: "Claude model",
+            keywords: ["claude code model", "sonnet", "opus", "fable", "haiku", "model alias"],
+            disambiguation:
+                "Shown only when the agent's runtime is Claude Code. The Claude Code column of the chat model picker sets the same value. Declarative key: `claude_code.model`.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.claudeCode.effort",
+            tab: .agents,
+            section: "Claude Code Options",
+            title: "Claude effort",
+            keywords: [
+                "claude code effort", "effort", "thinking effort", "reasoning effort", "thinking level",
+                "extra high", "xhigh", "max effort", "--effort",
+            ],
+            disambiguation:
+                "Shown only when the agent's runtime is Claude Code. Passed to the CLI as `--effort`; Default leaves Claude Code on its own per-model default. Not the chat composer's reasoning control for built-in-loop models. Declarative key: `claude_code.effort`.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.claudeCode",
+            tab: .agents,
+            section: "Claude Code Options",
+            title: "Allow file changes",
+            keywords: [
+                "execution mode", "text only", "allow shell commands", "bash", "allow osaurus read tools",
+                "allow osaurus configuration changes", "claude code permissions", "claude code tools", "mcp bridge",
+            ],
+            disambiguation:
+                "Claude Code permission switches on an agent whose runtime is Claude Code. File changes are scoped to the chat folder; shell commands can't be confined. Declarative block: `claude_code` on agents[] and default_agent.",
+            declarativeSection: "agents"
+        ),
+        // MARK: Agent Runtimes
+        .init(
+            id: "agentRuntimes.overview",
+            tab: .agentRuntimes,
+            title: "Agent Runtimes",
+            keywords: [
+                "runtimes", "harness", "harnesses", "external agent", "claude code", "pi", "pi rpc", "rpc mode",
+                "spotlight", "splash", "agent backend", "pluggable", "harness_runtimes",
+            ],
+            declarativeSection: "harness_runtimes"
+        ),
+        .init(
+            id: "agentRuntimes.add",
+            tab: .agentRuntimes,
+            title: "Add Runtime",
+            keywords: [
+                "new runtime", "register harness", "executable", "arguments", "environment", "protocol",
+                "session id", "chat id placeholder", "system prompt file",
+            ],
+            declarativeSection: "harness_runtimes"
+        ),
+        .init(
+            id: "agentRuntimes.list",
+            tab: .agentRuntimes,
+            title: "Test",
+            keywords: [
+                "test runtime", "check harness", "get_state", "sign in", "claude code sign in", "claude login",
+                "edit runtime", "delete runtime",
+            ],
+            disambiguation: "Per-runtime Test, Sign In (Claude Code), Edit, and Delete buttons in Agents → Runtimes.",
+            declarativeSection: "harness_runtimes"
+        ),
+        .init(
+            id: "agentRuntimes.safety",
+            tab: .agentRuntimes,
+            title: "How runtimes work",
+            keywords: ["harness permissions", "confine", "harness sandbox", "harness folder", "osaurus_agent_token"]
         ),
         .init(
             id: "agents.database",
@@ -1889,6 +2130,24 @@ public enum SettingsSearchIndex {
             subTab: "capabilities",
             disambiguation:
                 "Per-custom-agent groups in Abilities → Tools for the built-in Apple app tools (off by default, toggled per app). The Orchestrator never uses them directly; it enables them on a custom agent via osaurus_config capabilities.apple_apps.",
+            declarativeSection: "agents"
+        ),
+
+        // Agents → (custom agent) → Abilities → Tools: the per-agent skill
+        // allow-list card above the picker. Also writable via
+        // `agents[].skills`.
+        .init(
+            id: "agents.skills",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: "Limit to selected skills",
+            keywords: [
+                "skills", "skill allow-list", "allowed skills", "allow list", "allowlist",
+                "restrict skills", "choose skills", "agent skills", "skill access",
+            ],
+            subTab: "capabilities",
+            disambiguation:
+                "Per-custom-agent switch in Abilities → Tools. Off: the agent sees every installed skill. On: only the ticked skills appear in its prompt, capabilities_load and slash commands. Installing skill content is Skills in the sidebar, not this card. Declarative: agents[].skills (omit = unchanged, null = all skills, list = only these).",
             declarativeSection: "agents"
         ),
 

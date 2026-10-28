@@ -74,13 +74,13 @@ final class ModelDownloadService: ObservableObject {
     /// Last download failure surfaced to the UI.
     @Published var downloadAlert: DownloadAlertInfo?
 
-    /// Cached total on-disk size of downloaded models. Computed off the main
-    /// thread by `refreshTotalDownloadedSize` (a recursive filesystem walk) and
-    /// published here so the header can read it without blocking the UI.
+    /// Cached total on-disk size of the installed inventory. Computed off the
+    /// main thread by `refreshTotalDownloadedSize(inventoryCandidates:)` (a
+    /// recursive filesystem walk) and published here so the header can read
+    /// it without blocking the UI. `ModelManager` drives the refresh after
+    /// each local-discovery merge, which is also what `.localModelsChanged`
+    /// triggers, so the figure always covers the same set the header counts.
     @Published private(set) var totalDownloadedSizeBytes: Int64 = 0
-
-    /// Keeps the cached size fresh when models are added/removed.
-    private var localModelsObserver: NSObjectProtocol?
 
     /// Categorised failure info shown in the alert. The `title` describes
     /// the kind of failure, `message` is the human-readable cause, and
@@ -259,16 +259,6 @@ final class ModelDownloadService: ObservableObject {
 
     init() {
         HuggingFaceAuth.preloadInBackground()
-        refreshTotalDownloadedSize()
-        // Recompute whenever a download completes, a model is deleted, or the
-        // models directory changes — all of which already post this.
-        localModelsObserver = NotificationCenter.default.addObserver(
-            forName: .localModelsChanged,
-            object: nil,
-            queue: .main
-        ) { _ in
-            Task { @MainActor in ModelDownloadService.shared.refreshTotalDownloadedSize() }
-        }
     }
 
     // MARK: - Download Methods
@@ -1239,15 +1229,18 @@ final class ModelDownloadService: ObservableObject {
         ByteCountFormatter.string(fromByteCount: totalDownloadedSizeBytes, countStyle: .file)
     }
 
-    /// Recompute the on-disk size of all downloaded models off the main thread,
-    /// then publish it. The walk (`discoverLocalModels` plus a recursive size
-    /// sum per model) is far too expensive to run synchronously in a SwiftUI
-    /// body, which is where the header reads `totalDownloadedSizeString`.
-    func refreshTotalDownloadedSize() {
+    /// Recompute the on-disk size of the installed inventory off the main
+    /// thread, then publish it. `inventoryCandidates` is
+    /// `ModelManager.deduplicatedModels()` captured on the main actor; the
+    /// installed subset is resolved here with `ModelManager.installedModels(among:)`,
+    /// the same function behind the header count, so "N downloaded • size"
+    /// describes one set. The walk (an `isDownloaded` probe plus a recursive
+    /// size sum per model) is far too expensive to run synchronously in a
+    /// SwiftUI body, which is where the header reads `totalDownloadedSizeString`.
+    func refreshTotalDownloadedSize(inventoryCandidates: [MLXModel]) {
         Task { @MainActor [weak self] in
             let bytes = await Task.detached(priority: .utility) { () -> Int64 in
-                ModelManager.discoverLocalModels()
-                    .filter { $0.isDownloaded }
+                ModelManager.installedModels(among: inventoryCandidates)
                     .reduce(Int64(0)) { partial, model in
                         partial + (ModelDownloadService.directoryAllocatedSize(at: model.localDirectory) ?? 0)
                     }

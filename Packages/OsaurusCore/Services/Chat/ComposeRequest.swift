@@ -46,6 +46,11 @@ struct ComposeRequest: Sendable {
     /// project's knowledge collections into the knowledge-tool gate and the
     /// prompt's grant descriptors.
     let projectId: UUID?
+    /// False when the turn being composed is host-authored (a helper report
+    /// delivered as `.hostContinuation`): there is no user query to recall
+    /// against, and recall keyed on the report's own words pulls memory of
+    /// the delegated task itself onto a message the user never wrote.
+    let recallsMemory: Bool
 
     init(
         agentId: UUID,
@@ -61,7 +66,8 @@ struct ComposeRequest: Sendable {
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
         trace: TTFTTrace? = nil,
-        projectId: UUID? = nil
+        projectId: UUID? = nil,
+        recallsMemory: Bool = true
     ) {
         self.agentId = agentId
         self.executionMode = executionMode
@@ -77,5 +83,6 @@ struct ComposeRequest: Sendable {
         self.frozenSoul = frozenSoul
         self.trace = trace
         self.projectId = projectId
+        self.recallsMemory = recallsMemory
     }
 }

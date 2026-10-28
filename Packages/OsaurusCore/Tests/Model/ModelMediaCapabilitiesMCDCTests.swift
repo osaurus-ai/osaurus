@@ -4,6 +4,36 @@ import Testing
 
 @Suite("ModelMediaCapabilities — config and weight evidence")
 struct ModelMediaCapabilitiesMCDCTests {
+    @Test func deepseekV41InBundleVisionTowerGrantsImagesOnly() throws {
+        let root = try VisionBundleFixture.makeDeepseekV41()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["neutral", "DeepSeek-V4.1-Flash-1017-JANG-Q2Q3-IMATRIX"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(!caps.supportsVideo)
+            #expect(!caps.supportsAudio)
+        }
+        #expect(LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+    }
+
+    @Test(arguments: ["vision.patch_embed", "vision.blocks.1.attn", "vision.blocks.0.mlp",
+                      "vision.norm", "aligner.w2", "image_start", "image_newline"])
+    func deepseekV41MissingVisionComponentIsTextOnly(component: String) throws {
+        let root = try VisionBundleFixture.makeDeepseekV41(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        #expect(ModelMediaCapabilities.from(directory: root, modelId: "neutral") == .textOnly)
+    }
+
+    @Test func deepseekV41RequiresDepthBlocksAndImageToken() throws {
+        let deeper = try VisionBundleFixture.makeDeepseekV41(depth: 3)
+        defer { try? FileManager.default.removeItem(at: deeper) }
+        #expect(!LocalVisionEvidence.inspect(deeper, refresh: true).hasVision)
+        let noToken = try VisionBundleFixture.makeDeepseekV41(imageTokenId: nil)
+        defer { try? FileManager.default.removeItem(at: noToken) }
+        #expect(!LocalVisionEvidence.inspect(noToken, refresh: true).hasVision)
+    }
+
     @Test(arguments: [true, false], [true, false])
     func nemotronVideoRequiresBundleTokenAndTemporalWeights(hasToken: Bool, hasTemporalWeights: Bool) throws {
         let root = try VisionBundleFixture.make(type: "nemotron_h_omni")

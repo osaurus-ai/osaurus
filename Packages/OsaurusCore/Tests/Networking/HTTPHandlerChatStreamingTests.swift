@@ -168,6 +168,10 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
 
+            func streamResponses(request: ResponsesInferenceRequest) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+                httpFixtureResponseEvents(try await completeChat(request: request.chatCompletionsCompatibilityRequest()))
+            }
+
             func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
                 await capture.record(request)
                 let choice = ChatChoice(
@@ -269,6 +273,10 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 fatalError("not used")
+            }
+
+            func streamResponses(request: ResponsesInferenceRequest) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+                httpFixtureResponseEvents(try await completeChat(request: request.chatCompletionsCompatibilityRequest()))
             }
 
             func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
@@ -395,7 +403,7 @@ struct HTTPHandlerChatStreamingTests {
 
     @Test func ollama_chat_non_streaming_returns_single_message_object() async throws {
         let server = try await startChatStreamingTestServer(
-            with: MockChatEngine(deltas: [], completeText: "hello", model: "fake")
+            with: MockChatEngine(deltas: ["hello"], completeText: "hello", model: "fake")
         )
         defer { Task { await server.shutdown() } }
 
@@ -459,7 +467,7 @@ struct HTTPHandlerChatStreamingTests {
 
     @Test func ollama_generate_non_streaming_returns_single_response_object() async throws {
         let server = try await startChatStreamingTestServer(
-            with: MockChatEngine(deltas: [], completeText: "hello", model: "fake")
+            with: MockChatEngine(deltas: ["hello"], completeText: "hello", model: "fake")
         )
         defer { Task { await server.shutdown() } }
 
@@ -482,7 +490,7 @@ struct HTTPHandlerChatStreamingTests {
         #expect(body.split(separator: "\n").count <= 1)
     }
 
-    @Test func ollama_chat_drops_reasoning_sentinel_from_plaintext_ndjson() async throws {
+    @Test func ollama_chat_preserves_reasoning_in_thinking_without_plaintext_leakage() async throws {
         let server = try await startChatStreamingTestServer(
             with: MockChatEngine(
                 deltas: [StreamingReasoningHint.encode("private reasoning"), "visible"],
@@ -519,7 +527,12 @@ struct HTTPHandlerChatStreamingTests {
         let body = String(decoding: data, as: UTF8.self)
         #expect(status == 200)
         #expect(body.contains("visible"))
-        #expect(!body.contains("private reasoning"))
+        let frames = body.components(separatedBy: .newlines).compactMap {
+            (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
+        }
+        let messages = frames.compactMap { $0["message"] as? [String: Any] }
+        #expect(messages.compactMap { $0["thinking"] as? String }.joined() == "private reasoning")
+        #expect(messages.compactMap { $0["content"] as? String }.joined() == "visible")
         #expect(!body.contains("\u{FFFE}"))
     }
 
@@ -663,8 +676,18 @@ struct HTTPHandlerChatStreamingTests {
         #expect(status == 200)
         #expect(body.contains("\"tool_calls\""))
         #expect(body.contains("\"function\":{\"name\":\"get_weather\""))
-        #expect(body.contains("\\\"count\\\":7"))
-        #expect(!body.contains("\\\"count\\\":\\\"7\\\""))
+        let chunks = try body.components(separatedBy: .newlines)
+            .filter { $0.hasPrefix("data: ") && $0 != "data: [DONE]" }
+            .map { try #require(JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8)) as? [String: Any]) }
+        let calls = chunks.flatMap { $0["choices"] as? [[String: Any]] ?? [] }
+            .compactMap { $0["delta"] as? [String: Any] }
+            .flatMap { $0["tool_calls"] as? [[String: Any]] ?? [] }
+        #expect(calls.allSatisfy { $0["index"] as? Int == 0 })
+        let arguments = calls.compactMap { ($0["function"] as? [String: Any])?["arguments"] as? String }.joined()
+        #expect(arguments == #"{"city":"SF","count":"7"}"#)
+        let decoded = try #require(JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any])
+        #expect(decoded["count"] as? String == "7")
+        #expect(decoded["count"] as? Int == nil)
         #expect(body.contains("\"finish_reason\":\"tool_calls\""))
     }
     @Test func sse_path_emits_reasoning_content_field() async throws {
@@ -728,12 +751,15 @@ struct HTTPHandlerChatStreamingTests {
         #expect(!body.contains("\u{FFFE}"))
     }
 
-    @Test func sse_path_uses_engine_stats_for_usage_chunk() async throws {
+    @Test(arguments: [true, false])
+    func sse_path_uses_engine_stats_for_usage_chunk(_ reportsInput: Bool) async throws {
         struct StatsEngine: ChatEngineProtocol {
+            let reportsInput: Bool
             func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    if reportsInput { continuation.yield(StreamingInputTokenHint.encode(257)) }
                     continuation.yield("hello")
                     continuation.yield(
                         StreamingStatsHint.encode(
@@ -750,7 +776,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startChatStreamingTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine(reportsInput: reportsInput))
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -770,8 +796,22 @@ struct HTTPHandlerChatStreamingTests {
         let body = String(decoding: data, as: UTF8.self)
         #expect(status == 200)
         #expect(body.contains("\"content\":\"hello\""))
-        #expect(body.contains("\"completion_tokens\":77"))
-        #expect(body.contains("\"tokens_per_second\":12.5"))
+        let chunks = try body.components(separatedBy: .newlines)
+            .filter { $0.hasPrefix("data: ") && $0 != "data: [DONE]" }
+            .map { try #require(JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8)) as? [String: Any]) }
+        let usage = chunks.compactMap { $0["usage"] as? [String: Any] }
+        let metrics = try #require(chunks.compactMap { $0["generation_metrics"] as? [String: Any] }.first)
+        #expect(metrics["completion_tokens"] as? Int == 77)
+        #expect(metrics["tokens_per_second"] as? Double == 12.5)
+        #expect(usage.count == (reportsInput ? 1 : 0))
+        if reportsInput {
+            #expect(usage.first?["prompt_tokens"] as? Int == 257)
+            #expect(usage.first?["completion_tokens"] as? Int == 77)
+            #expect(usage.first?["total_tokens"] as? Int == 334)
+            #expect(usage.first?["tokens_per_second"] as? Double == 12.5)
+        } else {
+            #expect(metrics["prompt_tokens"] == nil && metrics["total_tokens"] == nil)
+        }
         #expect(body.contains("\"finish_reason\":\"length\""))
         #expect(!body.contains("\u{FFFE}"))
     }
@@ -1459,8 +1499,10 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(7))
                     continuation.yield(StreamingReasoningHint.encode("hi"))
                     continuation.yield("answer")
+                    continuation.yield(StreamingStatsHint.encode(tokenCount: 20, tokensPerSecond: 5))
                     continuation.finish()
                 }
             }
@@ -1499,6 +1541,7 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(7))
                     continuation.yield("answer")
                     continuation.yield(StreamingStatsHint.encode(tokenCount: 77, tokensPerSecond: 12.5))
                     continuation.finish()
@@ -1536,6 +1579,8 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(7))
+                    continuation.yield(StreamingStatsHint.encode(tokenCount: 20, tokensPerSecond: 5))
                     continuation.finish(
                         throwing: ServiceToolInvocations(
                             invocations: [
@@ -1593,6 +1638,10 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 fatalError("not used")
+            }
+
+            func streamResponses(request: ResponsesInferenceRequest) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+                httpFixtureResponseEvents(try await completeChat(request: request.chatCompletionsCompatibilityRequest()))
             }
 
             func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
@@ -1700,6 +1749,7 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(7))
                     continuation.yield("answer")
                     continuation.yield(StreamingStatsHint.encode(tokenCount: 77, tokensPerSecond: 12.5))
                     continuation.finish()
@@ -1937,5 +1987,26 @@ func startChatStreamingTestServer(
         }
         await lease.release()
         throw error
+    }
+}
+
+
+/// Explicit compatibility only for complete-only test doubles. Production HTTP
+/// inference calls the typed engine entry and never uses this helper.
+private func httpFixtureResponseEvents(_ response: ChatCompletionResponse) -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+    AsyncThrowingStream { continuation in
+        let message = response.choices.first?.message
+        if let reasoning = message?.reasoning_content { continuation.yield(.reasoningDelta(reasoning)) }
+        if let text = message?.content { continuation.yield(.outputTextDelta(text)) }
+        let calls = (message?.tool_calls ?? []).map {
+            ResponsesFunctionCall(id: "fc_" + $0.id, callID: $0.id, name: $0.function.name,
+                arguments: $0.function.arguments, geminiThoughtSignature: $0.geminiThoughtSignature)
+        }
+        continuation.yield(.responseCompleted(.init(responseID: response.id, status: .completed,
+            functionCalls: calls, tokenCount: response.usage.completion_tokens,
+            tokensPerSecond: response.usage.tokens_per_second, unclosedReasoning: false,
+            stopReason: response.choices.first?.finish_reason, promptTokensPerSecond: nil, mtp: nil,
+            inputTokenCount: response.usage.prompt_tokens)))
+        continuation.finish()
     }
 }

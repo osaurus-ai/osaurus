@@ -571,7 +571,7 @@ struct AgentCapabilityManagerView: View {
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
                     Text(
-                        "Pick which tools this agent can use. Skills come from the shared library and are always available.",
+                        "Pick which tools this agent can use. Skills come from the shared library; limit them below.",
                         bundle: .module
                     )
                         .font(.system(size: 12))
@@ -593,6 +593,10 @@ struct AgentCapabilityManagerView: View {
             }
 
             autoDiscoverCard
+
+            if case .live(let agentId) = source, agentId != Agent.defaultId {
+                AgentSkillAllowListCard(agentId: agentId)
+            }
         }
         .padding(.horizontal, compact ? 20 : 24)
         .padding(.vertical, 14)

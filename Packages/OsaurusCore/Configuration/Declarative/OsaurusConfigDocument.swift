@@ -71,6 +71,7 @@ extension KeyedEncodingContainer {
 /// settings; machine/app settings are Settings-UI-only.
 public enum ConfigSectionID: String, CaseIterable, Sendable {
     case memory
+    case harnessRuntimes = "harness_runtimes"
     case defaultAgent = "default_agent"
     /// Which agent NEW chats open with. `active_agent` is accepted as a
     /// legacy alias on input.
@@ -107,6 +108,8 @@ public struct OsaurusConfigDocument: Equatable, Sendable {
     /// Schema version. Currently always 1.
     public var version: Int?
     public var memory: MemorySection?
+    /// Registered harness runtimes (Claude Code, Pi, Pi-based CLIs).
+    public var harnessRuntimes: [HarnessRuntimeEntry]?
     public var defaultAgent: DefaultAgentSection?
     /// Name of the agent NEW chats open with ("default" or a custom agent's
     /// name). Serialized as `new_chat_agent`; `active_agent` still decodes.
@@ -133,6 +136,7 @@ public struct OsaurusConfigDocument: Equatable, Sendable {
     public var declaredSections: [ConfigSectionID] {
         var out: [ConfigSectionID] = []
         if memory != nil { out.append(.memory) }
+        if harnessRuntimes != nil { out.append(.harnessRuntimes) }
         if defaultAgent != nil { out.append(.defaultAgent) }
         if activeAgent != nil { out.append(.activeAgent) }
         if agents != nil { out.append(.agents) }
@@ -156,6 +160,7 @@ public struct OsaurusConfigDocument: Equatable, Sendable {
         var doc = OsaurusConfigDocument()
         doc.version = version
         if sections.contains(.memory) { doc.memory = memory }
+        if sections.contains(.harnessRuntimes) { doc.harnessRuntimes = harnessRuntimes }
         if sections.contains(.defaultAgent) { doc.defaultAgent = defaultAgent }
         if sections.contains(.activeAgent) { doc.activeAgent = activeAgent }
         if sections.contains(.agents) { doc.agents = agents }
@@ -179,6 +184,7 @@ extension OsaurusConfigDocument: Codable {
     enum CodingKeys: String, CodingKey {
         case version
         case memory
+        case harnessRuntimes = "harness_runtimes"
         case defaultAgent = "default_agent"
         case activeAgent = "new_chat_agent"
         /// Legacy spelling, read-only: older documents and habits.
@@ -202,6 +208,7 @@ extension OsaurusConfigDocument: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decodeIfPresent(Int.self, forKey: .version)
         memory = try c.decodeIfPresent(MemorySection.self, forKey: .memory)
+        harnessRuntimes = try c.decodeIfPresent([HarnessRuntimeEntry].self, forKey: .harnessRuntimes)
         defaultAgent = try c.decodeIfPresent(DefaultAgentSection.self, forKey: .defaultAgent)
         activeAgent =
             try c.decodeIfPresent(String.self, forKey: .activeAgent)
@@ -226,6 +233,7 @@ extension OsaurusConfigDocument: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(version, forKey: .version)
         try c.encodeIfPresent(memory, forKey: .memory)
+        try c.encodeIfPresent(harnessRuntimes, forKey: .harnessRuntimes)
         try c.encodeIfPresent(defaultAgent, forKey: .defaultAgent)
         try c.encodeIfPresent(activeAgent, forKey: .activeAgent)
         try c.encodeIfPresent(agents, forKey: .agents)
@@ -281,6 +289,9 @@ public struct DefaultAgentSection: Equatable, Sendable {
     public var maxTokens: ConfigField<Int> = .absent
     /// The Default agent's persona (system prompt).
     public var systemPrompt: String?
+    /// `builtin` or a registered harness runtime's name.
+    public var runtime: String?
+    public var claudeCode: AgentClaudeCodeEntry?
     public init() {}
 }
 
@@ -289,6 +300,8 @@ extension DefaultAgentSection: Codable {
         case name, model, temperature
         case maxTokens = "max_tokens"
         case systemPrompt = "system_prompt"
+        case runtime
+        case claudeCode = "claude_code"
     }
 
     public init(from decoder: Decoder) throws {
@@ -298,6 +311,8 @@ extension DefaultAgentSection: Codable {
         temperature = try c.configField(Double.self, forKey: .temperature)
         maxTokens = try c.configField(Int.self, forKey: .maxTokens)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
+        runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
+        claudeCode = try c.decodeIfPresent(AgentClaudeCodeEntry.self, forKey: .claudeCode)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -307,6 +322,8 @@ extension DefaultAgentSection: Codable {
         try c.encode(configField: temperature, forKey: .temperature)
         try c.encode(configField: maxTokens, forKey: .maxTokens)
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
+        try c.encodeIfPresent(runtime, forKey: .runtime)
+        try c.encodeIfPresent(claudeCode, forKey: .claudeCode)
     }
 }
 
@@ -364,6 +381,62 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
     }
 }
 
+/// Per-agent tool selection. `mode` is `auto` (RAG-picked) or `manual`.
+/// `enabled` lists the tool names an agent may call in manual mode. Tools
+/// owned by an MCP server or plugin are declared through `mcp_servers` /
+/// `plugins` instead, so a document stays portable across machines where
+/// the server exposes a different tool set.
+public struct AgentToolsEntry: Codable, Equatable, Sendable {
+    public var mode: String?
+    public var enabled: [String]?
+
+    public init() {}
+}
+
+/// Named group enablement (MCP servers by name, plugins by registry id).
+/// `enabled` adds every tool the group owns to the agent's manual list,
+/// `disabled` removes them. Groups not listed are untouched.
+public struct AgentToolGroupsEntry: Codable, Equatable, Sendable {
+    public var enabled: [String]?
+    public var disabled: [String]?
+
+    public init() {}
+}
+
+/// Sandbox (autonomous code execution) knobs for one agent.
+public struct AgentSandboxEntry: Codable, Equatable, Sendable {
+    public var enabled: Bool?
+    public var networkEnabled: Bool?
+    public var allowedDomains: [String]?
+    public var maxCommandsPerTurn: Int?
+    public var backgroundProcessEnabled: Bool?
+    public var pluginCreate: Bool?
+
+    public init() {}
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case networkEnabled = "network_enabled"
+        case allowedDomains = "allowed_domains"
+        case maxCommandsPerTurn = "max_commands_per_turn"
+        case backgroundProcessEnabled = "background_process_enabled"
+        case pluginCreate = "plugin_create"
+    }
+}
+
+/// Subagent delegation for one agent. `agents` are agent names (resolved
+/// to local ids on apply).
+public struct AgentSubagentsEntry: Codable, Equatable, Sendable {
+    public var enabled: Bool?
+    public var agents: [String]?
+    /// Deprecated and ignored. Spawning by raw model id was removed, but
+    /// templates exported before that still carry the key, so it keeps
+    /// decoding instead of failing the strict validator.
+    public var models: [String]?
+
+    public init() {}
+}
+
 /// A custom agent. Matched to existing agents by `name` (case-insensitive);
 /// an unmatched entry is created, a matched one is patched.
 public struct AgentEntry: Equatable, Sendable {
@@ -379,7 +452,33 @@ public struct AgentEntry: Equatable, Sendable {
     public var model: ConfigField<String> = .absent
     public var temperature: ConfigField<Double> = .absent
     public var maxTokens: ConfigField<Int> = .absent
+    /// Replaces the advanced override group; null clears it, absent preserves it.
+    public var generationSettings: ConfigField<AgentGenerationSettings> = .absent
     public var capabilities: AgentCapabilitiesEntry?
+    public var tools: AgentToolsEntry?
+    public var mcpServers: AgentToolGroupsEntry?
+    public var plugins: AgentToolGroupsEntry?
+    /// Skill allow-list (`Agent.skillNames`) by name or slug. A list
+    /// replaces the set; explicit `null` lets the agent see every skill.
+    public var skills: ConfigField<[String]> = .absent
+    /// Plugin id → extra instructions injected when that plugin's tools load.
+    public var pluginInstructions: [String: String]?
+    public var sandbox: AgentSandboxEntry?
+    public var subagents: AgentSubagentsEntry?
+    /// Working folder PATH. Exported as a hint only (never the bookmark).
+    /// On apply the folder is attached when it exists locally and a
+    /// security-scoped bookmark can be minted; otherwise the result asks
+    /// the user to pick it. Explicit `null` detaches the folder.
+    public var workingFolder: ConfigField<String> = .absent
+    /// Provenance: the agent template this agent was created from.
+    public var sourceTemplate: String?
+    /// `builtin` or a registered harness runtime's name.
+    public var runtime: String?
+    public var claudeCode: AgentClaudeCodeEntry?
+    /// Read only when the entry creates the agent: `false` keeps the new
+    /// agent out of the Orchestrator's spawn pool. Patching an existing
+    /// agent ignores it, so the user's Settings → Subagents choice stays.
+    public var orchestratorSpawnable: Bool?
 
     public init(name: String) {
         self.name = name
@@ -392,7 +491,20 @@ extension AgentEntry: Codable {
         case systemPrompt = "system_prompt"
         case model, temperature
         case maxTokens = "max_tokens"
+        case generationSettings = "generation_settings"
         case capabilities
+        case tools
+        case mcpServers = "mcp_servers"
+        case plugins
+        case skills
+        case pluginInstructions = "plugin_instructions"
+        case sandbox
+        case subagents
+        case workingFolder = "working_folder"
+        case sourceTemplate = "source_template"
+        case runtime
+        case claudeCode = "claude_code"
+        case orchestratorSpawnable = "orchestrator_spawnable"
     }
 
     public init(from decoder: Decoder) throws {
@@ -404,7 +516,20 @@ extension AgentEntry: Codable {
         model = try c.configField(String.self, forKey: .model)
         temperature = try c.configField(Double.self, forKey: .temperature)
         maxTokens = try c.configField(Int.self, forKey: .maxTokens)
+        generationSettings = try c.configField(AgentGenerationSettings.self, forKey: .generationSettings)
         capabilities = try c.decodeIfPresent(AgentCapabilitiesEntry.self, forKey: .capabilities)
+        tools = try c.decodeIfPresent(AgentToolsEntry.self, forKey: .tools)
+        mcpServers = try c.decodeIfPresent(AgentToolGroupsEntry.self, forKey: .mcpServers)
+        plugins = try c.decodeIfPresent(AgentToolGroupsEntry.self, forKey: .plugins)
+        skills = try c.configField([String].self, forKey: .skills)
+        pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
+        sandbox = try c.decodeIfPresent(AgentSandboxEntry.self, forKey: .sandbox)
+        subagents = try c.decodeIfPresent(AgentSubagentsEntry.self, forKey: .subagents)
+        workingFolder = try c.configField(String.self, forKey: .workingFolder)
+        sourceTemplate = try c.decodeIfPresent(String.self, forKey: .sourceTemplate)
+        runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
+        claudeCode = try c.decodeIfPresent(AgentClaudeCodeEntry.self, forKey: .claudeCode)
+        orchestratorSpawnable = try c.decodeIfPresent(Bool.self, forKey: .orchestratorSpawnable)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -416,7 +541,20 @@ extension AgentEntry: Codable {
         try c.encode(configField: model, forKey: .model)
         try c.encode(configField: temperature, forKey: .temperature)
         try c.encode(configField: maxTokens, forKey: .maxTokens)
+        try c.encode(configField: generationSettings, forKey: .generationSettings)
         try c.encodeIfPresent(capabilities, forKey: .capabilities)
+        try c.encodeIfPresent(tools, forKey: .tools)
+        try c.encodeIfPresent(mcpServers, forKey: .mcpServers)
+        try c.encodeIfPresent(plugins, forKey: .plugins)
+        try c.encode(configField: skills, forKey: .skills)
+        try c.encodeIfPresent(pluginInstructions, forKey: .pluginInstructions)
+        try c.encodeIfPresent(sandbox, forKey: .sandbox)
+        try c.encodeIfPresent(subagents, forKey: .subagents)
+        try c.encode(configField: workingFolder, forKey: .workingFolder)
+        try c.encodeIfPresent(sourceTemplate, forKey: .sourceTemplate)
+        try c.encodeIfPresent(runtime, forKey: .runtime)
+        try c.encodeIfPresent(claudeCode, forKey: .claudeCode)
+        try c.encodeIfPresent(orchestratorSpawnable, forKey: .orchestratorSpawnable)
     }
 }
 
@@ -470,6 +608,11 @@ public struct MCPServerEntry: Codable, Equatable, Sendable {
     /// resolved at apply and stored in the Keychain; the key joins
     /// `secretEnvKeys` and leaves the plain env. Never exported.
     public var secretEnvRefs: [String: String]?
+    /// Write-only map of HTTP request header -> secret reference, for
+    /// servers keyed by a custom header such as `X-API-Key`. Each value is
+    /// resolved at apply and stored in the Keychain; the header joins
+    /// `secretHeaderKeys`. Never exported.
+    public var secretHeaderRefs: [String: String]?
 
     public init(name: String) {
         self.name = name
@@ -481,6 +624,7 @@ public struct MCPServerEntry: Codable, Equatable, Sendable {
         case executionHost = "execution_host"
         case tokenRef = "token_ref"
         case secretEnvRefs = "secret_env_refs"
+        case secretHeaderRefs = "secret_header_refs"
     }
 }
 

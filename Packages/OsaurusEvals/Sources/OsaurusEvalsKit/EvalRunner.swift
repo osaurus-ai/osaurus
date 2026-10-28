@@ -257,7 +257,8 @@ public enum EvalRunner {
             trialSummaries: row.trialSummaries,
             blocker: row.blocker,
             judge: row.judge,
-            context: row.context
+            context: row.context,
+            cacheProof: row.cacheProof
         )
     }
 
@@ -612,7 +613,8 @@ public enum EvalRunner {
             trialSummaries: row.trialSummaries,
             blocker: row.blocker,
             judge: row.judge,
-            context: row.context
+            context: row.context,
+            cacheProof: row.cacheProof
         )
     }
 
@@ -1715,12 +1717,11 @@ public enum EvalRunner {
     /// persisted report. Input estimates are deterministic and therefore
     /// available for local and remote models even when runtime usage omits
     /// completion/decode statistics.
-    private static func claimsTelemetry(
+    static func claimsTelemetry(
         from transcript: CapabilityClaimsTranscript
     ) -> EvalCaseTelemetry? {
-        let total = transcript.promptTokensTotal.map {
-            $0 + (transcript.completionTokens ?? 0)
-        }
+        let total = EvalTokenCost.total(estimatedPrompt: transcript.promptTokensTotal,
+            reportedCompletion: transcript.completionTokens)
         let telemetry = EvalCaseTelemetry(
             decodeTokensPerSecond: transcript.decodeTokensPerSecond,
             completionTokens: transcript.completionTokens,

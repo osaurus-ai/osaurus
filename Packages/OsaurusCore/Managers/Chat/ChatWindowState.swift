@@ -716,6 +716,7 @@ final class ChatWindowState: ObservableObject {
         // schedule a fresh warm-up for a session that is being torn down.
         session.warmupController.shutdown()
         session.stop()
+        session.closeHarnessSession()
         session.onSessionChanged = nil
     }
 
@@ -1218,6 +1219,9 @@ final class ChatWindowState: ObservableObject {
                 target.folderFromAgentDefault = false
                 return
             }
+            // A harness runs on the host; the sandbox only governs Osaurus's
+            // own tools, which a harness agent's chat never uses.
+            guard AgentManager.shared.effectiveHarness(for: agentId) == nil else { return }
             do {
                 try await AgentManager.shared.disableSandboxForHostFolder(agentId: agentId)
             } catch {
@@ -1799,6 +1803,7 @@ final class ChatWindowState: ObservableObject {
         if !closingSession.turns.isEmpty { closingSession.save() }
         closingSession.warmupController.shutdown()
         closingSession.stop()
+        closingSession.closeHarnessSession()
         closingSession.onSessionChanged = nil
         closingSession.windowState = nil
     }
@@ -2175,6 +2180,9 @@ final class ChatWindowState: ObservableObject {
         refreshTheme()
         refreshAgentConfig()
         AgentManager.shared.setActiveAgent(newAgentId)
+        // First-run readiness: a freshly created agent (any path) is checked
+        // the first time a window shows it. Clean agents clear silently.
+        AgentSetupPromptCoordinator.shared.agentShown(newAgentId, windowId: windowId)
     }
 
     private func flushCurrentSession() {

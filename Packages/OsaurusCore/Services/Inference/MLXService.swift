@@ -15,7 +15,7 @@ private struct LocalModelRef {
     let modelId: String
 }
 
-actor MLXService: ToolCapableService {
+actor MLXService: ToolCapableService, ResponsesGenerationService {
 
     /// Shared instance for convenience (actor is stateless, delegates to ModelRuntime.shared)
     static let shared = MLXService()
@@ -51,7 +51,8 @@ actor MLXService: ToolCapableService {
     }
 
     fileprivate nonisolated static func findModel(named name: String) -> LocalModelRef? {
-        if let found = ModelManager.findInstalledModel(named: name) {
+        if let installed = ModelManager.findInstalledMLXModel(named: name), !installed.isDecision,
+            let found = ModelManager.findInstalledModel(named: name) {
             return LocalModelRef(name: found.name, modelId: found.id)
         }
         return nil
@@ -120,7 +121,7 @@ actor MLXService: ToolCapableService {
                         + "tokens_per_second=\(stats.tokensPerSecond) "
                         + "prefill_tokens_per_second=\(stats.prefillTokensPerSecond ?? 0) "
                         + "stop=\(stats.stopReason ?? "unknown")\n"
-                    FileHandle.standardError.write(Data(row.utf8))
+                    RuntimeDiagnostics.write(Data(row.utf8))
                 }
                 continue
             }
@@ -211,6 +212,38 @@ actor MLXService: ToolCapableService {
             toolChoice: toolChoice,
             modelId: model.modelId,
             modelName: model.name
+        )
+    }
+
+    func streamResponses(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        requestedModel: String?
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+        let model = try selectModel(requestedName: requestedModel)
+        try Self.validateRuntimePolicy(
+            modelName: model.name,
+            modelId: model.modelId,
+            messages: messages,
+            parameters: parameters,
+            tools: tools,
+            runtime: ServerRuntimeSettingsStore.snapshot()
+        )
+        let events = try await ModelRuntime.shared.streamResponseEvents(
+            messages: messages,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools,
+            toolChoice: toolChoice,
+            modelId: model.modelId,
+            modelName: model.name
+        )
+        return ResponsesGenerationStream.native(
+            events.events,
+            waitForProducerDrain: events.waitForProducerDrain
         )
     }
 

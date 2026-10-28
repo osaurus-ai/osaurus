@@ -87,6 +87,33 @@ struct ModelRuntimeResidencyLedger: Sendable {
     }
 }
 
+/// Request-owned allocator windows. A producer-drain callback and its outer
+/// fallback may both finish the same request; only its first finish can remove
+/// ownership or restore the shared allocator pool. Accessed on ModelRuntime's actor.
+struct ModelRuntimeGenerationAllocatorWindows: Sendable {
+    struct Token: Hashable, Sendable {
+        fileprivate let id: UUID
+        fileprivate var diagnosticID: String { String(id.uuidString.prefix(8)) }
+    }
+
+    private var active: Set<Token> = []
+
+    var count: Int { active.count }
+
+    mutating func begin() -> Token {
+        let token = Token(id: UUID())
+        active.insert(token)
+        return token
+    }
+
+    @discardableResult
+    mutating func finish(_ token: Token?, restoreWhenIdle: () -> Void) -> Bool {
+        guard let token, active.remove(token) != nil else { return false }
+        if active.isEmpty { restoreWhenIdle() }
+        return true
+    }
+}
+
 // Force-link both trampolines so ModelFactoryRegistry discovers them at runtime.
 // `loadModelContainer` iterates factories in order — without touching each
 // `.shared` the trampoline's static initializer may never run, and a model
@@ -242,7 +269,6 @@ public actor ModelRuntime {
         let dflash2BlockSize: Int?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
-        let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
         let cacheTopology: ModelCacheTopologySnapshot?
         /// Exact coordinator settings captured by this resident model. These
@@ -291,12 +317,15 @@ public actor ModelRuntime {
         var selectedDFlash2 = false
         /// A `uno/` self-speculation adapter in the bundle that fits it (validated by the engine).
         var bundledUno = false
-        var hasCompatibleDFlash2: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno }
-        var speculationAvailable: Bool { hasCompatibleDFlash2 || (bundleHasMTP && isTargetMTPFamily) }
-        var speculationBlocked: Bool { !hasCompatibleDFlash2 && isBlocked }
-        var familyDefaultOn: Bool { hasCompatibleDFlash2 || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
+        /// DeepSeek V4.1 stores its separate speculative head in `dspark/`.
+        var bundledDSpark = false
+        var hasCompatibleDrafter: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno || bundledDSpark }
+        var speculationAvailable: Bool { hasCompatibleDrafter || (bundleHasMTP && isTargetMTPFamily) }
+        var speculationBlocked: Bool { !hasCompatibleDrafter && isBlocked }
+        var familyDefaultOn: Bool { hasCompatibleDrafter || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
         var speculationCapabilityDescription: String {
             if selectedDFlash2 { return "Compatible selected DFlash 2 drafter detected" }
+            if bundledDSpark { return "Bundled DSpark drafter detected" }
             if bundledUno { return "Bundled Uno self-speculation adapter detected" }
             if bundledDFlash2 { return "Compatible bundled DFlash 2 drafter detected" }
             if !bundleHasMTP { return "No MTP head or compatible drafter detected" }
@@ -338,6 +367,12 @@ public actor ModelRuntime {
             configData: config, bundleDirectory: directory) != nil
         let bundledUno = VMLXServerRuntimeSettings().bundledUnoAdapter(
             configData: config, bundleDirectory: directory) != nil
+        // Use the runtime's bundle resolver, not a second architecture/name list.
+        // Capability stays visible under Off; execution still follows the saved mode.
+        var availabilitySettings = VMLXServerRuntimeSettings()
+        availabilitySettings.mtp.mode = .familyDefault
+        let bundledDSpark = availabilitySettings.bundledDSparkDrafter(
+            configData: config, bundleDirectory: directory) != nil
         // Availability remains discoverable under Off, so re-enabling never
         // requires loading weights. The selected mode controls execution/display.
         var selectedSettings = ServerRuntimeSettingsStore.snapshot()
@@ -353,6 +388,7 @@ public actor ModelRuntime {
             bundledDFlash2: bundledDFlash2,
             selectedDFlash2: selectedDFlash2,
             bundledUno: bundledUno,
+            bundledDSpark: bundledDSpark,
             statusLine: status.statusLine
         )
     }
@@ -419,6 +455,11 @@ public actor ModelRuntime {
         /// Saved cache contract used to create this holder's coordinator.
         /// Notices must not replay its old quota after a settings change.
         var cacheSettings: VMLXServerCacheSettings?
+        /// The coarse kind of volume the bundle was loaded from
+        /// (`HandledGPUFailureReport.volumeKind(of:)`): attached to a
+        /// handled GPU failure so a slow restore on a removable or external
+        /// volume can be told from one on the internal SSD. Never the path.
+        let modelVolumeKind: String?
         init(
             name: String,
             container: ModelContainer,
@@ -434,10 +475,12 @@ public actor ModelRuntime {
             allocatorCacheLimitBytes: Int? = nil,
             admittedWorkingSetBytes: UInt64? = nil,
             admittedLoadBudgetBytes: UInt64? = nil,
-            requiresAdmittedMLXAllocatorCeiling: Bool = false
+            requiresAdmittedMLXAllocatorCeiling: Bool = false,
+            modelVolumeKind: String? = nil
         ) {
             self.name = name
             self.container = container
+            self.modelVolumeKind = modelVolumeKind
             self.generationDefaults = generationDefaults
             self.weightsSizeBytes = weightsSizeBytes
             self.weightsFingerprint = weightsFingerprint
@@ -634,11 +677,11 @@ public actor ModelRuntime {
     }
     private var activeGenerationTasks: [UInt64: ActiveGenerationRecord] = [:]
     private var nextGenerationTaskID: UInt64 = 0
-    /// Number of in-flight generations whose resolved decode path needs the
+    /// Request ownership for in-flight generations whose resolved decode path needs the
     /// admitted MLX freed-buffer ceiling. The ceiling is request-scoped: a
     /// long-lived app must not retain up to the full RAM-admission budget after
     /// the request ends.
-    private var admittedAllocatorGenerationCount = 0
+    private var generationAllocatorWindows = ModelRuntimeGenerationAllocatorWindows()
 
     /// Last request source (chat UI / HTTP API / plugin / P2P) that generated
     /// against each resident model. Read by the chat-window-close path so it
@@ -1528,7 +1571,6 @@ public actor ModelRuntime {
                 dflash2BlockSize: holder.dflash2BlockSize,
                 nativeMTPStatus: holder.nativeMTPStatus,
                 nativeMTPReason: holder.nativeMTPReason,
-                mlxPressStatus: holder.container.mlxPressStatus(),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
                 cacheTopology: holder.cacheTopology,
                 activeCachePolicy: activeConfig.map {
@@ -1829,7 +1871,7 @@ public actor ModelRuntime {
     }
 
     nonisolated static func isChatOwnedResidencySource(_ source: RequestSource?) -> Bool {
-        source == nil || source == .chatUI
+        source == nil || source == .chatUI || source == .evaluation
     }
 
     /// Nested subagents may reuse a model resident for another surface. They
@@ -2245,9 +2287,10 @@ public actor ModelRuntime {
             loaded: holder.draftStrategy,
             mtp: warmupRuntime.mtp
         )
-        let usesWarmupAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
+        let warmupAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
             holder: holder,
-            requestStrategy: warmupStrategy
+            requestStrategy: warmupStrategy,
+            source: "warmup"
         )
         await MLXBatchAdapter.warmupNativeMTPAtLoad(
             modelName: name,
@@ -2257,7 +2300,7 @@ public actor ModelRuntime {
             runtime: warmupRuntime,
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
-        finishGenerationAllocatorWindowIfNeeded(usesWarmupAllocatorWindow)
+        finishGenerationAllocatorWindowIfNeeded(warmupAllocatorWindow, source: "warmup")
         return holder
     }
 
@@ -3060,6 +3103,20 @@ public actor ModelRuntime {
         return Int(min(UInt64(Int.max), budget - reserved))
     }
 
+    /// Request-owned decision weights are not SessionHolders. Price their active allocator
+    /// alongside registered residents using the same explicit caps and admitted scratch policy.
+    func decisionAllocatorCacheLimit(weightsBytes: Int64, workingSetBytes: UInt64?, budgetBytes: UInt64?,
+        physicalMemoryBytes: UInt64, explicitAllocatorBytes: UInt64?) -> Int {
+        let residents = Array(modelCache.values)
+        let headroom = Self.allocatorCacheBudgetHeadroom(
+            workingSets: residents.map(\.admittedWorkingSetBytes) + [workingSetBytes],
+            budgets: residents.map(\.admittedLoadBudgetBytes) + [budgetBytes])
+        return DecisionService.allocatorReuseLimit(weightsBytes: weightsBytes,
+            physicalMemoryBytes: physicalMemoryBytes, admittedMemoryLimit: Memory.memoryLimit,
+            budgetHeadroom: headroom, explicitAllocatorBytes: explicitAllocatorBytes,
+            residentCaps: residents.map(\.allocatorCacheLimitBytes))
+    }
+
     /// Native MTP and plain affine DSV4 both keep large decode intermediates
     /// live across repeated forwards. A tiny persistent MLX reuse cache makes
     /// those buffers churn without lowering physical footprint. This decision
@@ -3120,9 +3177,10 @@ public actor ModelRuntime {
     ///   proportionally less, while large Macs do not turn spare RAM into an
     ///   unbounded allocator pool).
     ///
-    /// The admitted memory limit and any user-entered allocator maximum are
-    /// hard ceilings. A profile's default load allowance is not an explicit
-    /// user maximum and must not disable the dynamic reuse policy.
+    /// The selected reuse target never exceeds the admitted budget or an
+    /// explicit user maximum. Native pooled occupancy can cross that target
+    /// until the next allocation trims it. A profile's default load allowance
+    /// is not an explicit user maximum and must not disable dynamic reuse.
     nonisolated static func effectiveGenerationMLXCacheLimit(
         persistentLimit: Int,
         admittedMemoryLimit: Int,
@@ -3146,16 +3204,27 @@ public actor ModelRuntime {
 
     private func beginGenerationAllocatorWindowIfNeeded(
         holder: SessionHolder,
-        requestStrategy: MLXLMCommon.DraftStrategy?
-    ) -> Bool {
+        requestStrategy: MLXLMCommon.DraftStrategy?,
+        source: StaticString
+    ) -> ModelRuntimeGenerationAllocatorWindows.Token? {
         let usesAdmittedCeiling = Self.requiresAdmittedMLXAllocatorCeiling(
             isPlainDeepseekV4AffineJANG: holder.requiresAdmittedMLXAllocatorCeiling,
             usesNativeMTP: requestStrategy?.usesNativeMTP == true
         )
-        guard usesAdmittedCeiling else { return false }
-        admittedAllocatorGenerationCount += 1
+        guard usesAdmittedCeiling else {
+            if PrefillDebugLog.shared.isEnabled {
+                PrefillDebugLog.shared.log(
+                    "==ALLOC-WINDOW event=begin source=\(source) token=nil activeCount=\(generationAllocatorWindows.count)")
+            }
+            return nil
+        }
+        let window = generationAllocatorWindows.begin()
         Memory.cacheLimit = generationAllocatorCacheLimit(holder: holder, requestStrategy: requestStrategy)
-        return true
+        if PrefillDebugLog.shared.isEnabled {
+            PrefillDebugLog.shared.log(
+                "==ALLOC-WINDOW event=begin source=\(source) token=\(window.diagnosticID) activeCount=\(generationAllocatorWindows.count)")
+        }
+        return window
     }
 
     /// Shared by generation and resident-child admission. The allocator is
@@ -3179,17 +3248,27 @@ public actor ModelRuntime {
         )
     }
 
-    private func finishGenerationAllocatorWindowIfNeeded(_ active: Bool) {
-        guard active else { return }
-        admittedAllocatorGenerationCount = max(0, admittedAllocatorGenerationCount - 1)
-        guard admittedAllocatorGenerationCount == 0 else { return }
-        // Every producer has reached its engine-owned terminal fence before
-        // this wrapper completes. Drain once more, return only freed buffers,
-        // then restore the persistent user-visible ceiling. Resident weights,
-        // KV state and disk/SSM companion caches are untouched.
-        Stream.gpu.synchronize()
-        Memory.clearCache()
-        Memory.cacheLimit = mlxCacheLimit()
+    private func finishGenerationAllocatorWindowIfNeeded(
+        _ window: ModelRuntimeGenerationAllocatorWindows.Token?,
+        source: StaticString
+    ) {
+        var restored = false
+        let accepted = generationAllocatorWindows.finish(window) {
+            // Only the request's first cleanup can reach this restoration.
+            // The adapter invokes it before releasing its generation gate;
+            // the outer completion/error fallback is then an ownership no-op.
+            // Preserve the fallback for requests that fail before producing a stream.
+            // Resident weights, KV and disk/SSM companion state stay untouched.
+            Stream.gpu.synchronize()
+            Memory.clearCache()
+            Memory.cacheLimit = mlxCacheLimit()
+            restored = true
+        }
+        if PrefillDebugLog.shared.isEnabled {
+            let result = accepted ? "accepted" : (window == nil ? "inactive" : "duplicate")
+            PrefillDebugLog.shared.log(
+                "==ALLOC-WINDOW event=finish source=\(source) token=\(window?.diagnosticID ?? "nil") result=\(result) restored=\(restored) activeCount=\(generationAllocatorWindows.count)")
+        }
     }
 
     /// Flexible-mode resident-weights soft cap. Also read by
@@ -5163,8 +5242,8 @@ public actor ModelRuntime {
                 "==LOAD SPECULATION model=\(name) strategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy)) "
                     + "nativeHeadRequested=\(mtpPlan.loadConfiguration.nativeMTP) nativeHeadLoaded=\(loadedNativeHead)"
             )
-            // Same receipt on stderr, where support bundles and the 48 GB test plan read load time.
-            FileHandle.standardError.write(Data(
+            // Best-effort diagnostic receipt; a disconnected stderr must not fail the load.
+            RuntimeDiagnostics.write(Data(
                 "[ModelRuntime] model_loaded model=\(name) elapsedMs=\(elapsedMs)\n".utf8))
             let holder = SessionHolder(
                 name: name,
@@ -5192,9 +5271,14 @@ public actor ModelRuntime {
                 admittedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
                 // Store the load-time DSV4 fact. Native MTP is resolved per
                 // request so toggling MTP Off cannot keep using the enlarged
-                // request allocator window.
+                // request allocator window. DeepSeek-V4.1 affine JANG needs the
+                // same window: a 2048-token prefill chunk's scratch exceeds the
+                // persistent pool, so buffers were freed and re-created inside
+                // every chunk (reference serving: 4 GB pool 475 pp/s, 16 GB 769).
                 requiresAdmittedMLXAllocatorCeiling:
                     loadBundleFacts.isPlainDeepseekV4AffineJANG
+                    || loadBundleFacts.isDeepseekV41AffineJANG,
+                modelVolumeKind: HandledGPUFailureReport.volumeKind(of: localURL)
             )
 
             // Install the cache coordinator before the coalesced load task
@@ -5694,6 +5778,9 @@ public actor ModelRuntime {
         if isDSV4CacheTopology {
             tags.append("layers=deepseekV4")
             tags.append("prefix=hybrid-pool-disk")
+            // Legacy tag: no current decode behavior backs it. Kept verbatim for cache
+            // compatibility; removing or renaming it would change the cache identity and
+            // orphan every stored DSV4 entry.
             tags.append("decode=max-rp110")
             // Activation-QAT changes every attention/cache activation from
             // token zero. Its stored SWA/CSA/HSA state is therefore not valid
@@ -5905,6 +5992,11 @@ public actor ModelRuntime {
         ) != nil {
             return true
         }
+        // LFM3 (lfm3 / lfm3_vl / lfm3_audio / lfm3_omni): LFM2's short-conv layers
+        // (MambaCache) interleaved with full and sliding-window attention.
+        if lower.range(of: #"(^|/)lfm3([\-_].*)?$"#, options: .regularExpression) != nil {
+            return true
+        }
         return false
     }
 
@@ -5930,7 +6022,7 @@ public actor ModelRuntime {
         toolChoice: ToolChoiceOption?,
         modelId: String,
         modelName: String
-    ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+    ) async throws -> ModelRuntimeEventStream {
         let trace = parameters.ttftTrace
         trace?.mark("runtime_start")
 
@@ -6074,9 +6166,10 @@ public actor ModelRuntime {
         await InferenceActivityRegistry.shared.update(id: activityID, phase: .prefilling)
 
         let prepared: MLXBatchAdapter.PreparedStream
-        let usesGenerationAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
+        let generationAllocatorWindow = beginGenerationAllocatorWindowIfNeeded(
             holder: holder,
-            requestStrategy: requestStrategy
+            requestStrategy: requestStrategy,
+            source: "request"
         )
         do {
             prepared = try await MLXBatchAdapter.generate(
@@ -6096,7 +6189,7 @@ public actor ModelRuntime {
                 maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize,
                 onEngineDrained: { [weak self] in
                     await self?.finishGenerationAllocatorWindowIfNeeded(
-                        usesGenerationAllocatorWindow
+                        generationAllocatorWindow, source: "engine_drained"
                     )
                 }
             )
@@ -6108,7 +6201,7 @@ public actor ModelRuntime {
             }
             await ModelLease.shared.release(modelName)
             await scheduleIdleResidency(for: modelName)
-            finishGenerationAllocatorWindowIfNeeded(usesGenerationAllocatorWindow)
+            finishGenerationAllocatorWindowIfNeeded(generationAllocatorWindow, source: "setup_error")
             await InferenceActivityRegistry.shared.finish(id: activityID)
             throw error
         }
@@ -6129,7 +6222,7 @@ public actor ModelRuntime {
             } onCancel: {
                 innerProducer.cancel()
             }
-            finishGenerationAllocatorWindowIfNeeded(usesGenerationAllocatorWindow)
+            finishGenerationAllocatorWindowIfNeeded(generationAllocatorWindow, source: "outer_completion")
             await ModelLease.shared.release(modelName)
             await self.scheduleIdleResidency(for: modelName)
             self.clearGenerationTask(id: genID)
@@ -6140,7 +6233,7 @@ public actor ModelRuntime {
             activeTask.cancel()
         }
 
-        return GenerationEventMapper.map(
+        let events = GenerationEventMapper.map(
             events: prepared.stream,
             modelName: modelName,
             promptTokenCount: prepared.promptTokens.count,
@@ -6149,6 +6242,16 @@ public actor ModelRuntime {
             // Background housekeeping (follow-up suggestions, titles) must not
             // stomp the user's turn in the speculative-decoding readout.
             recordMTPLastRun: parameters.loadIntent == .interactive,
+            // What a handled Metal failure report says about THIS request:
+            // the decode path it was resolved to (AR / native_mtp:dN /
+            // dflash2), its configured depth, and the bundle's volume kind.
+            // The disk-fetch sample stays unset until the vmlx pin exposes
+            // `DiskCacheStats.lastFetchPayloadBytes` / `lastFetchMs`.
+            failureRequestContext: GenerationEventMapper.FailureRequestContext(
+                decodePath: Self.describeDraftStrategy(requestStrategy),
+                configuredDepth: Self.nativeMTPDepth(requestStrategy),
+                modelVolumeKind: holder.modelVolumeKind
+            ),
             onConsumerCancellation: {
                 // Cancel this exact generation wrapper, not every request
                 // using the same model. The wrapper drains the direct vmlx
@@ -6180,6 +6283,13 @@ public actor ModelRuntime {
                 }
             }
         )
+        return ModelRuntimeEventStream(events: events, waitForProducerDrain: {
+            await withTaskCancellationHandler {
+                await activeTask.value
+            } onCancel: {
+                activeTask.cancel()
+            }
+        })
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -6211,15 +6321,10 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> String {
-        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: toolChoice,
-            modelName: modelName
-        )
-        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
+        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
-                try ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.makeMLXChatMessages(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -6232,7 +6337,7 @@ public actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
-        return try await Self.collectToolEventResponse(events)
+        return try await Self.collectToolEventResponse(events.events)
     }
 
     nonisolated static func collectToolEventResponse(
@@ -6247,7 +6352,7 @@ public actor ModelRuntime {
         // call, so iterating to natural EOS captures all of them).
         for try await ev in events {
             switch ev {
-            case .inputTokenCount:
+            case .inputTokenCount, .cachedInputTokenCount:
                 break
             case .tokens(let s):
                 accumulated += s
@@ -6299,14 +6404,20 @@ public actor ModelRuntime {
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
+            var cachedInputTokens: Int?
             do {
-                for try await ev in events {
+                for try await ev in events.events {
+                    if case .cachedInputTokenCount(let count) = ev {
+                        cachedInputTokens = count
+                        continue
+                    }
                     // Terminal usage must survive cancellation just as it does
                     // in streamWithTools; only generated deltas are suppressed.
                     if case .completionInfo(let count, let rate, let unclosed, let stop, let prefill, let mtp) = ev {
                         continuation.yield(StreamingStatsHint.encode(
                             tokenCount: count, tokensPerSecond: rate, unclosedReasoning: unclosed,
-                            stopReason: stop, prefillTokensPerSecond: prefill, mtp: mtp
+                            stopReason: stop, prefillTokensPerSecond: prefill,
+                            cachedInputTokenCount: cachedInputTokens, mtp: mtp
                         ))
                         continue
                     }
@@ -6347,15 +6458,36 @@ public actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<String, Error> {
-        let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
+        let events = try await streamResponseEvents(
+            messages: messages,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools,
             toolChoice: toolChoice,
+            modelId: modelId,
             modelName: modelName
         )
-        let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
-        let events = try await generateEventStream(
+        return Self.bridgeToolEventStream(
+            events.events,
+            collectCompleteResponse: parameters.collectCompleteToolResponse
+        )
+    }
+
+    /// Native typed entry point shared by Responses and the legacy boundary.
+    /// Generation, admission and cache-lease ownership stay in one pipeline.
+    func streamResponseEvents(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        modelId: String,
+        modelName: String
+    ) async throws -> ModelRuntimeEventStream {
+        let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
+        return try await generateEventStream(
             chatBuilder: {
-                try ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.makeMLXChatMessages(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -6367,10 +6499,6 @@ public actor ModelRuntime {
             toolChoice: toolChoice,
             modelId: modelId,
             modelName: modelName
-        )
-        return Self.bridgeToolEventStream(
-            events,
-            collectCompleteResponse: parameters.collectCompleteToolResponse
         )
     }
 
@@ -6388,6 +6516,7 @@ public actor ModelRuntime {
             var publishedTerminal = false
             var completedTools: [ServiceToolInvocation] = []
             var terminalStopReason: String?
+            var cachedInputTokens: Int?
             var hasCompletedToolPreview = false
             let traceID = PrefillDebugLog.shared.isEnabled ? UUID().uuidString : ""
 
@@ -6418,6 +6547,10 @@ public actor ModelRuntime {
                     // cleanup after it still owns its generation/cache lease.
                     if publishedTerminal { continue }
 
+                    if case .cachedInputTokenCount(let count) = ev {
+                        cachedInputTokens = count
+                        continue
+                    }
                     if case .completionInfo(
                         let tokenCount,
                         let tokensPerSecond,
@@ -6434,6 +6567,7 @@ public actor ModelRuntime {
                                 unclosedReasoning: unclosedReasoning,
                                 stopReason: stopReason,
                                 prefillTokensPerSecond: promptTokensPerSecond,
+                                cachedInputTokenCount: cachedInputTokens,
                                 mtp: mtp
                             )
                         )
@@ -6489,6 +6623,8 @@ public actor ModelRuntime {
                             hasCompletedToolPreview = true
                         }
                     case .completionInfo:
+                        continue
+                    case .cachedInputTokenCount:
                         continue
                     }
                 }
@@ -6773,12 +6909,14 @@ public actor ModelRuntime {
             jangConfig: jangConfig,
             status: status,
             // A drafter that ships in, or was selected for, this bundle: DFlash 2 (selected or
-            // bundled `dflash2/`) or a bundled Uno adapter (`uno/`, validated against the bundle by
-            // the engine). Per-request admission then keeps the loaded strategy instead of
-            // re-deriving native MTP, which would drop it.
+            // bundled `dflash2/`), a bundled Uno adapter (`uno/`, validated against the bundle by
+            // the engine), or a DeepSeek-V4.1 bundle's `dspark/` head. Per-request admission then
+            // keeps the loaded strategy instead of re-deriving native MTP, which would drop it.
             externalDrafterSelected: settings.resolvedDFlash2Selection(
                 configData: configData, bundleDirectory: modelDirectory) != nil
                 || settings.bundledUnoAdapter(
+                    configData: configData, bundleDirectory: modelDirectory) != nil
+                || settings.bundledDSparkDrafter(
                     configData: configData, bundleDirectory: modelDirectory) != nil
         )
         try admission.validateLoad(
@@ -7052,71 +7190,6 @@ public actor ModelRuntime {
         }
     }
 
-    nonisolated static func applyForcedToolChoiceDirective(
-        _ messages: [ChatMessage],
-        toolChoice: ToolChoiceOption?,
-        modelName: String? = nil
-    ) -> [ChatMessage] {
-        guard let toolChoice else { return messages }
-
-        let requiredToolName: String?
-        switch toolChoice {
-        case .function(let target):
-            requiredToolName = target.function.name
-        case .required:
-            requiredToolName = nil
-        case .auto, .none:
-            return messages
-        }
-
-        // Named `tool_choice` is primarily enforced by `makeTokenizerTools`:
-        // the tokenizer sees only the requested function's schema. Keep that
-        // no-op behavior for most families; DSV4 DSML in particular treats
-        // out-of-template prose as ordinary instruction text and regressed
-        // when this was generic.
-        //
-        // Gemma 4's native template already has a required-tool contract in
-        // its fallback path. Live Osaurus agent runs add a much larger system
-        // prompt than strict `/v1/chat/completions`; for Gemma, schema
-        // filtering alone lets forced `complete` degrade into a plain-text
-        // summary. Add the same required-tool wording as a request-local
-        // directive so the bundle-native parser sees a real function-call
-        // turn instead of a textual paraphrase. This is scoped to Gemma and
-        // to explicit `required` / named tool choice only.
-        guard let modelName, ModelFamilyNames.isGemmaFamily(modelName) else {
-            return messages
-        }
-
-        var directive = "The current assistant response MUST be a function call."
-        if let requiredToolName {
-            directive += " Use the `\(requiredToolName)` function."
-        }
-
-        var out = messages
-        if let lastUserIndex = out.lastIndex(where: { $0.role == "user" }) {
-            let original = out[lastUserIndex]
-            let existing = original.content ?? ""
-            let suffix = existing.isEmpty ? directive : "\n\n" + directive
-            // Keep media and in-process carriers when augmenting the request.
-            // Parts and flattened text must carry the same added directive.
-            out[lastUserIndex] = ChatMessage(
-                role: original.role,
-                content: existing + suffix,
-                contentParts: original.contentParts.map { $0 + [.text(suffix)] },
-                localAudioSamples: original.localAudioSamples,
-                tool_calls: original.tool_calls,
-                tool_call_id: original.tool_call_id,
-                reasoning_content: original.reasoning_content,
-                reasoning_item_id: original.reasoning_item_id,
-                reasoning_encrypted: original.reasoning_encrypted,
-                responses_output_items: original.responses_output_items
-            )
-        } else {
-            out.append(ChatMessage(role: "user", content: directive))
-        }
-        return out
-    }
-
     /// When `jsonMode` is true, prepend (or augment) a system instruction
     /// telling the model to respond with a single valid JSON object.
     /// OpenAI's `response_format: {type: json_object}` semantics — local
@@ -7162,7 +7235,7 @@ public actor ModelRuntime {
     /// XML-in-content workaround (which raised
     /// `TemplateException: "Message has tool role, but there was no
     /// previous assistant message with a tool call!"` on MiniMax).
-    nonisolated static func mapOpenAIChatToMLX(
+    nonisolated static func makeMLXChatMessages(
         _ msgs: [ChatMessage],
         trace: TTFTTrace? = nil,
         preserveStructuredToolHistory: Bool = true
@@ -7178,10 +7251,10 @@ public actor ModelRuntime {
             let videos = extractVideoSources(from: m)
             let audios = extractAudioSources(from: m, metrics: &audioMetrics)
             switch m.role {
-            case "system":
+            case "system", "developer":
                 out.append(
                     MLXLMCommon.Chat.Message(
-                        role: .system,
+                        role: m.role == "developer" ? .developer : .system,
                         content: m.content ?? "",
                         images: images,
                         videos: videos,
@@ -7201,7 +7274,7 @@ public actor ModelRuntime {
             case "assistant":
                 let content = m.content ?? ""
                 let reasoningContent = m.reasoning_content
-                let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil
+                let toolCalls = preserveStructuredToolHistory ? makeMLXToolCalls(m.tool_calls) : nil
                 // Skip fully-empty assistant turns. Reasoning-only assistant
                 // turns are NOT empty for local MLX templates: ZAYA,
                 // Nemotron-H/Omni, MiniMax and DSV4 read
@@ -7288,7 +7361,7 @@ public actor ModelRuntime {
     /// the vmlx `MLXLMCommon.ToolCall` list (arguments: `[String: JSONValue]`).
     /// Returns `nil` for a nil/empty input so callers can pass the result
     /// straight into `Chat.Message(toolCalls:)`.
-    nonisolated private static func toMLXToolCalls(
+    nonisolated private static func makeMLXToolCalls(
         _ calls: [ToolCall]?
     ) -> [MLXLMCommon.ToolCall]? {
         guard let calls, !calls.isEmpty else { return nil }
@@ -7810,7 +7883,7 @@ public actor ModelRuntime {
 
     /// Compute-weight accounting shared by load, UI projection, and child admission.
     ///
-    /// The production loader disables MLXPress/JangPress. Mapped routed pages
+    /// Mapped routed pages
     /// can be reclaimed by macOS, but that is not evidence that only 30% of
     /// their weights need a working-set budget. Count every compute weight,
     /// regardless of quantization name or mmap/materialized storage. Only

@@ -119,6 +119,9 @@ struct ToolCallLog: Identifiable, Sendable, Codable, Equatable {
 /// Source of the request
 enum RequestSource: String, Sendable, CaseIterable, Codable {
     case chatUI = "Chat UI"
+    /// Headless evaluation work: chat-owned for delegation handoff, with no
+    /// chat window whose closure should accelerate its configured idle timer.
+    case evaluation = "Evaluation"
     /// A local agent or delegated subagent model step.
     case agent = "Agent"
     case httpAPI = "HTTP API"
@@ -153,6 +156,7 @@ enum RequestSource: String, Sendable, CaseIterable, Codable {
     var displayName: String {
         switch self {
         case .chatUI: return L("Chat UI")
+        case .evaluation: return L("Evaluation")
         case .agent: return L("Agent")
         case .httpAPI: return L("HTTP API")
         case .plugin: return L("Plugin")
@@ -170,6 +174,7 @@ enum RequestSource: String, Sendable, CaseIterable, Codable {
     var shortName: String {
         switch self {
         case .chatUI: return "Chat"
+        case .evaluation: return "Eval"
         case .agent: return "Agent"
         case .httpAPI: return "HTTP"
         case .plugin: return "Plugin"
@@ -187,6 +192,7 @@ enum RequestSource: String, Sendable, CaseIterable, Codable {
     var icon: String {
         switch self {
         case .chatUI: return "bubble.left.fill"
+        case .evaluation: return "checklist"
         case .agent: return "person.crop.circle.fill"
         case .httpAPI: return "network"
         case .plugin: return "puzzlepiece.extension.fill"

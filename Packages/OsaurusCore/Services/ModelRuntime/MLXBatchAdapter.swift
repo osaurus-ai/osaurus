@@ -91,10 +91,11 @@ struct MLXBatchAdapter {
     /// keyed by model. Completion-time (unlike `EffectiveGenerationSettings`,
     /// which is submit-time) so it can show what the ADAPTIVE controller
     /// actually settled on — e.g. a request that asked for depth 3 but ran
-    /// depth 1 because acceptance collapsed. Called only for turns that
-    /// produced native-MTP tokens; every other decode path leaves the readout
-    /// unchanged.
-    static func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) async {
+    /// depth 1 because acceptance collapsed. Captured for turns that
+    /// produced native-MTP tokens. A failed/cancelled turn without stats clears
+    /// only its own model's stale readout. Successful non-MTP and background
+    /// turns leave it unchanged.
+    static func recordLastMTPStats(modelName: String, stats: MTPStatsSummary?) async {
         await Registry.shared.recordLastMTPStats(modelName: modelName, stats: stats)
     }
 
@@ -432,8 +433,8 @@ struct MLXBatchAdapter {
         private var lastEffectiveGenerationSettings: [String: EffectiveGenerationSettings] = [:]
         /// Last native-MTP runtime stats per model, captured at completion.
         /// Populated only for turns the native-MTP iterator produced, so a
-        /// non-MTP family never appears here and the readout for an MTP model
-        /// reflects its most recent speculative turn.
+        /// non-MTP family never appears here. A failed/cancelled turn without
+        /// stats removes that model's previous value rather than misattributing it.
         private var lastMTPStats: [String: MTPStatsSummary] = [:]
         /// Cache restore of the most recent real request, across models.
         private var lastCacheRestore: CacheRestoreSummary?
@@ -561,7 +562,7 @@ struct MLXBatchAdapter {
             lastEffectiveGenerationSettings
         }
 
-        func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) {
+        func recordLastMTPStats(modelName: String, stats: MTPStatsSummary?) {
             lastMTPStats[modelName] = stats
         }
 
@@ -955,6 +956,14 @@ struct MLXBatchAdapter {
                 maxBatchSize: maxBatchSize)
             return
         }
+        // DeepSeek-V4.1 dSpark (`.dspark`) is deliberately not warmed here. Its head (~8.9 GB) is
+        // attached by vmlx on the first request that can use it and stays resident after, so a load
+        // warmup would only move that cost earlier, at the price of committing it before any request:
+        // a V4.1 JANG_2K bundle is ~206 GB resident on a 256 GB Mac, and the warmup generation also
+        // allocates its own KV and verify activations on top. Lazily, a session that never runs a
+        // dSpark-eligible request (media prefill, `VMLX_DSV41_DSPARK=0`, sampled with
+        // `VMLX_DSV41_DSPARK_SAMPLED=0`) never pays for the head. The first dSpark request therefore
+        // includes the head load.
         if draftStrategy?.usesDFlash2 == true {
             await warmupDFlash2AtLoad(
                 modelName: modelName, container: container, modelDefaults: modelDefaults,
@@ -1005,6 +1014,22 @@ struct MLXBatchAdapter {
                 "native MTP load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — falling back to first-request AR warmup"
             )
         }
+    }
+
+    /// Whether a generation takes the model's solo lease before it is submitted.
+    ///
+    /// A drafted request whose speculation runs on the engine's exclusive solo path takes it even
+    /// under continuous batching (maxBatchSize > 1), so a second such request on the same model (a
+    /// spawned subagent, a parallel delegation) queues behind the first and drafts too, instead of
+    /// being cancelled (DFlash 2) or demoted to plain autoregressive decode (DeepSeek-V4.1 dSpark;
+    /// vmlx `BatchEngine.generate` drops `.dspark` when the solo path is busy). Ordinary batched
+    /// requests take no lease and still share the engine; the engine decodes a drafted request
+    /// autoregressively if it arrives while batched slots are active.
+    ///
+    /// Covers DFlash 2 (including MiniCPM's DSpark drafter, which runs on the DFlash 2 path) and
+    /// DeepSeek-V4.1's bundled dSpark head (`DraftStrategy.dspark`, a separate strategy).
+    static func requiresSoloLease(maxBatchSize: Int, draftStrategy: MLXLMCommon.DraftStrategy?) -> Bool {
+        maxBatchSize == 1 || draftStrategy?.usesDFlash2 == true || draftStrategy?.usesDSpark == true
     }
 
     /// DFlash 2 / DSpark: one short drafted generation right after load. The engine loads the
@@ -1118,12 +1143,15 @@ struct MLXBatchAdapter {
     /// Downscale CIImage attachments to a sane upper bound before tokenization.
     /// Pre-existing `URL` / `array` cases pass through untouched.
     ///
-    /// Preserves media plus `reasoningContent`, `toolCalls`, and `toolCallId`
-    /// through the rebuild. Dropping any of these fields silently unwinds the
-    /// structured handoff set up by `ModelRuntime.mapOpenAIChatToMLX`: ZAYA,
-    /// Nemotron-H/Omni, MiniMax, and DSV4 templates read
+    /// Preserves media plus `reasoningContent`, `toolCalls`, `toolCallId`, and
+    /// `contentParts` through the rebuild. Dropping any of these fields silently
+    /// unwinds the structured handoff set up by `ModelRuntime.makeMLXChatMessages`:
+    /// ZAYA, Nemotron-H/Omni, MiniMax, and DSV4 templates read
     /// `message.reasoning_content`; MiniMax and other templates read
-    /// `message.tool_calls[i]`; omni/VL processors read media arrays.
+    /// `message.tool_calls[i]`; omni/VL processors read media arrays; the
+    /// DeepSeek-V4.1 vision prompt and MiMo V2.6 read `contentParts` to keep
+    /// text and media in the order the client sent them (without it they put
+    /// every image before the text).
     private static func preprocessImages(in chat: [MLXLMCommon.Chat.Message]) -> [MLXLMCommon.Chat.Message] {
         chat.map { message in
             let processedImages = message.images.map { userInputImage -> UserInput.Image in
@@ -1142,7 +1170,8 @@ struct MLXBatchAdapter {
                 audios: message.audios,
                 reasoningContent: message.reasoningContent,
                 toolCalls: message.toolCalls,
-                toolCallId: message.toolCallId
+                toolCallId: message.toolCallId,
+                contentParts: message.contentParts
             )
         }
     }
@@ -1262,7 +1291,12 @@ struct MLXBatchAdapter {
         toolChoice: ToolChoiceOption? = nil,
         toolChoiceName: String? = nil
     ) -> [String: any Sendable] {
-        var context: [String: any Sendable] = [:]
+        // Start with the complete request dictionary. Explicit typed reasoning
+        // and tool controls below win; omission leaves bundle defaults intact.
+        var context = generation.templateKwargs?.mapValues(\.templateContextValue) ?? [:]
+        if generation.templateKwargs?.isEmpty == false {
+            context[ChatTemplateParameters.explicitContextKey] = true
+        }
         if toolChoiceRequiresLocalCall(toolChoice) {
             context["tool_choice"] = "required"
         }
@@ -1309,8 +1343,8 @@ struct MLXBatchAdapter {
                     defaultLevel: defaultLevel
                 ) ?? requested
             case .modeKwargs:
-                // Mode bundles never receive `reasoning_effort`; their declared
-                // kwargs are applied below.
+                // Mode bundles receive their declared kwargs below, including
+                // a native reasoning_effort transport when the bundle uses it.
                 return nil
             case .fixedNativeEffort:
                 // The bundle exposes no picker, but its engine still owns a
@@ -1353,8 +1387,11 @@ struct MLXBatchAdapter {
             if disableThinking == true || directRailReasoningEffort {
                 level = "none"
             } else if let requested = normalizedReasoningEffort, hasPositiveReasoningEffort {
-                level = DeclaredReasoningEffort.snapped(
-                    requested, ontoLevels: levels, defaultLevel: defaultLevel)
+                level = DeclaredReasoningEffort.mode(
+                    forNativeEffort: requested,
+                    control: .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs))
+                    ?? DeclaredReasoningEffort.snapped(
+                        requested, ontoLevels: levels, defaultLevel: defaultLevel)
             } else {
                 level = defaultLevel ?? levels.last
             }
@@ -1366,18 +1403,33 @@ struct MLXBatchAdapter {
             return context
         }
 
-        if DSV4ReasoningProfile.matches(modelId: modelName) {
+        // V4.1 from the bundle's `model_type` (as prompt rendering decides), so a
+        // renamed V4.1 bundle still gets V4.1 controls; the name is the fallback.
+        let isDSV41 = DSV41ModelDetection.isDSV41(modelId: modelName)
+        if DSV4ReasoningProfile.matches(modelId: modelName) || isDSV41 {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
             }
+            // DeepSeek-V4.1: an explicit thinking-off request selects the chat rail
+            // even when an effort is also present (a profile default or a stale
+            // option must not reopen thinking). DSV4-0731 keeps effort precedence.
+            if disableThinking == true, isDSV41 {
+                context["enable_thinking"] = false
+                return context
+            }
             if let normalizedReasoningEffort {
-                if let effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort) {
+                // V4.1 accepts the full low/medium/high/xhigh/max ladder; 0731 only low/high/max.
+                let effort =
+                    isDSV41
+                    ? DSV41ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                    : DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                if let effort {
                     switch effort {
-                    case "low", "high", "max":
+                    case "instruct":
+                        context["enable_thinking"] = false
+                    default:
                         context["enable_thinking"] = true
                         context["reasoning_effort"] = effort
-                    default:
-                        context["enable_thinking"] = false
                     }
                 } else {
                     // Preserve invalid explicit values so vmlx's DSV4 policy
@@ -1498,13 +1550,7 @@ struct MLXBatchAdapter {
     }
 
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
-        guard let value else { return false }
-        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
-            return true
-        default:
-            return false
-        }
+        DeclaredReasoningEffort.isOffEffort(value)
     }
 
     /// Compiled B=1 decode eligibility. Architecture-driven when the REAL
@@ -1591,12 +1637,7 @@ struct MLXBatchAdapter {
             "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
         )
         let soloLease: SoloGenerationGate.Lease?
-        // A DFlash 2 / DSpark request drafts on the engine's exclusive solo path. Under continuous batching
-        // (maxBatchSize > 1) two of them on one model (a spawned subagent, parallel delegations) used to
-        // collide: the engine cancelled the second. Taking the solo lease queues it behind the first, so each
-        // runs with its drafter; ordinary batched requests still share the engine (the engine decodes a
-        // drafter request autoregressively if it arrives while batched slots are active).
-        if maxBatchSize == 1 || draftStrategy?.usesDFlash2 == true {
+        if Self.requiresSoloLease(maxBatchSize: maxBatchSize, draftStrategy: draftStrategy) {
             soloLease = await Registry.shared.acquireSoloLease(for: modelName)
         } else {
             soloLease = nil
@@ -2366,6 +2407,7 @@ struct MLXBatchAdapter {
         cacheStableSystemPrefix: String?,
         trace: TTFTTrace?
     ) async throws -> PreparedInput {
+        try DeclaredReasoningEffort.validateModeRequest(modelId: modelName, options: generation.modelOptions)
         // Heap-allocated outbox so the throwing closure can hand a value back
         // across the actor boundary.
         final class OutBox: @unchecked Sendable {

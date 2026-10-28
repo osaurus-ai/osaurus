@@ -1423,6 +1423,8 @@ struct SpawnTargetAuthority: Equatable, Sendable {
     let systemPrompt: String
     let defaultModel: String?
     let temperature: Float?
+    let maxTokens: Int?
+    let generationSettings: AgentGenerationSettings?
     let toolsEnabled: Bool
     let toolSelectionMode: ToolSelectionMode?
     let manualToolNames: [String]?
@@ -1447,6 +1449,8 @@ struct SpawnTargetAuthority: Equatable, Sendable {
         systemPrompt = agent.systemPrompt
         defaultModel = agent.defaultModel
         temperature = agent.temperature
+        maxTokens = agent.maxTokens
+        generationSettings = agent.generationSettings
         toolsEnabled = agent.toolsEnabled
         toolSelectionMode = agent.toolSelectionMode
         manualToolNames = agent.manualToolNames

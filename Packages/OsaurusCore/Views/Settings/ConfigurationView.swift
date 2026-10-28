@@ -132,35 +132,42 @@ struct ConfigurationView: View {
 
     private var headerView: some View {
         ManagerHeader(
-            title: L("General"),
-            subtitle: L("App behavior, models on this Mac, and notifications")
+            title: LCached("General"),
+            subtitle: LCached("App behavior, models on this Mac, and notifications")
         )
     }
 
     // MARK: - General
 
+    // Static labels use `LCached` rather than `L`: this getter re-runs on every
+    // render, and the uncached catalog lookup was the leaf of a main-thread
+    // hang (APPLE-MACOS-3BN).
     private var generalSection: some View {
         SettingsSection(title: "General", icon: "gear") {
-            SettingsRow(title: L("Global Hotkey"), description: "Open Osaurus from anywhere", anchorId: "settings.general.hotkey") {
+            SettingsRow(
+                title: LCached("Global Hotkey"),
+                description: "Open Osaurus from anywhere",
+                anchorId: "settings.general.hotkey"
+            ) {
                 HotkeyRecorder(value: $tempChatHotkey)
             }
 
             SettingsToggle(
-                title: L("Start at Login"),
+                title: LCached("Start at Login"),
                 description: "Launch Osaurus when you sign in",
                 anchorId: "settings.general.login",
                 isOn: $tempStartAtLogin
             )
 
             SettingsToggle(
-                title: L("Hide Dock Icon"),
+                title: LCached("Hide Dock Icon"),
                 description: "Run in menu bar only (requires restart)",
                 anchorId: "settings.general.dock",
                 isOn: $tempHideDockIcon
             )
 
             SettingsToggle(
-                title: L("Beta Updates"),
+                title: LCached("Beta Updates"),
                 description: "Receive pre-release updates with new features before they're generally available",
                 anchorId: "settings.general.updates",
                 isOn: $updater.isBetaChannel
@@ -203,7 +210,7 @@ struct ConfigurationView: View {
     private var modelsOnThisMacSection: some View {
         SettingsSection(title: "Models on This Mac", icon: "internaldrive") {
             SettingsToggle(
-                title: L("Use models already on this Mac"),
+                title: LCached("Use models already on this Mac"),
                 description:
                     "Show models from Hugging Face and LM Studio in your catalog and run them in place. Nothing is copied, moved, or modified. Choose individual sources under Advanced.",
                 anchorId: "storage.externalModels",
@@ -217,7 +224,7 @@ struct ConfigurationView: View {
     private var notificationsSection: some View {
         SettingsSection(title: "Notifications", icon: "bell", anchorId: "settings.notifications.toasts") {
             SettingsToggle(
-                title: L("Show Notifications"),
+                title: LCached("Show Notifications"),
                 description: "Display notifications for background tasks and events",
                 isOn: $tempToastEnabled
             )

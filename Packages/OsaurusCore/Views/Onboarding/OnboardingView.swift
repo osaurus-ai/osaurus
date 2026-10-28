@@ -412,13 +412,14 @@ public struct OnboardingView: View {
                 pinProviderModel(providerId: providerId, forAgents: brainPinTargets)
             }
         case .claudeCode:
-            // No catalog to wait on and no provider to connect: the picker ids
-            // are a fixed set, so the default can be pinned immediately.
+            // Claude Code is a harness runtime, not a model: the agents run
+            // their chats in it, and their own model setting stays untouched.
+            let runtime = HarnessRuntimeStore.shared.ensureClaudeCodeRuntime()
             for agentId in brainPinTargets {
-                AgentManager.shared.updateDefaultModel(
-                    for: agentId,
-                    model: ClaudeCodeModel.sonnet.pickerId
-                )
+                var claude = AgentManager.shared.effectiveClaudeCodeConfig(for: agentId)
+                claude.model = ClaudeCodeModel.sonnet.rawValue
+                AgentManager.shared.updateClaudeCodeConfig(claude, for: agentId)
+                AgentManager.shared.updateRuntime(.harness(runtime.id), for: agentId)
             }
         case nil:
             break

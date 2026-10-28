@@ -31,6 +31,8 @@ extension HTTPHandler {
         /// `{"error":{"type":"error","code":"<code>","message":"..."}}` —
         /// the OpenAI Responses API shape.
         case openResponses(code: String)
+        /// Existing Ollama-compatible Osaurus error envelope and terminal bit.
+        case ollama(type: String)
     }
 
     /// Build the JSON body string for `flavor`. Pure: returns the body
@@ -47,10 +49,15 @@ extension HTTPHandler {
         case .openResponses(let code):
             return
                 #"{"error":{"type":"error","code":"\#(code)","message":"\#(escaped)"}}"#
+        case .ollama(let type):
+            return #"{"error":{"message":"\#(escaped)","type":"\#(type)"},"done":true}"#
         }
     }
 
-    private static func isStructuredOutputRequestError(_ error: Error) -> Bool {
+    private static func isRequestParameterError(_ error: Error) -> Bool {
+        if error is ChatTemplateParameters.InvalidParameter { return true }
+        if let providerError = error as? RemoteProviderServiceError,
+            case .unsupportedParameter = providerError { return true }
         guard let error = error as? ChatEngine.EngineError else { return false }
         if case .invalidStructuredOutput = error.kind { return true }
         return false
@@ -66,15 +73,16 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return .serviceUnavailable
         }
-        if isStructuredOutputRequestError(error)
+        if isRequestParameterError(error)
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return .badRequest
         }
         if (error as NSError).domain == "OsaurusToolChoice" {
-            return .badRequest
+            return .unprocessableEntity
         }
         return .internalServerError
     }
@@ -89,10 +97,11 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
-        if isStructuredOutputRequestError(error)
+        if isRequestParameterError(error)
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return "invalid_request_error"
         }
@@ -138,10 +147,11 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "overloaded_error"
         }
-        if isStructuredOutputRequestError(error)
+        if isRequestParameterError(error)
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return "invalid_request_error"
         }
@@ -158,10 +168,11 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
-        if isStructuredOutputRequestError(error)
+        if isRequestParameterError(error)
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return "invalid_request_error"
         }
@@ -178,10 +189,11 @@ extension HTTPHandler {
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
-        if isStructuredOutputRequestError(error)
+        if isRequestParameterError(error)
             || error is MLXService.RuntimePolicyError || error is NativeMTPAdmission.Refusal
             || error is ModelRuntime.ImageInputError || error is ModelManifest.Failure
             || error is K2HorizonTemplateContract.ContractError
+            || error is DeclaredReasoningEffort.RequestError
         {
             return "invalid_request_error"
         }

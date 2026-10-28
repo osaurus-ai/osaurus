@@ -14,6 +14,48 @@ extension Notification.Name {
     static let pluginConfigDidChange = Notification.Name("PluginConfigDidChange")
 }
 
+/// Bridges cancellation to the detached host task even when no model event
+/// has arrived. Completion releases the task closure; attachment may race
+/// with either cancellation or completion.
+final class PluginStreamCancellationHandle: Sendable {
+    private struct State {
+        var cancelled = false
+        var finished = false
+        var attached = false
+        var action: (@Sendable () -> Void)?
+    }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    func attach(_ action: @escaping @Sendable () -> Void) {
+        let shouldCancel = state.withLock { state in
+            guard !state.finished, !state.attached else { return false }
+            state.attached = true
+            if state.cancelled { return true }
+            state.action = action
+            return false
+        }
+        if shouldCancel { action() }
+    }
+
+    func cancel() {
+        let action = state.withLock { state -> (@Sendable () -> Void)? in
+            guard !state.finished, !state.cancelled else { return nil }
+            state.cancelled = true
+            let action = state.action
+            state.action = nil
+            return action
+        }
+        action?()
+    }
+
+    func finish() {
+        state.withLock { state in
+            state.finished = true
+            state.action = nil
+        }
+    }
+}
+
 // MARK: - Per-Plugin Host Context
 
 /// Holds per-plugin state needed by host API callbacks.
@@ -64,6 +106,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     let pluginId: String
     let database: PluginDatabase
+    private let inferenceEngineFactory: @Sendable () -> any ResponsesEngineProtocol
 
     /// Heap-allocated host API struct whose pointer is handed to the plugin at
     /// init. Must outlive the plugin because it may store the pointer rather
@@ -176,37 +219,51 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Streaming Cancellation Registry
 
-    /// Per-plugin set of stream IDs marked for cancellation. The plugin
-    /// supplies a `stream_id` UUID when it calls `complete_stream`; calling
-    /// `complete_cancel(stream_id)` flips the entry, and the streaming task
-    /// observes it between deltas and unwinds with `finish_reason: "cancelled"`.
-    /// Membership in the set means "this stream id should be cancelled" —
-    /// the streaming task removes the entry on exit (success or cancel).
+    private struct RegisteredStream {
+        var cancelled = false
+        let cancel: @Sendable () -> Void
+    }
     private let streamLock = NSLock()
-    private var cancelledStreamIds: Set<String> = []
+    private var activeStreams: [String: [UUID: RegisteredStream]] = [:]
 
-    /// Register a stream ID as in-flight. Idempotent; calling twice with
-    /// the same id is harmless.
-    private func registerStream(_ streamId: String) {
-        streamLock.withLock { _ = cancelledStreamIds.remove(streamId) }
+    /// Each invocation owns a registration. Reusing an opaque ID groups the
+    /// currently active invocations for cancellation without sharing cleanup.
+    func registerStream(_ streamId: String, owner: UUID, cancel: @escaping @Sendable () -> Void) {
+        streamLock.withLock {
+            guard activeStreams[streamId]?[owner] == nil else { return }
+            activeStreams[streamId, default: [:]][owner] = RegisteredStream(cancel: cancel)
+        }
     }
 
-    /// Mark a stream as cancelled. The streaming task's `isStreamCancelled`
-    /// check picks it up on the next delta. Internal access so unit tests
-    /// can verify the cancellation registry directly.
     func markStreamCancelled(_ streamId: String) {
-        streamLock.withLock { _ = cancelledStreamIds.insert(streamId) }
+        let callbacks: [@Sendable () -> Void] = streamLock.withLock {
+            guard var streams = activeStreams[streamId] else { return [] }
+            var callbacks: [@Sendable () -> Void] = []
+            for (owner, var stream) in streams where !stream.cancelled {
+                stream.cancelled = true
+                streams[owner] = stream
+                callbacks.append(stream.cancel)
+            }
+            activeStreams[streamId] = streams
+            return callbacks
+        }
+        // Task cancellation may invoke termination callbacks that reenter the
+        // registry. Never invoke them while holding its lock.
+        callbacks.forEach { $0() }
     }
 
-    /// Returns true if the stream id has been marked for cancellation.
-    /// Internal access so unit tests can assert registry state.
-    func isStreamCancelled(_ streamId: String) -> Bool {
-        streamLock.withLock { cancelledStreamIds.contains(streamId) }
+    func isStreamCancelled(_ streamId: String, owner: UUID? = nil) -> Bool {
+        streamLock.withLock {
+            if let owner { return activeStreams[streamId]?[owner]?.cancelled == true }
+            return activeStreams[streamId]?.values.contains { $0.cancelled } == true
+        }
     }
 
-    /// Drop bookkeeping for a stream that finished (success or cancel).
-    private func unregisterStream(_ streamId: String) {
-        streamLock.withLock { _ = cancelledStreamIds.remove(streamId) }
+    func unregisterStream(_ streamId: String, owner: UUID) {
+        streamLock.withLock {
+            activeStreams[streamId]?.removeValue(forKey: owner)
+            if activeStreams[streamId]?.isEmpty == true { activeStreams.removeValue(forKey: streamId) }
+        }
     }
 
     // MARK: - Per-Request Agent Context
@@ -235,9 +292,13 @@ final class PluginHostContext: @unchecked Sendable {
         uuidString: "ffffffff-ffff-ffff-ffff-fffffffffff0"
     )!
 
-    init(pluginId: String) throws {
+    init(
+        pluginId: String,
+        inferenceEngineFactory: @escaping @Sendable () -> any ResponsesEngineProtocol = { ChatEngine(source: .plugin) }
+    ) throws {
         self.pluginId = pluginId
         self.database = PluginDatabase(pluginId: pluginId)
+        self.inferenceEngineFactory = inferenceEngineFactory
         // NOTE: deliberately do NOT call `database.open()` here.
         // Most plugins never call `db.exec` / `db.query`, so eagerly
         // opening every plugin's SQLCipher database at host-api init
@@ -736,7 +797,6 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: - Inference Callbacks
 
-    private static let toolExecutionTimeout: UInt64 = 120
     // Plugin-host completions are used by agent/tool surfaces. A one-shot
     // default turns any omitted `max_iterations` into "stop before executing
     // the first model-emitted tool call", which is especially visible on
@@ -777,7 +837,7 @@ final class PluginHostContext: @unchecked Sendable {
         }
     }
 
-    private struct InferenceOptions {
+    struct InferenceOptions {
         let maxIterations: Int
         let wantsAgentTools: Bool
 
@@ -788,9 +848,9 @@ final class PluginHostContext: @unchecked Sendable {
         }
     }
 
-    private struct EnrichedInference {
-        var request: ChatCompletionRequest
-        let tools: [Tool]?
+    struct EnrichedInference {
+        var request: ResponsesInferenceRequest
+        var tools: [Tool]?
         /// (key, prefix) for the memory block injected into this request's
         /// latest user message, when the session ledger should record it.
         var recordedUserPrefix: (key: String, prefix: String)? = nil
@@ -800,7 +860,7 @@ final class PluginHostContext: @unchecked Sendable {
     private struct PreparedInference {
         let enriched: EnrichedInference
         let options: InferenceOptions
-        let engine: ChatEngine
+        let engine: any ResponsesEngineProtocol
         let budgetManager: ContextBudgetManager?
         let agentId: UUID?
         let executionMode: ExecutionMode
@@ -841,7 +901,8 @@ final class PluginHostContext: @unchecked Sendable {
         request: ChatCompletionRequest,
         rawJSON: [String: Any],
         pluginId: String? = nil,
-        activeAgentId: UUID? = nil
+        activeAgentId: UUID? = nil,
+        engineFactory: @Sendable () -> any ResponsesEngineProtocol = { ChatEngine(source: .plugin) }
     ) async -> PreparedInference {
         let options = InferenceOptions(from: rawJSON)
         let requestedModel = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -890,7 +951,7 @@ final class PluginHostContext: @unchecked Sendable {
                 PluginInstructionsResolver.instructions(pluginId: pid, agentId: agentCtx?.agentId)
             }
             if let instructions {
-                SystemPromptComposer.appendSystemContent(instructions, into: &enriched.request.messages)
+                SystemPromptComposer.appendSystemContent(instructions, into: &enriched.request.input)
             }
         }
         // No silent Default-agent fallback: when the plugin has no chat-bound
@@ -919,7 +980,7 @@ final class PluginHostContext: @unchecked Sendable {
         // `capabilities_load` path as chat, so the universal skill library
         // never bloats plugin requests.
 
-        let engine = ChatEngine(source: .plugin)
+        let engine = engineFactory()
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
         return PreparedInference(
             enriched: enriched,
@@ -928,7 +989,7 @@ final class PluginHostContext: @unchecked Sendable {
             budgetManager: budgetMgr,
             agentId: agentCtx?.agentId,
             executionMode: execMode,
-            contextId: enriched.request.session_id ?? UUID().uuidString
+            contextId: enriched.request.sessionID ?? UUID().uuidString
         )
     }
 
@@ -1061,14 +1122,14 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: Request Enrichment
 
-    private static func enrichRequest(
+    static func enrichRequest(
         _ request: ChatCompletionRequest,
         context: AgentContext?,
         options: InferenceOptions,
         frozenUserPrefixes: [String: String] = [:]
     ) -> EnrichedInference {
         guard let ctx = context else {
-            return EnrichedInference(request: request, tools: request.tools)
+            return EnrichedInference(request: ResponsesInferenceRequest(chatCompletion: request), tools: request.tools)
         }
 
         var model = request.model
@@ -1102,25 +1163,17 @@ final class PluginHostContext: @unchecked Sendable {
             effectiveTools = nil
         }
 
-        let enriched = ChatCompletionRequest(
-            model: model,
-            messages: messages,
-            temperature: request.temperature ?? ctx.temperature,
-            max_tokens: request.max_tokens ?? ctx.maxTokens,
-            stream: request.stream,
-            top_p: request.top_p,
-            frequency_penalty: request.frequency_penalty,
-            presence_penalty: request.presence_penalty,
-            stop: request.stop,
-            n: request.n,
-            tools: effectiveTools,
-            tool_choice: request.tool_choice,
-            session_id: request.session_id
-        )
-        var enrichedWithRuntimeOptions = enriched
-        enrichedWithRuntimeOptions.enable_thinking = request.enable_thinking
-        enrichedWithRuntimeOptions.reasoning_effort = request.reasoning_effort
-        enrichedWithRuntimeOptions.modelOptions = request.modelOptions
+        // Copy the complete external request at this boundary. Reconstructing
+        // selected fields loses output-limit aliases, sampling and host-only
+        // admission/residency controls before the canonical model step.
+        var enrichedWithRuntimeOptions = ResponsesInferenceRequest(chatCompletion: request)
+        enrichedWithRuntimeOptions.model = model
+        enrichedWithRuntimeOptions.input = messages
+        enrichedWithRuntimeOptions.generation.temperature = request.temperature ?? ctx.temperature
+        if request.resolvedMaxTokens == nil {
+            enrichedWithRuntimeOptions.generation.maxOutputTokens = ctx.maxTokens
+        }
+        enrichedWithRuntimeOptions.tools = effectiveTools
         return EnrichedInference(
             request: enrichedWithRuntimeOptions,
             tools: effectiveTools,
@@ -1128,30 +1181,15 @@ final class PluginHostContext: @unchecked Sendable {
         )
     }
 
-    private static func iterationRequest(
-        from base: ChatCompletionRequest,
+    static func iterationRequest(
+        from base: ResponsesInferenceRequest,
         messages: [ChatMessage],
         tools: [Tool]?
-    ) -> ChatCompletionRequest {
-        var request = ChatCompletionRequest(
-            model: base.model,
-            messages: messages,
-            temperature: base.temperature,
-            max_tokens: base.max_tokens,
-            stream: nil,
-            top_p: base.top_p,
-            frequency_penalty: base.frequency_penalty,
-            presence_penalty: base.presence_penalty,
-            stop: base.stop,
-            n: base.n,
-            tools: tools,
-            tool_choice: base.tool_choice,
-            session_id: base.session_id
-        )
-        request.enable_thinking = base.enable_thinking
-        request.reasoning_effort = base.reasoning_effort
-        request.modelOptions = base.modelOptions
-        request.isAgentRequest = base.isAgentRequest || tools?.isEmpty == false
+    ) -> ResponsesInferenceRequest {
+        var request = base
+        request.input = messages
+        request.tools = tools
+        request.context.isAgentRequest = base.context.isAgentRequest || tools?.isEmpty == false
         return request
     }
 
@@ -1226,7 +1264,7 @@ final class PluginHostContext: @unchecked Sendable {
         }
 
         // Auto mode (Design C): always-loaded hot set + session-loaded tools.
-        if let sid = inference.request.session_id {
+        if let sid = inference.request.sessionID {
             // Drop the cache if the (mode, toolMode) signature changed
             // since last turn — same rule as the chat send path.
             let liveFp = SessionToolState.fingerprint(
@@ -1283,7 +1321,7 @@ final class PluginHostContext: @unchecked Sendable {
         let builtInTools = await MainActor.run {
             ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
         }
-        if let sid = inference.request.session_id {
+        if let sid = inference.request.sessionID {
             let builtInNames = Set(builtInTools.map { $0.function.name })
             let fp = SessionToolState.fingerprint(
                 executionMode: executionMode,
@@ -1303,7 +1341,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Merge a set of resolved tool specs into an inference request, replacing
     /// any existing spec with the same name, then sort into canonical order.
-    private static func applyResolvedTools(
+    static func applyResolvedTools(
         _ specs: [Tool],
         to inference: EnrichedInference
     ) async -> EnrichedInference {
@@ -1322,28 +1360,12 @@ final class PluginHostContext: @unchecked Sendable {
             tools = await SystemPromptComposer.canonicalToolOrder(tools)
         }
 
-        let messages = inference.request.messages
         let effectiveTools = tools.isEmpty ? nil : tools
-        var request = ChatCompletionRequest(
-            model: inference.request.model,
-            messages: messages,
-            temperature: inference.request.temperature,
-            max_tokens: inference.request.max_tokens,
-            stream: inference.request.stream,
-            top_p: inference.request.top_p,
-            frequency_penalty: inference.request.frequency_penalty,
-            presence_penalty: inference.request.presence_penalty,
-            stop: inference.request.stop,
-            n: inference.request.n,
-            tools: effectiveTools,
-            tool_choice: inference.request.tool_choice,
-            session_id: inference.request.session_id
-        )
-        request.enable_thinking = inference.request.enable_thinking
-        request.reasoning_effort = inference.request.reasoning_effort
-        request.modelOptions = inference.request.modelOptions
-        request.isAgentRequest = inference.request.isAgentRequest || effectiveTools?.isEmpty == false
-        return EnrichedInference(request: request, tools: effectiveTools)
+        var resolved = inference
+        resolved.request.tools = effectiveTools
+        resolved.request.context.isAgentRequest = inference.request.context.isAgentRequest || effectiveTools?.isEmpty == false
+        resolved.tools = effectiveTools
+        return resolved
     }
 
     // MARK: Context Budget
@@ -1363,13 +1385,13 @@ final class PluginHostContext: @unchecked Sendable {
         let toolTokens = await MainActor.run {
             ToolRegistry.shared.totalEstimatedTokens(for: inf.tools ?? [])
         }
-        let sysChars = inf.request.messages.first(where: { $0.role == "system" })?.content?.count ?? 0
+        let sysChars = inf.request.input.first(where: { $0.role == "system" })?.content?.count ?? 0
 
         return AgentLoopBudget.makeBudgetManager(
             contextWindow: contextLength,
             systemPromptChars: sysChars,
             toolTokens: toolTokens,
-            maxResponseTokens: inf.request.max_tokens
+            maxResponseTokens: inf.request.generation.maxOutputTokens
         )
     }
 
@@ -1400,7 +1422,7 @@ final class PluginHostContext: @unchecked Sendable {
             // `session_id` composes their full schemas in.
             let newTools = await CapabilityLoadBuffer.shared.drain()
             guard !newTools.isEmpty else { return (result, nil) }
-            if let sid = prep.enriched.request.session_id {
+            if let sid = prep.enriched.request.sessionID {
                 recordSessionLoadedTools(
                     sessionId: sid,
                     names: newTools.map { $0.function.name }
@@ -1461,7 +1483,7 @@ final class PluginHostContext: @unchecked Sendable {
         return (result, nil)
     }
 
-    private static func executeToolCall(
+    static func executeToolCall(
         name: String,
         argumentsJSON: String,
         agentId: UUID? = nil,
@@ -1471,53 +1493,36 @@ final class PluginHostContext: @unchecked Sendable {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
 
-        return await withTaskGroup(of: String?.self) { group in
-            group.addTask {
-                do {
-                    return try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
-                        // The combined-mode host-read scope + secret-read
-                        // policy are bound centrally inside
-                        // ToolRegistry.execute (keyed off the agent in
-                        // context), so this path inherits them uniformly.
-                        try await ToolRegistry.shared.execute(
-                            name: name,
-                            argumentsJSON: argumentsJSON
-                        )
-                    }
-                } catch {
-                    return ToolEnvelope.fromError(error, tool: name)
-                }
+        // ToolRegistry owns per-tool timeout/bypass policy and cancellation
+        // cleanup. A second race here both overrides streaming tools' policy
+        // and can label a cancelled sleep as a retryable timeout.
+        do {
+            return try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                try await ToolRegistry.shared.execute(
+                    name: name,
+                    argumentsJSON: argumentsJSON
+                )
             }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: toolExecutionTimeout * 1_000_000_000)
-                return nil
-            }
-            let timeoutEnvelope = ToolErrorEnvelope(
-                kind: .timeout,
-                reason: "Tool did not complete within \(toolExecutionTimeout)s.",
-                toolName: name
-            ).toJSONString()
-            guard let first = await group.next() else {
-                return timeoutEnvelope
-            }
-            group.cancelAll()
-            return first ?? timeoutEnvelope
+        } catch is CancellationError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: L("Tool '\(name)' was cancelled."),
+                tool: name,
+                retryable: false
+            )
+        } catch {
+            return ToolEnvelope.fromError(error, tool: name)
         }
     }
 
     // MARK: complete (non-streaming)
-
-    /// Internal abort signals thrown out of the shared-loop hooks so the
-    /// plugin entrypoints can map them to their historical error envelopes.
-    private enum PluginLoopAbort: Error {
-        case noChoices
-    }
 
     func complete(requestJSON: String) -> String {
         guard tryEnterInflightInference() else {
             return Self.pluginBusyJSON(kind: "complete")
         }
         let pid = self.pluginId
+        let engineFactory = inferenceEngineFactory
         // Capture host-enforced agent scope on the calling thread before
         // crossing into `Self.blockingAsync` — TLS does not survive the
         // `Task.detached` hop. See `dispatch` for the full rationale.
@@ -1546,9 +1551,10 @@ final class PluginHostContext: @unchecked Sendable {
                 request: request,
                 rawJSON: rawJSON,
                 pluginId: pid,
-                activeAgentId: activeAgent
+                activeAgentId: activeAgent,
+                engineFactory: engineFactory
             )
-            var messages = prep.enriched.request.messages
+            var messages = prep.enriched.request.input
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
             // Frozen for the whole run (deferred-schema policy): the tool
@@ -1570,7 +1576,8 @@ final class PluginHostContext: @unchecked Sendable {
             // The final model response, stashed by the modelStep hook when the
             // completion carries no executable tool calls (or the iteration
             // budget says to stop executing).
-            var finalResponse: ChatCompletionResponse?
+            var finalResponse: ResponsesGenerationResult?
+            var batchHistory = ResponsesToolBatchHistory()
             // Set when a successful `complete`/`clarify` intercept ends the
             // run (`endRun` → driver `.endedBySurface`), so the terminal
             // handler below can build the matching envelope. Parity with
@@ -1601,69 +1608,39 @@ final class PluginHostContext: @unchecked Sendable {
                         messages: effective,
                         tools: toolSpecs
                     )
-                    let response = try await prep.engine.completeChat(request: iterReq)
-                    guard let choice = response.choices.first else {
-                        throw PluginLoopAbort.noChoices
-                    }
-
-                    if let calls = choice.message.tool_calls, !calls.isEmpty,
-                        choice.finish_reason == "tool_calls"
-                    {
-                        // The non-streaming path appends the full assistant
-                        // message (with all tool_calls) once; the per-call
-                        // hooks then append only the tool-result messages.
-                        // Recorded history gets the secret-safe argument view
-                        // so sandbox_secret_set values never re-enter the
-                        // multi-turn context; execution still uses the raw
-                        // invocations built from the model's original args.
-                        // The iteration cap is owned by the DRIVER (same
-                        // taxonomy as the HTTP surface): the final
-                        // iteration's calls still execute, then the loop
-                        // exits `.iterationCapReached`.
-                        messages.append(
-                            SecretArgumentScrubber.recordedAssistantMessage(choice.message)
-                        )
-                        return .toolCalls(
-                            calls.map {
-                                ServiceToolInvocation(
-                                    toolName: $0.function.name,
-                                    jsonArguments: $0.function.arguments,
-                                    toolCallId: $0.id
-                                )
-                            }
-                        )
-                    }
-
-                    // Final answer.
+                    let response = try await prep.engine.completeResponse(request: iterReq)
                     finalResponse = response
-                    return .finalResponse
+                    let step = try PluginResponsesCompatibility.classify(
+                        response, toolsWereOffered: toolSpecs?.isEmpty == false
+                    )
+                    if case .toolCalls = step {
+                        try batchHistory.begin(SecretArgumentScrubber.recordedAssistantMessage(
+                            try response.completedAssistantInput()
+                        ))
+                    }
+                    return step
                 },
                 onDedupedResult: { _, callId, held in
                     // Dedupe a still-fresh re-read: replay the exact held
                     // envelope instead of re-running the read. The assistant
                     // message with the tool_calls is already in history.
-                    messages.append(
-                        ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
-                    )
+                    batchHistory.record(callID: callId, result: held)
                 },
                 executeTool: { inv, callId in
                     let processed = await Self.processToolCall(
                         toolName: inv.toolName,
                         argumentsJSON: inv.jsonArguments,
                         callId: callId,
-                        priorAssistantContent: "",
-                        prep: prep
+                            prep: prep
                     )
-                    // assistantMessage from processToolCall is unused here
-                    // because choice.message already represents the full
-                    // assistant turn for this iteration.
+                    // Stage results until the whole model batch can be
+                    // committed in its original call order.
                     if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
-                    messages.append(processed.toolMessage)
+                    batchHistory.record(callID: callId, result: processed.result)
                     toolCallsExecuted.append(processed.toolCallExecuted)
                     // Agent-loop intercepts: a successful `complete`/`clarify`
-                    // ends the run cleanly instead of riding to the iteration
-                    // cap. The tool turn is already in `messages` (above), so
-                    // history stays paired.
+                    // ends the run cleanly. The terminal handler commits this
+                    // result and explicit unstarted outcomes before persistence.
                     if AgentToolLoop.isSuccessfulIntercept(
                         toolName: inv.toolName,
                         result: processed.result
@@ -1672,6 +1649,9 @@ final class PluginHostContext: @unchecked Sendable {
                         return AgentLoopToolExecution(result: processed.result, endRun: true)
                     }
                     return AgentLoopToolExecution(result: processed.result)
+                },
+                onBatchComplete: { outcomes in
+                    if let commit = batchHistory.complete(outcomes) { messages += commit.messages }
                 }
             )
 
@@ -1688,10 +1668,22 @@ final class PluginHostContext: @unchecked Sendable {
                     hooks: hooks
                 )
                 exit = runResult.exit
-            } catch PluginLoopAbort.noChoices {
-                return Self.jsonString(["error": "inference_error", "message": "No choices returned"])
             } catch {
+                if let commit = batchHistory.finish(runExit: "inference_error") { messages += commit.messages }
+                Self.persistInference(
+                    pluginId: pid, agentId: prep.agentId,
+                    externalSessionKey: prep.enriched.request.sessionID,
+                    finalMessages: messages, model: prep.enriched.request.model
+                )
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+            }
+            if let commit = batchHistory.finish(runExit: String(describing: exit)) { messages += commit.messages }
+            if exit != .finalResponse && exit != .endedBySurface {
+                Self.persistInference(
+                    pluginId: pid, agentId: prep.agentId,
+                    externalSessionKey: prep.enriched.request.sessionID,
+                    finalMessages: messages, model: prep.enriched.request.model
+                )
             }
 
             // Even fully-compacted history can't fit the window — the
@@ -1721,6 +1713,14 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
+            if exit == .incompleteReasoningExhausted {
+                return Self.jsonString([
+                    "error": "incomplete_response",
+                    "message": "The model did not complete a visible response with closed reasoning.",
+                    "tool_calls_executed": toolCallsExecuted, "shared_artifacts": sharedArtifacts,
+                ])
+            }
+
             // A successful `complete`/`clarify` intercept ended the run
             // (`.endedBySurface`): build the matching terminal envelope
             // instead of falling through to `max_iterations_reached`.
@@ -1728,7 +1728,7 @@ final class PluginHostContext: @unchecked Sendable {
                 Self.persistInference(
                     pluginId: pid,
                     agentId: prep.agentId,
-                    externalSessionKey: prep.enriched.request.session_id,
+                    externalSessionKey: prep.enriched.request.sessionID,
                     finalMessages: messages,
                     model: prep.enriched.request.model
                 )
@@ -1747,21 +1747,10 @@ final class PluginHostContext: @unchecked Sendable {
                 // `complete`: synthesize a normal chat-completion response
                 // whose content is the model's verified summary.
                 let summary = CompleteTool.parseSummary(from: intercept.args) ?? "Task completed."
-                let synthesized = ChatCompletionResponse(
-                    id: "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))",
-                    created: Int(Date().timeIntervalSince1970),
-                    model: prep.enriched.request.model,
-                    choices: [
-                        ChatChoice(
-                            index: 0,
-                            message: ChatMessage(role: "assistant", content: summary),
-                            finish_reason: "stop"
-                        )
-                    ],
-                    usage: Usage(prompt_tokens: 0, completion_tokens: 0, total_tokens: 0)
-                )
-                guard let encoded = try? JSONEncoder.osaurusCanonical().encode(synthesized),
-                    var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
+                guard let response = finalResponse,
+                    var json = try? PluginResponsesCompatibility.response(
+                        response, model: prep.enriched.request.model, contentOverride: summary
+                    )
                 else {
                     return Self.jsonString([
                         "error": "serialization_error", "message": "Failed to serialize response",
@@ -1773,7 +1762,7 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             guard exit == .finalResponse, let response = finalResponse,
-                let choice = response.choices.first
+                let assistant = try? response.completedAssistantInput()
             else {
                 // Driver-owned iteration cap (same taxonomy as HTTP): the
                 // final iteration's tool calls executed, but the model
@@ -1790,17 +1779,18 @@ final class PluginHostContext: @unchecked Sendable {
             // Persist the final assistant turn into the chat-history
             // SQLite so this conversation is browsable in the sidebar.
             var persistedMessages = messages
-            persistedMessages.append(choice.message)
+            persistedMessages.append(SecretArgumentScrubber.recordedAssistantMessage(assistant))
             Self.persistInference(
                 pluginId: pid,
                 agentId: prep.agentId,
-                externalSessionKey: prep.enriched.request.session_id,
+                externalSessionKey: prep.enriched.request.sessionID,
                 finalMessages: persistedMessages,
                 model: prep.enriched.request.model
             )
 
-            guard let encoded = try? JSONEncoder.osaurusCanonical().encode(response),
-                var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
+            guard var json = try? PluginResponsesCompatibility.response(
+                response, model: prep.enriched.request.model
+            )
             else {
                 return Self.jsonString([
                     "error": "serialization_error", "message": "Failed to serialize response",
@@ -1829,6 +1819,7 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnNullChunkCallbackOnce(pluginId: pluginId)
         }
         let pid = self.pluginId
+        let engineFactory = inferenceEngineFactory
         // Capture host-enforced agent scope on the calling thread before
         // crossing into `Self.blockingAsync` — TLS does not survive the
         // `Task.detached` hop. See `dispatch` for the full rationale.
@@ -1842,25 +1833,31 @@ final class PluginHostContext: @unchecked Sendable {
         let releaseSlot: @Sendable () -> Void = {
             ctxRef?.exitInflightInference()
         }
+        let streamOwner = UUID()
+        let cancellation = PluginStreamCancellationHandle()
         // `unregisterStream` runs once at the end of the streaming work,
         // regardless of how it terminates.
         let unregisterStream: @Sendable (String?) -> Void = { streamId in
-            if let id = streamId { ctxRef?.unregisterStream(id) }
+            if let id = streamId { ctxRef?.unregisterStream(id, owner: streamOwner) }
         }
         // `isCancelled` is the cheap per-delta check the for-await loop calls.
         // Returns false when no stream id was supplied.
         let isCancelled: @Sendable (String?) -> Bool = { streamId in
             guard let id = streamId, let ctx = ctxRef else { return false }
-            return ctx.isStreamCancelled(id)
+            return ctx.isStreamCancelled(id, owner: streamOwner)
         }
         let activityId = Self.beginPluginActivity(pluginId: pid, kind: .completeStream)
-        return Self.blockingAsync(fallback: Self.pluginHostTimeoutJSON(kind: "complete_stream")) {
+        return Self.blockingAsync(
+            fallback: Self.pluginHostTimeoutJSON(kind: "complete_stream"),
+            onTaskCreated: { task in cancellation.attach { task.cancel() } }
+        ) {
             // Stream id is per-call: if the plugin supplied one in the
             // request, register it so a concurrent `complete_cancel` call
             // can flag the stream for cancellation. We treat it as opaque
             // — any non-empty string works, but a UUID is recommended.
             var streamId: String?
             defer {
+                cancellation.finish()
                 releaseSlot()
                 unregisterStream(streamId)
                 Self.endPluginActivity(activityId)
@@ -1877,7 +1874,7 @@ final class PluginHostContext: @unchecked Sendable {
                 let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     streamId = trimmed
-                    ctxRef?.registerStream(trimmed)
+                    ctxRef?.registerStream(trimmed, owner: streamOwner, cancel: { cancellation.cancel() })
                 }
             }
 
@@ -1893,10 +1890,11 @@ final class PluginHostContext: @unchecked Sendable {
                 request: request,
                 rawJSON: rawJSON,
                 pluginId: pid,
-                activeAgentId: activeAgent
+                activeAgentId: activeAgent,
+                engineFactory: engineFactory
             )
             let cid = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
-            var messages = prep.enriched.request.messages
+            var messages = prep.enriched.request.input
             var lastContent = ""
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
@@ -1921,9 +1919,37 @@ final class PluginHostContext: @unchecked Sendable {
             // usage block, and so the last `usage` delta the plugin sees
             // is also reflected in the aggregated return value.
             var lastUsage: [String: Any]?
+            var batchHistory = ResponsesToolBatchHistory()
+            var emittedResultIDs: Set<String> = []
+            var emittedCallIDs: Set<String> = []
+            var interceptedTerminal: (text: String, finishReason: String)?
 
             let emit: ([String: Any]) -> Void = { payload in
                 Self.emitChunk(payload, callback: onChunk, userData: userData)
+            }
+
+            // A single commit includes guarded and unstarted calls as well
+            // as actual execution results. Stream each result once.
+            let appendCommit: (ResponsesToolBatchHistory.Commit?) -> Void = { commit in
+                guard let commit else { return }
+                for call in commit.assistant.tool_calls ?? [] where !emittedCallIDs.contains(call.id) {
+                    emittedCallIDs.insert(call.id)
+                    emit(Self.chunkPayload(id: cid, delta: ["tool_calls": [[
+                        "id": call.id,
+                        "function": ["name": call.function.name, "arguments": call.function.arguments],
+                    ]]], finishReason: "tool_calls"))
+                }
+                for row in commit.results {
+                    guard let id = row.tool_call_id, emittedResultIDs.insert(id).inserted else { continue }
+                    emit(Self.chunkPayload(id: cid, delta: [
+                        "role": "tool", "tool_call_id": id, "content": row.content ?? "",
+                    ]))
+                }
+                messages += commit.messages
+                // A guarded-only batch never calls executeTool/onDedupedResult.
+                // Its narration belongs to the committed assistant snapshot,
+                // not the next model step's final visible answer.
+                lastContent = ""
             }
 
             // Terminal envelope stashed by the modelStep hook (natural finish,
@@ -1936,7 +1962,7 @@ final class PluginHostContext: @unchecked Sendable {
                 Self.persistStreamingInference(
                     pluginId: pid,
                     agentId: prep.agentId,
-                    externalSessionKey: prep.enriched.request.session_id,
+                    externalSessionKey: prep.enriched.request.sessionID,
                     priorMessages: messages,
                     assistantContent: assistantContent,
                     model: prep.enriched.request.model
@@ -1980,89 +2006,61 @@ final class PluginHostContext: @unchecked Sendable {
                         messages: effective,
                         tools: toolSpecs
                     )
-                    do {
-                        let stream = try await prep.engine.streamChat(request: iterReq)
-                        var iterContent = ""
-                        var iterFinishReason = "stop"
-
-                        for try await delta in stream {
-                            // Cancellation check: plugin called `complete_cancel`
-                            // with our stream id. Emit a final chunk with
-                            // `finish_reason: "cancelled"` and stash the
-                            // cancelled envelope as the terminal result.
-                            if isCancelled(streamId) {
-                                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
-                                persistPartial(lastContent)
-                                terminalEnvelope = Self.cancelledStreamEnvelope(
-                                    id: cid,
-                                    streamId: streamId,
-                                    model: prep.enriched.request.model,
-                                    partialContent: lastContent,
-                                    toolCallsExecuted: toolCallsExecuted,
-                                    sharedArtifacts: sharedArtifacts,
-                                    usage: lastUsage
-                                )
-                                return .finalResponse
-                            }
-                            // Reasoning and stats sentinels must be decoded
-                            // BEFORE the generic `isSentinel` filter, otherwise
-                            // these payloads get dropped together with tool
-                            // hints and the plugin loses both reasoning text
-                            // and token-usage metering.
-                            if let reasoning = StreamingReasoningHint.decode(delta) {
-                                emit(Self.chunkPayload(id: cid, delta: ["reasoning_content": reasoning]))
-                                continue
-                            }
-                            if let stats = StreamingStatsHint.decode(delta) {
-                                // Forward usage to the plugin as an OpenAI-style
-                                // usage delta and remember it for the aggregated
-                                // return so non-stream and stream paths surface
-                                // the same metering shape.
-                                if let stopReason = stats.stopReason {
-                                    iterFinishReason = stopReason
-                                }
-                                let usage: [String: Any] = [
-                                    "completion_tokens": stats.tokenCount,
-                                    "tokens_per_second": stats.tokensPerSecond,
-                                    "unclosed_reasoning": stats.unclosedReasoning,
-                                ]
-                                lastUsage = usage
-                                emit(Self.chunkPayload(id: cid, delta: ["usage": usage]))
-                                continue
-                            }
-                            if StreamingToolHint.isSentinel(delta) { continue }
-                            iterContent += delta
-                            lastContent += delta
-                            emit(Self.chunkPayload(id: cid, delta: ["content": delta]))
+                    let stream = try await prep.engine.streamResponses(request: iterReq)
+                    var accumulator = ResponsesGenerationAccumulator()
+                    modelStream: for try await event in stream {
+                        // The shared driver owns the one terminal cancel
+                        // envelope. Closing here cancels preterminal native work.
+                        if isCancelled(streamId) { return .finalResponse }
+                        try Task.checkCancellation()
+                        try accumulator.consume(event)
+                        switch event {
+                        case .outputTextDelta(let text):
+                            lastContent += text
+                            emit(Self.chunkPayload(id: cid, delta: ["content": text]))
+                        case .reasoningDelta(let reasoning):
+                            emit(Self.chunkPayload(id: cid, delta: ["reasoning_content": reasoning]))
+                        case .responseCompleted:
+                            let completed = try accumulator.result()
+                            let usage = PluginResponsesCompatibility.reportedUsage(completed)
+                            lastUsage = usage
+                            emit(Self.chunkPayload(id: cid, delta: [
+                                "usage": usage, "model_response_id": completed.completion.responseID,
+                            ]))
+                            // Whole completed batches dispatch immediately;
+                            // the native producer still owns its cache drain.
+                            break modelStream
+                        default: break
                         }
-
-                        if !iterContent.isEmpty {
-                            messages.append(ChatMessage(role: "assistant", content: iterContent))
-                        }
-                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: iterFinishReason))
+                    }
+                    if isCancelled(streamId) { return .finalResponse }
+                    try Task.checkCancellation()
+                    let response = try accumulator.result()
+                    let step = try PluginResponsesCompatibility.classify(
+                        response, toolsWereOffered: toolSpecs?.isEmpty == false
+                    )
+                    if case .toolCalls = step {
+                        try batchHistory.begin(SecretArgumentScrubber.recordedAssistantMessage(
+                            try response.completedAssistantInput()
+                        ))
+                        emittedResultIDs.removeAll(keepingCapacity: true)
+                        emittedCallIDs.removeAll(keepingCapacity: true)
+                        return step
+                    }
+                    if case .finalResponse = step {
+                        messages.append(SecretArgumentScrubber.recordedAssistantMessage(
+                            try response.completedAssistantInput()
+                        ))
+                        let finish = response.completion.stopReason ?? "stop"
+                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: finish))
                         persistPartial("")
                         terminalEnvelope = Self.buildStreamResult(
-                            id: cid,
-                            model: prep.enriched.request.model,
-                            content: lastContent,
-                            toolCallsExecuted: toolCallsExecuted,
-                            sharedArtifacts: sharedArtifacts,
-                            usage: lastUsage,
-                            finishReason: iterFinishReason
+                            id: cid, model: prep.enriched.request.model, content: lastContent,
+                            toolCallsExecuted: toolCallsExecuted, sharedArtifacts: sharedArtifacts,
+                            usage: lastUsage, finishReason: finish
                         )
-                        return .finalResponse
-
-                    } catch let invs as ServiceToolInvocations {
-                        // The iteration cap is owned by the DRIVER (same
-                        // taxonomy as the HTTP surface): the final
-                        // iteration's calls still execute, then the loop
-                        // exits `.iterationCapReached` and the terminal
-                        // handler below emits the honest stop chunk.
-                        return .toolCalls(invs.invocations)
-
-                    } catch let inv as ServiceToolInvocation {
-                        return .toolCalls([inv])
                     }
+                    return step
                 },
                 willProcessCall: { inv, callId in
                     // Surface the tool call to the plugin before the dedupe
@@ -2080,36 +2078,20 @@ final class PluginHostContext: @unchecked Sendable {
                             ]
                         ]
                     ]
-                    emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
+                    if emittedCallIDs.insert(callId).inserted {
+                        emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
+                    }
                 },
                 onDedupedResult: { inv, callId, held in
                     // Dedupe a still-fresh re-read: replay the exact held
-                    // envelope instead of re-running the read. Still pair an
-                    // assistant tool_call message with the tool result so
-                    // history stays valid. Arguments on the recorded
-                    // assistant message are the secret-safe view.
-                    emit(
-                        Self.chunkPayload(
-                            id: cid,
-                            delta: ["role": "tool", "tool_call_id": callId, "content": held]
-                        )
-                    )
-                    messages.append(
-                        ChatMessage(
-                            role: "assistant",
-                            content: lastContent.isEmpty ? nil : lastContent,
-                            tool_calls: [
-                                SecretArgumentScrubber.recordedToolCall(
-                                    id: callId,
-                                    invocation: inv
-                                )
-                            ],
-                            tool_call_id: nil
-                        )
-                    )
-                    messages.append(
-                        ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
-                    )
+                    // envelope instead of re-running the read. The complete
+                    // secret-safe assistant batch is already in history.
+                    batchHistory.record(callID: callId, result: held)
+                    if emittedResultIDs.insert(callId).inserted {
+                        emit(Self.chunkPayload(id: cid, delta: [
+                            "role": "tool", "tool_call_id": callId, "content": held,
+                        ]))
+                    }
                     lastContent = ""
                 },
                 executeTool: { inv, callId in
@@ -2117,28 +2099,20 @@ final class PluginHostContext: @unchecked Sendable {
                         toolName: inv.toolName,
                         argumentsJSON: inv.jsonArguments,
                         callId: callId,
-                        priorAssistantContent: lastContent,
                         prep: prep
                     )
                     if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
 
-                    emit(
-                        Self.chunkPayload(
-                            id: cid,
-                            delta: [
-                                "role": "tool", "tool_call_id": callId, "content": processed.result,
-                            ]
-                        )
-                    )
+                    if emittedResultIDs.insert(callId).inserted {
+                        emit(Self.chunkPayload(id: cid, delta: [
+                            "role": "tool", "tool_call_id": callId, "content": processed.result,
+                        ]))
+                    }
 
                     toolCallsExecuted.append(processed.toolCallExecuted)
-                    messages.append(processed.assistantMessage)
-                    messages.append(processed.toolMessage)
-                    // Only the FIRST invocation in the batch consumes the
-                    // streamed assistant prose — subsequent calls in the same
-                    // completion share the same response, so we clear
-                    // lastContent after the first tool to avoid duplicating
-                    // prose into every assistant tool-call message.
+                    batchHistory.record(callID: callId, result: processed.result)
+                    // The staged assistant batch owns its original prose.
+                    // Subsequent final content starts a fresh visible buffer.
                     lastContent = ""
                     // Agent-loop intercepts: a successful `complete`/`clarify`
                     // ends the run cleanly (`endRun` → `.endedBySurface`)
@@ -2154,25 +2128,12 @@ final class PluginHostContext: @unchecked Sendable {
                             isComplete
                             ? (CompleteTool.parseSummary(from: inv.jsonArguments) ?? "Task completed.")
                             : (ClarifyTool.parse(argumentsJSON: inv.jsonArguments)?.question ?? "")
-                        if !text.isEmpty {
-                            emit(Self.chunkPayload(id: cid, delta: ["content": text]))
-                        }
-                        let finishReason = isComplete ? "stop" : "clarify"
-                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: finishReason))
-                        persistPartial(text)
-                        terminalEnvelope = Self.buildStreamResult(
-                            id: cid,
-                            model: prep.enriched.request.model,
-                            content: text,
-                            toolCallsExecuted: toolCallsExecuted,
-                            sharedArtifacts: sharedArtifacts,
-                            usage: lastUsage,
-                            finishReason: finishReason
-                        )
+                        interceptedTerminal = (text, isComplete ? "stop" : "clarify")
                         return AgentLoopToolExecution(result: processed.result, endRun: true)
                     }
                     return AgentLoopToolExecution(result: processed.result)
-                }
+                },
+                onBatchComplete: { outcomes in appendCommit(batchHistory.complete(outcomes)) }
             )
 
             let exit: AgentToolLoop.Exit
@@ -2189,7 +2150,34 @@ final class PluginHostContext: @unchecked Sendable {
                 )
                 exit = runResult.exit
             } catch {
+                appendCommit(batchHistory.finish(runExit: "inference_error"))
+                if let envelope = terminalEnvelope { return envelope }
+                if isCancelled(streamId) {
+                    emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "cancelled"))
+                    persistPartial(lastContent)
+                    return Self.cancelledStreamEnvelope(
+                        id: cid, streamId: streamId, model: prep.enriched.request.model,
+                        partialContent: lastContent, toolCallsExecuted: toolCallsExecuted,
+                        sharedArtifacts: sharedArtifacts, usage: lastUsage
+                    )
+                }
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "error"))
+                persistPartial(lastContent)
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+            }
+
+            appendCommit(batchHistory.finish(runExit: String(describing: exit)))
+            if exit == .endedBySurface, let terminal = interceptedTerminal {
+                if !terminal.text.isEmpty {
+                    emit(Self.chunkPayload(id: cid, delta: ["content": terminal.text]))
+                }
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: terminal.finishReason))
+                persistPartial(terminal.text)
+                return Self.buildStreamResult(
+                    id: cid, model: prep.enriched.request.model, content: terminal.text,
+                    toolCallsExecuted: toolCallsExecuted, sharedArtifacts: sharedArtifacts,
+                    usage: lastUsage, finishReason: terminal.finishReason
+                )
             }
 
             if exit == .overBudget {
@@ -2225,6 +2213,21 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
+            if exit == .incompleteReasoningExhausted {
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "incomplete"))
+                persistPartial(lastContent)
+                return Self.jsonString([
+                    "error": "incomplete_response",
+                    "message": "The model did not complete a visible response with closed reasoning.",
+                    "tool_calls_executed": toolCallsExecuted, "shared_artifacts": sharedArtifacts,
+                ])
+            }
+
+            // A callback may request cancel after seeing the final chunk.
+            // A committed run terminal is authoritative; do not emit a second
+            // cancelled terminal or relabel that completed response.
+            if let envelope = terminalEnvelope { return envelope }
+
             if exit == .cancelled {
                 // Cancellation detected at an iteration boundary (between
                 // tool calls) rather than mid-stream. Emit the same final
@@ -2242,10 +2245,6 @@ final class PluginHostContext: @unchecked Sendable {
                 )
             }
 
-            if let envelope = terminalEnvelope {
-                return envelope
-            }
-
             // Iteration budget exhausted while the model was still requesting
             // tools (driver `.iterationCapReached`). Emit a finish chunk
             // that is honest about why we stopped, persist whatever we have
@@ -2259,21 +2258,17 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: Inference Helpers
 
-    /// Outcome of executing a single model-emitted tool call. Shared between
-    /// `complete` (non-streaming, walks each item in `choice.message.tool_calls`)
-    /// and `complete_stream` (each `ServiceToolInvocation`) so the per-call
-    /// behaviour — execute, post-process, append assistant + tool messages —
-    /// stays in sync between the two paths.
+    /// Actual execution/post-processing shared by both plugin entrypoints.
+    /// Ordered batch history is committed separately from this per-call work.
     private struct ToolCallProcessing {
         let result: String
-        let assistantMessage: ChatMessage
         let toolMessage: ChatMessage
         let toolCallExecuted: [String: String]
         let artifactDict: [String: Any]?
     }
 
-    /// Execute one tool call, post-process the result, and produce the
-    /// assistant + tool ChatMessages to append to the running history.
+    /// Execute one call and produce its result message. The model-step hook
+    /// stages the complete, secret-safe assistant batch before dispatch.
     ///
     /// Execution receives the original `argumentsJSON`. The assistant
     /// tool-call message that re-enters multi-turn history uses the
@@ -2285,7 +2280,6 @@ final class PluginHostContext: @unchecked Sendable {
         toolName: String,
         argumentsJSON: String,
         callId: String,
-        priorAssistantContent: String,
         prep: PreparedInference
     ) async -> ToolCallProcessing {
         // Execution seam: original arguments, including any secret value.
@@ -2302,22 +2296,6 @@ final class PluginHostContext: @unchecked Sendable {
         )
         result = postProcessed.result
 
-        // Recording seam: secret-safe args for history / model re-feed.
-        let material = ToolCallArgumentMaterial.split(
-            toolName: toolName,
-            argumentsJSON: argumentsJSON
-        )
-        let toolCall = ToolCall(
-            id: callId,
-            type: "function",
-            function: ToolCallFunction(name: toolName, arguments: material.forRecording)
-        )
-        let assistantMessage = ChatMessage(
-            role: "assistant",
-            content: priorAssistantContent.isEmpty ? nil : priorAssistantContent,
-            tool_calls: [toolCall],
-            tool_call_id: nil
-        )
         let toolMessage = ChatMessage(
             role: "tool",
             content: result,
@@ -2326,7 +2304,6 @@ final class PluginHostContext: @unchecked Sendable {
         )
         return ToolCallProcessing(
             result: result,
-            assistantMessage: assistantMessage,
             toolMessage: toolMessage,
             toolCallExecuted: ["name": toolName, "tool_call_id": callId],
             artifactDict: postProcessed.artifactDict
@@ -2521,7 +2498,7 @@ final class PluginHostContext: @unchecked Sendable {
         PluginOnceLogger.warnOnce(
             key: "\(pluginId)|\(op)|no_agent_context",
             "[PluginHostAPI] Plugin '%@' called %@ from a thread with no resolvable agent context. "
-                + "The host fell back to the default agent. Originate plugin calls from a thread that "
+                + "No chat-bound agent context is available. Originate plugin calls from a thread that "
                 + "carries the agent (inside invoke / handle_route / on_config_changed / on_task_event). "
                 + "This warning is logged once per plugin per op per process.",
             pluginId,
@@ -3459,6 +3436,7 @@ extension PluginHostContext {
     static func blockingAsync<T: Sendable>(
         timeout: DispatchTime = .now() + 1800,
         fallback: @autoclosure @escaping () -> T,
+        onTaskCreated: (@Sendable (Task<Void, Never>) -> Void)? = nil,
         _ work: @escaping @Sendable () async -> T
     ) -> T {
         assert(!Thread.isMainThread, "Host API trampoline must not be called from main thread")
@@ -3471,6 +3449,7 @@ extension PluginHostContext {
                 sem.signal()
             }
         }
+        onTaskCreated?(task)
         guard sem.wait(timeout: timeout) == .success else {
             task.cancel()
             NSLog("[PluginHostAPI] blockingAsync timed out — cancelling inner work, returning fallback")

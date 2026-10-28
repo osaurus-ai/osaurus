@@ -120,6 +120,22 @@ private final class UnsafeSendableBox<T>: @unchecked Sendable {
     init(value: T) { self.value = value }
 }
 
+/// Inference portion of the sandbox bridge's text-only public contract. The
+/// host harness stays typed even though older sandbox clients send messages.
+enum HostBridgeInference {
+    static func completeContent(
+        model: String,
+        input: [ChatMessage],
+        engine: any ResponsesEngineProtocol
+    ) async throws -> String {
+        let request = ResponsesInferenceRequest(model: model, input: input)
+        let response = try await engine.completeResponse(request: request)
+        // This endpoint has no field for partial/cancelled output. Do not
+        // turn an unfinished generation into an apparently successful body.
+        return try response.completedAssistantInput().content ?? ""
+    }
+}
+
 private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
@@ -429,25 +445,10 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         }
 
         do {
-            let request = ChatCompletionRequest(
-                model: model,
-                messages: chatMessages,
-                temperature: nil,
-                max_tokens: nil,
-                stream: false,
-                top_p: nil,
-                frequency_penalty: nil,
-                presence_penalty: nil,
-                stop: nil,
-                n: nil,
-                tools: nil,
-                tool_choice: nil,
-                session_id: nil
-            )
-
             let engine = ChatEngine(source: .plugin)
-            let response = try await engine.completeChat(request: request)
-            let content = response.choices.first?.message.content ?? ""
+            let content = try await HostBridgeInference.completeContent(
+                model: model, input: chatMessages, engine: engine
+            )
             return .ok("{\"content\":\(jsonEscape(content))}")
         } catch {
             return .error(500, "Inference failed: \(error.localizedDescription)")

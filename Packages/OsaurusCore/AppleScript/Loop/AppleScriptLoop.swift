@@ -104,14 +104,14 @@ public struct AppleScriptRunResult: Sendable {
     public let succeeded: Int
     /// Scripts that ran but failed (compile / runtime / permission / timeout).
     public let failed: Int
-    /// Total model tokens spent across the run.
+    /// Subtotal of prompt + output usage for steps reporting both counts.
+    /// Missing provider usage is not estimated; this may be a partial subtotal.
     public let modelTokens: Int
     /// Total wall-clock seconds for the whole run (includes confirmation waits
     /// and script execution).
     public let elapsedSeconds: Double
-    /// Seconds spent inside model-generation steps only — the honest
-    /// denominator for tokens-per-second (a user sitting on a confirm card
-    /// must not dilute the reported generation throughput).
+    /// Wall-clock seconds inside model steps, including prefill and any
+    /// transport wait. This is separate from the runtime's decode speed.
     public let modelSeconds: Double
     /// The last non-empty coerced output across the run (the headline `values`
     /// the parent reads back). Captured on any successful script, including the
@@ -120,11 +120,9 @@ public struct AppleScriptRunResult: Sendable {
     /// The full per-step transcript (executed + declined + blocked + invalid).
     public let steps: [AppleScriptStepRecord]
 
-    /// The engine's own decode-speed measurement (mean of the per-step
-    /// `usage.tokens_per_second` hints), when any step carried one. This is
-    /// the AUTHORITATIVE decode number: tool-call turns report
-    /// `completion_tokens == 0` by contract, so a tokens/seconds division
-    /// over the loop's counters would understate a tool-heavy run.
+    /// Mean of the engine's reported per-step Responses decode speeds, when
+    /// any step carried a measurement. Prompt-token
+    /// counts and step wall time are not substituted for missing decode speed.
     public let engineDecodeTokensPerSecond: Double?
 
     public init(
@@ -151,12 +149,12 @@ public struct AppleScriptRunResult: Sendable {
         self.steps = steps
     }
 
-    /// Model-generation throughput (tokens per second), or `nil` when the run
-    /// spent no measurable time generating (scripted/injected steps). Prefers
-    /// the engine's own decode measurement; falls back to the loop-derived
-    /// division. Never fabricated: no tokens or no time → no number.
-    public var tokensPerSecond: Double? {
-        if let engineDecodeTokensPerSecond { return engineDecodeTokensPerSecond }
+    /// Measured runtime decode speed only. Missing measurements stay nil.
+    public var tokensPerSecond: Double? { engineDecodeTokensPerSecond }
+
+    /// Derived model-step throughput, including prompt tokens, prefill and
+    /// transport time. This is not a decode-speed measurement.
+    public var modelStepThroughputTokensPerSecond: Double? {
         guard modelTokens > 0, modelSeconds > 0.001 else { return nil }
         return Double(modelTokens) / modelSeconds
     }
@@ -791,6 +789,7 @@ public enum AppleScriptLoop {
             let stepMessages = iterationInput.messages
             let stepIndex = step
             let capturedLastResult = lastToolResult
+            let responseAttempt = nextScript == nil ? DesktopResponsesAttempt() : nil
             let produce: @Sendable () async throws -> ModelStepResult = {
                 if let nextScript {
                     let input = AppleScriptStepInput(step: stepIndex, lastToolResult: capturedLastResult)
@@ -803,7 +802,8 @@ public enum AppleScriptLoop {
                     messages: stepMessages,
                     samplingTemperature: samplingTemperature,
                     enableThinking: enableThinking,
-                    reasoningEffort: reasoningEffort
+                    reasoningEffort: reasoningEffort,
+                    attempt: responseAttempt
                 )
             }
 
@@ -815,12 +815,15 @@ public enum AppleScriptLoop {
                     timeout: limits.modelStepTimeoutSeconds,
                     maxRetries: limits.maxInferenceRetries,
                     feed: feed,
-                    step: step
+                    step: step,
+                    shouldRetry: { error in
+                        responseAttempt?.permitsRetry(error, isTimeout: error is ModelStepTimeout) ?? true
+                    }
                 )
             } catch {
                 return terminate(.failed(reason: error.localizedDescription))
             }
-            modelTokens += stepResult.tokens
+            if let tokens = stepResult.tokens { modelTokens += tokens }
             modelSeconds += Date().timeIntervalSince(modelStepStarted)
             if let rate = stepResult.tokensPerSecond, rate > 0 { decodeRates.append(rate) }
 
@@ -828,6 +831,7 @@ public enum AppleScriptLoop {
             // the one-shot verification read-back when a data task produced no
             // value, so the parent gets a REAL result instead of "completed".
             guard let call = stepResult.call else {
+                if let snapshot = stepResult.assistantMessage { messages.append(snapshot) }
                 let text = stepResult.text?.trimmingCharacters(in: .whitespacesAndNewlines)
                 // A few dedicated AppleScript bundles occasionally emit the
                 // complete script as assistant text instead of wrapping it in
@@ -867,7 +871,9 @@ public enum AppleScriptLoop {
                             )
                         )
                     }
-                    messages.append(ChatMessage(role: "assistant", content: text))
+                    if stepResult.assistantMessage == nil {
+                        messages.append(ChatMessage(role: "assistant", content: text))
+                    }
                     messages.append(ChatMessage(role: "user", content: reason))
                     lastToolResult = reason
                     step += 1
@@ -985,7 +991,7 @@ public enum AppleScriptLoop {
                 return terminate(.done(summary: summary))
             }
 
-            let assistantMessage = ChatMessage(
+            let assistantMessage = stepResult.assistantMessage ?? ChatMessage(
                 role: "assistant",
                 content: nil,
                 tool_calls: [
@@ -2393,72 +2399,55 @@ public enum AppleScriptLoop {
 
     // MARK: - Model step
 
-    /// One model step's result: the proposed call (nil when the model emitted
-    /// no tool call → completion), the assistant text (the completion summary),
-    /// and the token usage (plus the engine's decode-speed hint when present).
     struct ModelStepResult: Sendable {
         var call: ModelActionCall?
         var text: String?
-        var tokens: Int = 0
+        var tokens: Int? = nil
         var tokensPerSecond: Double? = nil
+        var assistantMessage: ChatMessage? = nil
+        var inputTokenCount: Int? = nil
+        var outputTokenCount: Int? = nil
     }
 
-    private static func modelStep(
-        engine: ChatEngine,
+    static func modelStep(
+        engine: any ResponsesEngineProtocol,
         modelId: String,
         sessionId: String,
         messages: [ChatMessage],
         samplingTemperature: Double? = nil,
         enableThinking: Bool?,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        attempt: DesktopResponsesAttempt? = nil
     ) async throws -> ModelStepResult {
-        var req = ChatCompletionRequest(
-            model: modelId,
-            messages: messages,
-            temperature: samplingTemperature.map(Float.init),
-            max_tokens: nil,
-            stream: false,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: [AppleScriptAction.toolSpec],
-            tool_choice: AppleScriptAction.autoToolChoice,
-            session_id: sessionId
-        )
-        // Sampling comes from the model bundle's generation_config unless the
-        // caller EXPLICITLY overrode it (eval-case-declared A/B, recorded in
-        // the report) — never a hidden synthetic default.
-        req.samplingParametersAreImplicit = samplingTemperature == nil
-        req.isAgentRequest = true
-        req.enable_thinking = enableThinking
-        req.reasoning_effort = reasoningEffort
+        var request = ResponsesInferenceRequest(model: modelId, input: messages)
+        request.tools = [AppleScriptAction.toolSpec]
+        request.toolChoice = AppleScriptAction.autoToolChoice
+        request.sessionID = sessionId
+        request.context.samplingParametersAreImplicit = samplingTemperature == nil
+        request.context.isAgentRequest = true
+        request.generation.temperature = samplingTemperature.map(Float.init)
+        request.generation.enableThinking = enableThinking
+        request.generation.reasoningEffort = reasoningEffort
         let generateStarted = Date()
-        let response = try await engine.completeChat(request: req)
+        let response = try await DesktopResponsesModelStep.completeResponse(
+            engine: engine, request: request, attempt: attempt
+        )
         AppleScriptTraceLog.record(
-            request: req,
-            response: response,
+            request: request, response: response,
             elapsedSeconds: Date().timeIntervalSince(generateStarted)
         )
-        let tokens = response.usage.total_tokens
-        let tokensPerSecond = response.usage.tokens_per_second
-        guard let message = response.choices.first?.message else {
-            return ModelStepResult(call: nil, text: nil, tokens: tokens)
+        let call = try DesktopResponsesModelStep.actionCall(
+            from: response, expectedTool: AppleScriptAction.toolName, required: false
+        )
+        let total = response.inputTokenCount.flatMap { input in
+            response.completion.tokenCount.map { input + $0 }
         }
-        let text = message.content
-        if let calls = message.tool_calls,
-            let call = calls.first(where: { $0.function.name == AppleScriptAction.toolName })
-                ?? calls.first
-        {
-            return ModelStepResult(
-                call: ModelActionCall(id: call.id, arguments: call.function.arguments),
-                text: text,
-                tokens: tokens,
-                tokensPerSecond: tokensPerSecond
-            )
-        }
-        return ModelStepResult(call: nil, text: text, tokens: tokens, tokensPerSecond: tokensPerSecond)
+        return ModelStepResult(
+            call: call, text: response.text, tokens: total,
+            tokensPerSecond: response.completion.tokensPerSecond,
+            assistantMessage: try response.completedAssistantInput(),
+            inputTokenCount: response.inputTokenCount, outputTokenCount: response.completion.tokenCount
+        )
     }
 
     // MARK: - Model-step robustness (mirrors ComputerUseLoop)
@@ -2467,12 +2456,13 @@ public enum AppleScriptLoop {
         var errorDescription: String? { "The model step timed out." }
     }
 
-    private static func runModelStep(
+    static func runModelStep(
         _ produce: @escaping @Sendable () async throws -> ModelStepResult,
         timeout: TimeInterval,
         maxRetries: Int,
         feed: SubagentFeed,
-        step: Int
+        step: Int,
+        shouldRetry: (@Sendable (Error) -> Bool)? = nil
     ) async throws -> ModelStepResult {
         var attempt = 0
         while true {
@@ -2481,7 +2471,7 @@ public enum AppleScriptLoop {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                if attempt >= maxRetries { throw error }
+                if attempt >= maxRetries || shouldRetry?(error) == false { throw error }
                 attempt += 1
                 feed.emit(
                     SubagentActivityEvent(

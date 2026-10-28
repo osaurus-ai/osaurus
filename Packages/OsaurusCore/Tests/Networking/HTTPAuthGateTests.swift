@@ -655,6 +655,304 @@ struct HTTPAuthGateTests {
         let ownResult = try await Self.send("GET", "/v1/tasks/\(own.uuidString)", token: fixture.token, server: server)
         #expect(ownResult.status == 404)
     }
+
+    // MARK: - Local Access Key Policy (`LocalAPIKeyPolicy`)
+
+    private struct LocalResult {
+        let status: Int
+        let body: String
+        let allowOrigin: String?
+    }
+
+    private static func sendLocal(
+        _ method: String,
+        _ path: String,
+        server: AuthTestServer,
+        token: String? = nil,
+        origin: String? = nil,
+        headers: [String: String] = [:]
+    ) async throws -> LocalResult {
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)\(path)")!)
+        request.httpMethod = method
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let origin { request.setValue(origin, forHTTPHeaderField: "Origin") }
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        if method == "POST" {
+            request.httpBody = Data("{}".utf8)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let http = resp as? HTTPURLResponse
+        return LocalResult(
+            status: http?.statusCode ?? -1,
+            body: String(decoding: data, as: UTF8.self),
+            allowOrigin: http?.value(forHTTPHeaderField: "Access-Control-Allow-Origin")
+        )
+    }
+
+    private static func aliceMasterToken() throws -> String {
+        try TokenBuilder.build(
+            privateKey: TestKeys.alicePrivateKey, iss: TestKeys.aliceAddress, aud: TestKeys.aliceAddress
+        )
+    }
+
+    private static let protectedLocalRoutes: [(String, String)] = [
+        ("GET", "/agents"),
+        ("GET", "/v1/agents"),
+        ("POST", "/agents/00000000-0000-0000-0000-000000000001/run"),
+        ("GET", "/sessions"),
+        ("GET", "/v1/sessions/not-a-session"),
+        ("GET", "/mcp/tools"),
+        ("POST", "/mcp/call"),
+        ("GET", "/admin/config/schema"),
+        ("POST", "/admin/import/plan"),
+    ]
+
+    /// Setting off (every existing install): a key-less loopback caller and a
+    /// local browser page keep today's access and `*` CORS.
+    @Test func localKeyPolicyOff_keepsKeylessLoopbackAccess() async throws {
+        let server = try await startAuthTestServer(validator: .forAlice(), trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        for (method, path) in [("GET", "/agents"), ("GET", "/mcp/tools"), ("GET", "/admin/config/schema")] {
+            let result = try await Self.sendLocal(method, path, server: server)
+            #expect(result.status == 200, "\(method) \(path) returned \(result.status): \(result.body)")
+        }
+        let browser = try await Self.sendLocal("GET", "/agents", server: server, origin: "https://any.example")
+        #expect(browser.status == 200)
+        #expect(browser.allowOrigin == "*")
+    }
+
+    @Test func localKeyPolicyOn_keylessLoopbackGets401OnProtectedRoutesOnly() async throws {
+        let server = try await startAuthTestServer(
+            validator: .forAlice(), trustLoopback: true, localKeyRequired: true
+        )
+        defer { Task { await server.shutdown() } }
+
+        for (method, path) in Self.protectedLocalRoutes {
+            let result = try await Self.sendLocal(method, path, server: server)
+            #expect(result.status == 401, "\(method) \(path) returned \(result.status): \(result.body)")
+            #expect(result.body.contains("authentication_error"), "\(method) \(path): \(result.body)")
+        }
+        for path in ["/health", "/v1/models", "/api/tags"] {
+            let result = try await Self.sendLocal("GET", path, server: server)
+            #expect(result.status == 200, "\(path) returned \(result.status)")
+        }
+    }
+
+    @Test func localKeyPolicyOn_noKeysConfigured_explains401() async throws {
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: true, localKeyRequired: true)
+        defer { Task { await server.shutdown() } }
+
+        let result = try await Self.sendLocal("GET", "/agents", server: server)
+        #expect(result.status == 401)
+        #expect(result.body.contains("No access keys configured"))
+    }
+
+    /// An owner key keeps the full local surface, including owner-only
+    /// `/sessions` and plaintext `/agents/{id}/run` (no 426).
+    @Test func localKeyPolicyOn_ownerKeyKeepsLocalBehavior() async throws {
+        let server = try await startAuthTestServer(
+            validator: .forAlice(), trustLoopback: true, localKeyRequired: true
+        )
+        defer { Task { await server.shutdown() } }
+        let token = try Self.aliceMasterToken()
+
+        for path in ["/agents", "/mcp/tools", "/admin/config/schema", "/sessions"] {
+            let result = try await Self.sendLocal("GET", path, server: server, token: token)
+            #expect(result.status == 200, "\(path) returned \(result.status): \(result.body)")
+        }
+        // Past the gate: the import endpoint itself rejects the request.
+        let importPlan = try await Self.sendLocal("POST", "/admin/import/plan", server: server, token: token)
+        #expect(importPlan.status == 400, "\(importPlan.status): \(importPlan.body)")
+        #expect(importPlan.body.contains("bundle_path"), "\(importPlan.body)")
+    }
+
+    /// An agent-scoped key on loopback is confined exactly as it is remotely:
+    /// the workspace allowlist denies enumeration and tools, and owner-only
+    /// chat history is refused.
+    @Test func localKeyPolicyOn_agentScopedKeyIsConfinedLikeARemoteCaller() async throws {
+        let fixture = try Self.agentScopedFixture(workspaceMinted: true)
+        defer { WorkspaceAgentAccessHost.shared.nonceIndex.remove(fixture.nonce) }
+        let server = try await startAuthTestServer(
+            validator: fixture.validator, trustLoopback: true, localKeyRequired: true
+        )
+        defer { Task { await server.shutdown() } }
+
+        for (method, path) in [("GET", "/agents"), ("GET", "/mcp/tools"), ("POST", "/mcp/call")] {
+            let result = try await Self.sendLocal(method, path, server: server, token: fixture.token)
+            #expect(result.status == 403, "\(method) \(path) returned \(result.status)")
+            #expect(result.body.contains("agent_scope_denied"), "\(method) \(path): \(result.body)")
+        }
+        let sessions = try await Self.sendLocal("GET", "/sessions", server: server, token: fixture.token)
+        #expect(sessions.status == 403, "\(sessions.status): \(sessions.body)")
+        let importPlan = try await Self.sendLocal("POST", "/admin/import/plan", server: server, token: fixture.token)
+        #expect(importPlan.status == 403, "\(importPlan.status): \(importPlan.body)")
+    }
+
+    @Test func localKeyPolicyOn_unlistedBrowserOriginIsRefusedEvenWithKey() async throws {
+        let server = try await startAuthTestServer(
+            validator: .forAlice(), trustLoopback: true, localKeyRequired: true,
+            allowedOrigins: ["https://app.example.com"]
+        )
+        defer { Task { await server.shutdown() } }
+        let token = try Self.aliceMasterToken()
+
+        for (method, path) in Self.protectedLocalRoutes {
+            let result = try await Self.sendLocal(
+                method, path, server: server, token: token, origin: "https://evil.example"
+            )
+            #expect(result.status == 403, "\(method) \(path) returned \(result.status)")
+            #expect(result.body.contains("browser_origin_refused"), "\(method) \(path): \(result.body)")
+            #expect(result.allowOrigin == nil, "\(method) \(path) leaked CORS: \(result.allowOrigin ?? "")")
+        }
+        // Unprotected routes keep loopback CORS.
+        let models = try await Self.sendLocal("GET", "/v1/models", server: server, origin: "https://evil.example")
+        #expect(models.status == 200)
+        #expect(models.allowOrigin == "*")
+    }
+
+    @Test func localKeyPolicyOn_listedOriginStillNeedsAKey() async throws {
+        let listed = "https://app.example.com"
+        let server = try await startAuthTestServer(
+            validator: .forAlice(), trustLoopback: true, localKeyRequired: true, allowedOrigins: [listed]
+        )
+        defer { Task { await server.shutdown() } }
+
+        let keyless = try await Self.sendLocal("GET", "/agents", server: server, origin: listed)
+        #expect(keyless.status == 401, "\(keyless.status): \(keyless.body)")
+        #expect(keyless.allowOrigin == listed)
+
+        let keyed = try await Self.sendLocal(
+            "GET", "/agents", server: server, token: try Self.aliceMasterToken(), origin: listed
+        )
+        #expect(keyed.status == 200, "\(keyed.status): \(keyed.body)")
+        #expect(keyed.allowOrigin == listed)
+    }
+
+    @Test func localKeyPolicyOn_wildcardAllowedOriginsExemptsNothing() async throws {
+        let server = try await startAuthTestServer(
+            validator: .forAlice(), trustLoopback: true, localKeyRequired: true, allowedOrigins: ["*"]
+        )
+        defer { Task { await server.shutdown() } }
+        let token = try Self.aliceMasterToken()
+
+        let browser = try await Self.sendLocal(
+            "GET", "/agents", server: server, token: token, origin: "https://app.example.com"
+        )
+        #expect(browser.status == 403, "\(browser.status): \(browser.body)")
+        #expect(browser.body.contains("browser_origin_refused"))
+
+        let script = try await Self.sendLocal("GET", "/agents", server: server, token: token)
+        #expect(script.status == 200)
+        #expect(script.allowOrigin == nil)
+    }
+
+    @Test func localKeyPolicyOn_preflightOnlyAdmitsListedOrigins() async throws {
+        let listed = "https://app.example.com"
+        let server = try await startAuthTestServer(
+            validator: .forAlice(), trustLoopback: true, localKeyRequired: true, allowedOrigins: [listed, "*"]
+        )
+        defer { Task { await server.shutdown() } }
+        let preflight = ["Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization"]
+
+        let unlisted = try await Self.sendLocal(
+            "OPTIONS", "/admin/config/apply", server: server, origin: "https://evil.example", headers: preflight
+        )
+        #expect(unlisted.status == 204)
+        #expect(unlisted.allowOrigin == nil)
+
+        let admitted = try await Self.sendLocal(
+            "OPTIONS", "/admin/config/apply", server: server, origin: listed, headers: preflight
+        )
+        #expect(admitted.status == 204)
+        #expect(admitted.allowOrigin == listed)
+    }
+
+    /// App Intents (`OsaurusLocalClient`) present the in-process app token
+    /// instead of a key; a wrong token, or one replayed through the relay,
+    /// does not count.
+    @Test func localKeyPolicyOn_appSessionTokenStandsInForAKeyOverLoopbackOnly() async throws {
+        let server = try await startAuthTestServer(
+            validator: .forAlice(), trustLoopback: true, localKeyRequired: true
+        )
+        defer { Task { await server.shutdown() } }
+        let header = LocalAPIKeyPolicy.appTokenHeaderName
+
+        let app = try await Self.sendLocal(
+            "GET", "/agents", server: server, headers: [header: LocalAPIKeyPolicy.appSessionToken]
+        )
+        #expect(app.status == 200, "\(app.status): \(app.body)")
+
+        let wrong = try await Self.sendLocal("GET", "/agents", server: server, headers: [header: "not-the-token"])
+        #expect(wrong.status == 401)
+
+        let relayed = try await Self.sendLocal(
+            "GET", "/agents", server: server,
+            headers: [header: LocalAPIKeyPolicy.appSessionToken, HTTPHandler.relayOriginHeaderName: "1"]
+        )
+        #expect(relayed.status == 401)
+    }
+
+    @Test func localKeyPolicyOn_harnessTokenStillReachesMCP() async throws {
+        let server = try await startAuthTestServer(
+            validator: .forAlice(), trustLoopback: true, localKeyRequired: true
+        )
+        defer { Task { await server.shutdown() } }
+        let token = HarnessGrantStore.shared.mint(agentId: UUID(), allowsConfigWrites: false)
+        defer { HarnessGrantStore.shared.revoke(token) }
+
+        let tools = try await Self.sendLocal("GET", "/mcp/tools", server: server, token: token)
+        #expect(tools.status == 200, "\(tools.status): \(tools.body)")
+        let agents = try await Self.sendLocal("GET", "/agents", server: server, token: token)
+        #expect(agents.status == 403)
+        #expect(agents.body.contains("harness_token_scope"))
+    }
+}
+
+struct LocalAPIKeyPolicyTests {
+    @Test func protectedRoutesMatchOnlyTheFiveGroups() {
+        for path in [
+            "/sessions", "/sessions/abc", "/agents", "/agents/abc/run", "/mcp/tools", "/mcp/call",
+            "/admin/config/export", "/admin/config/apply", "/admin/import/plan", "/admin/import/apply",
+        ] {
+            #expect(LocalAPIKeyPolicy.isProtectedRoute(path), "\(path)")
+        }
+        for path in [
+            "/", "/health", "/models", "/chat/completions", "/sessionsx", "/agentsx", "/mcp",
+            "/admin/runtime-settings", "/admin/configx", "/admin/importx", "/plugins/x", "/channels/x",
+        ] {
+            #expect(!LocalAPIKeyPolicy.isProtectedRoute(path), "\(path)")
+        }
+    }
+
+    @Test func onlyOriginsListedByNameAreExplicitlyAllowed() {
+        #expect(LocalAPIKeyPolicy.isExplicitlyAllowedOrigin("https://a.example", allowedOrigins: ["https://a.example"]))
+        #expect(!LocalAPIKeyPolicy.isExplicitlyAllowedOrigin("https://a.example", allowedOrigins: ["*"]))
+        #expect(!LocalAPIKeyPolicy.isExplicitlyAllowedOrigin("*", allowedOrigins: ["*"]))
+        #expect(!LocalAPIKeyPolicy.isExplicitlyAllowedOrigin("null", allowedOrigins: []))
+    }
+
+    @Test func absentDefaultIsOffAndToggleRoundTrips() throws {
+        let suite = "LocalAPIKeyPolicyTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        #expect(!LocalAPIKeyPolicy.isEnabled(defaults: defaults))
+        LocalAPIKeyPolicy.setEnabled(true, defaults: defaults)
+        #expect(LocalAPIKeyPolicy.isEnabled(defaults: defaults))
+        LocalAPIKeyPolicy.setEnabled(false, defaults: defaults)
+        #expect(defaults.object(forKey: LocalAPIKeyPolicy.defaultsKey) == nil)
+    }
+
+    @Test func appSessionTokenComparesExactly() {
+        let token = LocalAPIKeyPolicy.appSessionToken
+        #expect(token.count == 64)
+        #expect(LocalAPIKeyPolicy.isAppSessionToken(token))
+        #expect(!LocalAPIKeyPolicy.isAppSessionToken(nil))
+        #expect(!LocalAPIKeyPolicy.isAppSessionToken(""))
+        #expect(!LocalAPIKeyPolicy.isAppSessionToken(String(token.dropLast()) + "x"))
+    }
 }
 
 // MARK: - Test Server Bootstrap
@@ -678,9 +976,12 @@ private struct AuthTestServer {
 private func startAuthTestServer(
     validator: APIKeyValidator,
     trustLoopback: Bool = false,
-    peerInferenceSharing: Bool = false
+    peerInferenceSharing: Bool = false,
+    localKeyRequired: Bool = false,
+    allowedOrigins: [String] = []
 ) async throws -> AuthTestServer {
-    let config = ServerConfiguration.default
+    var config = ServerConfiguration.default
+    config.allowedOrigins = allowedOrigins
 
     let lease = await HTTPServerTestLock.shared.acquire()
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -696,7 +997,8 @@ private func startAuthTestServer(
                             apiKeyValidator: validator,
                             eventLoop: channel.eventLoop,
                             trustLoopback: trustLoopback,
-                            peerInferenceSharingProvider: { peerInferenceSharing }
+                            peerInferenceSharingProvider: { peerInferenceSharing },
+                            localKeyRequiredProvider: { localKeyRequired }
                         )
                     )
                 }

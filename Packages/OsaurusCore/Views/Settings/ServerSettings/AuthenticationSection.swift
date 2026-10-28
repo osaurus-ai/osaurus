@@ -2,7 +2,8 @@
 //  AuthenticationSection.swift
 //  osaurus
 //
-//  API key callout plus planned rate-limit / timeout / log-level
+//  API key callout, the local access-key switch (`LocalAPIKeyPolicy`),
+//  plus planned rate-limit / timeout / log-level
 //  controls. Access keys are managed in the Overview tab and stored in
 //  the macOS Keychain; this section is read-mostly for the daily user.
 //
@@ -13,6 +14,8 @@ import SwiftUI
 struct AuthenticationSection: View {
     @Binding var draft: VMLXServerRuntimeSettings
     @Environment(\.theme) private var theme
+    @State private var requireLocalKey = LocalAPIKeyPolicy.isEnabled()
+    @State private var hasAccessKeys = true
 
     var body: some View {
         ServerSettingsCard(
@@ -21,6 +24,21 @@ struct AuthenticationSection: View {
             blurb: "Who can call your API and how aggressively."
         ) {
             accessKeyCallout
+
+            SettingsToggle(
+                title: L("Require Access Key for Local Admin Routes"),
+                description:
+                    "Callers on this Mac must send an access key to /sessions, /agents, /mcp/*, /admin/config/* and /admin/import/*. Browser pages are refused on these routes unless their origin is listed by name in Allowed Origins (CORS). Siri and Shortcuts keep working. Takes effect on the next request.",
+                isOn: $requireLocalKey
+            )
+            .settingsLandingAnchor("server.localAccessKey")
+            .onChange(of: requireLocalKey) { _, newValue in
+                LocalAPIKeyPolicy.setEnabled(newValue)
+            }
+
+            if requireLocalKey && !hasAccessKeys {
+                noAccessKeysWarning
+            }
 
             SettingsDivider()
 
@@ -59,6 +77,25 @@ struct AuthenticationSection: View {
                     }
                 }
             }
+        }
+        .onAppear {
+            requireLocalKey = LocalAPIKeyPolicy.isEnabled()
+            hasAccessKeys = !APIKeyManager.shared.listKeys().isEmpty
+        }
+    }
+
+    private var noAccessKeysWarning: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(theme.warningColor)
+            Text(
+                "No access keys exist yet, so local tools calling these routes will get 401. Create a key in the Server → Overview tab.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 

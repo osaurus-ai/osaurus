@@ -17,6 +17,10 @@ public final class DirectoryPickerService: ObservableObject {
     @Published var hasValidDirectory: Bool = false
 
     private let bookmarkKey = "ModelDirectoryBookmark"
+    private let defaults: UserDefaults
+    private let sharedDefaults: UserDefaults?
+    private let publishBookmarkCache: (URL?) -> Void
+    private let directoryChanged: () -> Void
     private var securityScopedResource: URL?
 
     // MARK: - Bookmark URL Cache (in-memory, avoids expensive IPC)
@@ -118,78 +122,90 @@ public final class DirectoryPickerService: ObservableObject {
         cacheLock.unlock()
     }
 
-    private init() {
-        loadSavedDirectory()
+    private convenience init() {
+        self.init(
+            defaults: .standard,
+            sharedDefaults: UserDefaults(suiteName: "group.com.osaurus.shared"),
+            publishBookmarkCache: { url in
+                if let url { Self.updateCache(with: url) } else { Self.invalidateCache() }
+            },
+            directoryChanged: {
+                ModelManager.invalidateLocalModelsCache()
+                SystemMonitorService.shared.updateStoragePath(Self.effectiveModelsDirectory().path)
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            }
+        )
         SystemMonitorService.shared.updateStoragePath(Self.effectiveModelsDirectory().path)
     }
 
-    /// Load previously saved directory from security-scoped bookmark
+    /// Injected stores and side-effect sinks keep directory-selection tests out
+    /// of the user's app and shared CLI preferences.
+    init(
+        defaults: UserDefaults,
+        sharedDefaults: UserDefaults?,
+        publishBookmarkCache: @escaping (URL?) -> Void,
+        directoryChanged: @escaping () -> Void
+    ) {
+        self.defaults = defaults
+        self.sharedDefaults = sharedDefaults
+        self.publishBookmarkCache = publishBookmarkCache
+        self.directoryChanged = directoryChanged
+        loadSavedDirectory()
+    }
+
+    /// Publish the same selection to UI, the app cache and the CLI's plain
+    /// path fallback. An environment override remains a resolver concern and
+    /// must never replace this persisted user selection.
+    private func publishSelection(_ url: URL?) {
+        selectedDirectory = url
+        hasValidDirectory = url != nil
+        if let url {
+            sharedDefaults?.set(url.path, forKey: "modelsDirectoryPath")
+        } else {
+            sharedDefaults?.removeObject(forKey: "modelsDirectoryPath")
+        }
+        publishBookmarkCache(url)
+    }
+
+    /// Load previously saved directory from security-scoped bookmark.
     private func loadSavedDirectory() {
-        guard let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) else {
+        guard let bookmarkData = defaults.data(forKey: bookmarkKey) else {
+            // No app selection is not proof that a shared CLI fallback is
+            // invalid. Reset and a malformed existing bookmark clear it.
+            publishBookmarkCache(nil)
             return
         }
 
-        do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-
-            if isStale {
-                // Bookmark is stale (e.g. volume remounted), try without security scope
-                if let fallbackURL = try? URL(
-                    resolvingBookmarkData: bookmarkData,
-                    options: [],
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                ) {
-                    selectedDirectory = fallbackURL
-                    hasValidDirectory = true
-                    Self.updateCache(with: fallbackURL)
-                } else {
-                    UserDefaults.standard.removeObject(forKey: bookmarkKey)
-                    Self.invalidateCache()
-                }
-                return
-            }
-
-            // Start accessing the security-scoped resource
-            guard url.startAccessingSecurityScopedResource() else {
-                print("Failed to start accessing security-scoped resource, using URL directly")
-                selectedDirectory = url
-                hasValidDirectory = true
-                Self.updateCache(with: url)
-                return
-            }
-
-            selectedDirectory = url
-            securityScopedResource = url
-            hasValidDirectory = true
-
-            // Populate the static cache with the resolved URL
-            Self.updateCache(with: url)
-
-        } catch {
-            print("Failed to resolve security-scoped bookmark: \(error), trying without scope")
-            // Fallback: resolve without security scope for non-sandboxed apps
+        var isStale = false
+        let scopedURL = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+        let url: URL?
+        if let scopedURL, !isStale {
+            url = scopedURL
+        } else {
+            // Non-sandboxed apps and remounted volumes may resolve only the
+            // ordinary bookmark. Preserve that existing fallback contract.
             var fallbackStale = false
-            if let fallbackURL = try? URL(
+            url = try? URL(
                 resolvingBookmarkData: bookmarkData,
                 options: [],
                 relativeTo: nil,
                 bookmarkDataIsStale: &fallbackStale
-            ) {
-                selectedDirectory = fallbackURL
-                hasValidDirectory = true
-                Self.updateCache(with: fallbackURL)
-            } else {
-                UserDefaults.standard.removeObject(forKey: bookmarkKey)
-                Self.invalidateCache()
-            }
+            )
         }
+        guard let url else {
+            defaults.removeObject(forKey: bookmarkKey)
+            publishSelection(nil)
+            return
+        }
+        if url.startAccessingSecurityScopedResource() {
+            securityScopedResource = url
+        }
+        publishSelection(url)
     }
 
     /// Present directory picker and save selection
@@ -211,48 +227,49 @@ public final class DirectoryPickerService: ObservableObject {
         }
     }
 
-    /// Save directory selection from SwiftUI file picker
+    /// Both native pickers enter the same bookmark/selection transaction.
     @MainActor func saveDirectoryFromFilePicker(_ url: URL) {
-        // For security-scoped resources from file picker, we need to start accessing first
-        guard url.startAccessingSecurityScopedResource() else {
-            print("Failed to access security-scoped resource from file picker")
-            return
-        }
-
         saveDirectory(url)
     }
 
-    /// Save directory selection with security-scoped bookmark
+    /// Save directory selection with security-scoped bookmark. A false scope
+    /// result is normal in a non-sandboxed app; require actual directory read
+    /// access before accepting that fallback. Failed saves retain the old state.
     private func saveDirectory(_ url: URL) {
-        // Stop accessing previous resource
-        securityScopedResource?.stopAccessingSecurityScopedResource()
-
-        do {
-            // Create security-scoped bookmark
-            let bookmarkData = try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-
-            // Save bookmark to UserDefaults
-            UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
-
-            // Start accessing the new resource
-            guard url.startAccessingSecurityScopedResource() else {
-                print("Failed to start accessing newly selected directory")
+        let scopedAccess = url.startAccessingSecurityScopedResource()
+        if !scopedAccess {
+            guard (try? FileManager.default.contentsOfDirectory(
+                at: url, includingPropertiesForKeys: nil
+            )) != nil else {
+                print("Failed to access selected models directory")
                 return
             }
+        }
 
-            selectedDirectory = url
-            securityScopedResource = url
-            hasValidDirectory = true
+        do {
+            let bookmarkData: Data
+            do {
+                bookmarkData = try url.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+            } catch {
+                guard !scopedAccess else { throw error }
+                bookmarkData = try url.bookmarkData(
+                    options: [], includingResourceValuesForKeys: nil, relativeTo: nil
+                )
+            }
 
-            // Update the static cache with the new URL
-            Self.updateCache(with: url)
+            // Commit only after access and bookmark creation succeed. The new
+            // scope was acquired once, and the prior scope is released once.
+            securityScopedResource?.stopAccessingSecurityScopedResource()
+            securityScopedResource = scopedAccess ? url : nil
+            defaults.set(bookmarkData, forKey: bookmarkKey)
+            publishSelection(url)
             notifyModelsDirectoryChanged()
-
         } catch {
+            if scopedAccess { url.stopAccessingSecurityScopedResource() }
             print("Failed to create security-scoped bookmark: \(error)")
         }
     }
@@ -373,20 +390,14 @@ public final class DirectoryPickerService: ObservableObject {
     @MainActor func resetDirectory() {
         securityScopedResource?.stopAccessingSecurityScopedResource()
         securityScopedResource = nil
-        selectedDirectory = nil
-        hasValidDirectory = false
-        UserDefaults.standard.removeObject(forKey: bookmarkKey)
-
-        // Invalidate the static cache
-        Self.invalidateCache()
+        defaults.removeObject(forKey: bookmarkKey)
+        publishSelection(nil)
         notifyModelsDirectoryChanged()
     }
 
-    /// Notify the rest of the app that the models directory changed so local models are rescanned.
+    /// Notify the rest of the app that the models directory changed.
     private func notifyModelsDirectoryChanged() {
-        ModelManager.invalidateLocalModelsCache()
-        SystemMonitorService.shared.updateStoragePath(Self.effectiveModelsDirectory().path)
-        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+        directoryChanged()
     }
 
     deinit {

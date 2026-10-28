@@ -13,8 +13,11 @@
 //   - provider endpoint CHANGES on existing providers (changing an endpoint
 //     under a stored credential is the classic bait-and-switch; endpoints
 //     export for visibility and are create-only)
-//   - skills (content installation, not configuration) and custom search
-//     definitions (nested endpoint templates with interleaved secrets)
+//   - skill content (installation, not configuration; `osaurus import`
+//     installs it from a bundle). An agent's skill allow-list does export,
+//     as `agents[].skills`, when the agent has one.
+//   - custom search definitions (nested endpoint templates with
+//     interleaved secrets)
 //   - channel credentials, custom HTTP channel connections, per-room
 //     dispatch routes, platform extras (polling, attachments, receipts)
 //   - per-agent autonomy ceilings, telemetry, identity/pairing, storage
@@ -31,6 +34,7 @@ enum ConfigExporter {
         var doc = OsaurusConfigDocument()
         doc.version = 1
         doc.memory = exportMemory()
+        doc.harnessRuntimes = exportHarnessRuntimes()
         doc.defaultAgent = exportDefaultAgent()
         doc.activeAgent = exportActiveAgent()
         doc.agents = exportAgents()
@@ -71,7 +75,20 @@ enum ConfigExporter {
         section.temperature = config.temperature.map { .value(Double($0)) } ?? .null
         section.maxTokens = config.maxTokens.map { .value($0) } ?? .null
         section.systemPrompt = config.systemPrompt
+        section.runtime = ConfigHarness.runtimeKey(for: config.runtime)
+        section.claudeCode = config.claudeCode.map { ConfigHarness.export($0, includeConfigWrites: true) }
         return section
+    }
+
+    private static func exportHarnessRuntimes() -> [HarnessRuntimeEntry] {
+        HarnessRuntimeStore.shared.all().map { runtime in
+            var entry = HarnessRuntimeEntry(name: runtime.displayName)
+            entry.kind = ConfigHarness.key(for: runtime.kind)
+            entry.executable = runtime.executable
+            entry.arguments = runtime.arguments
+            entry.environment = runtime.environment
+            return entry
+        }
     }
 
     /// `new_chat_agent`: the agent NEW chats open with — the persisted
@@ -86,38 +103,130 @@ enum ConfigExporter {
 
     private static func exportAgents() -> [AgentEntry] {
         let relay = RelayConfigurationStore.load()
-        return AgentManager.shared.agents
+        let agents = AgentManager.shared.agents
+        let toolGroups = ToolRegistry.shared.portableToolGroups()
+        return agents
             .filter { !$0.isBuiltIn }
             .map { agent in
-                var entry = AgentEntry(name: agent.name)
-                entry.description = agent.description
-                entry.systemPrompt = agent.systemPrompt
-                entry.model = agent.defaultModel.map { .value($0) } ?? .null
-                entry.temperature = agent.temperature.map { .value(Double($0)) } ?? .null
-                entry.maxTokens = agent.maxTokens.map { .value($0) } ?? .null
-                var caps = AgentCapabilitiesEntry()
-                caps.toolsEnabled = agent.toolsEnabled
-                caps.memoryEnabled = agent.memoryEnabled
-                caps.searchMemoryEnabled = agent.settings.searchMemoryEnabled
-                caps.webSearchEnabled = agent.settings.webSearchEnabled
-                caps.knowledgeEnabled = agent.settings.knowledgeEnabled
-                caps.knowledgeCollectionIds =
-                    agent.settings.knowledgeCollectionIds.isEmpty
-                    ? nil
-                    : agent.settings.knowledgeCollectionIds.map { $0.uuidString }
-                caps.dbEnabled = agent.settings.dbEnabled
-                caps.selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
-                caps.computerUseEnabled = agent.settings.computerUseEnabled
-                caps.browserUseEnabled = agent.settings.browserUseEnabled
-                caps.appleApps = AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue)
-                caps.imageEnabled = agent.settings.imageEnabled
-                caps.applescriptEnabled = agent.settings.appleScriptEnabled
-                caps.speakEnabled = agent.settings.speakEnabled
-                caps.renderChartEnabled = agent.settings.renderChartEnabled
-                caps.relayEnabled = relay.isEnabled(for: agent.id)
-                entry.capabilities = caps
-                return entry
+                exportAgent(agent, agents: agents, relay: relay, toolGroups: toolGroups)
             }
+    }
+
+    /// One custom agent as a document entry. Shared by the `agents` section
+    /// export and by agent templates (`AgentTemplate.make(from:)`).
+    static func exportAgent(_ agent: Agent) -> AgentEntry {
+        exportAgent(
+            agent,
+            agents: AgentManager.shared.agents,
+            relay: RelayConfigurationStore.load(),
+            toolGroups: ToolRegistry.shared.portableToolGroups())
+    }
+
+    private static func exportAgent(
+        _ agent: Agent, agents: [Agent], relay: RelayConfiguration,
+        toolGroups: [PortableToolGroup: [String]]
+    ) -> AgentEntry {
+        var entry = AgentEntry(name: agent.name)
+        entry.description = agent.description
+        entry.systemPrompt = agent.systemPrompt
+        entry.model = agent.defaultModel.map { .value($0) } ?? .null
+        entry.temperature = agent.temperature.map { .value(Double($0)) } ?? .null
+        entry.maxTokens = agent.maxTokens.map { .value($0) } ?? .null
+        entry.generationSettings = agent.generationSettings.map { .value($0) } ?? .null
+        var caps = AgentCapabilitiesEntry()
+        caps.toolsEnabled = agent.toolsEnabled
+        caps.memoryEnabled = agent.memoryEnabled
+        caps.searchMemoryEnabled = agent.settings.searchMemoryEnabled
+        caps.webSearchEnabled = agent.settings.webSearchEnabled
+        caps.knowledgeEnabled = agent.settings.knowledgeEnabled
+        caps.knowledgeCollectionIds =
+            agent.settings.knowledgeCollectionIds.isEmpty
+            ? nil
+            : agent.settings.knowledgeCollectionIds.map { $0.uuidString }
+        caps.dbEnabled = agent.settings.dbEnabled
+        caps.selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
+        caps.computerUseEnabled = agent.settings.computerUseEnabled
+        caps.browserUseEnabled = agent.settings.browserUseEnabled
+        caps.appleApps = AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue)
+        caps.imageEnabled = agent.settings.imageEnabled
+        caps.applescriptEnabled = agent.settings.appleScriptEnabled
+        caps.speakEnabled = agent.settings.speakEnabled
+        caps.renderChartEnabled = agent.settings.renderChartEnabled
+        caps.relayEnabled = relay.isEnabled(for: agent.id)
+        entry.capabilities = caps
+        exportToolSelection(of: agent, into: &entry, groups: toolGroups)
+        if let skillNames = agent.skillNames { entry.skills = .value(skillNames) }
+        entry.pluginInstructions =
+            (agent.pluginInstructions?.isEmpty ?? true) ? nil : agent.pluginInstructions
+        entry.sandbox = exportSandbox(of: agent)
+        entry.subagents = exportSubagents(of: agent, agents: agents)
+        entry.workingFolder = agent.workingFolderPath.map { .value($0) } ?? .null
+        entry.sourceTemplate = agent.sourceTemplateName
+        entry.runtime = ConfigHarness.runtimeKey(for: agent.runtime)
+        entry.claudeCode = agent.claudeCode.map { ConfigHarness.export($0, includeConfigWrites: false) }
+        return entry
+    }
+
+    /// Manual tool selection splits into tool names plus MCP / plugin group
+    /// enablement. Fully selected groups travel by name so the document
+    /// survives a move to a machine where the same server exposes different
+    /// tool names; partly selected groups travel as their exact tool names.
+    /// Auto mode only records the mode.
+    private static func exportToolSelection(
+        of agent: Agent, into entry: inout AgentEntry,
+        groups: [PortableToolGroup: [String]]
+    ) {
+        var tools = AgentToolsEntry()
+        let mode = agent.toolSelectionMode ?? .auto
+        tools.mode = mode.rawValue
+        guard mode == .manual else {
+            entry.tools = tools
+            return
+        }
+        let split = AgentToolSelectionResolver.export(
+            manualToolNames: agent.manualToolNames ?? [], groups: groups)
+        tools.enabled = split.toolNames
+        entry.tools = tools
+        if !split.enabledMCPServers.isEmpty || !split.disabledMCPServers.isEmpty {
+            var mcp = AgentToolGroupsEntry()
+            mcp.enabled = split.enabledMCPServers
+            mcp.disabled = split.disabledMCPServers.isEmpty ? nil : split.disabledMCPServers
+            entry.mcpServers = mcp
+        }
+        if !split.enabledPlugins.isEmpty || !split.disabledPlugins.isEmpty {
+            var plugins = AgentToolGroupsEntry()
+            plugins.enabled = split.enabledPlugins
+            plugins.disabled = split.disabledPlugins.isEmpty ? nil : split.disabledPlugins
+            entry.plugins = plugins
+        }
+    }
+
+    private static func exportSandbox(of agent: Agent) -> AgentSandboxEntry? {
+        // Unconfigured agents resolve to the host default; export what the
+        // agent EFFECTIVELY runs with so a template pins the behaviour.
+        guard let exec = AgentManager.shared.effectiveAutonomousExec(for: agent.id) else {
+            var off = AgentSandboxEntry()
+            off.enabled = false
+            return off
+        }
+        var section = AgentSandboxEntry()
+        section.enabled = exec.enabled
+        section.networkEnabled = exec.sandboxNetworkEnabled
+        section.allowedDomains = exec.sandboxAllowedDomains ?? []
+        section.maxCommandsPerTurn = exec.maxCommandsPerTurn
+        section.backgroundProcessEnabled = exec.backgroundProcessEnabled
+        section.pluginCreate = exec.pluginCreate
+        return section
+    }
+
+    private static func exportSubagents(of agent: Agent, agents: [Agent]) -> AgentSubagentsEntry {
+        var section = AgentSubagentsEntry()
+        section.enabled = agent.settings.spawnDelegationEnabled
+        // Ids without a live agent are dropped, matching the delegation section.
+        section.agents = agent.settings.spawnableAgentIDs.compactMap { id in
+            agents.first { $0.id == id }?.name
+        }
+        return section
     }
 
     // MARK: - App behavior (Wave 3b)
@@ -266,8 +375,7 @@ enum ConfigExporter {
     // MARK: - Models / Plugins
 
     private static func exportModels() -> [String] {
-        ModelManager.shared.availableModels
-            .filter { $0.isDownloaded }
+        ModelManager.shared.installedModels()
             .map { $0.id }
             .sorted()
     }

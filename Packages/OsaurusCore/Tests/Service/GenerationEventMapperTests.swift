@@ -16,6 +16,206 @@ import Testing
 
 @Suite("GenerationEventMapper bridge behaviour")
 struct GenerationEventMapperTests {
+    @Test(.timeLimit(.minutes(1)))
+    func reportsFailureOnceWithoutChangingTheErrorOrAbandoningProducerDrain() async {
+        let failure = GenerationFailure(stage: .decoding,
+            cause: "kIOGPUCommandBufferCallbackErrorImpactingInteractivity: original caller diagnostic")
+        let info = GenerateCompletionInfo(promptTokenCount: 72, generationTokenCount: 11,
+            promptTime: 0, generationTime: 0, stopReason: .cancelled, generationFailure: failure)
+        let source = MapperDuplicateFailureSource(info: info)
+        let recorder = MapperFailureRecorder()
+        let events = AsyncStream<Generation>(unfolding: { await source.next() })
+        do {
+            for try await event in GenerationEventMapper.map(events: events, modelName: "public--model",
+                reportFailure: { recorder.record($0, model: $1, prompt: $2, generated: $3, context: $4) })
+            {
+                if case .completionInfo = event { Issue.record("Failed generation must not complete successfully") }
+            }
+            Issue.record("Expected originating error")
+        } catch let caught as GenerationFailure {
+            #expect(caught == failure)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        await source.drained.wait()
+        let reports = recorder.snapshot()
+        #expect(reports.count == 1)
+        #expect(reports.first?.failure == failure)
+        #expect(reports.first?.model == "public--model")
+        #expect(reports.first?.prompt == 72)
+        #expect(reports.first?.generated == 11)
+    }
+
+    /// Preparation failures must retain observed stage/restore figures and
+    /// the caller's resolved decode path. Missing or scrubbed counts are not
+    /// evidence of zero work.
+    @Test(.timeLimit(.minutes(1)))
+    func preparationFailureReportCarriesPrefillRestoreAndDecodePathContext() async {
+        let failure = GenerationFailure(stage: .preparation,
+            cause: "[METAL] Command buffer execution failed: Impacting Interactivity (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity)")
+        // The runtime reports -1 prompt tokens for a preparation failure.
+        let info = GenerateCompletionInfo(promptTokenCount: -1, generationTokenCount: -1,
+            promptTime: 0, generationTime: 0, stopReason: .cancelled, generationFailure: failure)
+        let events: [Generation] = [
+            .prefillProgress(PrefillProgress(stage: .cacheLookup, completedUnitCount: 0, totalUnitCount: 4096, detail: "native-mtp")),
+            .prefillProgress(PrefillProgress(stage: .cacheRestore, completedUnitCount: 1200, totalUnitCount: 4096, detail: "disk")),
+            .prefillProgress(PrefillProgress(stage: .prefill, completedUnitCount: 1712, totalUnitCount: 4096, detail: "running")),
+            .info(info),
+        ]
+        let recorder = MapperFailureRecorder()
+        let context = GenerationEventMapper.FailureRequestContext(
+            decodePath: "native_mtp:d3", configuredDepth: 3, modelVolumeKind: "external",
+            diskRestoreSample: { (bytes: 734_003_200, ms: 2_481.6) })
+        do {
+            for try await _ in GenerationEventMapper.map(
+                events: makeStream(events), modelName: "public--model", promptTokenCount: 4096,
+                failureRequestContext: context,
+                reportFailure: { recorder.record($0, model: $1, prompt: $2, generated: $3, context: $4) })
+            {}
+            Issue.record("Expected originating preparation failure")
+        } catch let caught as GenerationFailure {
+            #expect(caught == failure)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        let reports = recorder.snapshot()
+        #expect(reports.count == 1)
+        let reported = reports.first?.context
+        #expect(reported?.decodePath == "native_mtp:d3")
+        #expect(reported?.configuredDepth == 3)
+        #expect(reported?.modelVolumeKind == "external")
+        #expect(reported?.lastPrefillStage == "prefill")
+        #expect(reported?.prefillCompletedUnits == 1712)
+        #expect(reported?.prefillTotalUnits == 4096)
+        #expect(reported?.restoredTokens == 1200)
+        #expect(reported?.restoreDetail == "disk")
+        #expect((reported?.cacheRestoreMs ?? -1) >= 0)
+        #expect(reported?.diskRestoreBytes == 734_003_200)
+        #expect(reported?.diskRestoreMs == 2482)
+        #expect(reported?.promptTokens == 4096)
+
+        // The report then fills prompt_tokens from the request, since the
+        // runtime's -1 said nothing.
+        let report = HandledGPUFailureReport(
+            failure: failure, modelName: "public--model", promptTokens: reports.first?.prompt ?? -1,
+            generatedTokens: reports.first?.generated ?? -1, context: reported ?? HandledGPUFailureContext())
+        #expect(report?.context["prompt_tokens"] as? Int == 4096)
+        #expect(report?.context["generated_tokens"] == nil)
+        #expect(report?.context["decode_path"] as? String == "native_mtp:d3")
+        #expect(report?.context["restored_tokens"] as? Int == 1200)
+    }
+
+    /// A request that never reached the cache lookup says nothing about a
+    /// restore; one whose lookup missed says it restored 0.
+    @Test func failureContextDoesNotInventARestore() async {
+        let failure = GenerationFailure(stage: .preparation, cause: "fixture")
+        let info = GenerateCompletionInfo(promptTokenCount: -1, generationTokenCount: -1,
+            promptTime: 0, generationTime: 0, stopReason: .cancelled, generationFailure: failure)
+        let recorder = MapperFailureRecorder()
+        do {
+            for try await _ in GenerationEventMapper.map(
+                events: makeStream([.info(info)]), modelName: "public--model",
+                reportFailure: { recorder.record($0, model: $1, prompt: $2, generated: $3, context: $4) })
+            {}
+        } catch {}
+        let before = recorder.snapshot().first?.context
+        #expect(before?.restoredTokens == nil)
+        #expect(before?.cacheRestoreMs == nil)
+        #expect(before?.lastPrefillStage == nil)
+        #expect(before?.promptTokens == nil)
+        #expect(before?.decodePath == nil)
+
+        let missed = MapperFailureRecorder()
+        do {
+            for try await _ in GenerationEventMapper.map(
+                events: makeStream([
+                    .prefillProgress(PrefillProgress(stage: .cacheLookup, completedUnitCount: 0, totalUnitCount: 64)),
+                    .prefillProgress(PrefillProgress(stage: .prefill, completedUnitCount: 0, totalUnitCount: 64)),
+                    .info(info),
+                ]), modelName: "public--model",
+                reportFailure: { missed.record($0, model: $1, prompt: $2, generated: $3, context: $4) })
+            {}
+        } catch {}
+        let after = missed.snapshot().first?.context
+        #expect(after?.restoredTokens == 0)
+        #expect(after?.restoreDetail == nil)
+        #expect(after?.cacheRestoreMs == nil)
+        #expect(after?.lastPrefillStage == "prefill")
+        #expect(after?.prefillTotalUnits == 64)
+    }
+
+    @Test func failureDuringCacheLookupDoesNotClaimAColdMiss() async {
+        let failure = GenerationFailure(stage: .preparation, cause: "fixture restore failed before a result")
+        let info = GenerateCompletionInfo(promptTokenCount: -1, generationTokenCount: -1,
+            promptTime: 0, generationTime: 0, stopReason: .cancelled, generationFailure: failure)
+        let recorder = MapperFailureRecorder()
+        do {
+            for try await event in GenerationEventMapper.map(
+                events: makeStream([
+                    .prefillProgress(PrefillProgress(stage: .cacheLookup, completedUnitCount: 0,
+                                                    totalUnitCount: 65536, detail: "native-mtp")),
+                    .info(info),
+                ]), modelName: "public--model", promptTokenCount: 65536,
+                suppressProgressUI: true, recordMTPLastRun: false,
+                reportFailure: { recorder.record($0, model: $1, prompt: $2, generated: $3, context: $4) })
+            {
+                if case .completionInfo = event { Issue.record("Failure must not become a successful completion") }
+            }
+            Issue.record("Expected the originating preparation failure")
+        } catch let caught as GenerationFailure {
+            #expect(caught == failure)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        let reports = recorder.snapshot()
+        #expect(reports.count == 1)
+        let context = reports.first?.context
+        #expect(context?.lastPrefillStage == "cacheLookup")
+        #expect(context?.lastPrefillOperation == "native-mtp")
+        #expect(context?.prefillCompletedUnits == 0)
+        #expect(context?.prefillTotalUnits == 65536)
+        #expect(context?.promptTokens == 65536)
+        #expect(context?.restoredTokens == nil)
+        #expect(context?.restoreDetail == nil)
+        #expect(context?.cacheRestoreMs == nil)
+        #expect(context?.diskRestoreBytes == nil)
+        #expect(context?.diskRestoreMs == nil)
+    }
+
+    @Test(arguments: ["native-mtp-head-prime", "native-mtp-seed", "native-mtp-bridge", "native-mtp-initial-drafts",
+                      "disk", "/Users/private-user/secret-model", "arbitrary user description"])
+    func failurePreservesOnlyKnownRuntimeOperationLabels(_ operation: String) async {
+        let failure = GenerationFailure(stage: .preparation, cause: "fixture phase boundary failure")
+        let info = GenerateCompletionInfo(promptTokenCount: -1, generationTokenCount: -1,
+            promptTime: 0, generationTime: 0, stopReason: .cancelled, generationFailure: failure)
+        let recorder = MapperFailureRecorder()
+        do {
+            for try await _ in GenerationEventMapper.map(
+                events: makeStream([
+                    .prefillProgress(PrefillProgress(stage: .prefill, completedUnitCount: 32,
+                                                    totalUnitCount: 64, detail: operation)),
+                    .info(info),
+                ]), modelName: "public--model", promptTokenCount: 64,
+                suppressProgressUI: true, recordMTPLastRun: false,
+                reportFailure: { recorder.record($0, model: $1, prompt: $2, generated: $3, context: $4) })
+            {}
+            Issue.record("Expected the originating preparation failure")
+        } catch let caught as GenerationFailure {
+            #expect(caught == failure)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        let reports = recorder.snapshot()
+        #expect(reports.count == 1)
+        let context = reports.first?.context
+        let known = ["native-mtp-head-prime", "native-mtp-seed", "native-mtp-bridge", "native-mtp-initial-drafts", "disk"]
+        #expect(context?.lastPrefillOperation == (known.contains(operation) ? operation : nil))
+        #expect(context?.lastPrefillStage == "prefill")
+        #expect(context?.prefillCompletedUnits == 32)
+        #expect(context?.prefillTotalUnits == 64)
+        #expect(context?.restoredTokens == nil, "A nonzero progress tick alone does not quantify restored state")
+    }
+
     @Test func preparationFailureReachesCallerWithoutCompletion() async {
         let failure = GenerationFailure(stage: .preparation, cause: "fixture projection shape mismatch")
         let info = GenerateCompletionInfo(promptTokenCount: 8, generationTokenCount: 0,
@@ -621,7 +821,7 @@ struct GenerationEventMapperTests {
         }
     }
 
-    @Test func missing_terminal_info_synthesizes_completion_for_reasoning_only_stream() async throws {
+    @Test func missingTerminalInfoPreservesReasoningWithoutInventingCompletionOrUsage() async throws {
         let out = try await collect(
             events: [
                 .reasoning("The user is straightforward greeting. "),
@@ -629,13 +829,22 @@ struct GenerationEventMapperTests {
             ],
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ"
         )
-        guard case .completionInfo(let count, _, let unclosed, let stopReason, _, _) = out.last else {
-            Issue.record("expected synthesized completionInfo at end, got \(String(describing: out.last))")
-            return
-        }
-        #expect(count > 0)
-        #expect(unclosed == true)
-        #expect(stopReason == nil)
+        #expect(out.compactMap { if case .reasoning(let text) = $0 { text } else { nil } }.joined()
+            == "The user is straightforward greeting. I should answer briefly.")
+        #expect(!out.contains { if case .completionInfo = $0 { true } else { false } })
+        let native = ResponsesGenerationStream.native(
+            GenerationEventMapper.map(events: makeStream([.reasoning("partial")]))
+        )
+        var reasoning = ""
+        do {
+            for try await event in native {
+                if case .reasoningDelta(let text) = event { reasoning += text }
+                if case .responseCompleted = event { Issue.record("Missing info became a completed response") }
+            }
+            Issue.record("Missing native completion must fail")
+        } catch ResponsesGenerationStream.StreamError.missingCompletion {
+            #expect(reasoning == "partial")
+        } catch { Issue.record("Unexpected error: \(error)") }
     }
 
     @Test("consumer cancellation directly cancels the owned runtime generation")
@@ -811,6 +1020,44 @@ struct GenerationEventMapperTests {
 }
 
 private struct MapperTestTimeout: Error {}
+
+private final class MapperFailureRecorder: @unchecked Sendable {
+    struct Row: Sendable {
+        let failure: GenerationFailure
+        let model: String
+        let prompt: Int
+        let generated: Int
+        let context: HandledGPUFailureContext
+    }
+    private let lock = NSLock()
+    private var rows: [Row] = []
+    func record(
+        _ failure: GenerationFailure, model: String, prompt: Int, generated: Int,
+        context: HandledGPUFailureContext
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        rows.append(Row(failure: failure, model: model, prompt: prompt, generated: generated, context: context))
+    }
+    func snapshot() -> [Row] {
+        lock.lock()
+        defer { lock.unlock() }
+        return rows
+    }
+}
+
+private actor MapperDuplicateFailureSource {
+    let drained = MapperAsyncLatch()
+    private let info: GenerateCompletionInfo
+    private var reads = 0
+    init(info: GenerateCompletionInfo) { self.info = info }
+    func next() async -> Generation? {
+        reads += 1
+        if reads <= 2 { return .info(info) }
+        await drained.signal()
+        return nil
+    }
+}
 
 private final class MapperCancellationProbe: @unchecked Sendable {
     private let lock = NSLock()

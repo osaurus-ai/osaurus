@@ -334,6 +334,9 @@ struct ChatMessage: Codable, Sendable {
     /// replayed verbatim on later Responses turns so item ids, assistant phase,
     /// encrypted reasoning, and future typed fields survive.
     var responses_output_items: [JSONValue]? = nil
+    /// In-process provider-tagged signed/opaque thinking blocks. Never encoded
+    /// on the OpenAI Chat Completions wire or replayed as Responses Items.
+    var anthropic_thinking_blocks: [JSONValue]? = nil
 
     /// Extract image URLs from content parts (supports both data URLs and http URLs)
     var imageUrls: [String] {
@@ -485,7 +488,8 @@ extension ChatMessage {
         reasoning_content: String? = nil,
         reasoning_item_id: String? = nil,
         reasoning_encrypted: String? = nil,
-        responses_output_items: [JSONValue]? = nil
+        responses_output_items: [JSONValue]? = nil,
+        anthropic_thinking_blocks: [JSONValue]? = nil
     ) {
         self.role = role
         self.content = content
@@ -497,6 +501,7 @@ extension ChatMessage {
         self.reasoning_item_id = reasoning_item_id
         self.reasoning_encrypted = reasoning_encrypted
         self.responses_output_items = responses_output_items
+        self.anthropic_thinking_blocks = anthropic_thinking_blocks
     }
 
     /// Initialize from a route adapter that already normalized OpenAI-style
@@ -546,7 +551,7 @@ extension ChatMessage {
     /// modality. Audio bytes encode as `input_audio` with explicit
     /// format hint; video bytes encode as `video_url` with
     /// `data:video/<container>` URL. All three flow into the
-    /// OpenAI-compatible JSON shape that `mapOpenAIChatToMLX` lowers through
+    /// OpenAI-compatible JSON shape that `makeMLXChatMessages` lowers through
     /// `extractAudioSources` / `extractVideoSources`.
     init(
         role: String,
@@ -701,20 +706,22 @@ struct CompletionRequest: Decodable, Sendable {
 struct ChatCompletionRequest: Codable, Sendable {
     let model: String
     var messages: [ChatMessage]
-    let temperature: Float?
+    var temperature: Float?
     let max_tokens: Int?
     /// OpenAI newer alias for max_tokens; accepted on inbound requests alongside max_tokens.
     var max_completion_tokens: Int? = nil
     let stream: Bool?
-    let top_p: Float?
+    var top_p: Float?
     var top_k: Int? = nil
     /// Extension sampling knob (mlx/llama.cpp ecosystems): minimum
     /// probability cutoff relative to the top token. Mapped to
     /// `GenerationParameters.minPOverride`.
     var min_p: Float? = nil
-    let frequency_penalty: Float?
-    let presence_penalty: Float?
-    let stop: [String]?
+    /// Explicit multiplicative repetition penalty; absent preserves the model default.
+    var repetition_penalty: Float? = nil
+    var frequency_penalty: Float?
+    var presence_penalty: Float?
+    var stop: [String]?
     let n: Int?
     /// OpenAI tools/function-calling definitions
     let tools: [Tool]?
@@ -762,15 +769,28 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// typed 400 instead of being silently dropped.
     var logprobs: Bool? = nil
     var top_logprobs: Int? = nil
+    /// Host execution state is independent of the public chat/Responses wire body.
+    /// Copy it as one value across adapters so new controls cannot be dropped.
+    var inferenceContext = InferenceRequestContext()
+
     /// Model-specific options from the active ModelProfile (not serialized to JSON).
-    var modelOptions: [String: ModelOptionValue]? = nil
+    var modelOptions: [String: ModelOptionValue]? {
+        get { inferenceContext.modelOptions }
+        set { inferenceContext.modelOptions = newValue }
+    }
     /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
-    var ttftTrace: TTFTTrace? = nil
+    var ttftTrace: TTFTTrace? {
+        get { inferenceContext.ttftTrace }
+        set { inferenceContext.ttftTrace = newValue }
+    }
     /// Local-only correlation id tying this request to the chat assistant
     /// turn that produced it, so the Insights tab can be opened focused on a
     /// specific response. Not decoded from OpenAI JSON, not forwarded to
     /// remote providers.
-    var turnId: UUID? = nil
+    var turnId: UUID? {
+        get { inferenceContext.turnId }
+        set { inferenceContext.turnId = newValue }
+    }
     /// Per-request thinking toggle. Translated to `modelOptions["disableThinking"]`
     /// at request entry; absent preserves server defaults.
     var enable_thinking: Bool? = nil
@@ -778,20 +798,31 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// `reasoning_effort` chat-template kwarg; remote providers forward it
     /// natively where supported.
     var reasoning_effort: String? = nil
+    /// Request-local variables rendered by the active bundle's chat template.
+    var chat_template_kwargs: [String: JSONValue]? = nil
     /// Local-only marker for app/UI requests whose sampling values came from
     /// profile defaults. Not decoded from OpenAI JSON and not forwarded to
     /// remote providers.
-    var samplingParametersAreImplicit: Bool = false
+    var samplingParametersAreImplicit: Bool {
+        get { inferenceContext.samplingParametersAreImplicit }
+        set { inferenceContext.samplingParametersAreImplicit = newValue }
+    }
     /// Local-only marker set by agent-driven surfaces (the `/agents/{id}/run`
     /// endpoint, dispatch, and agent-bound Chat sessions) so `message_sent`
     /// telemetry can label the turn `is_agent`. Not decoded from OpenAI JSON
     /// and not forwarded to remote providers.
-    var isAgentRequest: Bool = false
+    var isAgentRequest: Bool {
+        get { inferenceContext.isAgentRequest }
+        set { inferenceContext.isAgentRequest = newValue }
+    }
     /// Stable per-logical-step idempotency token. Set by the chat surface and
     /// reused across connect-phase and transient agent-loop retries so the
     /// Osaurus Router can dedupe billing on a re-POST. Not decoded from inbound
     /// OpenAI JSON; forwarded ONLY to the router (in the signed request body).
-    var idempotencyKey: String? = nil
+    var idempotencyKey: String? {
+        get { inferenceContext.idempotencyKey }
+        set { inferenceContext.idempotencyKey = newValue }
+    }
     /// Local-only marker set by a chat session that targets a paired/discovered
     /// remote Osaurus *agent* (Mode 2). When true the request is routed to the
     /// remote `/agents/{address}/run` endpoint so the agent runs fully
@@ -799,7 +830,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// stream back. When false an `.osaurus` provider is used as a plain
     /// OpenAI-compatible inference backend (`/chat/completions`, Mode 1). Not
     /// decoded from OpenAI JSON and not forwarded to remote providers.
-    var runAsRemoteAgent: Bool = false
+    var runAsRemoteAgent: Bool {
+        get { inferenceContext.runAsRemoteAgent }
+        set { inferenceContext.runAsRemoteAgent = newValue }
+    }
     /// Local-only: the remote agent's live effective model (the model the peer
     /// will actually run), carried purely so the Insights log records *that*
     /// instead of the local prefixed fallback (e.g. `coco/foundation`) the
@@ -807,39 +841,54 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// Only meaningful for Mode 2 (`runAsRemoteAgent`); over the wire Mode 2
     /// omits `model` entirely (the peer resolves its own effective model).
     /// Not decoded from OpenAI JSON and not forwarded to remote providers.
-    var remoteAgentLogModel: String? = nil
+    var remoteAgentLogModel: String? {
+        get { inferenceContext.remoteAgentLogModel }
+        set { inferenceContext.remoteAgentLogModel = newValue }
+    }
     /// Local-only: the `RemoteProvider` id of the remote agent this Mode 2 run
     /// targets. With `runAsRemoteAgent`, `ChatEngine` routes directly to this
     /// provider's service instead of by model string, so a stale `selectedModel`
     /// (e.g. a leftover prefix like `fugu/...`) can't redirect an agent run to a
     /// different provider. Not decoded from OpenAI JSON, not sent to providers.
-    var remoteAgentProviderId: UUID? = nil
-    /// Local-only: per-agent behavior for the Claude Code subprocess backend
-    /// (mode + tool opt-ins + working directory). Set by the chat surface from
-    /// the active agent's `claudeCode` config; read only by `ClaudeCodeService`
-    /// and ignored by every other backend. Not decoded from OpenAI JSON and
-    /// never forwarded to a provider.
-    var claudeCodeOptions: ClaudeCodeRunOptions? = nil
+    var remoteAgentProviderId: UUID? {
+        get { inferenceContext.remoteAgentProviderId }
+        set { inferenceContext.remoteAgentProviderId = newValue }
+    }
     /// Local-only: when true, model-load and prefill progress are not surfaced
     /// through `InferenceProgressManager` (background warm-up requests).
-    var suppressProgressUI: Bool = false
+    var suppressProgressUI: Bool {
+        get { inferenceContext.suppressProgressUI }
+        set { inferenceContext.suppressProgressUI = newValue }
+    }
     /// Local-only: when true, the prompt is truncated to the processor's
     /// canonical history cache boundary (rendered without the generation
     /// prompt) before prefill. Background warm-up requests set this so the
     /// KV the engine stores is an exact token-prefix of the next real send —
     /// required for sliding-window models whose caches cannot be trimmed to
     /// a boundary at store time.
-    var warmupPrefill: Bool = false
+    var warmupPrefill: Bool {
+        get { inferenceContext.warmupPrefill }
+        set { inferenceContext.warmupPrefill = newValue }
+    }
     /// Local-only: byte-exact reusable leading system-prompt text from
     /// `SystemPromptComposer.staticPrefix`. vmlx uses this only as a
     /// tokenizer-validated SSD-prefix boundary hint after the full prompt has
     /// already been rendered; it is not decoded from OpenAI JSON and is not
     /// forwarded to remote providers.
-    var cacheStableSystemPrefix: String? = nil
+    var cacheStableSystemPrefix: String? {
+        get { inferenceContext.cacheStableSystemPrefix }
+        set { inferenceContext.cacheStableSystemPrefix = newValue }
+    }
     /// Local admission contract, checked against exact prepared tokens before prefill.
-    var admissionPositionLimit: Int? = nil
+    var admissionPositionLimit: Int? {
+        get { inferenceContext.admissionPositionLimit }
+        set { inferenceContext.admissionPositionLimit = newValue }
+    }
     /// Internal delegation ceiling, not a user output reservation. Never decoded from API JSON.
-    var admissionOutputTokensAreImplicit: Bool = false
+    var admissionOutputTokensAreImplicit: Bool {
+        get { inferenceContext.admissionOutputTokensAreImplicit }
+        set { inferenceContext.admissionOutputTokensAreImplicit = newValue }
+    }
     /// Local-only: when true, this request's model load must not disturb a model
     /// that is already resident or already loading — the runtime refuses the load
     /// instead of evicting. Set by housekeeping that nobody is waiting on
@@ -848,9 +897,15 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// entitled to the GPU.
     ///
     /// Not decoded from OpenAI JSON, not sent to providers.
-    var backgroundModelLoad: Bool = false
+    var backgroundModelLoad: Bool {
+        get { inferenceContext.backgroundModelLoad }
+        set { inferenceContext.backgroundModelLoad = newValue }
+    }
     /// Internal direct-Send capability, never decoded from or encoded to the wire.
-    var alignmentRepairModel: String? = nil
+    var alignmentRepairModel: String? {
+        get { inferenceContext.alignmentRepairModel }
+        set { inferenceContext.alignmentRepairModel = newValue }
+    }
     /// Local-only: a nested subagent may reuse a model that another surface
     /// already owns (for example an HTTP API model under manual multi-model
     /// residency). In that case the child request must not relabel the
@@ -859,25 +914,34 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// models still acquire the normal Chat UI ownership marker.
     ///
     /// Not decoded from OpenAI JSON, not sent to providers.
-    var preserveExistingResidencyOwner: Bool = false
+    var preserveExistingResidencyOwner: Bool {
+        get { inferenceContext.preserveExistingResidencyOwner }
+        set { inferenceContext.preserveExistingResidencyOwner = newValue }
+    }
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
 
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_tokens, max_completion_tokens, stream, top_p, top_k
-        case min_p
+        case min_p, repetition_penalty
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
         case logprobs, top_logprobs
-        case enable_thinking, reasoning_effort
+        case enable_thinking, reasoning_effort, chat_template_kwargs
     }
 
     /// Osaurus Connect fields, decoded only: they belong to this Mac and are
     /// never encoded into a request forwarded to a provider.
     private enum OsaurusCodingKeys: String, CodingKey {
         case osaurus_session_id, osaurus_create_session, osaurus_run_id, osaurus_voice_call, osaurus_privacy
+    }
+
+    /// vLLM / SGLang / vmlx-py carry template switches in `chat_template_kwargs`.
+    /// Legacy alias handling remains separate from preserving the complete dictionary.
+    private enum TemplateKwargsCodingKeys: String, CodingKey {
+        case chat_template_kwargs
     }
 
     func withModel(_ newModel: String) -> ChatCompletionRequest {
@@ -901,28 +965,13 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        // Preserve admission, residency, routing and attribution as one value.
+        copy.inferenceContext = inferenceContext
         copy.min_p = min_p
-        copy.modelOptions = modelOptions
-        copy.ttftTrace = ttftTrace
-        copy.turnId = turnId
+        copy.repetition_penalty = repetition_penalty
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
-        copy.samplingParametersAreImplicit = samplingParametersAreImplicit
-        copy.isAgentRequest = isAgentRequest
-        copy.idempotencyKey = idempotencyKey
-        copy.runAsRemoteAgent = runAsRemoteAgent
-        copy.remoteAgentLogModel = remoteAgentLogModel
-        copy.remoteAgentProviderId = remoteAgentProviderId
-        copy.claudeCodeOptions = claudeCodeOptions
-        copy.suppressProgressUI = suppressProgressUI
-        copy.warmupPrefill = warmupPrefill
-        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
-        // Must be copied with the other local-only flags. Dropping it silently
-        // promotes a background request back to interactive — and an interactive
-        // request is allowed to evict the model someone is using.
-        copy.backgroundModelLoad = backgroundModelLoad
-        copy.alignmentRepairModel = alignmentRepairModel
-        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
+        copy.chat_template_kwargs = chat_template_kwargs
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy
@@ -953,28 +1002,13 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        // Preserve admission, residency, routing and attribution as one value.
+        copy.inferenceContext = inferenceContext
         copy.min_p = min_p
-        copy.modelOptions = modelOptions
-        copy.ttftTrace = ttftTrace
-        copy.turnId = turnId
+        copy.repetition_penalty = repetition_penalty
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
-        copy.samplingParametersAreImplicit = samplingParametersAreImplicit
-        copy.isAgentRequest = isAgentRequest
-        copy.idempotencyKey = idempotencyKey
-        copy.runAsRemoteAgent = runAsRemoteAgent
-        copy.remoteAgentLogModel = remoteAgentLogModel
-        copy.remoteAgentProviderId = remoteAgentProviderId
-        copy.claudeCodeOptions = claudeCodeOptions
-        copy.suppressProgressUI = suppressProgressUI
-        copy.warmupPrefill = warmupPrefill
-        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
-        // Must be copied with the other local-only flags. Dropping it silently
-        // promotes a background request back to interactive — and an interactive
-        // request is allowed to evict the model someone is using.
-        copy.backgroundModelLoad = backgroundModelLoad
-        copy.alignmentRepairModel = alignmentRepairModel
-        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
+        copy.chat_template_kwargs = chat_template_kwargs
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy
@@ -1001,6 +1035,11 @@ extension ChatCompletionRequest {
         top_p = try container.decodeIfPresent(Float.self, forKey: .top_p)
         top_k = try container.decodeIfPresent(Int.self, forKey: .top_k)
         min_p = try container.decodeIfPresent(Float.self, forKey: .min_p)
+        repetition_penalty = try container.decodeIfPresent(Float.self, forKey: .repetition_penalty)
+        if let reason = RequestValidator.repetitionPenaltyReason(repetition_penalty) {
+            throw DecodingError.dataCorruptedError(forKey: .repetition_penalty, in: container,
+                debugDescription: reason)
+        }
         frequency_penalty = try container.decodeIfPresent(Float.self, forKey: .frequency_penalty)
         presence_penalty = try container.decodeIfPresent(Float.self, forKey: .presence_penalty)
         if let singleStop = try? container.decode(String.self, forKey: .stop) {
@@ -1019,6 +1058,35 @@ extension ChatCompletionRequest {
         top_logprobs = try container.decodeIfPresent(Int.self, forKey: .top_logprobs)
         enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
         reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
+        chat_template_kwargs = try? container.decodeIfPresent([String: JSONValue].self, forKey: .chat_template_kwargs)
+        try ChatTemplateParameters.validate(chat_template_kwargs)
+        // DeepSeek-V4.1: clients written for vmlx-py / vLLM switch thinking with
+        // `chat_template_kwargs.enable_thinking` (or DeepSeek's `thinking`) and
+        // the effort with `chat_template_kwargs.reasoning_effort`. Without this the
+        // kwargs were dropped and an explicit `false` still rendered the thinking
+        // rail. The top-level fields win when both are sent. Other families keep
+        // their request contract unchanged. V4.1 is detected from the installed
+        // bundle's `model_type` (name fallback), and only when the kwargs would
+        // change something, so other requests never touch the bundle lookup.
+        let kwargsContainer = try decoder.container(keyedBy: TemplateKwargsCodingKeys.self)
+        if let kwargs = try? kwargsContainer.decodeIfPresent(
+            [String: JSONValue].self, forKey: .chat_template_kwargs),
+            (enable_thinking == nil
+                && (kwargs["enable_thinking"] != nil || kwargs["thinking"] != nil))
+                || (reasoning_effort == nil && kwargs["reasoning_effort"] != nil),
+            DSV41ModelDetection.isDSV41(modelId: model)
+        {
+            if enable_thinking == nil {
+                if case .bool(let enabled)? = kwargs["enable_thinking"] {
+                    enable_thinking = enabled
+                } else if case .bool(let enabled)? = kwargs["thinking"] {
+                    enable_thinking = enabled
+                }
+            }
+            if reasoning_effort == nil, case .string(let effort)? = kwargs["reasoning_effort"] {
+                reasoning_effort = effort
+            }
+        }
         let osaurus = try decoder.container(keyedBy: OsaurusCodingKeys.self)
         osaurus_session_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_session_id)
         osaurus_create_session = try osaurus.decodeIfPresent(Bool.self, forKey: .osaurus_create_session)
@@ -1095,6 +1163,15 @@ struct Usage: Codable, Sendable {
         self.total_tokens = total_tokens
         self.tokens_per_second = tokens_per_second
         self.prompt_tokens_details = prompt_tokens_details
+    }
+
+    /// `prompt_tokens_details` for a local response whose prompt prefix was
+    /// restored from the runtime's prefix cache: `cached_tokens` clamped to
+    /// `[0, promptTokens]`. `nil` (field omitted, wire unchanged) for a cold
+    /// prompt.
+    static func cachedPromptDetails(_ cachedTokens: Int?, promptTokens: Int) -> PromptTokensDetails? {
+        guard let cachedTokens, cachedTokens > 0 else { return nil }
+        return PromptTokensDetails(cached_tokens: min(cachedTokens, max(0, promptTokens)))
     }
 
     /// Provider-reported prompt-cache hits, clamped to `[0, prompt_tokens]`.
@@ -1743,4 +1820,10 @@ extension Tool {
         }
         return JSONCanonicalization.normalizeObject(value)
     }
+}
+
+// Typed access preserves unknown template variables without coercing strings.
+extension JSONValue {
+    var boolValue: Bool? { if case .bool(let value) = self { return value }; return nil }
+    var stringValue: String? { if case .string(let value) = self { return value }; return nil }
 }

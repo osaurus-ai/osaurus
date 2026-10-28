@@ -461,6 +461,8 @@ struct ModelRowView: View {
     @ViewBuilder
     private func modelTypeBadge(_ type: ModelCardType) -> some View {
         switch type {
+        case .decision:
+            TintedPill(icon: "checklist", label: Text(verbatim: "D3"), color: theme.accentColor)
         case .llm:
             TintedPill(icon: "text.bubble", label: Text(L("LLM")), color: theme.accentColor)
         case .vlm:
@@ -506,6 +508,7 @@ struct ModelCardContent {
 }
 
 enum ModelCardType {
+    case decision
     case llm
     case vlm
     case image
@@ -532,9 +535,10 @@ extension ModelCardContent {
             useCase: model.useCase == .smallest ? nil : model.useCase,
             compatibility: model.compatibility(totalMemoryGB: totalMemoryGB),
             memoryNeeded: model.formattedEstimatedMemory,
-            type: model.useCase == .vision ? nil : (model.isVLM ? .vlm : .llm),
+            type: model.isDecision ? .decision : (model.useCase == .vision ? nil : (model.isVLM ? .vlm : .llm)),
             size: model.formattedDownloadSize,
-            params: model.parameterCount,
+            // The decision bundle slug names its quantization, not its backbone size.
+            params: model.isDecision ? nil : model.parameterCount,
             variantCount: variantCount,
             downloadsText: model.formattedDownloads,
             releaseText: model.formattedReleaseMonth

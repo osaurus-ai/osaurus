@@ -271,12 +271,14 @@ struct RemoteReasoningPolicy {
     /// preserved as closely as the provider's thinking-mode contract allows.
     func sanitizedToolChoice(
         _ choice: ToolChoiceOption?,
-        thinking: ThinkingConfig?
+        thinking: ThinkingConfig?,
+        manualAnthropicThinking: Bool = false
     ) -> ToolChoiceOption? {
         guard let choice else { return nil }
         // Newer Claude generations reject forced tool use outright, on every
-        // host that serves them (#3051).
-        if Self.rejectsForcedToolChoice(model: model) {
+        // host that serves them (#3051); manual `enabled` thinking rejects it
+        // on every Claude model.
+        if Self.rejectsForcedToolChoice(model: model) || manualAnthropicThinking {
             switch choice {
             case .required, .function:
                 return .auto
@@ -346,13 +348,14 @@ struct RemoteReasoningPolicy {
         }
 
         // The official OpenAI API likewise documents `none` as a real
-        // GPT-5.6 reasoning effort (`none` … `max`); stripping it here would
-        // silently re-enable the model's default reasoning. Only `none` is
-        // exempted, and only for GPT-5.6 on the official host — older OpenAI
-        // models and the other direct-rail aliases stay local-only.
+        // reasoning effort for GPT-5.6 and some GPT-6 models (`none` … `max`);
+        // stripping it here would silently re-enable the model's default
+        // reasoning. Only `none` is exempted, and only for models whose
+        // documented table has it on the official host — older OpenAI models
+        // and the other direct-rail aliases stay local-only.
         if normalized == "none",
             host.lowercased().contains("openai.com"),
-            ModelPickerItem.isPublicGPT56ModelId(model)
+            ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: model)
         {
             return (normalized, nil)
         }

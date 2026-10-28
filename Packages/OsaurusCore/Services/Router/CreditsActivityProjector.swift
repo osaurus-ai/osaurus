@@ -60,7 +60,7 @@ struct CreditsActivityProjector {
         return
             ledgerEntries
             .filter { !usedLedgerIds.contains($0.id) }
-            .filter { ledgerEntryMatches($0, usage: item) }
+            .filter { ledgerEntryMatches($0, usage: item, usageDate: usageDate) }
             .min { lhs, rhs in
                 let lhsDelta = usageDate.map { abs(lhs.createdAt.timeIntervalSince($0)) } ?? 0
                 let rhsDelta = usageDate.map { abs(rhs.createdAt.timeIntervalSince($0)) } ?? 0
@@ -69,7 +69,11 @@ struct CreditsActivityProjector {
             .map { CreditsActivityLedgerMatch(entry: $0, quality: .legacyFuzzy) }
     }
 
-    private func ledgerEntryMatches(_ entry: RouterBillingEntry, usage item: OsaurusRouterUsageItem) -> Bool {
+    private func ledgerEntryMatches(
+        _ entry: RouterBillingEntry,
+        usage item: OsaurusRouterUsageItem,
+        usageDate: Date?
+    ) -> Bool {
         guard entry.requestId == nil else {
             return false
         }
@@ -87,16 +91,27 @@ struct CreditsActivityProjector {
             return false
         }
 
-        guard let usageDate = Self.date(fromRouterTimestamp: item.createdAt) else {
+        guard let usageDate else {
             return true
         }
         return abs(entry.createdAt.timeIntervalSince(usageDate)) <= 300
     }
 
-    static func date(fromRouterTimestamp raw: String) -> Date? {
+    /// Shared formatters. Creating an `ISO8601DateFormatter` is expensive (ICU
+    /// setup), and this is called per row from SwiftUI body evaluation, so
+    /// allocating per call hung the main thread. `ISO8601DateFormatter` is
+    /// documented thread-safe and these are never mutated after init, so
+    /// `nonisolated(unsafe)` is sound (same pattern as AppleDateParsing).
+    nonisolated(unsafe) private static let fractionalSecondsFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+        return formatter
+    }()
+
+    nonisolated(unsafe) private static let plainFormatter = ISO8601DateFormatter()
+
+    static func date(fromRouterTimestamp raw: String) -> Date? {
+        fractionalSecondsFormatter.date(from: raw) ?? plainFormatter.date(from: raw)
     }
 }
 

@@ -14,11 +14,34 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - Or ask the default Osaurus assistant: "create a coding agent" — it can create, update, and switch agents for you.
 - Switch agents from the agent menu in the chat window.
 
+## Agent templates (Agents → Templates)
+
+- A template is one agent's configuration as portable JSON: prompt, model, tool selection (MCP servers and plugins by name), sandbox, subagent settings, and a `requires` list of what the author relied on (working folder, knowledge collections, plugins, MCP servers, permissions, model). Secrets, folder access grants, and knowledge files never travel.
+- Open the Templates page with the **Templates** button in the Agents header (**Agents** at the top returns). Built-in **Cloud Agent**, **Local Agent**, and **Sub Agent** templates are always there.
+- Save one from any agent card (**…** → **Save as Template**) or the agent page's Share menu (**Save as Template**). Import one with **Import Template** (choose a `.osaurustemplate` or `.json` file) or by dropping the file on the Templates page. The import review shows the author signature, the model and tools, what it needs on this Mac, and how to connect its MCP servers before anything is saved; the same version with different content asks **Keep both** or **Replace**.
+- A template card's **…** menu has **Use Template**, **Export File…** (a `.osaurustemplate` file, signed with your Osaurus identity when this Mac has one; saved answers, secret values, and absolute paths are left out), **Save to Library** for built-ins, and for your own templates **Show to Orchestrator** / **Hide from Orchestrator**, **Rename…**, and **Delete**.
+- **Use Template** opens **Create Agent from Template**: one step for each thing this Mac is missing (Model, Working Folder, Knowledge, Tools, Permissions) then Review. The agent is created only when nothing blocks it. Agents made this way show **From the … template** on their card and page.
+- An agent with unfinished setup shows **Needs setup** on its card; **Run Setup** in the card menu, or the **Finish setting up …** prompt when you first open it in chat, walks through the gaps. Delegating to it is refused while something it needs is still missing.
+- A template shown to the Orchestrator lets you say "make me an agent from the Cloud Agent template that does X"; the Orchestrator bases the new agent on the template instead of enabling every tool.
+- Templates live in `~/.osaurus/template-library/<template-id>/v<N>.json` (one file per version). Whole-config YAML templates saved by `osaurus_config export` stay in `~/.osaurus/templates/`.
+
 ## Per-agent features (agent → Abilities → Overview)
 
 - Tools (on by default) and Memory (on by default).
 - Off by default, opt in per agent: Charts, Voice output, Memory Recall (search past memory), Self-scheduling, Computer Use, Database (per-agent private SQLite), Knowledge collections, sandbox execution options.
 - Working Folder: the one folder the agent works inside. Picking a folder with the chat Folder chip — or in the picker the agent itself opens with `prompt_working_folder` when a folder-less chat needs files — remembers it on the agent, so new chats, schedules, watchers, and other background runs without their own folder start there; it also grants remote agent runs file access confined to that folder. Inside it, `file_read` handles every file type (text, PDF, Word, PowerPoint, Excel preview, images for vision models or via OCR) and `file_write` generates `.xlsx`, `.docx`, and `.pdf` as well as text — see the Chat topic, "File formats the folder tools handle".
+
+## Skills per agent (agent → Abilities → Tools)
+
+- Skills come from the shared library (**Skills** in the sidebar). By default every custom agent can use every installed skill.
+- **Limit to selected skills** above the tool picker narrows that to a list: only ticked skills appear in the agent's prompt, `capabilities_load`, and its slash commands. Turning it on starts with every installed skill ticked; **Choose Skills…** opens the checklist. A listed skill that is not installed here is flagged **not installed** and starts working once it is installed (for example by an `osaurus import` bundle).
+- In config YAML this is `agents[].skills`: omit it to leave it unchanged, `null` for all skills, a list (skill names or slugs) for only those. Templates and bundles carry the list; the Templates review shows missing skills as an advisory.
+
+## Runtime (agent → Configure → Runtime)
+
+- **Runs on** chooses who runs the agent's chats: Osaurus (built-in), or a harness registered under Settings → Agents → **Runtimes**, such as Claude Code, Pi, or a Pi-based harness. The chat model picker lists the same runtimes as columns, so you can switch from the composer; it changes this setting for the agent.
+- On a harness, each chat is a long-running process in the chat's folder that brings its own model, tools, and history. The agent's system prompt is passed to Claude Code, and to a Pi runtime whose arguments include `{system_prompt_file}`; Osaurus abilities, memory, and the sandbox don't apply.
+- Harness agents can't be delegated to or run through `/agents/{id}/run`, Computer Use, or AppleScript yet; those return an error naming the harness.
 
 ## The Orchestrator (default agent) vs custom agents
 
@@ -31,6 +54,18 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 
 - Each agent can have its own theme (activating the agent applies it), avatar, greeting, quick actions, and voice.
 - Custom agents are stored as JSON under `~/.osaurus/agents/<uuid>.json`. The Orchestrator's own settings (name, persona, temperature, max tokens, delegation helpers) live in Settings → Orchestrator, or ask the assistant to change them.
+
+## Generation overrides for each custom agent
+
+Use Create Agent → Advanced Settings, or open an existing custom agent → General → Configure → Advanced Settings → Generation Overrides. Each field can inherit existing defaults or use a custom value. Temperature and Max Tokens keep their existing saved fields; Top P, Top K, Min P, repetition/frequency/presence penalties, seed, stop sequences and template parameters are saved with the same agent.
+
+The selected model is inspected for its supported Thinking switch and exact Reasoning effort choices. An effort from a different model cannot be saved until it is changed to a supported choice or Inherit. No effort ladder or independent thinking-token budget is invented when the model has no such contract. The model's shared settings are never changed by this editor.
+
+Use Save generation defaults when editing an existing agent; Create Agent saves the creation draft. Defaults apply to chat, scheduled work and delegated execution. Explicit request/workflow values win; delegation limits can tighten an agent's Max Tokens. A submitted turn freezes its settings for tools, queued work and regeneration. External harnesses own their generation settings and do not use this section.
+
+Agent export, templates and config apply carry the defaults. In YAML, temperature and max_tokens keep their existing fields. generation_settings contains the other optional snake_case fields. Omit the group to preserve it, use null to clear it, or supply a replacement group. template_kwargs accepts a JSON object; conversation, tools and special-token variables are reserved.
+
+Max Tokens and Max output tokens per subagent cap total generated output per model turn, including reasoning. A model can exhaust the limit before producing a final answer. This cap does not reserve answer tokens and is not a separate thinking budget.
 
 ## Subagents and delegation
 

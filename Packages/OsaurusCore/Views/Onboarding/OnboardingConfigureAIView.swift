@@ -292,7 +292,7 @@ final class ConfigureAIState: ObservableObject {
         // 1. A curated top pick already on disk wins. Onboarding only shows
         // top picks, so we don't fall back to ad-hoc downloaded models that
         // wouldn't appear in the list anyway.
-        let downloaded = ModelManager.shared.deduplicatedModels().filter(\.isDownloaded)
+        let downloaded = ModelManager.shared.installedModels()
         if let topDownloaded = downloaded.first(where: \.isTopSuggestion) {
             selectedModel = topDownloaded
             return

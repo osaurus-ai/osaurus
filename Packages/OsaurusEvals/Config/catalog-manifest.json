@@ -330,6 +330,7 @@
     "DefaultAgent": [
       "default_agent.agent-activate",
       "default_agent.agent-create",
+      "default_agent.agent-create-from-template",
       "default_agent.agent-delete",
       "default_agent.agent-update",
       "default_agent.agent-update-capabilities",

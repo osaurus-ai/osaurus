@@ -5,14 +5,37 @@
 //  Coverage for the file side-effect advisory: a message that narrates a
 //  file write ("appended to the file") while no file-writing tool succeeded
 //  this run gets a factual `[System Notice]` staged for the next step. The
-//  loop never stops on it — the model either calls the file tool or says
-//  nothing was written.
+//  notice describes recorded execution only; it does not authorize or
+//  instruct a file write.
 //
 
 import Foundation
 import Testing
 
 @testable import OsaurusCore
+
+private enum LiveReadOnlyFileRegression {
+    static let request =
+        "Use a file-reading tool to read probe.json in the working folder and report its nonce and integer value. Do not modify it."
+
+    // Exact first final answer from the native 9aac/877 SQL transcript,
+    // session D97F5BFB-F49E-4C8E-92DA-D59008FF7BCF. The old bare "to file"
+    // regex misclassified the closing memory comparison as a write claim.
+    static let answer = "\n\n" + #"""
+        I read `probe.json` in the working folder. Here are its contents (unmodified):
+
+        **probe.json**
+        ```json
+        {"nonce":"responses-integrated-20261025","value":42}
+        ```
+
+        **Reported values:**
+        - **Nonce:** `responses-integrated-20261025`
+        - **Integer value:** `42`
+
+        The file is 53 bytes, one line, valid JSON, and was read without any modification. (Note: the file's actual `value` is 42, which matches the "Integer value: 42" memory entry; the "Current integer value in probe.json is 43" memory entry appears stale relative to the file on disk.)
+        """#
+}
 
 @Suite
 struct GroundedFileSideEffectCheckTests {
@@ -100,6 +123,34 @@ struct GroundedFileSideEffectCheckTests {
                 "The page describes how the compiler writes object files."
             )
         )
+    }
+
+    @Test func exactLiveReadOnlyAnswerWithFencedJSONAndMemoryComparisonIsNotAWriteClaim() {
+        #expect(!GroundedFileSideEffectCheck.containsFileSideEffectClaim(LiveReadOnlyFileRegression.answer))
+    }
+
+    @Test(arguments: [
+        "The memory entry appears stale relative to the file on disk.",
+        "These values are identical to the file contents.",
+        "The report refers to the file we read.",
+        "The written report contains the nonce ABC and value 42.",
+        "The written report points to the file.",
+        "The written instructions refer to the file.",
+    ])
+    func fileDestinationWithoutWritePredicateIsNotAClaim(text: String) {
+        #expect(!GroundedFileSideEffectCheck.containsFileSideEffectClaim(text))
+    }
+
+    @Test(arguments: [
+        "The summary was written to the file.",
+        "Appended it to your file.",
+        "Wrote the extracted content to the file.",
+        "I added the summary to the file.",
+        "I pasted the result to the file.",
+        "I have written the report.",
+    ])
+    func affirmativeWritePredicateWithDestinationStillTrips(text: String) {
+        #expect(GroundedFileSideEffectCheck.containsFileSideEffectClaim(text))
     }
 
     // MARK: isGroundedFileWriteOutcome
@@ -254,6 +305,68 @@ struct FileClaimLoopDriverTests {
             toolName: "file_write",
             jsonArguments: #"{"path": "notes.md", "content": "summary", "append": true}"#
         )
+    }
+
+    @Test(arguments: [
+        LiveReadOnlyFileRegression.answer,
+        "The written report contains the nonce ABC and value 42.",
+    ])
+    func readOnlyExchangeExecutesOneReadAndAcceptsItsFirstFinalWithoutRetry(answer: String) async throws {
+        let call = ServiceToolInvocation(
+            toolName: "file_read", jsonArguments: #"{"path":"probe.json"}"#, toolCallId: "call_live_read"
+        )
+        let readPayload: [String: Any] = [
+            "path": "probe.json", "text": #"{"nonce":"responses-integrated-20261025","value":42}"#,
+            "file_size": 53, "bytes_read": 53, "truncated": false,
+        ]
+        let readResult = ToolEnvelope.success(tool: "file_read", result: readPayload)
+        var history = [ChatMessage(role: "user", content: LiveReadOnlyFileRegression.request)]
+        var modelInputs: [[ChatMessage]] = []
+        var deliveredNotices: [[String]] = []
+        var executedCalls: [ServiceToolInvocation] = []
+        var visibleText = ""
+        var retryPreparations = 0
+        var finalSteps = 0
+        let hooks = AgentLoopHooks(
+            buildMessages: { notices in
+                deliveredNotices.append(notices)
+                return AgentLoopIterationInput(messages: AgentLoopBudget.appendingTransientNotices(notices, to: history))
+            },
+            modelStep: { messages, _ in
+                modelInputs.append(messages)
+                if modelInputs.count == 1 { return .toolCalls([call]) }
+                finalSteps += 1
+                visibleText = finalSteps == 1 ? answer : "Unexpected regeneration"
+                return .finalResponse
+            },
+            executeTool: { invocation, _ in
+                executedCalls.append(invocation)
+                return AgentLoopToolExecution(result: readResult)
+            },
+            onBatchComplete: { outcomes in
+                history.append(ChatMessage(role: "assistant", content: nil, tool_calls: outcomes.map {
+                    ToolCall(id: $0.callId, type: "function", function: ToolCallFunction(
+                        name: $0.invocation.toolName, arguments: $0.invocation.jsonArguments))
+                }, tool_call_id: nil))
+                history += outcomes.map {
+                    ChatMessage(role: "tool", content: $0.result, tool_calls: nil, tool_call_id: $0.callId)
+                }
+            },
+            prepareGroundedClaimRetry: { retryPreparations += 1 },
+            assistantVisibleText: { visibleText }
+        )
+        let result = try await AgentToolLoop.run(policy: policy, state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .finalResponse && result.iterations == 2)
+        #expect(retryPreparations == 0, "The valid final must not be excluded or regenerated")
+        #expect(finalSteps == 1 && visibleText == answer)
+        #expect(deliveredNotices.allSatisfy { $0.isEmpty })
+        #expect(executedCalls.map(\.toolName) == ["file_read"])
+        #expect(executedCalls.first?.jsonArguments == #"{"path":"probe.json"}"#)
+        try #require(modelInputs.count == 2)
+        #expect(modelInputs[1].map(\.role) == ["user", "assistant", "tool"])
+        #expect(modelInputs[1].first?.content == LiveReadOnlyFileRegression.request)
+        #expect(modelInputs[1].last?.tool_call_id == "call_live_read")
+        #expect(modelInputs[1].last?.content == readResult)
     }
 
     /// The reported shape: "appended to the file" narrated on a turn whose

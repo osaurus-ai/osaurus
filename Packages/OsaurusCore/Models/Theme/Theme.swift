@@ -929,14 +929,13 @@ public class ThemeManager: ObservableObject {
     private static func isDarkMode(for mode: AppearanceMode) -> Bool {
         switch mode {
         case .system:
-            // Use UserDefaults to reliably detect system appearance during early app startup
-            // NSApp.effectiveAppearance may not be ready yet when ThemeManager initializes
-            if let app = NSApp, app.isRunning {
-                return app.effectiveAppearance.name == .darkAqua
-            } else {
-                // Fall back to reading system preference directly
-                return UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
-            }
+            // Always read the system appearance from UserDefaults rather than
+            // NSApp.effectiveAppearance. The latter can block the main thread
+            // during AppKit appearance transitions (even after app launch),
+            // causing app hangs. UserDefaults "AppleInterfaceStyle" is set by
+            // the OS before DistributedNotificationCenter fires the appearance-
+            // changed notification, so it is always current at this call site.
+            return UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
         case .light:
             return false
         case .dark:

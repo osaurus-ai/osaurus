@@ -58,6 +58,18 @@ struct AgentsView: View {
     @State private var hasAppeared = false
     @State private var successMessage: String?
     @State private var consumedDeeplinkAgentId: UUID?
+    /// Agents grid, or the pushed Templates page.
+    @State private var section: AgentsSection = .agents
+    /// Template library sheets. `templateImportText` is non-nil while the
+    /// import sheet is up (empty string = open on the file chooser).
+    @State private var templateImportText: String?
+    @State private var templateSourceAgent: Agent?
+    @State private var templateToRename: AgentTemplate?
+    @ObservedObject private var templateStore = TemplateStore.shared
+    /// What the Set Up Agent wizard is working on: a saved agent (Run
+    /// Setup, first-open prompt) or a template draft (Use Template).
+    @State private var setupSubject: AgentSetupSubject?
+    @ObservedObject private var setupState = SetupStateStore.shared
     /// One-shot inner-tab target paired with an agent id, set by the
     /// `.agentDetailDeeplink` handler so the detail view opens on a specific
     /// tab (e.g. Subagents). Kept as the RAW deep-link string (not a resolved
@@ -189,6 +201,64 @@ struct AgentsView: View {
                 }
             )
         }
+        .sheet(
+            isPresented: Binding(
+                get: { templateImportText != nil },
+                set: { if !$0 { templateImportText = nil } }
+            )
+        ) {
+            TemplateImportSheet(
+                initialText: templateImportText ?? "",
+                expectedKind: .agent,
+                onImported: { template in
+                    templateImportText = nil
+                    showSuccess("Imported \"\(template.name)\"")
+                },
+                onCancel: { templateImportText = nil }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(item: $templateSourceAgent) { agent in
+            SaveAgentTemplateSheet(
+                agent: agent,
+                onSaved: { template in
+                    templateSourceAgent = nil
+                    showSuccess("Saved template \"\(template.name)\"")
+                    withAnimation(Self.navTransition) { section = .templates }
+                },
+                onCancel: { templateSourceAgent = nil }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(item: $templateToRename) { template in
+            RenameAgentTemplateSheet(template: template, onDone: { templateToRename = nil })
+                .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(item: $setupSubject) { subject in
+            AgentSetupWizardView(
+                subject: subject,
+                onClose: { setupSubject = nil },
+                onFinished: { agent in
+                    if subject.isDraft {
+                        showSuccess("Created \"\(agent.name)\"")
+                        withAnimation(Self.navTransition) { section = .agents }
+                    }
+                }
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .onReceive(managementState.$pendingAgentSetupId) { pending in
+            guard let pending else { return }
+            managementState.pendingAgentSetupId = nil
+            withAnimation(Self.navTransition) {
+                selectedAgent = nil
+                section = .agents
+            }
+            setupSubject = .saved(pending)
+        }
+        .onReceive(managementState.$pendingSetupSubject) { _ in
+            resumeParkedSetupIfNeeded()
+        }
         .sheet(isPresented: $isReordering) {
             AgentReorderSheet()
                 .environment(\.theme, themeManager.currentTheme)
@@ -200,6 +270,10 @@ struct AgentsView: View {
             }
             consumeDeeplinkIfPossible()
             applyPendingRemoteAgentDetail()
+            // The wizard parks itself here when it sends the user to another
+            // tab. Coming back rebuilds this view, so the publisher has
+            // already fired by now and the value has to be read directly.
+            resumeParkedSetupIfNeeded()
             routeSettingsLanding(highlightCoordinator.pending)
         }
         .onChange(of: agentManager.agents) { _, _ in
@@ -222,6 +296,7 @@ struct AgentsView: View {
             managementState.pendingCreateAgent = false
             withAnimation(Self.navTransition) {
                 selectedAgent = nil
+                section = .agents
             }
             isCreating = true
         }
@@ -260,7 +335,7 @@ struct AgentsView: View {
     /// cold-mounted Agents tab never sees the `onChange`.
     private func routeSettingsLanding(_ pending: String?) {
         guard let pending, pending.hasPrefix("agents.") else { return }
-        if pending == "agents.description",
+        if (pending == "agents.description" || pending.hasPrefix("agents.generation.")),
             let target = detailAgent ?? customAgents.first
         {
             selectedRemoteAgentId = nil
@@ -272,9 +347,9 @@ struct AgentsView: View {
             )
             return
         }
-        if pending.hasPrefix("agents.appleApps") {
-            // The Apple app groups live inside a custom agent's
-            // Abilities → Tools picker, not on the grid: route into the
+        if pending.hasPrefix("agents.appleApps") || pending == "agents.skills" {
+            // The Apple app groups and the skill allow-list live inside a
+            // custom agent's Abilities → Tools picker, not on the grid: route into the
             // first custom agent's Tools tab (or keep the currently open
             // custom agent) so the anchored group can scroll and glow.
             // With no custom agent yet there is nothing to land on; the
@@ -308,6 +383,7 @@ struct AgentsView: View {
         withAnimation(Self.navTransition) {
             selectedAgent = nil
             selectedRemoteAgentId = nil
+            section = .agents
         }
     }
 
@@ -336,7 +412,10 @@ struct AgentsView: View {
             // That way the "Create Your First Agent" CTA never silently
             // disappears just because someone else's agent is sitting in the
             // grid. When both lists exist, we fall through to the normal grid.
-            if customAgents.isEmpty {
+            if section == .templates {
+                templatesContent
+                    .transition(.opacity)
+            } else if customAgents.isEmpty {
                 ScrollView {
                     VStack(spacing: 24) {
                         SettingsEmptyState(
@@ -385,6 +464,9 @@ struct AgentsView: View {
                                     withAnimation(Self.navTransition) { selectedAgent = agent }
                                 },
                                 onDuplicate: { duplicateAgent(agent) },
+                                onSaveTemplate: { templateSourceAgent = agent },
+                                needsSetup: setupState.needsSetup(agent.id),
+                                onRunSetup: { setupSubject = .saved(agent.id) },
                                 onDelete: { deleteAgent(agent) },
                                 onOpenDatabase: { openDatabase(for: agent) }
                             )
@@ -472,25 +554,103 @@ struct AgentsView: View {
 
     // MARK: - Header
 
+    @ViewBuilder
     private var headerView: some View {
         let totalCount = customAgents.count + remoteAgents.count
-        return ManagerHeaderWithActions(
-            title: L("Agents"),
-            subtitle: L("Create custom assistant personalities with unique behaviors"),
-            count: totalCount == 0 ? nil : totalCount
-        ) {
-            HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
-                agentManager.refresh()
-            }
-            if !customAgents.isEmpty {
-                HeaderIconButton("list.bullet.indent", help: "Reorder agents") {
-                    isReordering = true
+        switch section {
+        case .agents:
+            ManagerHeaderWithActions(
+                title: L("Agents"),
+                subtitle: L("Create custom assistant personalities with unique behaviors"),
+                count: totalCount == 0 ? nil : totalCount
+            ) {
+                HeaderSecondaryButton(L("Templates"), icon: AgentsSection.templates.icon) {
+                    withAnimation(Self.navTransition) { section = .templates }
+                }
+                .settingsLandingAnchor("agents.templates")
+                HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
+                    agentManager.refresh()
+                }
+                if !customAgents.isEmpty {
+                    HeaderIconButton("list.bullet.indent", help: "Reorder agents") {
+                        isReordering = true
+                    }
+                }
+                HeaderPrimaryButton("Create Agent", icon: "plus") {
+                    isCreating = true
                 }
             }
-            HeaderPrimaryButton("Create Agent", icon: "plus") {
-                isCreating = true
+        case .templates:
+            VStack(spacing: 0) {
+                SettingsBackBar(title: L("Agents")) {
+                    withAnimation(Self.navTransition) { section = .agents }
+                }
+                ManagerHeaderWithActions(
+                    title: L("Templates"),
+                    subtitle: L("Start a new agent from a ready-made setup, or share yours as a file"),
+                    count: templateStore.allTemplates(kind: .agent).count
+                ) {
+                    HeaderIconButton("arrow.clockwise", help: "Refresh templates") {
+                        templateStore.reload()
+                    }
+                    HeaderPrimaryButton("Import Template", icon: "square.and.arrow.down") {
+                        templateImportText = ""
+                    }
+                }
             }
         }
+    }
+
+    /// Templates page body. Using a template builds an unsaved draft
+    /// through the same mapping `osaurus_config apply` uses and opens the
+    /// setup wizard on it.
+    private var templatesContent: some View {
+        AgentTemplatesView(
+            columns: Self.gridColumns,
+            hasAppeared: hasAppeared,
+            onUse: { template in useTemplate(template) },
+            onImport: { templateImportText = "" },
+            onImportText: { text in templateImportText = text },
+            onRename: { template in templateToRename = template },
+            showSuccess: showSuccess,
+            showError: { message in _ = ToastManager.shared.error(L("Template"), message: message) }
+        )
+    }
+
+    /// Use Template: open the setup wizard on an UNSAVED draft. The agent
+    /// is created only when the wizard's Create Agent passes the readiness
+    /// check, so a template this Mac cannot honour never yields a broken
+    /// agent. The template's requested model stays on the draft even when it
+    /// is missing, so the Model step can show it instead of silently falling
+    /// back; a `preferred` policy makes that step advisory.
+    private func useTemplate(_ template: AgentTemplate) {
+        var entry = template.resolvedEntry()
+        if case .available = template.modelResolution() {} else if let requested = template.agent.model.valueOrNil {
+            entry.model = .value(requested)
+        }
+        var draft = ConfigApplier.draftAgent(from: entry).agent
+        // The applier attaches a folder only when it can mint a bookmark;
+        // keep the author's path as a hint so the Working Folder step shows.
+        if let hint = entry.workingFolder.valueOrNil, draft.workingFolderPath == nil {
+            draft.workingFolderPath = (hint as NSString).expandingTildeInPath
+        }
+        if let actions = template.quickActions { draft.chatQuickActions = actions }
+        // Lets the setup check find the template's MCP servers and plugins,
+        // which add no tool names to the draft when missing here.
+        draft.sourceTemplateName = template.name
+        setupSubject = .draft(draft, template: template)
+    }
+
+    /// Reopen a wizard that stepped aside for another tab, with whatever
+    /// the user had already filled in.
+    private func resumeParkedSetupIfNeeded() {
+        guard case .agent(let parked)? = managementState.pendingSetupSubject else { return }
+        managementState.pendingSetupSubject = nil
+        withAnimation(Self.navTransition) {
+            selectedAgent = nil
+            section = .agents
+        }
+        setupSubject = parked
     }
 
     // MARK: - Success Toast
@@ -619,6 +779,12 @@ private struct AgentCard: View {
     let hasAppeared: Bool
     let onSelect: () -> Void
     let onDuplicate: () -> Void
+    /// Snapshots the agent into the template library (Templates page).
+    let onSaveTemplate: () -> Void
+    /// First-run setup still pending (`SetupStateStore`).
+    var needsSetup: Bool = false
+    /// Opens the Set Up Agent wizard for this agent.
+    var onRunSetup: () -> Void = {}
     let onDelete: () -> Void
     /// Opens the agent's detail view directly on the Database workspace
     /// (Knowledge › Database) — surfaced in the card menu so users can jump
@@ -632,15 +798,21 @@ private struct AgentCard: View {
         hasAppeared: Bool,
         onSelect: @escaping () -> Void,
         onDuplicate: @escaping () -> Void,
+        onSaveTemplate: @escaping () -> Void,
+        needsSetup: Bool = false,
+        onRunSetup: @escaping () -> Void = {},
         onDelete: @escaping () -> Void,
         onOpenDatabase: @escaping () -> Void
     ) {
+        self.needsSetup = needsSetup
+        self.onRunSetup = onRunSetup
         self.agent = agent
         self.isActive = isActive
         self.animationDelay = animationDelay
         self.hasAppeared = hasAppeared
         self.onSelect = onSelect
         self.onDuplicate = onDuplicate
+        self.onSaveTemplate = onSaveTemplate
         self.onDelete = onDelete
         self.onOpenDatabase = onOpenDatabase
     }
@@ -698,6 +870,20 @@ private struct AgentCard: View {
                                             .fill(theme.successColor.opacity(0.12))
                                     )
                             }
+                            if needsSetup {
+                                Text("Needs setup", bundle: .module)
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(theme.warningColor)
+                                    .lineLimit(1)
+                                    .fixedSize()
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(theme.warningColor.opacity(0.12))
+                                    )
+                                    .help(L("Run Setup from the card menu to finish configuring this agent"))
+                            }
                         }
 
                         // Always render the description line so card heights line
@@ -730,6 +916,20 @@ private struct AgentCard: View {
                                 Text("Duplicate", bundle: .module)
                             } icon: {
                                 Image(systemName: "doc.on.doc")
+                            }
+                        }
+                        Button(action: onSaveTemplate) {
+                            Label {
+                                Text("Save as Template", bundle: .module)
+                            } icon: {
+                                Image(systemName: "square.on.square.dashed")
+                            }
+                        }
+                        Button(action: onRunSetup) {
+                            Label {
+                                Text("Run Setup", bundle: .module)
+                            } icon: {
+                                Image(systemName: "checklist")
                             }
                         }
                         Button(action: onOpenDatabase) {
@@ -786,6 +986,25 @@ private struct AgentCard: View {
                 }
 
                 Spacer(minLength: 0)
+                // Provenance sits on its own line above the stats: that band
+                // is the same width on every card, so a long template name
+                // can neither crowd the agent name nor squeeze the stat chips.
+                if let source = agent.sourceTemplateName, !source.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.on.square.dashed")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(L("From the \(source) template"))
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .foregroundColor(theme.infoColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(theme.infoColor.opacity(0.12)))
+                    .help(L("Created from the \(source) template"))
+                    .padding(.bottom, 6)
+                }
                 compactStats
             }
             .frame(maxWidth: .infinity, minHeight: 140, alignment: .top)
@@ -1218,7 +1437,10 @@ struct AgentDetailView: View {
     @State private var systemPrompt: String = ""
     @State private var temperature: String = ""
     @State private var maxTokens: String = ""
+    @State private var generationSettings: AgentGenerationSettings?
     @State private var claudeCodeConfig: ClaudeCodeAgentConfig = .default
+    @State private var agentRuntime: AgentRuntime = .builtIn
+    @ObservedObject private var harnessRuntimeStore = HarnessRuntimeStore.shared
     @State private var selectedThemeId: UUID?
     @State private var chatQuickActions: [AgentQuickAction]?
     @State private var editingQuickActionId: UUID?
@@ -1434,6 +1656,8 @@ struct AgentDetailView: View {
 
     /// Drives the share-agent sheet (cross-device deeplink invite flow).
     @State private var showingShareSheet: Bool = false
+    /// Drives the Save as Template sheet from the share menu.
+    @State private var showingSaveTemplateSheet: Bool = false
 
     /// Local UI state: which tabs the user has dropped into the "Advanced" disclosure
     /// of the Configure tab. Persists only for the lifetime of this view (intentional —
@@ -1694,6 +1918,9 @@ struct AgentDetailView: View {
             loadMemoryData()
             loadAgentSecrets()
             selectedModel = currentAgent.defaultModel
+            if settingsLandingPending?.hasPrefix("agents.generation.") == true {
+                showAdvancedSettings = true
+            }
             refreshDetailCaches()
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
@@ -1701,6 +1928,12 @@ struct AgentDetailView: View {
         }
         .task(id: abilityDraft) {
             await refreshAbilityContextPreview()
+        }
+        .onChange(of: settingsLandingPending) { _, pending in
+            if pending?.hasPrefix("agents.generation.") == true {
+                selectedTab = .builtIn(.configure)
+                showAdvancedSettings = true
+            }
         }
         .onDisappear {
             abilityContextDeltaDismissTask?.cancel()
@@ -2019,6 +2252,16 @@ struct AgentDetailView: View {
             onBack: onBack,
             identity: { identityButton },
             status: {
+                if saveIndicator == nil, let source = currentAgent.sourceTemplateName, !source.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.on.square.dashed")
+                            .font(.system(size: 10))
+                        Text(L("From the \(source) template"))
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.tertiaryText)
+                    .help(L("Created from the \(source) template"))
+                }
                 if let indicator = saveIndicator {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.circle.fill")
@@ -2063,6 +2306,17 @@ struct AgentDetailView: View {
         .sheet(isPresented: $showingShareSheet) {
             ShareAgentSheet(agent: currentAgent)
                 .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(isPresented: $showingSaveTemplateSheet) {
+            SaveAgentTemplateSheet(
+                agent: currentAgent,
+                onSaved: { template in
+                    showingSaveTemplateSheet = false
+                    showSuccess("Saved template \"\(template.name)\"")
+                },
+                onCancel: { showingSaveTemplateSheet = false }
+            )
+            .environment(\.theme, themeManager.currentTheme)
         }
     }
 
@@ -2255,11 +2509,14 @@ struct AgentDetailView: View {
         // Ordered by how often each is touched from the chat menu: model
         // right after identity, voice further down.
         identitySection
-        defaultModelSection
-        if ClaudeCodeConfiguration.isAvailable()
-            || selectedModel?.hasPrefix(ClaudeCodeConfiguration.modelPrefix) == true
-        {
+        runtimeSection
+        switch selectedHarness {
+        case nil:
+            defaultModelSection
+        case .resolved(let runtime) where runtime.kind == .claudeCode:
             claudeCodeSection
+        case .resolved, .missing:
+            EmptyView()
         }
         systemPromptSection
         voiceSection
@@ -2434,7 +2691,9 @@ struct AgentDetailView: View {
     /// this disclosure.
     private var advancedSummary: String {
         var parts: [String] = []
-        if !temperature.isEmpty || !maxTokens.isEmpty { parts.append("generation") }
+        if !temperature.isEmpty || !maxTokens.isEmpty || generationSettings?.isEmpty == false {
+            parts.append("generation")
+        }
         return parts.isEmpty ? L("Defaults") : parts.joined(separator: " · ")
     }
 
@@ -2711,6 +2970,16 @@ struct AgentDetailView: View {
         }
         menu.addItem(workspaceItem)
 
+        // Portable copy of the configuration (no data, no secrets): the
+        // same action as the grid card's Save as Template.
+        menu.addItem(.separator())
+        let templateItem = NSMenuItem(
+            title: L("Save as Template"), action: #selector(HeaderMenuTarget.fire(_:)), keyEquivalent: "")
+        let templateTarget = HeaderMenuTarget { showingSaveTemplateSheet = true }
+        templateItem.target = templateTarget
+        templateItem.representedObject = templateTarget
+        menu.addItem(templateItem)
+
         let origin = NSEvent.mouseLocation
         menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
     }
@@ -2944,8 +3213,39 @@ struct AgentDetailView: View {
     }
 
     private var claudeCodeSection: some View {
-        AgentDetailSection(title: L("Claude Code"), icon: "terminal.fill") {
+        AgentDetailSection(title: L("Claude Code Options"), icon: "terminal.fill") {
             VStack(alignment: .leading, spacing: 14) {
+                Picker(
+                    L("Claude model"),
+                    selection: Binding(
+                        get: { claudeCodeConfig.resolvedModel },
+                        set: { model in updateClaudeCodeConfig { $0.model = model } }
+                    )
+                ) {
+                    ForEach(ClaudeCodeModel.allCases, id: \.rawValue) { model in
+                        Text(verbatim: model.rawValue.capitalized).tag(model.rawValue)
+                    }
+                    if ClaudeCodeModel(rawValue: claudeCodeConfig.resolvedModel) == nil {
+                        Text(verbatim: claudeCodeConfig.resolvedModel).tag(claudeCodeConfig.resolvedModel)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .settingsLandingAnchor("agents.claudeCode.model")
+
+                Picker(
+                    L("Claude effort"),
+                    selection: Binding(
+                        get: { claudeCodeConfig.resolvedEffort?.rawValue ?? "" },
+                        set: { effort in updateClaudeCodeConfig { $0.effort = effort.isEmpty ? nil : effort } }
+                    )
+                ) {
+                    Text("Default", bundle: .module).tag("")
+                    ForEach(ClaudeCodeEffort.allCases, id: \.rawValue) { effort in
+                        Text(verbatim: effort.displayName).tag(effort.rawValue)
+                    }
+                }
+                .settingsLandingAnchor("agents.claudeCode.effort")
+
                 Picker(
                     L("Execution mode"),
                     selection: Binding(
@@ -2976,7 +3276,7 @@ struct AgentDetailView: View {
                 ) {
                     claudeCodePermissionLabel(
                         title: "Allow file changes",
-                        detail: "Auto-approve Edit, Write, and NotebookEdit. These run with your macOS file access, starting in the chat folder."
+                        detail: "Auto-approve Edit, Write, and NotebookEdit inside the chat folder, or the chat's private scratch folder when none is set."
                     )
                 }
                 .disabled(claudeCodeConfig.mode != .agent)
@@ -2989,7 +3289,7 @@ struct AgentDetailView: View {
                 ) {
                     claudeCodePermissionLabel(
                         title: "Allow shell commands",
-                        detail: "Auto-approve Bash under your macOS account. This is not the Osaurus sandbox."
+                        detail: "Auto-approve Bash under your macOS account. Osaurus can't confine shell commands to the chat folder, and this is not the Osaurus sandbox."
                     )
                 }
                 .disabled(claudeCodeConfig.mode != .agent)
@@ -3007,14 +3307,14 @@ struct AgentDetailView: View {
                 ) {
                     claudeCodePermissionLabel(
                         title: "Allow Osaurus read tools",
-                        detail: "Attach a scoped MCP bridge for status, list, describe, and search."
+                        detail: "Attach osaurus_inspect and osaurus_help over an MCP bridge scoped to this agent. Needs the Osaurus server running."
                     )
                 }
                 .disabled(claudeCodeConfig.mode != .agent)
 
                 Toggle(
                     isOn: Binding(
-                        get: { claudeCodeConfig.allowOsaurusConfigWrites },
+                        get: { claudeCodeConfig.allowOsaurusConfigWrites && agent.id == Agent.defaultId },
                         set: { enabled in
                             updateClaudeCodeConfig { $0.allowOsaurusConfigWrites = enabled }
                         }
@@ -3022,16 +3322,117 @@ struct AgentDetailView: View {
                 ) {
                     claudeCodePermissionLabel(
                         title: "Allow Osaurus configuration changes",
-                        detail: "Permit agent, provider, model, plugin, and MCP configuration writes."
+                        detail: agent.id == Agent.defaultId
+                            ? "Also attach osaurus_config, which changes agents, providers, models, plugins, and MCP servers."
+                            : "Only the Default agent can change Osaurus configuration."
                     )
                 }
                 .disabled(
                     claudeCodeConfig.mode != .agent
                         || !claudeCodeConfig.allowOsaurusTools
+                        || agent.id != Agent.defaultId
                 )
             }
             .toggleStyle(.switch)
+            .settingsLandingAnchor("agents.claudeCode")
         }
+    }
+
+    // MARK: - Runtime
+
+    private var selectedHarness: HarnessSelection? {
+        guard let id = agentRuntime.harnessId else { return nil }
+        if let runtime = harnessRuntimeStore.runtimes.first(where: { $0.id == id }) {
+            return .resolved(runtime)
+        }
+        return .missing(id)
+    }
+
+    private var runtimeSection: some View {
+        AgentDetailSection(title: L("Runtime"), icon: "terminal") {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker(
+                    L("Runs on"),
+                    selection: Binding(
+                        get: { agentRuntime },
+                        set: { runtime in
+                            agentRuntime = runtime
+                            agentManager.updateRuntime(runtime, for: agent.id)
+                            showSaveIndicator()
+                        }
+                    )
+                ) {
+                    Text("Osaurus (built-in)", bundle: .module).tag(AgentRuntime.builtIn)
+                    ForEach(harnessRuntimeStore.runtimes) { runtime in
+                        Text(verbatim: runtime.displayName).tag(AgentRuntime.harness(runtime.id))
+                    }
+                    if case .missing(let id) = selectedHarness {
+                        Text("Missing runtime", bundle: .module).tag(AgentRuntime.harness(id))
+                    }
+                }
+                .pickerStyle(.menu)
+                .settingsLandingAnchor("agents.runtime")
+
+                runtimeExplanation
+
+                Button {
+                    ManagementStateManager.shared.selectedTab = .agentRuntimes
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Manage Runtimes", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .onAppear { harnessRuntimeStore.loadIfNeeded() }
+    }
+
+    @ViewBuilder
+    private var runtimeExplanation: some View {
+        switch selectedHarness {
+        case nil:
+            runtimeNote(
+                L("Osaurus runs this agent itself, on its model, with its tools, memory, and sandbox.")
+            )
+        case .missing:
+            runtimeNote(
+                L("The runtime this agent used was deleted, so its chats can't start. Pick another runtime or switch back to built-in."),
+                isWarning: true
+            )
+        case .resolved(let runtime):
+            VStack(alignment: .leading, spacing: 6) {
+                runtimeNote(
+                    String(
+                        format: L(
+                            "%@ runs this agent's chats as a process on this Mac, with its own model, tools, and conversation history. Osaurus sends each message and shows the reply; Osaurus abilities, memory, and the sandbox don't apply."
+                        ),
+                        runtime.displayName
+                    )
+                )
+                if runtime.kind == .piRPC {
+                    runtimeNote(
+                        L("Osaurus can't confine this runtime's tools. Narrow them with --tools in the runtime's arguments.")
+                    )
+                    if !runtime.wantsSystemPromptFile {
+                        runtimeNote(
+                            L("The system prompt below reaches it only when the runtime's arguments include {system_prompt_file}.")
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func runtimeNote(_ text: String, isWarning: Bool = false) -> some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundColor(isWarning ? theme.warningColor : theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func claudeCodePermissionLabel(
@@ -3279,41 +3680,30 @@ struct AgentDetailView: View {
     /// 90% case.
     private var generationOverridesSection: some View {
         AgentDetailSection(title: L("Generation Overrides"), icon: "slider.horizontal.3") {
-            VStack(spacing: 12) {
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label {
-                            Text("Temperature", bundle: .module)
-                        } icon: {
-                            Image(systemName: "thermometer.medium")
-                        }
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-
-                        StyledTextField(placeholder: "0.7", text: $temperature, icon: nil)
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label {
-                            Text("Max Tokens", bundle: .module)
-                        } icon: {
-                            Image(systemName: "number")
-                        }
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-
-                        StyledTextField(placeholder: "4096", text: $maxTokens, icon: nil)
-                    }
-                }
-
-                Text("Leave empty to use default values from global settings.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if agentRuntime != .builtIn {
+                Text("These generation defaults apply to Osaurus (built-in). The selected external runtime owns its generation settings.", bundle: .module)
+                    .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+            } else {
+            AgentGenerationSettingsEditor(
+                modelID: generationModelID,
+                modelIsLocal: pickerItems.first(where: { $0.id == generationModelID })?.source == .local,
+                catalogCapabilities: pickerItems.first(where: { $0.id == generationModelID })?.reasoningCapabilities,
+                savedTemperature: Float(temperature), savedMaxTokens: Int(maxTokens),
+                savedSettings: generationSettings
+            ) { values in
+                temperature = values.temperature.map { String($0) } ?? ""
+                maxTokens = values.maxTokens.map { String($0) } ?? ""
+                generationSettings = values.settings
+                saveAgent()
             }
-            .onChange(of: temperature) { debouncedSave() }
-            .onChange(of: maxTokens) { debouncedSave() }
+            }
         }
+    }
+
+    private var generationModelID: String? {
+        var draftAgent = currentAgent
+        draftAgent.defaultModel = selectedModel
+        return agentManager.effectiveModel(for: draftAgent)
     }
 
     // MARK: - Voice
@@ -4598,7 +4988,7 @@ struct AgentDetailView: View {
             // Autonomy policy (same read/navigate/edit/consequential gate as
             // Computer Use), so there is no per-agent permission row here.
             subagentFootnote(
-                "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser."
+                "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser Use."
             )
         }
     }
@@ -6973,7 +7363,9 @@ struct AgentDetailView: View {
         systemPrompt = agent.systemPrompt
         temperature = agent.temperature.map { String($0) } ?? ""
         maxTokens = agent.maxTokens.map { String($0) } ?? ""
+        generationSettings = agent.generationSettings
         claudeCodeConfig = agentManager.effectiveClaudeCodeConfig(for: agent.id)
+        agentRuntime = agentManager.effectiveRuntime(for: agent.id)
         selectedThemeId = agent.themeId
         chatQuickActions = agent.chatQuickActions
         chatGreetingDraft = agent.chatGreeting ?? ""
@@ -7190,6 +7582,7 @@ struct AgentDetailView: View {
             defaultModel: selectedModel,
             temperature: Float(temperature),
             maxTokens: Int(maxTokens),
+            generationSettings: generationSettings,
             chatQuickActions: chatQuickActions,
             chatGreeting: {
                 let trimmed = chatGreetingDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -7207,10 +7600,12 @@ struct AgentDetailView: View {
             agentDeviceScope: current.agentDeviceScope,
             autonomousExec: current.autonomousExec,
             claudeCode: current.claudeCode,
+            runtime: current.runtime,
             pluginInstructions: effectivePluginInstructions,
             bonjourEnabled: current.bonjourEnabled,
             toolSelectionMode: current.toolSelectionMode,
             manualToolNames: current.manualToolNames,
+            skillNames: current.skillNames,
             toolsEnabled: toolsEnabled,
             memoryEnabled: memoryEnabled,
             avatar: avatar,
@@ -8192,6 +8587,8 @@ private struct AgentEditorSheet: View {
     @State private var selectedModel: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker: Bool = false
+    @State private var generationDraft = AgentGenerationDraft()
+    @State private var generationChoices: AgentGenerationReasoningChoices?
     @State private var showAddModelWarning: Bool = false
     @State private var hasAppeared: Bool = false
 
@@ -8220,7 +8617,35 @@ private struct AgentEditorSheet: View {
     private var agentColor: Color { agentColorFor(name) }
 
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let values = try? generationDraft.validated() else { return false }
+        if let settings = values.settings,
+            settings.reasoningEffort != nil || settings.enableThinking != nil
+        {
+            guard let generationChoices, generationChoices.modelID == generationModelID else { return false }
+            return (try? generationChoices.validate(settings: settings)) != nil
+        }
+        return true
+    }
+
+    private var generationModelID: String? {
+        AgentManager.shared.effectiveModel(for: Agent(name: "", defaultModel: selectedModel))
+    }
+
+    private var generationField: some View {
+        DisclosureGroup(L("Advanced Settings")) {
+            AgentGenerationSettingsEditor(
+                modelID: generationModelID,
+                modelIsLocal: pickerItems.first(where: { $0.id == generationModelID })?.source == .local,
+                catalogCapabilities: pickerItems.first(where: { $0.id == generationModelID })?.reasoningCapabilities,
+                savedTemperature: nil, savedMaxTokens: nil, savedSettings: nil,
+                onSave: { _ in }, showsSaveButton: false,
+                onDraftChange: { generationDraft = $0 },
+                onReasoningChoicesChange: { generationChoices = $0 },
+                initialDraft: generationDraft
+            )
+            .padding(.top, 12)
+        }
     }
 
     var body: some View {
@@ -8299,6 +8724,7 @@ private struct AgentEditorSheet: View {
             || !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || selectedTemplate != .blank
             || selectedAvatar != nil
+            || generationDraft != AgentGenerationDraft()
     }
 
     /// "Add Model" in the picker switches the Management window to the Models
@@ -8361,6 +8787,7 @@ private struct AgentEditorSheet: View {
                 modelField
                 capabilitiesField
                 promptField
+                generationField
             }
             .padding(20)
         }
@@ -8813,6 +9240,10 @@ private struct AgentEditorSheet: View {
             themeId: nil,
             defaultModel: selectedModel
         )
+        guard canSave, let generation = try? generationDraft.validated() else { return }
+        agent.temperature = generation.temperature
+        agent.maxTokens = generation.maxTokens
+        agent.generationSettings = generation.settings
         agent.toolSelectionMode = draftMode
         agent.manualToolNames = Array(draftToolNames)
         agent.avatar = selectedAvatar

@@ -332,9 +332,20 @@ let package = Package(
         // self-speculation for K2 Horizon bundles that ship a uno/ adapter.
         // Nemotron 3.5 Super-VL: image-only bundle loading, quantized projector,
         // physical capability checks and staged recurrent MTP state handling.
+        // vmlx-swift#659: DeepSeek-V4.1 JANGHT bundles (JANGT trellis experts, MXFP8 projections,
+        // JANGHT dSpark drafter), exact sampled dSpark at temperature > 0, multi-row MXFP8 QMV.
+        // vmlx-swift#661: JANGHT bundles keep their F32 hyper-connection / sink / router-bias parameters.
+        // Preserve native MTP verifier failures and reject failed generated-state publication.
+        // vmlx-swift#662: every DeepSeek-V4.1 bundle (JANG_2K included) keeps its F32 control parameters.
+        // vmlx-swift#666 + #665 (with #667, main a05a5eef): V4.1 indexer evaluates each query chunk before the
+        // next (1M prefill peak -3.4 GiB), a fixed seed repeats under sampled dSpark, the resident dSpark head's
+        // 1024-token prefill cap wins over a wider server step.
+        // vmlx-swift#667: SSD restore retries, capacity estimates and nested vision configuration.
+        // vmlx-swift#668: DeepSeek-V4.1 split-by-keys decode attention; dSpark governor cost as a ratio of EMAs.
+        // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "78203b791cca6ef845b67c37220a6c7e79a774f3"
+            revision: "887d428c3431597cea48fb4f14251f48d303be96"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

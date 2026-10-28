@@ -142,6 +142,14 @@ struct ModelReasoningCapabilities: Sendable, Equatable, Hashable {
         defaultLevelId: "medium"
     )
 
+    /// Documented contract for the GPT-6 models that do accept `none`
+    /// (`gpt-6.1-terra`, `gpt-6-luna`, `gpt-6-sol`): `none` through `max`, defaulting to
+    /// `medium`. Same official-host scoping as the Astra profile.
+    static let officialOpenAIGPT6WithNone = ModelReasoningCapabilities(
+        levels: ["none", "low", "medium", "high", "xhigh", "max"].map { Level(id: $0) },
+        defaultLevelId: "medium"
+    )
+
     init(levels: [Level], defaultLevelId: String?) {
         self.levels = levels
         self.defaultLevelId = defaultLevelId
@@ -223,6 +231,8 @@ enum ModelProfileRegistry {
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
         LagunaThinkingProfile.self,
+        // DeepSeek-V4.1 names also match the broader DSV4 matcher; first match wins.
+        DSV41ReasoningProfile.self,
         DSV4ReasoningProfile.self,
         Hy3ReasoningProfile.self,
         LingRuntimeProfile.self,
@@ -357,6 +367,15 @@ enum ModelProfileRegistry {
                 acc[def.id] = Set(segments.map(\.id))
             }
         }
+        // A bundle can declare native low as its Off rail. Preserve old saved
+        // selections when discovery replaces the native effort list with modes.
+        if let effort = persisted["reasoningEffort"]?.stringValue,
+            let mode = DeclaredReasoningEffort.mode(
+                forNativeEffort: effort, control: DeclaredReasoningEffort.control(forModelId: modelId)),
+            allowedSegmentValues["reasoningEffort"]?.contains(mode) == true
+        {
+            persisted["reasoningEffort"] = .string(mode)
+        }
         // An explicit Off from the older toggle remains Off when asynchronous
         // bundle discovery replaces it with an effort picker. Do not convert
         // an absent choice into a default or invent an unsupported direct rail.
@@ -426,10 +445,13 @@ enum ModelProfileRegistry {
 // MARK: - DSV4 Reasoning Profile
 
 /// DeepSeek-V4 / DSV4 Flash JANG bundles use vmlx's dedicated DSV4 encoder
-/// rather than a generic `enable_thinking`-only Jinja path. The runtime has
-/// four intentional modes:
+/// rather than a generic `enable_thinking`-only Jinja path. For DSV4-0731 the
+/// runtime has four intentional modes:
 /// - instruct: compatibility id for the direct/off rail (`enable_thinking=false`)
 /// - low/high/max: exact 0731 reasoning-effort values passed through to vmlx
+///
+/// DeepSeek-V4.1 names match ``DSV41ReasoningProfile`` first (registered
+/// ahead of this profile), which offers V4.1's full effort ladder.
 ///
 /// The bundle default is low. The default below is display-only; Osaurus does
 /// not synthesize it into requests, so bundle metadata remains authoritative.
@@ -466,6 +488,55 @@ struct DSV4ReasoningProfile: ModelProfile {
             return value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         default:
             return nil
+        }
+    }
+}
+
+/// DeepSeek-V4.1 bundles (`model_type=deepseek_v41`) render a numeric
+/// `Reasoning Effort: N` line, and vmlx's encoder
+/// (`DeepseekV4ChatEncoder.reasoningBudget`) maps the named ladder onto it:
+/// low 50, medium 62, high 75, xhigh 88, max 100 (`minimal` 25). Off is the
+/// direct chat rail (`enable_thinking=false`, no effort line), stored as
+/// `instruct` like DSV4-0731 so saved choices keep working; `none` and the
+/// other off aliases normalize to it. The V4.1 default budget is 50 (low);
+/// the default below is display-only and never synthesized into requests.
+struct DSV41ReasoningProfile: ModelProfile {
+    static let displayName = "DeepSeek-V4.1 Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        ModelFamilyNames.isDSV41Family(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Mode"),
+            icon: "brain.head.profile",
+            kind: .segmented([
+                ModelOptionSegment(id: "instruct", label: L("Off")),
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "xhigh", label: L("Extra High")),
+                ModelOptionSegment(id: "max", label: L("Max")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("low")
+    ]
+
+    /// The V4.1 named efforts, plus the shared off aliases mapped to
+    /// `instruct`. Nil for anything else (numeric budgets, `minimal`), which
+    /// the adapter forwards unchanged for vmlx's encoder to resolve.
+    static func normalizedEffort(_ value: String) -> String? {
+        let lowered = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch lowered {
+        case "low", "medium", "high", "xhigh", "max":
+            return lowered
+        default:
+            return DSV4ReasoningProfile.normalizedEffort(lowered) == "instruct" ? "instruct" : nil
         }
     }
 }
@@ -520,10 +591,11 @@ struct MuseGlimmerReasoningProfile: ModelProfile {
 ///   .officialOpenAIGPT56`) and the live Codex catalog; on custom
 ///   OpenAI-compatible hosts it falls through to the 5.2+ static set, which
 ///   is never assumed to include `max`.
-/// - gpt-6 (Astra): `low` through `max`, no `none` — carried by
-///   `ModelReasoningCapabilities.officialOpenAIGPT6Astra` on the official
-///   route and the live Codex catalog; the static `OpenAIGPT6ReasoningProfile`
-///   offers `low` through `xhigh` on custom hosts.
+/// - gpt-6: Astra and 6.1 Sol `low` through `max`, no `none`
+///   (`officialOpenAIGPT6Astra`); 6 Sol, Terra and Luna `none` through `max`
+///   (`officialOpenAIGPT6WithNone`). Both are official-route profiles beside
+///   the live Codex catalog; the static `OpenAIGPT6ReasoningProfile` offers
+///   `low` through `xhigh` on custom hosts.
 private enum OpenAIModelVersion {
     static func bare(_ modelId: String) -> String {
         modelId.lowercased().split(separator: "/").last.map(String.init)

@@ -27,12 +27,20 @@ memory: # cross-chat conversation memory
   budget_tokens: 1200 # 100..4000
   retention_days: 365 # 0..3650 (0 = forever)
 
+harness_runtimes: # external agent harnesses (Agents → Runtimes); HIGH RISK: runs a local program
+  - name: Pi
+    kind: pi_rpc # claude_code | pi_rpc; immutable after create
+    executable: pi # command on PATH, or a path
+    arguments: ["--mode", "rpc", "--session-id", "{chat_id}"] # {chat_id} {agent_id} {cwd} {system_prompt_file}
+    environment: {} # plain values only — never secrets
+
 default_agent: # the built-in Default agent (the Orchestrator)
   name: null # custom display name; null = "Osaurus"
   model: foundation # "foundation", local id, or "<provider>/<model>"
   temperature: 0.7 # 0..2 or null
   max_tokens: null # null = automatic
   system_prompt: "You are a friendly, concise assistant."
+  runtime: builtin # "builtin" or a harness_runtimes name
 
 new_chat_agent: default # which agent NEW chats open with: "default" or a custom agent's name
 
@@ -56,6 +64,23 @@ agents: # custom agents (never the Default agent)
       # calendar | reminders | contacts | notes | mail | messages | maps | music | shortcuts
       # (mail / messages / shortcuts act on your behalf — the plan card flags them)
       relay_enabled: false # HIGH RISK: reachable from outside
+    tools: # per-agent tool selection
+      mode: manual # auto = RAG-picked, manual = only `enabled`
+      enabled: [get_current_time, web_search] # MCP/plugin tools go under mcp_servers / plugins
+    mcp_servers: # MCP server NAMES
+      enabled: []
+      disabled: []
+    plugins: # plugin registry ids
+      enabled: []
+    sandbox: # autonomous code execution sandbox
+      enabled: true
+      network_enabled: true
+      allowed_domains: [] # empty = unrestricted
+    subagents: # per-agent delegation
+      enabled: false
+      agents: [] # agent NAMES this agent may spawn
+      models: [] # raw model ids for spawn_model
+    working_folder: null # folder PATH hint; the apply asks the user when it is missing
 
 tools: # global tool enablement / permission policies
   enabled:

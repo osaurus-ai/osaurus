@@ -158,7 +158,6 @@ struct ModelSSDResidencyTests {
 
     @Test("Full compute estimates preserve advisory Safe Auto and explicit Strict admission")
     func fullComputeEstimateKeepsSelectedMemorySafetyContract() {
-        #expect(LoadConfiguration.osaurusProduction.jangPress == .disabled)
         var facts = LoadBundleFacts(
             totalSafetensorsBytes: 94_572_043_640,
             isRouted: true,

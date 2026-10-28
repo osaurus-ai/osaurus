@@ -153,6 +153,15 @@ enum ModelFamilyNames {
         return matches(#"(^|/)deepseek[\-_]flash($|[\-_/\.])"#, in: lower)
     }
 
+    /// DeepSeek-V4.1 bundles (`model_type=deepseek_v41`): `DeepSeek-V4.1-Flash-…`,
+    /// `dsv41-…`, `dsv4.1-…`. A subset of ``isDSV4Family(_:)`` names that never
+    /// matches DSV4-0731 (`DeepSeek-V4-Flash-0731-…`).
+    static func isDSV41Family(_ modelId: String) -> Bool {
+        matches(
+            #"(^|/|[\-_])(dsv4[\._]?1|deepseek[\-_]?v4[\._]?1)($|[\-_/\.])"#,
+            in: modelId.lowercased())
+    }
+
     /// Nemotron Omni bundles. Match both the long public `Nemotron-3-Nano-Omni`
     /// naming and shorter local picker/API ids like `Nemotron-Omni-Nano`.
     static func isNemotronOmniFamily(_ modelId: String) -> Bool {

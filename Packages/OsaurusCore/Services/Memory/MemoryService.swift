@@ -62,20 +62,36 @@ public actor MemoryService {
 
     private init() {}
 
+    /// Test seam for the distill model call, receiving (prompt, system
+    /// prompt). Nil in production, where `CoreModelService` answers.
+    private var distillGenerateOverride: (@Sendable (String, String) async throws -> String)?
+
+    func setDistillGenerateOverrideForTests(_ override: (@Sendable (String, String) async throws -> String)?) {
+        distillGenerateOverride = override
+    }
+
     // MARK: - Buffer Turn (no LLM)
+
+    public enum TurnProvenance: Sendable, Equatable {
+        case user
+        case delegated
+    }
 
     /// Buffer a conversation turn for later distillation. This is the hot
     /// path for every chat turn — no LLM call, no extraction, no scoring.
     /// The debounce timer is (re)armed; if no new turn arrives within
     /// `summaryDebounceSeconds`, the session is distilled. Switching to a
     /// different conversation flushes the previous session immediately.
+    /// A real delegated ChatSession uses this same tracking path, but its
+    /// captured provenance prevents the agent's words writing user identity.
     public func bufferTurn(
         userMessage: String,
         assistantMessage: String?,
         agentId: String,
         conversationId: String,
         sessionDate: String? = nil,
-        projectId: UUID? = nil
+        projectId: UUID? = nil,
+        provenance: TurnProvenance = .user
     ) async {
         await bufferTurnCore(
             userMessage: userMessage,
@@ -84,7 +100,8 @@ public actor MemoryService {
             conversationId: conversationId,
             sessionDate: sessionDate,
             projectId: projectId,
-            startsSession: true
+            startsSession: true,
+            delegated: provenance == .delegated
         )
     }
 
@@ -108,7 +125,8 @@ public actor MemoryService {
             agentId: agentId,
             conversationId: conversationId,
             sessionDate: sessionDate,
-            startsSession: false
+            startsSession: false,
+            delegated: true
         )
     }
 
@@ -119,7 +137,8 @@ public actor MemoryService {
         conversationId: String,
         sessionDate: String?,
         projectId: UUID? = nil,
-        startsSession: Bool
+        startsSession: Bool,
+        delegated: Bool = false
     ) async {
         // Telemetry intentionally precedes the early-return guards so
         // "attempts" reflects every caller invocation. The diagnostics
@@ -140,6 +159,12 @@ public actor MemoryService {
         }
 
         do {
+            // Record provenance before a signal can become eligible for any
+            // distillation path (including restart recovery). If this fails,
+            // do not enqueue an agent's instructions as the user's words.
+            if delegated {
+                try db.markDelegatedConversation(conversationId)
+            }
             try db.insertPendingSignal(
                 PendingSignal(
                     agentId: agentId,
@@ -881,24 +906,47 @@ public actor MemoryService {
             return Self.iso8601Now()
         }()
 
+        // A delegated session's "user" turns are the delegating agent's
+        // instructions. They are labeled as such for the distiller, and the
+        // session never writes the user's global identity: the replay minted
+        // "User's token is BG_TOKEN_9 within the delegated task context" from
+        // a helper run and injected it into every later request.
+        let delegated: Bool
+        do {
+            delegated = try db.isDelegatedConversation(conversationId)
+        } catch {
+            // Unknown provenance must not be downgraded to user identity.
+            return .error(error.localizedDescription)
+        }
         let prompt = buildDistillPrompt(
             signals: signals,
             identity: identity,
             recentEpisodes: recentEpisodes,
-            sessionDate: resolvedDate
+            sessionDate: resolvedDate,
+            requesterLabel: delegated ? "Delegating agent" : "User"
         )
 
         do {
-            let response = try await CoreModelService.shared.generate(
-                prompt: prompt,
-                systemPrompt: distillSystemPrompt,
-                // Distillation is housekeeping — it runs on ingest and at launch,
-                // unprompted. It must never evict the model the user is chatting
-                // with (or cancel the one they're waiting on) to summarise history.
-                intent: .background,
-                purpose: "memory_distillation"
+            let response: String
+            if let distillGenerateOverride {
+                response = try await distillGenerateOverride(prompt, distillSystemPrompt)
+            } else {
+                response = try await CoreModelService.shared.generate(
+                    prompt: prompt,
+                    systemPrompt: distillSystemPrompt,
+                    // Distillation is housekeeping — it runs on ingest and at launch,
+                    // unprompted. It must never evict the model the user is chatting
+                    // with (or cancel the one they're waiting on) to summarise history.
+                    intent: .background,
+                    purpose: "memory_distillation"
+                )
+            }
+            // Screen once, before the episode / pinned / project-mirror /
+            // identity fan-out, so every sink sees the same distillate.
+            let parsed = MemoryDistillateScreen.screen(
+                parseDistillResponse(response),
+                userMessages: signals.map(\.userMessage)
             )
-            let parsed = parseDistillResponse(response)
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
 
             guard let episode = parsed.episode else {
@@ -1022,8 +1070,10 @@ public actor MemoryService {
 
             // Apply identity delta: the distillation may declare new
             // identity-grade facts. Agent namespace only, so skip it when
-            // the agent isn't building its own memory.
-            if agentMemoryOn, !parsed.identityFacts.isEmpty {
+            // the agent isn't building its own memory, and never from a
+            // delegated session (its requester is an agent, not the user).
+            let identityFactsApplied = agentMemoryOn && !delegated ? parsed.identityFacts.count : 0
+            if identityFactsApplied > 0 {
                 applyIdentityDelta(
                     facts: parsed.identityFacts,
                     currentIdentity: identity,
@@ -1041,7 +1091,7 @@ public actor MemoryService {
                 durationMs: durationMs
             )
             MemoryLogger.service.info(
-                "distill: \(conversationId) → episode #\(episodeId), \(storedPinned) pinned, \(parsed.identityFacts.count) identity facts (\(durationMs)ms)"
+                "distill: \(conversationId) → episode #\(episodeId), \(storedPinned) pinned, \(identityFactsApplied) identity facts\(delegated ? " (delegated session: identity not written)" : "") (\(durationMs)ms)"
             )
 
             await MemoryContextAssembler.shared.invalidateCache(agentId: agentId)
@@ -1049,7 +1099,7 @@ public actor MemoryService {
             return .distilled(
                 episodeId: episodeId,
                 pinned: storedPinned,
-                identityFacts: parsed.identityFacts.count
+                identityFacts: identityFactsApplied
             )
         } catch is CancellationError {
             // Interrupted (app quitting, caller walked away). Not an error
@@ -1379,9 +1429,14 @@ public actor MemoryService {
         "entities" (string array of person/project/place/tool names mentioned), \
         "pinned_candidates" (array of {"content": string, "salience": number 0-1, "tags": string array} for \
         facts worth remembering long-term: explicit user identity facts, strong preferences, decisions the \
-        user clearly committed to. Be conservative — most sessions yield 0-2 candidates.), \
+        user clearly committed to. Be conservative — most sessions yield 0-2 candidates. Restate each fact \
+        in your own words. Never pin a request or instruction the user gave for this session, a task \
+        result, a tool or file output, a value that may change, or a token/nonce produced during the \
+        session; those belong in the episode summary.), \
         "identity_facts" (string array of facts that should appear in the user's identity profile, e.g. \
-        "User's name is X" or "User works at Y". Empty when nothing identity-relevant came up.). \
+        "User's name is X" or "User works at Y", only when the user actually stated them. Never write a \
+        placeholder such as "not specified" or "no facts found", and never describe what the user did in \
+        this session. Use an empty array when nothing identity-relevant came up.). \
         Salience scoring: 0.9+ = critical identity/decision, 0.6-0.8 = clear preference, \
         0.3-0.5 = casual mention, <0.3 = transient chitchat. \
         Do NOT invent facts. Use only what the conversation actually contains.
@@ -1391,7 +1446,8 @@ public actor MemoryService {
         signals: [PendingSignal],
         identity: Identity,
         recentEpisodes: [Episode],
-        sessionDate: String
+        sessionDate: String,
+        requesterLabel: String = "User"
     ) -> String {
         var prompt = "Conversation date: \(sessionDate)\n\n"
 
@@ -1432,7 +1488,7 @@ public actor MemoryService {
             if omittedCount > 0, i == headCount {
                 prompt += "\n[... \(omittedCount) middle turn(s) omitted to fit the core model's context ...]\n"
             }
-            prompt += "\nUser: \(Self.clampTurnText(signal.userMessage))"
+            prompt += "\n\(requesterLabel): \(Self.clampTurnText(signal.userMessage))"
             if let asst = signal.assistantMessage {
                 prompt += "\nAssistant: \(Self.clampTurnText(asst))"
             }

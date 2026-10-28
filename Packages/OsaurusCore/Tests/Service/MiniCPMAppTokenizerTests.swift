@@ -10,6 +10,15 @@ import Testing
 /// A byte-level tokenizer fixture requires no model bundle or weights on CI.
 @Suite(.serialized)
 struct MiniCPMAppTokenizerTests {
+    private static var actualBundleDirectory: URL {
+        // Honor the same explicit model root as the isolated app harness.
+        // An empty fixture root must not reach a user's unrelated bundles.
+        let root = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"].map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        } ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("models")
+        return root.appendingPathComponent("OsaurusAI/MiniCPM5-2B-JANG_8M")
+    }
+
     private static let nativeTemplate = #"""
         {% if tools %}{{ '<function name="example"><param name="value"><![CDATA[x]]></param></function>\n' }}{% endif %}
         {% for m in messages %}{{ '<|im_start|>' + m.role + '\n' + m.content + '<|im_end|>\n' }}{% endfor %}
@@ -115,14 +124,13 @@ struct MiniCPMAppTokenizerTests {
     @Test(
         .enabled(
             if: FileManager.default.fileExists(
-                atPath: FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent("models/OsaurusAI/MiniCPM5-2B-JANG_8M/tokenizer.json").path
+                atPath: MiniCPMAppTokenizerTests.actualBundleDirectory
+                    .appendingPathComponent("tokenizer.json").path
             )
         )
     )
     func actualBundleUsesAppLoaderWithNativeToolsAndTails() async throws {
-        let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("models/OsaurusAI/MiniCPM5-2B-JANG_8M")
+        let directory = Self.actualBundleDirectory
         let tokenizer = try await SwiftTransformersTokenizerLoader().load(
             from: JangLoader.resolveChatTemplateSidecarSubstitution(for: directory)
         )

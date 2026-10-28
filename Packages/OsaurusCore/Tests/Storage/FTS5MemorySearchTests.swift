@@ -261,10 +261,13 @@ struct FTS5MemorySearchTests {
     func querySanitizerStripsSQLOperators() {
         // Terms are quoted, prefix-matched, and OR-joined; operator-ish
         // characters embedded by the user become safe literal tokens.
+        // "AND"/"OR" are also function words, so they drop out of a query
+        // that has content words (see `FTSQueryTerms`); NEAR stays literal.
         #expect(
-            MemoryDatabase.ftsMatchQuery("foo AND bar OR baz")
-                == "\"foo\"* OR \"AND\"* OR \"bar\"* OR \"OR\"* OR \"baz\"*"
+            MemoryDatabase.ftsMatchQuery("foo AND bar OR baz NEAR qux")
+                == "\"foo\"* OR \"bar\"* OR \"baz\"* OR \"NEAR\"* OR \"qux\"*"
         )
+        #expect(MemoryDatabase.ftsMatchQuery("AND OR") == "\"AND\"* OR \"OR\"*")
         #expect(MemoryDatabase.ftsMatchQuery("(rm -rf /)") == "\"rm\"* OR \"-rf\"*")
         #expect(MemoryDatabase.ftsMatchQuery("\u{0}\"NEAR\"") == "\"NEAR\"*")
         #expect(MemoryDatabase.ftsMatchQuery("   ") == nil)

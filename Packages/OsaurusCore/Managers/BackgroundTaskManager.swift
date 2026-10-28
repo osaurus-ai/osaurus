@@ -999,6 +999,12 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
+        do { try request.generationOverrides?.validate(forWorkspaceAgent: request.workspaceTarget != nil) }
+        catch {
+            print("[BackgroundTaskManager] Invalid generation controls: \(error.localizedDescription)")
+            return nil
+        }
+
         // A teammate's shared workspace agent runs on THEIR Mac: the local
         // built-in-agent guard, per-agent tool grants and DB run logging
         // don't apply, and the run must be refused up front (offline host,
@@ -1251,7 +1257,15 @@ public final class BackgroundTaskManager: ObservableObject {
                             await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
                                 await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
                                     await residencyContext.run {
-                                        await context.start(prompt: request.prompt)
+                                        await ChatExecutionContext.$inferenceSourceOverride.withValue(request.inferenceSourceOverride) {
+                                            if let startFailure = await context.start(prompt: request.prompt, taskIntent: request.taskIntent, generationOverrides: request.generationOverrides) {
+                                                // A rejected start never flips isStreaming. Complete this
+                                                // registered task explicitly rather than waiting forever
+                                                // for the ordinary streaming-observed terminal path.
+                                                self.markCompleted(state, success: false, summary: startFailure)
+                                                self.pumpQueue()
+                                            }
+                                        }
                                     }
                                 }
                             }

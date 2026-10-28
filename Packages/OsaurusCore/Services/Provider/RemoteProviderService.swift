@@ -154,7 +154,7 @@ public enum RemoteProviderServiceError: LocalizedError {
 }
 
 /// Service that proxies requests to a remote OpenAI-compatible API provider
-public actor RemoteProviderService: ToolCapableService {
+public actor RemoteProviderService: ToolCapableService, ResponsesGenerationService {
 
     public let provider: RemoteProvider
     private let cachedHeaders: [String: String]
@@ -243,7 +243,8 @@ public actor RemoteProviderService: ToolCapableService {
         provider: RemoteProvider,
         models: [String],
         resolvedHeaders: [String: String],
-        cachedOAuthTokens: RemoteProviderOAuthTokens? = nil
+        cachedOAuthTokens: RemoteProviderOAuthTokens? = nil,
+        urlSession: URLSession? = nil
     ) {
         self.provider = provider
         self.cachedHeaders = resolvedHeaders
@@ -268,7 +269,7 @@ public actor RemoteProviderService: ToolCapableService {
             config.timeoutIntervalForRequest = max(provider.timeout, 300)
             config.timeoutIntervalForResource = max(provider.timeout * 2, 600)
         }
-        self.session = GlobalProxySettings.makeSession(base: config)
+        self.session = urlSession ?? GlobalProxySettings.makeSession(base: config)
     }
 
     /// Minimum timeout for image generation models (5 minutes).
@@ -733,6 +734,51 @@ public actor RemoteProviderService: ToolCapableService {
             toolChoice: nil
         )
         return PrivacyFilterPipeline.wrapInboundStream(inner, map: redactionMap)
+    }
+
+    /// Canonical remote entry. Native Responses remains native through the
+    /// authenticated SSE parser; other configured protocols use their named
+    /// compatibility adapter, never an automatic replay after output.
+    func streamResponses(
+        messages: [ChatMessage], parameters: GenerationParameters,
+        stopSequences: [String], tools: [Tool], toolChoice: ToolChoiceOption?, requestedModel: String?
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+        guard let modelName = extractModelName(requestedModel) else { throw RemoteProviderServiceError.noModelsAvailable }
+        let responsesNative = provider.providerType == .openResponses || provider.providerType == .openAICodex
+        let native = responsesNative || provider.providerType == .anthropic
+        if !responsesNative { try RemoteResponsesCapabilityFallback.validatePortableOptions(parameters.responsesProviderOptions, providerType: provider.providerType) }
+        let (prepared, map) = try await applyPrivacyOutbound(messages: messages, parameters: parameters)
+        if !native, provider.providerType == .gemini, Self.isImageCapableModel(modelName) {
+            let legacy = try await geminiImageGenerateContent(messages: prepared, parameters: parameters,
+                model: modelName, stopSequences: stopSequences, tools: tools.isEmpty ? nil : tools, toolChoice: toolChoice)
+            return ResponsesGenerationStream.compatibility(PrivacyFilterPipeline.wrapInboundStream(legacy, map: map))
+        }
+        let pair = AsyncThrowingStream<ResponsesGenerationEvent, Error>.makeStream()
+        let nativeStream: (any RemoteNativeStreamConsumer)?
+        if responsesNative { nativeStream = RemoteResponsesNativeStream { pair.continuation.yield($0) } }
+        else if provider.providerType == .anthropic { nativeStream = RemoteAnthropicNativeStream { pair.continuation.yield($0) } }
+        else { nativeStream = nil }
+        let legacy = try await _streamRemote(modelName: modelName, messages: prepared, parameters: parameters,
+            stopSequences: stopSequences, tools: tools.isEmpty ? nil : tools, toolChoice: toolChoice,
+            nativeResponses: nativeStream)
+        let task = Task {
+            do {
+                // Native parser emits directly. In an explicit compatibility
+                // route the older provider boundary is decoded once here.
+                let compatible = ResponsesGenerationStream.compatibility(legacy)
+                for try await event in compatible {
+                    try Task.checkCancellation()
+                    if nativeStream?.observed != true { pair.continuation.yield(event) }
+                }
+                if let nativeStream, nativeStream.observed {
+                    guard nativeStream.completed else { throw ResponsesGenerationResult.CollectionError.missingCompletion }
+                    pair.continuation.yield(.compatibilityStreamClosed)
+                }
+                pair.continuation.finish()
+            } catch { pair.continuation.finish(throwing: error) }
+        }
+        pair.continuation.onTermination = { _ in task.cancel() }
+        return RemoteResponsesPrivacyStream.wrap(pair.stream, map: map)
     }
 
     // MARK: - ToolCapableService Protocol
@@ -1963,6 +2009,28 @@ public actor RemoteProviderService: ToolCapableService {
     /// - Azure OpenAI Foundry: same OpenAI request schema.
     /// - OpenRouter: forwards `prompt_cache_key` to OpenAI-backed models and
     ///   ignores it elsewhere.
+    /// Whether a Responses request should ask for `reasoning.summary` even
+    /// when no effort was picked. Without it the Responses API returns only
+    /// encrypted reasoning and the reasoning panel stays empty at the model's
+    /// default effort. ChatGPT/Codex follows the live catalog's
+    /// `supports_reasoning_summaries`; the official API covers its reasoning
+    /// model families. Custom hosts never get it.
+    static func requestsReasoningSummary(providerType: RemoteProviderType, host: String, model: String) -> Bool {
+        switch providerType {
+        case .openAICodex:
+            return OpenAICodexOAuthService.modelMetadata(forSlug: model)?.supportsReasoningSummaries
+                ?? OpenAIReasoningProfile.matches(modelId: model)
+        case .openResponses:
+            let normalizedHost = host.lowercased()
+            // `gpt-5-chat-latest` and friends share the prefix but don't reason.
+            return (normalizedHost == "api.openai.com" || normalizedHost.hasSuffix(".openai.com"))
+                && OpenAIReasoningProfile.matches(modelId: model)
+                && !model.lowercased().contains("-chat")
+        default:
+            return false
+        }
+    }
+
     static func supportsPromptCacheKey(providerType: RemoteProviderType, host: String) -> Bool {
         switch providerType {
         case .osaurusRouter, .azureOpenAI:
@@ -2173,6 +2241,9 @@ public actor RemoteProviderService: ToolCapableService {
                 current.args += jsonDelta.partial_json
                 state.accumulatedToolCalls[idx] = current
                 yield(StreamingToolHint.encodeArgs(jsonDelta.partial_json))
+            } else if case .thinkingDelta(let thinkingDelta) = deltaEvent.delta, !thinkingDelta.thinking.isEmpty {
+                // Summarized thinking goes to the Think panel, not the answer.
+                yield(StreamingReasoningHint.encode(thinkingDelta.thinking))
             }
 
         case "content_block_start":
@@ -2422,7 +2493,7 @@ public actor RemoteProviderService: ToolCapableService {
                         )
                     if current.args.isEmpty { current.args = funcCall.arguments }
                     state.accumulatedToolCalls[idx] = current
-                case .reasoning, .message:
+                case .reasoning, .message, .raw:
                     break
                 }
             }
@@ -2808,7 +2879,8 @@ public actor RemoteProviderService: ToolCapableService {
         parameters: GenerationParameters,
         stopSequences: [String],
         tools: [Tool]?,
-        toolChoice: ToolChoiceOption?
+        toolChoice: ToolChoiceOption?,
+        nativeResponses: (any RemoteNativeStreamConsumer)? = nil
     ) async throws -> AsyncThrowingStream<String, Error> {
         var request = buildChatRequest(
             messages: messages,
@@ -2822,9 +2894,23 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         try await refreshXAIOAuthIfNeeded()
-        let urlRequest = try await buildURLRequest(for: request)
+        let initialURLRequest = try await buildURLRequest(for: request)
+        let configuredType = provider.providerType
+        let capabilityFallback: (@Sendable () async throws -> URLRequest)?
+        if configuredType == .openResponses {
+            let fallbackRequest = request
+            capabilityFallback = { @Sendable [weak self, fallbackRequest] in
+                guard let self else { throw CancellationError() }
+                try RemoteResponsesCapabilityFallback.validatePortableOptions(parameters.responsesProviderOptions)
+                var fallback = fallbackRequest
+                fallback.streamOptions = StreamOptions(include_usage: true)
+                return try await self.buildURLRequest(for: fallback, providerTypeOverride: .openaiLegacy)
+            }
+        } else {
+            capabilityFallback = nil
+        }
         let currentSession = self.session
-        let providerType = Self.effectiveRequestProviderType(
+        let initialProviderType = Self.effectiveRequestProviderType(
             configuredProviderType: self.provider.providerType,
             request: request
         )
@@ -2833,28 +2919,28 @@ public actor RemoteProviderService: ToolCapableService {
         // producer, and the SSE response is decrypted frame-by-frame before
         // the line parser. No downgrade path — if the peer can't handshake,
         // the user-facing SecureChannelClientError says to upgrade it.
-        let secureProvider = providerType == .osaurus ? self.provider : nil
+        let secureProvider = initialProviderType == .osaurus ? self.provider : nil
         let inactivityTimeout = self.streamInactivityTimeout
         let toolList = tools ?? []
         Self.routerStreamDebug(
-            providerType: providerType,
-            "request model=\(modelName) url=\(urlRequest.url?.absoluteString ?? "nil") stream=\(request.stream) tools=\(toolList.count) bodyBytes=\(urlRequest.httpBody?.count ?? 0)"
+            providerType: initialProviderType,
+            "request model=\(modelName) url=\(initialURLRequest.url?.absoluteString ?? "nil") stream=\(request.stream) tools=\(toolList.count) bodyBytes=\(initialURLRequest.httpBody?.count ?? 0)"
         )
         // Only the with-tools path needs accumulated text for the inline
         // tool-call fallback; streamDeltas has no tools, so skip the
         // memory cost of growing a 100% unused buffer.
         let trackContent = !toolList.isEmpty
         let initialRouterDiagnostics =
-            providerType == .osaurusRouter
+            initialProviderType == .osaurusRouter
             ? RouterStreamDiagnostics(
                 request: request,
-                urlRequest: urlRequest,
+                urlRequest: initialURLRequest,
                 toolNames: toolList.map(\.function.name),
-                providerType: providerType
+                providerType: initialProviderType
             )
             : nil
         let recoverableRequestContainsImageInput =
-            providerType == .osaurusRouter
+            initialProviderType == .osaurusRouter
             && request.messages.contains { !$0.imageUrls.isEmpty }
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
@@ -2875,6 +2961,9 @@ public actor RemoteProviderService: ToolCapableService {
         let liveTaskBox = LiveURLSessionTaskBox()
 
         let producerTask = Task.detached {
+            var urlRequest = initialURLRequest
+            var providerType = initialProviderType
+            var usedCapabilityFallback = false
             var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
             state.requireCompleteOutput = parameters.requireCompleteOutput
             state.routerDiagnostics = initialRouterDiagnostics
@@ -2982,6 +3071,17 @@ public actor RemoteProviderService: ToolCapableService {
                         for try await byte in bytes {
                             errorData.append(byte)
                         }
+                        probe?.recordAttempt(request: urlRequest, statusCode: httpResponse.statusCode, accepted: false)
+                        if !usedCapabilityFallback, providerType == .openResponses,
+                            let capabilityFallback,
+                            RemoteResponsesCapabilityFallback.isUnsupportedEndpoint(status: httpResponse.statusCode,
+                                body: errorData, endpoint: urlRequest.url)
+                        {
+                            urlRequest = try await capabilityFallback()
+                            providerType = .openaiLegacy
+                            usedCapabilityFallback = true
+                            continue connectLoop
+                        }
                         // Server restarted and forgot the session — drop the
                         // cached keys, re-handshake, retry once.
                         if let secureProvider, attempt == 1,
@@ -3078,6 +3178,7 @@ public actor RemoteProviderService: ToolCapableService {
                         secureDecoder = SecureFrameStreamDecoder(opener: secureOpener)
                     }
 
+                    probe?.recordAttempt(request: urlRequest, statusCode: httpResponse.statusCode, accepted: true)
                     connectedBytes = bytes
                     routerStreamConnected = true
                     // Expose the live task so `onTermination` can hard-cancel
@@ -3179,6 +3280,10 @@ public actor RemoteProviderService: ToolCapableService {
                         if providerType == .osaurusRouter {
                             routerEventCount += 1
                         }
+                        if let nativeResponses, providerType == .openResponses || providerType == .openAICodex || providerType == .anthropic {
+                            if try nativeResponses.consume(dataContent) { continuation.finish(); return }
+                            continue
+                        }
                         if Self.processEventPayload(
                             dataContent,
                             state: &state,
@@ -3198,7 +3303,9 @@ public actor RemoteProviderService: ToolCapableService {
                             if providerType == .osaurusRouter {
                                 routerEventCount += 1
                             }
-                            if Self.processEventPayload(
+                            if let nativeResponses, providerType == .openResponses || providerType == .openAICodex || providerType == .anthropic {
+                                if try nativeResponses.consume(dataContent) { continuation.finish(); return }
+                            } else if Self.processEventPayload(
                                 dataContent,
                                 state: &state,
                                 providerType: providerType,
@@ -3212,6 +3319,11 @@ public actor RemoteProviderService: ToolCapableService {
                     }
                 }
 
+                if let nativeResponses, providerType == .openResponses || providerType == .openAICodex || providerType == .anthropic {
+                    guard nativeResponses.completed else { throw ResponsesGenerationResult.CollectionError.missingCompletion }
+                    continuation.finish()
+                    return
+                }
                 // Stream ended naturally without a finish marker.
                 Self.routerStreamDebug(
                     providerType: providerType,
@@ -3303,11 +3415,35 @@ public actor RemoteProviderService: ToolCapableService {
         let reasoningOff = reasoningPolicy.reasoningOffControls(
             disableThinking: RemoteReasoningPolicy.requestsReasoningOff(parameters.modelOptions))
         let thinking = effortThinking ?? reasoningOff.thinking
+        let isAgentRun = parameters.runAsRemoteAgent
+        let maxTokens = Self.remoteChatMaxTokens(providerType: provider.providerType, parameters: parameters)
+        // Native Anthropic: the provider's Models API contract decides the
+        // `thinking` / `output_config.effort` fields (see
+        // `AnthropicReasoningContract`). Read the raw picker value because the
+        // generic effort translation strips the Off (`none`) id.
+        let anthropicCapabilities =
+            provider.providerType == .anthropic
+            ? AnthropicModelCatalog.info(providerId: provider.id, modelId: model)?.capabilities : nil
+        let anthropicReasoning: AnthropicReasoningContract.WireControls? =
+            provider.providerType == .anthropic && !isAgentRun
+            ? AnthropicReasoningContract.wireControls(
+                capabilities: anthropicCapabilities,
+                effort: RemoteReasoningPolicy.requestsReasoningOff(parameters.modelOptions)
+                    ? AnthropicReasoningContract.offLevelId
+                    : parameters.modelOptions["reasoningEffort"]?.stringValue,
+                maxTokens: maxTokens ?? RemoteChatRequest.anthropicFallbackMaxTokens
+            )
+            : nil
         // DeepSeek thinking mode rejects forced tool choices (HTTP 400
         // "Thinking mode does not support this tool_choice"); downgrade
         // `.required`/`.function` to `.auto` there. See
         // `RemoteReasoningPolicy.sanitizedToolChoice`.
-        let wireToolChoice = reasoningPolicy.sanitizedToolChoice(toolChoice, thinking: thinking)
+        let wireToolChoice = parameters.responsesProviderOptions?.toolChoice.map(RemoteResponsesCapabilityFallback.portableChoice)
+            ?? reasoningPolicy.sanitizedToolChoice(
+                toolChoice,
+                thinking: thinking,
+                manualAnthropicThinking: anthropicReasoning?.isManualThinking == true
+            )
         if let toolChoice, wireToolChoice != toolChoice {
             debugLog(
                 "[RemoteProviderService] tool_choice \(toolChoice) downgraded to "
@@ -3344,19 +3480,13 @@ public actor RemoteProviderService: ToolCapableService {
         // defaults and silently overrides the agent's native
         // `generation_config.json` (faithfulness regression). `model` is passed
         // through for Mode 1 and for local reasoning-profile checks only.
-        let isAgentRun = parameters.runAsRemoteAgent
         var request = RemoteChatRequest(
             model: model,
             messages: messages,
             // Reasoning models (o1, gpt-5) forbid temperature/top_p when reasoning is active as inferred from
             // https://community.openai.com/t/gpt-5-nano-accepted-parameters/1355086/2
             temperature: isAgentRun ? nil : (isReasoningModel ? nil : parameters.temperature),
-            max_completion_tokens: isAgentRun
-                ? nil
-                : Self.remoteChatMaxTokens(
-                    providerType: provider.providerType,
-                    parameters: parameters
-                ),
+            max_completion_tokens: isAgentRun ? nil : maxTokens,
             stream: stream,
             top_p: isAgentRun ? nil : (isReasoningModel ? nil : parameters.topPOverride),
             // Forward the raw OpenAI penalties — most upstream OpenAI-
@@ -3386,6 +3516,13 @@ public actor RemoteProviderService: ToolCapableService {
             idempotencyKey: provider.providerType == .osaurusRouter
                 ? (parameters.idempotencyKey ?? "auto-\(UUID().uuidString)") : nil
         )
+        request.anthropicReasoning = anthropicReasoning
+        request.anthropicAcceptsSamplerKnobs =
+            provider.providerType == .anthropic
+            ? AnthropicReasoningContract.acceptsSamplerKnobs(anthropicCapabilities) : nil
+        request.requestsReasoningSummary =
+            !isAgentRun
+            && Self.requestsReasoningSummary(providerType: provider.providerType, host: provider.host, model: model)
 
         // Workspace-billed inference (router only). Precedence:
         // 1. An explicit `workspaceBillingContext` bound by the HTTP agent-run
@@ -3456,14 +3593,37 @@ public actor RemoteProviderService: ToolCapableService {
         // Anthropic has no faithful equivalent — its `output_config.format`
         // requires a strict json_schema, which schema-free json_object mode
         // can't provide (documented in docs/REMOTE_PROVIDERS.md).
+        // Canonical signed Int seeds use a UInt64 bit pattern in the local
+        // sampler. Recover that same signed value on remote wires (including -1).
+        request.seed = parameters.seed.map { Int(truncatingIfNeeded: $0) }
+        request.repetition_penalty = parameters.repetitionPenalty
         if !isAgentRun {
-            request.seed = parameters.seed.flatMap { Int(exactly: $0) }
-            if parameters.jsonMode {
+            if let format = parameters.responsesProviderOptions?.text?.format {
+                request.response_format = ResponseFormat(type: format.type, json_schema: format.schema.map {
+                    ResponseJSONSchema(name: format.name ?? "", description: format.description, schema: $0, strict: format.strict)
+                })
+            } else if parameters.jsonMode {
                 request.response_format = ResponseFormat(type: "json_object")
             }
         }
+        request.responsesProviderOptions = parameters.responsesProviderOptions
         request.runAsRemoteAgent = parameters.runAsRemoteAgent
-        if !isAgentRun { request.chat_template_kwargs = reasoningOff.templateKwargs }
+        if !isAgentRun {
+            request.top_k = parameters.topKOverride
+            request.min_p = parameters.minPOverride
+            var kwargs = reasoningOff.templateKwargs?.mapValues(JSONValue.bool) ?? [:]
+            kwargs.merge(parameters.templateKwargs ?? [:]) { _, explicit in explicit }
+            // Match local dispatch precedence when both representations exist.
+            if let disabled = parameters.modelOptions["disableThinking"]?.boolValue {
+                for key in ["enable_thinking", "thinking"] where kwargs[key] != nil {
+                    kwargs[key] = .bool(!disabled)
+                }
+            }
+            if kwargs["reasoning_effort"] != nil, let effortValue {
+                kwargs["reasoning_effort"] = .string(effortValue)
+            }
+            request.chat_template_kwargs = kwargs.isEmpty ? nil : kwargs
+        }
         // Mode 2 against an Osaurus peer: thread the conversation id so the
         // host groups this chat's turns into one history row (see
         // `remoteAgentSessionId`).
@@ -3796,12 +3956,16 @@ public actor RemoteProviderService: ToolCapableService {
     /// `internal` (not `private`) so the Mode 2 defense-in-depth guard — a
     /// `runAsRemoteAgent` request against a non-`.osaurus` provider must throw
     /// rather than POST `/chat/completions` — can be asserted directly in tests.
-    func buildURLRequest(for request: RemoteChatRequest) async throws -> URLRequest {
+    func buildURLRequest(for request: RemoteChatRequest, providerTypeOverride: RemoteProviderType? = nil) async throws -> URLRequest {
         let url: URL
-        let requestProviderType = Self.effectiveRequestProviderType(
+        let requestProviderType = providerTypeOverride ?? Self.effectiveRequestProviderType(
             configuredProviderType: provider.providerType,
             request: request
         )
+        try request.validateSamplingExtensions(for: requestProviderType)
+        if requestProviderType != .openResponses && requestProviderType != .openAICodex {
+            try RemoteResponsesCapabilityFallback.validatePortableOptions(request.responsesProviderOptions, providerType: requestProviderType)
+        }
         let usesCodexResponsesLite =
             requestProviderType == .openAICodex
             && OpenAICodexOAuthService.usesResponsesLite(modelId: request.model)
@@ -3970,6 +4134,20 @@ public actor RemoteProviderService: ToolCapableService {
         // tool-heavy payloads) for zero wire benefit.
         let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: false)
 
+        if (requestProviderType == .anthropic || requestProviderType == .gemini
+            || requestProviderType == .openAICodex),
+            request.chat_template_kwargs?.isEmpty == false
+        {
+            throw RemoteProviderServiceError.unsupportedParameter(
+                "This provider protocol cannot represent chat_template_kwargs. Use an OpenAI-compatible or compatible Responses endpoint."
+            )
+        }
+        if (requestProviderType == .anthropic || requestProviderType == .gemini), request.min_p != nil {
+            throw RemoteProviderServiceError.unsupportedParameter("This provider protocol cannot represent min_p.")
+        }
+        if requestProviderType == .openAICodex, request.top_k != nil || request.min_p != nil {
+            throw RemoteProviderServiceError.unsupportedParameter("This provider protocol cannot represent top_k or min_p.")
+        }
         var bodyData: Data
         switch requestProviderType {
         case .anthropic:
@@ -4054,7 +4232,7 @@ public actor RemoteProviderService: ToolCapableService {
         // probe (only the first write wins) so request retries
         // don't stomp the original snapshot. No-op when no probe
         // is set (every non-chatUI path).
-        WireTransportProbe.current?.recordRequestBody(bodyData)
+        WireTransportProbe.current?.recordRequestBody(bodyData, endpointURL: urlRequest.url)
         return urlRequest
     }
 
@@ -4131,7 +4309,8 @@ public actor RemoteProviderService: ToolCapableService {
                     reasoning_content: base.reasoning_content,
                     reasoning_item_id: base.reasoning_item_id,
                     reasoning_encrypted: base.reasoning_encrypted,
-                    responses_output_items: base.responses_output_items
+                    responses_output_items: base.responses_output_items,
+                    anthropic_thinking_blocks: base.anthropic_thinking_blocks
                 )
             } else {
                 indexByCallId[callId] = result.count
@@ -4245,7 +4424,8 @@ public actor RemoteProviderService: ToolCapableService {
                 reasoning_content: source.reasoning_content,
                 reasoning_item_id: source.reasoning_item_id,
                 reasoning_encrypted: source.reasoning_encrypted,
-                responses_output_items: source.responses_output_items
+                responses_output_items: source.responses_output_items,
+                anthropic_thinking_blocks: source.anthropic_thinking_blocks
             )
         }
 
@@ -4410,7 +4590,8 @@ public actor RemoteProviderService: ToolCapableService {
             reasoning_content: message.reasoning_content,
             reasoning_item_id: message.reasoning_item_id,
             reasoning_encrypted: message.reasoning_encrypted,
-            responses_output_items: message.responses_output_items
+            responses_output_items: message.responses_output_items,
+            anthropic_thinking_blocks: message.anthropic_thinking_blocks
         )
     }
 
@@ -4535,6 +4716,8 @@ public actor RemoteProviderService: ToolCapableService {
                 switch block {
                 case .text(_, let text):
                     textContent += text
+                case .thinking, .redactedThinking:
+                    continue
                 case .toolUse(_, let id, let name, let input):
                     // Sorted keys: replayed into next-turn
                     // `tool_calls[].function.arguments`.
@@ -4591,6 +4774,10 @@ public actor RemoteProviderService: ToolCapableService {
                             function: ToolCallFunction(name: funcCall.name, arguments: funcCall.arguments)
                         )
                     )
+                case .raw:
+                    // The original provider JSON is retained by the native
+                    // output-Item hint; no invented visible text projection.
+                    continue
                 case .reasoning:
                     // Reasoning summary text is forwarded via
                     // `StreamingReasoningHint` on the streaming path; in
@@ -4841,7 +5028,10 @@ struct RemoteChatRequest: Encodable {
     /// the chat template. Only set when reasoning is explicitly turned off
     /// and the host is not a strict hosted schema (see
     /// `RemoteReasoningPolicy.reasoningOffControls`).
-    var chat_template_kwargs: [String: Bool]? = nil
+    var chat_template_kwargs: [String: JSONValue]? = nil
+    var top_k: Int? = nil
+    var min_p: Float? = nil
+    var repetition_penalty: Float? = nil
     /// Router-only billing behavior. `false` keeps insufficient-balance
     /// requests explicit (402) instead of silently shrinking the token cap.
     var clamp_to_balance: Bool? = nil
@@ -4879,8 +5069,8 @@ struct RemoteChatRequest: Encodable {
     /// OpenAI deterministic-sampling `seed`. Forwarded from the caller's
     /// request on OpenAI-compatible chat-completions wires (standard field,
     /// unknown-but-ignored elsewhere); Gemini maps it into
-    /// `generationConfig.seed` in `toGeminiRequest`. Anthropic has no seed
-    /// parameter, so it is omitted there. Encoded only when non-nil.
+    /// `generationConfig.seed` in `toGeminiRequest`. Unsupported protocols
+    /// reject an explicit seed before HTTP. Encoded only when non-nil.
     var seed: Int? = nil
     /// OpenAI `response_format` (JSON mode). Set only for
     /// `{type: json_object}` requests; Gemini maps it to
@@ -4911,10 +5101,26 @@ struct RemoteChatRequest: Encodable {
     /// Local-only source conversation key for OpenCode session affinity
     /// (`x-opencode-session`). Intentionally absent from `CodingKeys`.
     var opencodeSessionKey: String? = nil
+    /// Responses-native options are encoded only by the Responses builder.
+    var responsesProviderOptions: ResponsesProviderOptions? = nil
+    /// Native Anthropic `thinking` / `output_config.effort`, resolved from the
+    /// provider's Models API capabilities in `buildChatRequest`. Encoded only
+    /// by `toAnthropicRequest`; absent from `CodingKeys`.
+    var anthropicReasoning: AnthropicReasoningContract.WireControls? = nil
+    /// Native Anthropic sampler-knob support from the Models API catalog
+    /// (`AnthropicReasoningContract.acceptsSamplerKnobs`). Nil when the model
+    /// is uncatalogued; absent from `CodingKeys`.
+    var anthropicAcceptsSamplerKnobs: Bool? = nil
+    /// Responses-only: send `reasoning.summary` even without an effort. Set
+    /// by `buildChatRequest`; absent from `CodingKeys`.
+    var requestsReasoningSummary: Bool = false
+
+    /// `max_tokens` sent to the Messages API when the caller set no cap.
+    static let anthropicFallbackMaxTokens = 4096
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream
-        case top_p, frequency_penalty, presence_penalty, stop, tools, tool_choice
+        case top_p, top_k, min_p, repetition_penalty, frequency_penalty, presence_penalty, stop, tools, tool_choice
         case reasoning_effort
         case reasoning
         case thinking
@@ -4928,6 +5134,7 @@ struct RemoteChatRequest: Encodable {
         case promptCacheKey = "prompt_cache_key"
         case seed
         case response_format
+        case metadata, parallel_tool_calls
     }
 
     func encode(to encoder: Encoder) throws {
@@ -4949,6 +5156,8 @@ struct RemoteChatRequest: Encodable {
             try container.encode(remoteAgentSessionId, forKey: .remoteAgentSessionId)
         }
         try container.encode(messages, forKey: .messages)
+        try container.encodeIfPresent(responsesProviderOptions?.metadata, forKey: .metadata)
+        try container.encodeIfPresent(responsesProviderOptions?.parallelToolCalls, forKey: .parallel_tool_calls)
         try container.encodeIfPresent(temperature, forKey: .temperature)
 
         // OpenAI-compatible endpoints disagree on the token-cap key:
@@ -4973,6 +5182,9 @@ struct RemoteChatRequest: Encodable {
 
         try container.encode(stream, forKey: .stream)
         try container.encodeIfPresent(top_p, forKey: .top_p)
+        try container.encodeIfPresent(top_k, forKey: .top_k)
+        try container.encodeIfPresent(min_p, forKey: .min_p)
+        try container.encodeIfPresent(repetition_penalty, forKey: .repetition_penalty)
         try container.encodeIfPresent(frequency_penalty, forKey: .frequency_penalty)
         try container.encodeIfPresent(presence_penalty, forKey: .presence_penalty)
         try container.encodeIfPresent(stop, forKey: .stop)
@@ -5065,6 +5277,15 @@ struct RemoteChatRequest: Encodable {
                 flushToolResults()
                 // Convert assistant messages, including tool calls
                 var blocks: [AnthropicContentBlock] = []
+                for raw in msg.anthropic_thinking_blocks ?? [] {
+                    let data = try? JSONEncoder.osaurusCanonical().encode(raw)
+                    if let data, let block = try? JSONDecoder().decode(AnthropicContentBlock.self, from: data) {
+                        switch block {
+                        case .thinking, .redactedThinking: blocks.append(block)
+                        default: break
+                        }
+                    }
+                }
 
                 if let content = msg.content, RemoteProviderService.hasMeaningfulText(content) {
                     blocks.append(.text(AnthropicTextBlock(text: content)))
@@ -5175,13 +5396,13 @@ struct RemoteChatRequest: Encodable {
             }
         }
 
-        // The newer adaptive-thinking Claude generations reject sampler knobs
-        // outright — HTTP 400 "`temperature` is deprecated for this model."
-        // (observed live on claude-fable-5 and claude-opus-4-8). Omit them so
-        // the model runs on its native defaults instead of failing the whole
-        // request. Older dated snapshots (claude-sonnet-4-5, claude-haiku-4-5,
-        // …) still accept the knobs, so match only the affected families by
-        // prefix rather than stripping for every Claude model.
+        // The newer Claude generations reject sampler knobs outright — HTTP 400
+        // "`temperature` is deprecated for this model." — even with thinking
+        // off. Omit them so the model runs on its native defaults instead of
+        // failing the whole request. Catalogued models answer from their
+        // Models API capabilities; the prefix list covers uncatalogued ones
+        // (proxies, requests before discovery). Older dated snapshots
+        // (claude-sonnet-4-5, claude-haiku-4-5, …) still accept the knobs.
         let bareModel =
             model.lowercased().split(separator: "/").last.map(String.init)
             ?? model.lowercased()
@@ -5194,24 +5415,27 @@ struct RemoteChatRequest: Encodable {
             "claude-sonnet-5",
             // claude-opus-5 (released 2026-07-24) is an adaptive-thinking
             // model of the same generation as sonnet-5 / fable-5 and shares
-            // their sampler-knob deprecation. Added from the documented
-            // model contract; confirm with a live HTTP 400 trace when an
-            // Anthropic key is available.
+            // their sampler-knob deprecation (confirmed live, as is haiku-5-5).
             "claude-opus-5",
+            "claude-haiku-5",
         ]
-        let deprecatesSamplerKnobs = knobDeprecatingClaudePrefixes.contains {
-            bareModel.hasPrefix($0)
-        }
+        // Thinking is incompatible with temperature/top_k changes on every
+        // Claude model, so an active thinking config drops the knobs too.
+        let thinkingActive = ["adaptive", "enabled"].contains(anthropicReasoning?.thinking?.type ?? "")
+        let deprecatesSamplerKnobs =
+            thinkingActive
+            || anthropicAcceptsSamplerKnobs.map { !$0 }
+                ?? knobDeprecatingClaudePrefixes.contains { bareModel.hasPrefix($0) }
 
         return AnthropicMessagesRequest(
             model: model,
-            max_tokens: max_completion_tokens ?? 4096,
+            max_tokens: max_completion_tokens ?? Self.anthropicFallbackMaxTokens,
             system: systemContent,
             messages: anthropicMessages,
             stream: stream,
             temperature: deprecatesSamplerKnobs ? nil : temperature.map { Double($0) },
             top_p: deprecatesSamplerKnobs ? nil : top_p.map { Double($0) },
-            top_k: nil,
+            top_k: deprecatesSamplerKnobs ? nil : top_k,
             stop_sequences: stop,
             tools: anthropicTools,
             tool_choice: anthropicToolChoice,
@@ -5225,7 +5449,9 @@ struct RemoteChatRequest: Encodable {
             // requests below the model's minimum cacheable length are simply
             // processed uncached. TTL: 1h after a human turn (gap likely),
             // 5m after a tool result (tight loop) — see `forConversation`.
-            cache_control: AnthropicCacheControl.forConversation(lastMessageRole: messages.last?.role)
+            cache_control: AnthropicCacheControl.forConversation(lastMessageRole: messages.last?.role),
+            thinking: anthropicReasoning?.thinking,
+            output_config: anthropicReasoning?.effort.map { AnthropicOutputConfig(effort: $0) }
         )
     }
 
@@ -5420,7 +5646,7 @@ struct RemoteChatRequest: Encodable {
             effort: reasoning_effort
         )
         var generationConfig: GeminiGenerationConfig?
-        if temperature != nil || max_completion_tokens != nil || top_p != nil || stop != nil
+        if temperature != nil || max_completion_tokens != nil || top_p != nil || top_k != nil || stop != nil
             || responseModalities != nil || imageConfig != nil
             || seed != nil || jsonMimeType != nil
             || thinkingConfig != nil
@@ -5429,7 +5655,7 @@ struct RemoteChatRequest: Encodable {
                 temperature: temperature.map { Double($0) },
                 maxOutputTokens: max_completion_tokens,
                 topP: top_p.map { Double($0) },
-                topK: nil,
+                topK: top_k,
                 stopSequences: stop,
                 responseModalities: responseModalities,
                 imageConfig: imageConfig,
@@ -5631,8 +5857,41 @@ struct RemoteChatRequest: Encodable {
         return isStrict(schema)
     }
 
+    /// Reject options that the selected protocol cannot carry before HTTP.
+    /// Compatible Chat/Responses endpoints receive the explicit extensions.
+    func validateSamplingExtensions(for providerType: RemoteProviderType) throws {
+        if let reason = RequestValidator.repetitionPenaltyReason(repetition_penalty) {
+            throw RemoteProviderServiceError.unsupportedParameter(reason)
+        }
+        if runAsRemoteAgent, seed != nil || repetition_penalty != nil {
+            throw RemoteProviderServiceError.unsupportedParameter(
+                "Remote agents own their sampling settings; seed and repetition_penalty overrides are not supported.")
+        }
+        var unsupported: [String] = []
+        if providerType == .anthropic || providerType == .openAICodex {
+            if seed != nil { unsupported.append("seed") }
+        }
+        if providerType == .anthropic || providerType == .gemini || providerType == .openAICodex {
+            if repetition_penalty != nil { unsupported.append("repetition_penalty") }
+        }
+        if !unsupported.isEmpty {
+            throw RemoteProviderServiceError.unsupportedParameter(
+                "This provider protocol cannot represent: \(unsupported.joined(separator: ", ")).")
+        }
+    }
+
     /// Convert to Open Responses API request format
     func toOpenResponsesRequest(alwaysUseInputItems: Bool = false) throws -> OpenResponsesRequest {
+        try validateSamplingExtensions(for: .openResponses)
+        var unsupported: [String] = []
+        if stop?.isEmpty == false { unsupported.append("stop") }
+        if frequency_penalty != nil { unsupported.append("frequency_penalty") }
+        if presence_penalty != nil { unsupported.append("presence_penalty") }
+        guard unsupported.isEmpty else {
+            throw RemoteProviderServiceError.unsupportedParameter(
+                "The Responses protocol does not represent these request options: \(unsupported.joined(separator: ", "))."
+            )
+        }
         var inputItems: [OpenResponsesInputItem] = []
         var instructions: String?
 
@@ -5670,6 +5929,7 @@ struct RemoteChatRequest: Encodable {
                 }
 
             case "user":
+                let firstPreparedItem = inputItems.count
                 // User messages become message input items. Image content
                 // parts translate to `input_image` parts (the Responses API
                 // accepts data URIs in `image_url`). Preserve each image's
@@ -5715,6 +5975,21 @@ struct RemoteChatRequest: Encodable {
                     inputItems.append(
                         .message(OpenResponsesMessageItem(role: "user", content: .parts(parts)))
                     )
+                }
+
+                if inputItems.count > firstPreparedItem,
+                    let preserved = msg.responses_output_items?.first,
+                    case .object(var fields) = preserved,
+                    fields["type"] == .string("message") || fields["type"] == nil,
+                    let rendered = try? JSONEncoder.osaurusCanonical().encode(inputItems[firstPreparedItem]),
+                    case .object(let prepared) = try? JSONDecoder().decode(JSONValue.self, from: rendered)
+                {
+                    // The original JSON contributes identity/future metadata;
+                    // the privacy/media pipeline owns the actual payload.
+                    fields["type"] = .string("message")
+                    fields["role"] = .string("user")
+                    fields["content"] = prepared["content"]
+                    inputItems[firstPreparedItem] = .raw(.object(fields))
                 }
 
             case "assistant":
@@ -5856,13 +6131,14 @@ struct RemoteChatRequest: Encodable {
             input = .items(inputItems)
         }
 
-        let reasoning =
-            reasoning_effort
-            .map {
-                OpenResponsesReasoningConfig(
-                    effort: $0,
-                    summary: "auto"
-                )
+        // A summary-only config leaves effort to the server default.
+        let reasoning: OpenResponsesReasoningConfig? =
+            if let reasoning_effort {
+                OpenResponsesReasoningConfig(effort: reasoning_effort, summary: "auto")
+            } else if requestsReasoningSummary {
+                OpenResponsesReasoningConfig(effort: nil, summary: "auto")
+            } else {
+                nil
             }
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
         let responseText =
@@ -5872,29 +6148,42 @@ struct RemoteChatRequest: Encodable {
             )
             : nil
 
-        return OpenResponsesRequest(
+        var result = OpenResponsesRequest(
             model: model,
             input: input,
             stream: stream,
-            tools: openResponsesTools,
-            tool_choice: openResponsesToolChoice,
+            tools: responsesProviderOptions?.tools ?? openResponsesTools,
+            tool_choice: responsesProviderOptions?.toolChoice ?? openResponsesToolChoice,
             temperature: isReasoningModel ? nil : temperature,
             max_output_tokens: max_completion_tokens,
             top_p: isReasoningModel ? nil : top_p,
             instructions: instructions,
             previous_response_id: nil,
-            metadata: nil,
-            reasoning: reasoning,
-            store: false,
-            include: ["reasoning.encrypted_content"],
-            parallel_tool_calls: openResponsesTools?.isEmpty == false ? true : nil,
+            metadata: responsesProviderOptions?.metadata,
+            reasoning: responsesProviderOptions?.reasoning ?? reasoning,
+            store: responsesProviderOptions?.store ?? false,
+            include: responsesProviderOptions?.include ?? ["reasoning.encrypted_content"],
+            parallel_tool_calls: responsesProviderOptions?.parallelToolCalls
+                ?? ((responsesProviderOptions?.tools ?? openResponsesTools)?.isEmpty == false ? true : nil),
             prompt_cache_key: promptCacheKey,
-            text: responseText
+            text: responsesProviderOptions?.text ?? responseText
         )
+        result.top_k = top_k
+        result.min_p = min_p
+        result.seed = seed
+        result.repetition_penalty = repetition_penalty
+        result.chat_template_kwargs = chat_template_kwargs
+        return result
     }
 
     func toCodexOpenResponsesRequest() throws -> OpenResponsesRequest {
-        try toOpenResponsesRequest(alwaysUseInputItems: true)
+        try validateSamplingExtensions(for: .openAICodex)
+        guard chat_template_kwargs?.isEmpty != false, top_k == nil, min_p == nil else {
+            throw RemoteProviderServiceError.unsupportedParameter(
+                "Codex does not represent chat_template_kwargs, top_k or min_p."
+            )
+        }
+        return try toOpenResponsesRequest(alwaysUseInputItems: true)
     }
 }
 
@@ -6257,6 +6546,21 @@ extension RemoteProviderService {
         if provider.providerType == .openAICodex {
             let models = try await fetchModels(from: provider)
             return (models, OpenAICodexOAuthService.lastContextWindows)
+        }
+        // Anthropic's Models API publishes per-model thinking/effort
+        // capabilities and `max_input_tokens`; keep both for the picker and
+        // the request builder instead of falling back to 128k / no reasoning.
+        if provider.providerType == .anthropic {
+            guard let baseURL = provider.url(for: "/models") else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            let infos = try await fetchAnthropicModelInfos(
+                baseURL: baseURL,
+                headers: await provider.resolvedHeadersOffMainActor(),
+                timeout: min(provider.timeout, 30)
+            )
+            AnthropicModelCatalog.replace(providerId: provider.id, models: infos)
+            return (infos.map(\.id), AnthropicModelCatalog.contextLengths(of: infos))
         }
         // Grok/SuperGrok sign-in models have no live catalog to read windows
         // from (the OAuth token 403s on `/models`), so surface the
@@ -7016,7 +7320,7 @@ extension RemoteProviderService {
         return models
     }
 
-    /// Fetch all models from the Anthropic `/v1/models` endpoint, handling pagination.
+    /// Fetch all model ids from the Anthropic `/v1/models` endpoint, handling pagination.
     ///
     /// Shared between `fetchModels(from:)` and `RemoteProviderManager.testAnthropicConnection`.
     static func fetchAnthropicModels(
@@ -7024,7 +7328,17 @@ extension RemoteProviderService {
         headers: [String: String],
         timeout: TimeInterval = 30
     ) async throws -> [String] {
-        var allModels: [String] = []
+        try await fetchAnthropicModelInfos(baseURL: baseURL, headers: headers, timeout: timeout).map(\.id)
+    }
+
+    /// Like `fetchAnthropicModels` but keeps each entry's capability, context,
+    /// and lifecycle metadata.
+    static func fetchAnthropicModelInfos(
+        baseURL: URL,
+        headers: [String: String],
+        timeout: TimeInterval = 30
+    ) async throws -> [AnthropicModelInfo] {
+        var allModels: [AnthropicModelInfo] = []
         var afterId: String?
 
         while true {
@@ -7055,7 +7369,7 @@ extension RemoteProviderService {
             }
 
             let modelsResponse = try JSONDecoder().decode(AnthropicModelsResponse.self, from: data)
-            allModels.append(contentsOf: modelsResponse.data.map { $0.id })
+            allModels.append(contentsOf: modelsResponse.data)
 
             if modelsResponse.has_more, let lastId = modelsResponse.last_id {
                 afterId = lastId

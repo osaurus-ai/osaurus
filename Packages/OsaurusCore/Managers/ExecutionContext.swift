@@ -230,7 +230,14 @@ public final class ExecutionContext: ObservableObject {
     }
 
     /// Begin execution with the given prompt.
-    public func start(prompt: String) async {
+    @discardableResult
+    public func start(prompt: String, taskIntent: ChatTaskIntent? = nil, generationOverrides: ChatTurnOverrides? = nil) async -> String? {
+        do { try generationOverrides?.validate(forWorkspaceAgent: workspaceTarget != nil) }
+        catch {
+            let message = error.localizedDescription
+            chatSession.lastStreamError = message
+            return message
+        }
         let folderFailure = await activateFolderContextIfNeeded()
         if let folderFailure {
             // The dispatch NAMED a folder and that folder cannot be read.
@@ -240,10 +247,11 @@ public final class ExecutionContext: ObservableObject {
             // of files. The run still executes (the result must reach the
             // watcher log/UI), but the model is told the truth up front so it
             // reports the real problem instead of inventing one.
-            chatSession.send(folderFailure + "\n\n" + prompt)
-            return
+            chatSession.send(folderFailure + "\n\n" + prompt, taskIntent: taskIntent, turnOverrides: generationOverrides)
+            return nil
         }
-        chatSession.send(prompt)
+        chatSession.send(prompt, taskIntent: taskIntent, turnOverrides: generationOverrides)
+        return nil
     }
 
     /// Resolve the stored bookmark onto THIS context's session folder state

@@ -98,6 +98,36 @@ struct ConfigurationToolsGateContractTests {
         #expect(result.contains("Default agent"))
     }
 
+    /// `/mcp/call` binds `harnessTokenAgentId` only after a live agent token
+    /// resolved; the read tools then run for that agent, `osaurus_config`
+    /// still refuses, and a mismatched binding proves nothing.
+    @Test
+    func readTools_runForTheAgentAVerifiedHarnessTokenSpeaksFor() async throws {
+        let agentId = UUID()
+        func run(_ tool: any OsaurusTool, args: String, tokenAgent: UUID?) async throws -> String {
+            try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                try await ChatExecutionContext.$harnessTokenAgentId.withValue(tokenAgent) {
+                    try await tool.execute(argumentsJSON: args)
+                }
+            }
+        }
+
+        let help = try await run(OsaurusHelpTool(), args: #"{"action":"topics"}"#, tokenAgent: agentId)
+        #expect(!help.contains("only available to the Default agent"), "got \(help)")
+        let inspect = try await run(
+            OsaurusInspectTool(),
+            args: #"{"action":"list","scope":"themes"}"#,
+            tokenAgent: agentId
+        )
+        #expect(!inspect.contains("only available to the Default agent"), "got \(inspect)")
+
+        let config = try await run(OsaurusConfigTool(), args: #"{"action":"apply"}"#, tokenAgent: agentId)
+        #expect(config.contains("only available to the Default agent"))
+
+        let mismatched = try await run(OsaurusHelpTool(), args: #"{"action":"topics"}"#, tokenAgent: UUID())
+        #expect(mismatched.contains("only available to the Default agent"))
+    }
+
     @Test
     func inspectList_refusesFromCustomAgent() async throws {
         let result = try await executeAsCustomAgent(

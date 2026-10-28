@@ -86,11 +86,11 @@ jobs:
     # because Containerization needs the macOS 26 SDK.
     runs-on: macos-26
     # Release builds are intentionally cache-free (fresh cold compile of
-    # mlx-swift Cmlx + SQLCipher). The compile step alone ran 69-87m across
-    # recent green runs and 0.25.11 timed out at the previous 90m cap, so
-    # leave headroom for signing, notarization, and publishing while still
+    # mlx-swift Cmlx + SQLCipher). 0.25.11 timed out at a 90m cap and
+    # 0.25.26 at a 120m cap (the OsaurusCore Release compile alone ran >92m),
+    # so leave headroom for signing, notarization, and publishing while still
     # bounding a hung job well below GitHub's 6h default.
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Checkout code

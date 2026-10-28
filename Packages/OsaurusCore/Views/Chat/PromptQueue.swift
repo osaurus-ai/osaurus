@@ -112,6 +112,16 @@ public final class PromptQueue: ObservableObject {
         }
     }
 
+    /// Cancel and drop specific prompts, leaving the rest queued.
+    public func dismiss(_ ids: Set<ObjectIdentifier>) {
+        for item in pending where ids.contains(item.id) { item.cancel() }
+        pending.removeAll { ids.contains($0.id) }
+        if let cur = current, ids.contains(cur.id) {
+            cur.cancel()
+            advance()
+        }
+    }
+
     /// Cancel everything in the queue (current + pending) and clear.
     /// Used by reset paths so a brand-new conversation doesn't
     /// inherit dangling prompts from the previous one.

@@ -8,16 +8,22 @@
 import Foundation
 import os
 
-actor ChatEngine: Sendable, ChatEngineProtocol {
+actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
     private let services: [ModelService]
     private let installedModelsProvider: @Sendable () -> [String]
     private let remoteServicesProvider: @Sendable () async -> [ModelService]
     private let reasoningCapabilityProvider: @Sendable (String) -> LocalReasoningCapability.Capability
     private let agentModelOptionsProvider:
         @Sendable (String) async -> [String: ModelOptionValue]?
+    private let agentReasoningChoicesProvider:
+        @Sendable (String, Bool) async -> AgentGenerationReasoningChoices
 
-    /// Source of the inference (for logging purposes)
-    private var inferenceSource: InferenceSource = .httpAPI
+    /// Host execution source controls residency as well as attribution. The
+    /// evaluation override is scoped to this run, never sticky on a reused engine.
+    private let baseInferenceSource: InferenceSource
+    private var inferenceSource: InferenceSource {
+        ChatExecutionContext.resolvedInferenceSource(baseInferenceSource)
+    }
     /// Display-only producer attribution. Residency continues to use
     /// `inferenceSource`; delegated helpers are chat-owned but shown as Agent.
     private let activitySource: InferenceSource?
@@ -57,7 +63,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     private let privacyReviewMode: PrivacyReviewMode
 
     init(
-        services: [ModelService] = [FoundationModelService(), ClaudeCodeService(), MLXService()],
+        services: [ModelService] = [FoundationModelService(), MLXService()],
         installedModelsProvider: @escaping @Sendable () -> [String] = {
             MLXService.getAvailableModels()
         },
@@ -79,6 +85,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     ModelOptionsStore.shared.loadOptions(for: modelId)
                 }
             },
+        agentReasoningChoicesProvider:
+            @escaping @Sendable (String, Bool) async -> AgentGenerationReasoningChoices = { modelId, isLocal in
+                await AgentGenerationReasoningChoices.resolve(modelID: modelId, isLocal: isLocal)
+            },
         source: InferenceSource = .httpAPI,
         activitySource: InferenceSource? = nil,
         privacyReviewMode: PrivacyReviewMode = .interactive
@@ -88,7 +98,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         self.remoteServicesProvider = remoteServicesProvider
         self.reasoningCapabilityProvider = reasoningCapabilityProvider
         self.agentModelOptionsProvider = agentModelOptionsProvider
-        self.inferenceSource = source
+        self.agentReasoningChoicesProvider = agentReasoningChoicesProvider
+        self.baseInferenceSource = source
         self.activitySource = activitySource
         self.privacyReviewMode = privacyReviewMode
     }
@@ -169,6 +180,23 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let remoteServices: [ModelService]
     }
 
+    /// Validate original saved values against the route already selected below.
+    /// Legacy parameter normalization may have run, but provenance retains the
+    /// exact agent values. Unmarked API and model-option requests are unchanged.
+    private func validateAgentReasoningDefaults(
+        request: ResponsesInferenceRequest,
+        service: ModelService,
+        effectiveModel: String
+    ) async throws {
+        guard let defaults = request.context.agentReasoningDefaults else { return }
+        guard !request.context.runAsRemoteAgent else {
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "Configure saved reasoning defaults on the remote agent's host; its effective model is owned there.")
+        }
+        let choices = await agentReasoningChoicesProvider(effectiveModel, service is MLXService)
+        try choices.validate(settings: defaults.settings)
+    }
+
     /// Build the shared dispatch context for `streamChat` / `completeChat`.
     /// Threads the optional `ttftTrace` so non-streaming callers carry the
     /// same trace as streaming ones (parity fix — `completeChat` used to
@@ -177,61 +205,70 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         request: ChatCompletionRequest,
         trace: TTFTTrace?
     ) async throws -> Dispatch {
-        if let reason = RequestValidator.responseFormatReason(request.response_format)
+        try await prepareDispatch(request: ResponsesInferenceRequest(chatCompletion: request), trace: trace)
+    }
+
+    private func prepareDispatch(
+        request: ResponsesInferenceRequest,
+        trace: TTFTTrace?
+    ) async throws -> Dispatch {
+        if let reason = RequestValidator.responseFormatReason(request.generation.outputFormat)
             ?? RequestValidator.unsupportedSamplerReason(
-                n: nil, responseFormatType: request.response_format?.type)
+                n: nil, responseFormatType: request.generation.outputFormat?.type)
         {
             throw EngineError(kind: .invalidStructuredOutput(reason))
         }
-        let jsonSchema = request.response_format?.type == "json_schema"
-            ? try request.response_format?.json_schema?.encodedSchema() : nil
-        if jsonSchema != nil && request.stop?.isEmpty == false {
+        let jsonSchema = request.generation.outputFormat?.type == "json_schema"
+            ? try request.generation.outputFormat?.json_schema?.encodedSchema() : nil
+        if jsonSchema != nil && request.generation.stop?.isEmpty == false {
             throw EngineError(kind: .invalidStructuredOutput(
                 "JSON schema output cannot be combined with text stop strings; completion uses the schema and EOS."))
         }
-        if jsonSchema != nil && (request.runAsRemoteAgent || request.tools?.isEmpty == false) {
+        if jsonSchema != nil && (request.context.runAsRemoteAgent || request.tools?.isEmpty == false) {
             throw EngineError(kind: .invalidStructuredOutput(
                 "JSON schema output is not yet supported with tools or remote agent execution."))
         }
-        let temperature = request.temperature
-        let maxTokens = request.resolvedMaxTokens ?? 16384
-        // OpenAI `frequency_penalty` / `presence_penalty` ride
-        // `GenerationParameters` verbatim: vmlx natively implements both as
-        // additive count-scaled penalties (`GenerateParameters
-        // .frequencyPenalty`/`.presencePenalty`), so the old lossy mapping
-        // of frequency_penalty onto a multiplicative repetition penalty
-        // (which also silently dropped negative values) is gone. A
-        // per-request repetition_penalty is not an OpenAI field; model
-        // bundle / server defaults still apply downstream.
-        let repPenalty: Float? = nil
-        let seedBits: UInt64? = request.seed.map { UInt64(bitPattern: Int64($0)) }
-        let isJSONObject = (request.response_format?.type == "json_object")
+        let temperature = request.generation.temperature
+        let maxTokens = request.generation.maxOutputTokens ?? 16384
+        // Multiplicative repetition and additive frequency/presence are
+        // independent explicit controls. Nil preserves each bundle default.
+        if let reason = RequestValidator.repetitionPenaltyReason(request.generation.repetitionPenalty) {
+            throw EngineError(kind: .invalidStructuredOutput(reason))
+        }
+        let repPenalty = request.generation.repetitionPenalty
+        let seedBits: UInt64? = request.generation.seed.map { UInt64(bitPattern: Int64($0)) }
+        let isJSONObject = (request.generation.outputFormat?.type == "json_object")
         // Internal UI-owned agent loops (Computer Use, AppleScript, and
         // delegated text agents) construct fresh requests on every step. They
         // do not own a composer-local option snapshot, so resolve the same
         // persisted per-model choice the visible picker writes. Keep this
-        // strictly on `.chatUI` + explicit agent requests: ordinary chat,
+        // on chat-owned UI/evaluation + explicit agent requests: ordinary chat,
         // OpenAI tool requests, plugins, scheduled work, P2P, and remote-agent
         // execution must not silently inherit GUI preferences.
         let requestModelOptions: [String: ModelOptionValue]? =
-            if let explicit = request.modelOptions {
+            if let explicit = request.context.modelOptions {
                 explicit
-            } else if inferenceSource == .chatUI,
-                request.isAgentRequest,
-                !request.runAsRemoteAgent
+            } else if (inferenceSource == .chatUI || inferenceSource == .evaluation),
+                request.context.isAgentRequest,
+                !request.context.runAsRemoteAgent
             {
                 await agentModelOptionsProvider(request.model)
             } else {
                 nil
             }
+        try ChatTemplateParameters.validate(request.generation.templateKwargs)
         var modelOptions = Self.normalizedModelOptions(
             for: request.model,
             requestOptions: requestModelOptions
         )
         let isHy3 = Hy3ReasoningProfile.matches(modelId: request.model)
+        let templateThinking = request.generation.templateKwargs?["enable_thinking"]?.boolValue
+            ?? request.generation.templateKwargs?["thinking"]?.boolValue
+        let explicitEnableThinking = request.generation.enableThinking ?? templateThinking
         let requestReasoningEffort: String? = {
             guard
-                let value = request.reasoning_effort?
+                let value = (request.generation.reasoningEffort
+                    ?? request.generation.templateKwargs?["reasoning_effort"]?.stringValue)?
                     .trimmingCharacters(in: .whitespacesAndNewlines),
                 !value.isEmpty
             else { return nil }
@@ -242,21 +279,21 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // the same bundle/template default on ordinary, agent and tool turns.
         let hasEnabledToolSurface =
             request.tools?.isEmpty == false
-            && Self.allowsLocalToolDispatch(request.tool_choice)
-        let isAgentOrToolRequest = request.isAgentRequest || hasEnabledToolSurface
+            && Self.allowsLocalToolDispatch(request.toolChoice)
+        let isAgentOrToolRequest = request.context.isAgentRequest || hasEnabledToolSurface
         let usesReasoningEffortControl = ModelProfileRegistry.options(for: request.model)
             .contains { $0.id == "reasoningEffort" }
-        if !request.runAsRemoteAgent,
+        if !request.context.runAsRemoteAgent,
             !isHy3,
             let agentEnableThinking = AgentReasoningPolicy.defaultEnableThinking(
                 isAgentOrToolRequest: isAgentOrToolRequest,
-                explicitEnableThinking: request.enable_thinking,
+                explicitEnableThinking: explicitEnableThinking,
                 explicitReasoningEffort: requestReasoningEffort,
                 modelOptions: modelOptions,
                 usesReasoningEffortControl: usesReasoningEffortControl,
                 capability: reasoningCapabilityProvider(request.model)
             ),
-            request.enable_thinking == nil,
+            explicitEnableThinking == nil,
             modelOptions["disableThinking"] == nil
         {
             modelOptions["disableThinking"] = .bool(!agentEnableThinking)
@@ -268,19 +305,20 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     Hy3ReasoningProfile.normalizedEffort(requestReasoningEffort)
                 )
             } else if modelOptions["reasoningEffort"] == nil,
-                let enableThinking = request.enable_thinking
+                let enableThinking = explicitEnableThinking
             {
                 modelOptions["reasoningEffort"] = .string(enableThinking ? "high" : "no_think")
             }
             modelOptions.removeValue(forKey: "disableThinking")
         } else {
-            if let enableThinking = request.enable_thinking {
+            if let enableThinking = explicitEnableThinking {
                 modelOptions["disableThinking"] = .bool(!enableThinking)
             }
             if let requestReasoningEffort {
                 modelOptions["reasoningEffort"] = .string(requestReasoningEffort)
             }
         }
+        try DeclaredReasoningEffort.validateModeRequest(modelId: request.model, options: modelOptions)
         ComputerUseTraceLog.recordEffectiveDispatch(
             request: request,
             modelOptions: modelOptions
@@ -293,37 +331,38 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let params = GenerationParameters(
             temperature: temperature,
             maxTokens: maxTokens,
-            maxTokensExplicit: request.resolvedMaxTokens != nil,
-            admissionOutputTokensAreImplicit: request.admissionOutputTokensAreImplicit,
-            topPOverride: request.top_p,
-            topKOverride: request.top_k,
-            minPOverride: request.min_p,
+            maxTokensExplicit: request.generation.maxOutputTokens != nil,
+            admissionOutputTokensAreImplicit: request.context.admissionOutputTokensAreImplicit,
+            topPOverride: request.generation.topP,
+            topKOverride: request.generation.topK,
+            minPOverride: request.generation.minP,
             repetitionPenalty: repPenalty,
-            samplingParametersAreImplicit: request.samplingParametersAreImplicit,
-            frequencyPenalty: request.frequency_penalty,
-            presencePenalty: request.presence_penalty,
+            samplingParametersAreImplicit: request.context.samplingParametersAreImplicit,
+            frequencyPenalty: request.generation.frequencyPenalty,
+            presencePenalty: request.generation.presencePenalty,
             seed: seedBits,
             jsonMode: isJSONObject,
             jsonSchema: jsonSchema,
             modelOptions: modelOptions,
-            sessionId: request.session_id,
+            templateKwargs: request.generation.templateKwargs,
+            sessionId: request.sessionID,
             activitySource: activitySource,
             ttftTrace: trace,
-            idempotencyKey: request.idempotencyKey,
-            runAsRemoteAgent: request.runAsRemoteAgent,
-            suppressProgressUI: request.suppressProgressUI,
-            warmupPrefill: request.warmupPrefill,
-            cacheStableSystemPrefix: request.cacheStableSystemPrefix,
-            admissionPositionLimit: request.admissionPositionLimit,
+            idempotencyKey: request.context.idempotencyKey,
+            runAsRemoteAgent: request.context.runAsRemoteAgent,
+            suppressProgressUI: request.context.suppressProgressUI,
+            warmupPrefill: request.context.warmupPrefill,
+            cacheStableSystemPrefix: request.context.cacheStableSystemPrefix,
+            admissionPositionLimit: request.context.admissionPositionLimit,
             requestSource: inferenceSource,
             privacyReviewMode: privacyReviewMode,
-            loadIntent: request.backgroundModelLoad ? .background : .interactive,
-            alignmentRepairModel: inferenceSource == .chatUI && !request.backgroundModelLoad
-                && !request.warmupPrefill && !request.suppressProgressUI
-                ? request.alignmentRepairModel : nil,
-            claudeCode: request.claudeCodeOptions,
-            preserveExistingResidencyOwner: request.preserveExistingResidencyOwner,
-            collectCompleteToolResponse: inferenceSource == .httpAPI && !request.isAgentRequest
+            loadIntent: request.context.backgroundModelLoad ? .background : .interactive,
+            alignmentRepairModel: inferenceSource == .chatUI && !request.context.backgroundModelLoad
+                && !request.context.warmupPrefill && !request.context.suppressProgressUI
+                ? request.context.alignmentRepairModel : nil,
+            preserveExistingResidencyOwner: request.context.preserveExistingResidencyOwner,
+            collectCompleteToolResponse: inferenceSource == .httpAPI && !request.context.isAgentRequest,
+            responsesProviderOptions: request.providerOptions
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
@@ -332,16 +371,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // run to a different local provider — that produced opaque upstream
         // 404s ("Model default not found"). The peer resolves its own
         // effective model server-side, so the model field here is irrelevant.
-        if request.runAsRemoteAgent, let agentProviderId = request.remoteAgentProviderId {
+        if request.context.runAsRemoteAgent, let agentProviderId = request.context.remoteAgentProviderId {
             let remoteServices = await remoteServicesProvider()
             if let agentService = Self.remoteAgentService(
                 providerId: agentProviderId,
                 in: remoteServices
             ) {
-                let effective = request.remoteAgentLogModel ?? request.model
+                let effective = request.context.remoteAgentLogModel ?? request.model
                 RemoteAgentRunLog.client(
                     "dispatch route=provider providerId=\(agentProviderId.uuidString) effectiveModel=\(effective) reqModel=\(request.model)"
                 )
+                try await validateAgentReasoningDefaults(
+                    request: request, service: agentService, effectiveModel: effective)
                 return Dispatch(
                     route: .service(service: agentService, effectiveModel: effective),
                     params: params,
@@ -361,11 +402,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             services: services,
             remoteServices: []
         )
-        if case .service(let service, _) = localRoute {
+        if case .service(let service, let effectiveModel) = localRoute {
+            try Self.validateSamplingExtensions(params, for: service)
             if jsonSchema != nil && !(service is MLXService) {
                 throw EngineError(kind: .invalidStructuredOutput(
                     "JSON schema output is currently supported only by the local MLX runtime."))
             }
+            try await validateAgentReasoningDefaults(
+                request: request, service: service, effectiveModel: effectiveModel)
             return Dispatch(route: localRoute, params: params, remoteServices: [])
         }
 
@@ -384,6 +428,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             services: services,
             remoteServices: remoteServices
         )
+        if case .service(let service, let effectiveModel) = route {
+            try await validateAgentReasoningDefaults(
+                request: request, service: service, effectiveModel: effectiveModel)
+        }
         return Dispatch(route: route, params: params, remoteServices: remoteServices)
     }
 
@@ -445,19 +493,39 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         effectiveModel: String,
         stream: Bool
     ) {
+        emitMessageSentIfPrimaryTurn(request: ResponsesInferenceRequest(chatCompletion: request),
+            service: service, effectiveModel: effectiveModel, stream: stream)
+    }
+
+    private func emitMessageSentIfPrimaryTurn(
+        request: ResponsesInferenceRequest,
+        service: ModelService,
+        effectiveModel: String,
+        stream: Bool
+    ) {
         // Warmup prefills replay conversation history to heat the KV cache;
         // they are not a user message even when that history happens to end
         // with a user turn.
-        guard !request.warmupPrefill else { return }
-        guard FeatureTelemetry.isPrimaryUserTurn(request.messages) else { return }
+        guard !request.context.warmupPrefill else { return }
+        guard FeatureTelemetry.isPrimaryUserTurn(request.input) else { return }
         let info = FeatureTelemetry.messageInfo(
             service: service,
             effectiveModel: effectiveModel,
             source: inferenceSource,
-            isAgent: request.isAgentRequest,
+            isAgent: request.context.isAgentRequest,
             stream: stream
         )
         Task { @MainActor in FeatureTelemetry.messageSent(info) }
+    }
+
+    /// This Foundation service's implemented options carry neither field.
+    /// Reject explicit requests instead of accepting and silently ignoring them.
+    static func validateSamplingExtensions(_ parameters: GenerationParameters, for service: ModelService) throws {
+        guard service is FoundationModelService,
+            parameters.seed != nil || parameters.repetitionPenalty != nil
+        else { return }
+        throw EngineError(kind: .invalidStructuredOutput(
+            "This Foundation Models route does not support seed or repetition_penalty overrides."))
     }
 
     private static func normalizedModelOptions(
@@ -737,6 +805,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         maxTokens: Int,
         tokensPerSecond: Double? = nil,
         completionTokens: Int? = nil,
+        cachedInputTokens: Int? = nil,
         content: String? = nil,
         reasoningContent: String? = nil,
         turnId: UUID? = nil,
@@ -793,7 +862,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             prompt_tokens: inputTokens,
             completion_tokens: outputTokens,
             total_tokens: inputTokens + outputTokens,
-            tokens_per_second: tokensPerSecond
+            tokens_per_second: tokensPerSecond,
+            prompt_tokens_details: Usage.cachedPromptDetails(
+                cachedInputTokens, promptTokens: inputTokens)
         )
 
         let response = ChatCompletionResponse(
@@ -842,6 +913,117 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         }
 
         return response
+    }
+
+    /// Canonical internal entry point. A typed native service receives the
+    /// original input snapshot; only legacy provider/service boundaries decode
+    /// their existing transport stream. No request is replayed on failure.
+    func streamResponses(request: ResponsesInferenceRequest) async throws
+        -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
+    {
+        try ResponsesToolChoiceContract.preflight(request)
+        let trace = request.context.ttftTrace
+        trace?.mark("chatengine_start")
+        let dispatch = try await prepareDispatch(request: request, trace: trace)
+        guard case .service(let service, let effectiveModel) = dispatch.route else {
+            if request.context.runAsRemoteAgent, request.context.remoteAgentProviderId != nil {
+                throw EngineError(kind: .remoteAgentUnavailable)
+            }
+            throw EngineError(kind: .modelNotFound(requested: request.model))
+        }
+        try checkRouterSpendAuthorization(service: service)
+        emitMessageSentIfPrimaryTurn(request: request, service: service,
+            effectiveModel: effectiveModel, stream: true)
+        let source = loggedSource
+        let shouldLog = Self.shouldLogInferenceToInsights(source: source,
+            warmupPrefill: request.context.warmupPrefill)
+        let attribution = InsightsService.ActivityAttribution.current()
+        let connection = shouldLog
+            ? Self.remoteConnectionInfo(for: service, runAsRemoteAgent: dispatch.params.runAsRemoteAgent) : nil
+        let probe: WireTransportProbe? = connection != nil ? WireTransportProbe() : nil
+        let inner: AsyncThrowingStream<ResponsesGenerationEvent, Error>
+        if let probe {
+            inner = try await WireTransportProbe.$current.withValue(probe) {
+                try await self.openResponsesInnerStream(request: request, service: service, params: dispatch.params)
+            }
+        } else {
+            inner = try await openResponsesInnerStream(request: request, service: service, params: dispatch.params)
+        }
+        let turnID = request.context.turnId ?? ChatExecutionContext.currentAssistantTurnId
+        let parentTurnID: UUID? = {
+            guard ChatExecutionContext.currentSessionSource == .delegation,
+                let parent = ChatExecutionContext.currentAssistantTurnId,
+                parent != request.context.turnId
+            else { return nil }
+            return parent
+        }()
+        let loggedModel = connection?.info.mode == .remoteAgentRun
+            ? request.context.remoteAgentLogModel?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        return wrapStreamWithLogging(inner, logEvent: Self.responsesLogEvent,
+            source: source, turnId: turnID, parentTurnId: parentTurnID,
+            requestId: request.context.idempotencyKey,
+            model: loggedModel?.isEmpty == false ? loggedModel! : effectiveModel,
+            inputTokens: estimateInputTokens(request.input),
+            temperature: request.generation.temperature,
+            maxTokens: request.generation.maxOutputTokens ?? 16384,
+            requestBodyJSON: shouldLog ? Self.serializeResponseRequestForLog(request) : nil,
+            connection: connection?.info, logPath: connection?.path ?? "/responses",
+            wireProbe: probe,
+            secretToolWasExposed: request.tools?.contains {
+                SecretArgumentScrubber.isSecretSetToolName($0.function.name)
+            } ?? false,
+            warmupPrefill: request.context.warmupPrefill,
+            attribution: attribution)
+    }
+
+    private func openResponsesInnerStream(
+        request: ResponsesInferenceRequest,
+        service: ModelService,
+        params: GenerationParameters
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+        if request.providerOptions?.unsupportedPortableTools.isEmpty == false,
+            !(service is RemoteProviderService) {
+            throw ResponsesToolChoiceContract.failure("Hosted tools require a native hosted-tool provider; this model route cannot execute them.")
+        }
+        let originalChoice = ResponsesToolChoiceContract.choice(request)
+        let tools = Self.allowsLocalToolDispatch(originalChoice) ? (request.tools ?? []) : []
+        let choice = tools.isEmpty ? nil : Self.localToolChoiceForDispatch(originalChoice, tools: tools)
+        if let typed = service as? ResponsesGenerationService {
+            let stream = try await typed.streamResponses(messages: request.input, parameters: params,
+                stopSequences: request.generation.stop ?? [], tools: tools, toolChoice: choice,
+                requestedModel: request.model)
+            return ResponsesToolChoiceContract.enforce(stream, request: request)
+        }
+        let legacy: AsyncThrowingStream<String, Error>
+        if !tools.isEmpty, let capable = service as? ToolCapableService {
+            legacy = try await capable.streamWithTools(messages: request.input, parameters: params,
+                stopSequences: request.generation.stop ?? [], tools: tools, toolChoice: choice,
+                requestedModel: request.model)
+        } else {
+            legacy = try await service.streamDeltas(messages: request.input, parameters: params,
+                requestedModel: request.model, stopSequences: request.generation.stop ?? [])
+        }
+        return ResponsesToolChoiceContract.enforce(ResponsesGenerationStream.compatibility(legacy), request: request)
+    }
+
+    /// The app-owned input snapshot, not an assertion about provider wire JSON.
+    /// WireTransportProbe records the actual post-adapter provider body.
+    private static func serializeResponseRequestForLog(_ request: ResponsesInferenceRequest) -> String? {
+        struct Body: Encodable {
+            let model: String
+            let input: [ChatMessage]
+            let generation: ResponsesGenerationOptions
+            let tools: [Tool]?
+            let toolChoice: ToolChoiceOption?
+            let sessionID: String?
+            let providerOutputItems: [[JSONValue]?]
+        }
+        let body = Body(model: request.model, input: request.input, generation: request.generation,
+            tools: request.tools, toolChoice: request.toolChoice, sessionID: request.sessionID,
+            providerOutputItems: request.input.map(\.responses_output_items))
+        let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: true)
+        guard let data = try? encoder.encode(body) else { return nil }
+        return redactInlineImagePayloads(in: String(decoding: data, as: UTF8.self))
     }
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
@@ -952,6 +1134,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
             return wrapStreamWithLogging(
                 innerStream,
+                logEvent: Self.legacyLogEvent,
                 source: source,
                 turnId: turnId,
                 parentTurnId: parentTurnId,
@@ -1084,11 +1267,100 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return m
     }
 
+    private struct StreamLogStats: Sendable {
+        let tokenCount: Int?
+        let inputTokenCount: Int?
+        let stopReason: String?
+        var calls: [ResponsesFunctionCall] = []
+    }
+
+    /// Provider type alone cannot identify the wire path: model/request
+    /// routing may choose Responses, a dynamic Gemini path or a peer run.
+    /// Prefer the built URLRequest captured at that boundary.
+    static func inferenceLogDestination(
+        connection: RequestConnectionInfo?, path: String, endpointURL: URL?
+    ) -> (connection: RequestConnectionInfo?, path: String) {
+        guard let endpointURL else { return (connection, path) }
+        var observed = connection
+        observed?.remoteEndpoint = endpointURL.absoluteString
+        return (observed, endpointURL.path)
+    }
+
+    private enum StreamLogEvent: Sendable {
+        case inputTokens(Int)
+        case stats(StreamLogStats)
+        case reasoning(String)
+        case text(String)
+        case billing, prefill, artifact, control
+        case drainFailure(String)
+    }
+
+    private nonisolated static func legacyLogEvent(_ delta: String) -> StreamLogEvent {
+        if let count = StreamingInputTokenHint.decode(delta) { return .inputTokens(count) }
+        if let stats = StreamingStatsHint.decode(delta) {
+            return .stats(StreamLogStats(tokenCount: stats.tokenCount,
+                inputTokenCount: stats.inputTokenCount, stopReason: stats.stopReason))
+        }
+        if let text = StreamingReasoningHint.decode(delta) { return .reasoning(text) }
+        if StreamingBillingHint.decode(delta) != nil { return .billing }
+        if StreamingPrefillProgressHint.decode(delta) != nil { return .prefill }
+        if StreamingArtifactHint.decode(delta) != nil { return .artifact }
+        if StreamingToolHint.isSentinel(delta) { return .control }
+        return .text(delta)
+    }
+
+    private nonisolated static func responsesLogEvent(_ event: ResponsesGenerationEvent) -> StreamLogEvent {
+        switch event {
+        case .inputTokenCount(let count): return .inputTokens(count)
+        case .outputTextDelta(let text): return .text(text)
+        case .reasoningDelta(let text): return .reasoning(text)
+        case .prefillProgress: return .prefill
+        case .billing: return .billing
+        case .artifacts: return .artifact
+        case .responseCompleted(let completion):
+            return .stats(StreamLogStats(tokenCount: completion.tokenCount,
+                inputTokenCount: completion.inputTokenCount,
+                stopReason: completion.status == .cancelled ? "cancelled" : completion.stopReason,
+                calls: completion.dispatchableFunctionCalls))
+        case .drainFailed(let message): return .drainFailure(message)
+        default: return .control
+        }
+    }
+
+    /// Completion observation and consumer cancellation compete at one
+    /// transition boundary. A cancellation that wins cannot be undone by
+    /// buffered terminal metadata arriving before producer.cancel() runs.
+    final class StreamLoggingLifecycle: Sendable {
+        struct Snapshot: Sendable {
+            var terminalStatsObserved = false
+            var consumerCancelledBeforeTerminal = false
+        }
+
+        private let state = OSAllocatedUnfairLock(initialState: Snapshot())
+
+        func observeTerminalStats() {
+            state.withLock { $0.terminalStatsObserved = true }
+        }
+
+        /// Atomically commit the cancellation decision before side effects
+        /// (logging or task cancellation) can give the producer time to finish.
+        func consumerDidCancel() -> Bool {
+            state.withLock { value in
+                guard !value.terminalStatsObserved else { return false }
+                value.consumerCancelledBeforeTerminal = true
+                return true
+            }
+        }
+
+        func snapshot() -> Snapshot { state.withLock { $0 } }
+    }
+
     /// Wraps an async stream to count output tokens and log on completion.
     /// Uses Task.detached to avoid actor isolation deadlocks when consumed from MainActor.
     /// Properly handles cancellation via onTermination handler to prevent orphaned tasks.
-    private func wrapStreamWithLogging(
-        _ inner: AsyncThrowingStream<String, Error>,
+    private func wrapStreamWithLogging<Element: Sendable>(
+        _ inner: AsyncThrowingStream<Element, Error>,
+        logEvent: @escaping @Sendable (Element) -> StreamLogEvent,
         source: InferenceSource,
         turnId: UUID? = nil,
         parentTurnId: UUID? = nil,
@@ -1104,8 +1376,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         secretToolWasExposed: Bool = false,
         warmupPrefill: Bool = false,
         attribution: InsightsService.ActivityAttribution = .none
-    ) -> AsyncThrowingStream<String, Error> {
-        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+    ) -> AsyncThrowingStream<Element, Error> {
+        let (stream, continuation) = AsyncThrowingStream<Element, Error>.makeStream()
         let shouldLogToInsights = Self.shouldLogInferenceToInsights(
             source: source,
             warmupPrefill: warmupPrefill
@@ -1120,7 +1392,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // drain and leaves the following request contending with unfinished
         // Metal/cache work.  This lock-backed latch distinguishes that normal
         // terminal race from a real pre-terminal disconnect.
-        let terminalStatsObserved = OSAllocatedUnfairLock(initialState: false)
+        let lifecycle = StreamLoggingLifecycle()
 
         // Capture the background-task id at construction time (still on
         // the parent task) so the detached producer below can forward
@@ -1169,11 +1441,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             let mlxErrorEpoch = MLXErrorRecovery.errorSequence()
 
             let startTime = Date()
+            // Estimates remain useful for conservative live budget charging;
+            // only runtime/provider counts belong in persisted usage fields.
             var outputTokenCount = 0
-            var resolvedInputTokens = inputTokens
+            var authoritativeInputTokens: Int?
+            var authoritativeOutputTokens: Int?
             var reportedInputTokens = initialInputTokens
             func recordInputTokens(_ count: Int) {
-                resolvedInputTokens = count
+                authoritativeInputTokens = count
                 // The estimate was charged at admission. Only add newly known
                 // input work; never refund a budget reservation mid-request.
                 if let bgId, count > reportedInputTokens {
@@ -1216,17 +1491,21 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             print("[Osaurus][Stream] Starting stream wrapper for model: \(model)")
 
             do {
-                for try await delta in inner {
-                    if let count = StreamingInputTokenHint.decode(delta) {
+                for try await element in inner {
+                    let event = logEvent(element)
+                    if case .inputTokens(let count) = event {
                         recordInputTokens(count)
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
-                    if let stats = StreamingStatsHint.decode(delta) {
+                    if case .stats(let stats) = event {
                         if let count = stats.inputTokenCount { recordInputTokens(count) }
-                        terminalStatsObserved.withLock { $0 = true }
+                        lifecycle.observeTerminalStats()
                         statsHintCount += 1
-                        outputTokenCount = stats.tokenCount
+                        if let count = stats.tokenCount {
+                            authoritativeOutputTokens = count
+                            outputTokenCount = count
+                        }
                         // Stats hint carries the authoritative cumulative
                         // output-token count from the model runtime. Push
                         // only the delta since our last report so we
@@ -1247,18 +1526,22 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         {
                             finishReason = loggedReason
                         }
-                        continuation.yield(delta)
+                        if !stats.calls.isEmpty {
+                            parsedToolNames = stats.calls.map(\.name)
+                            if let first = stats.calls.first { toolInvocation = (first.name, first.arguments) }
+                            finishReason = .toolCalls
+                        }
+                        continuation.yield(element)
                         continue
                     }
 
                     // Check for task cancellation to allow early termination
                     if Task.isCancelled {
                         print("[Osaurus][Stream] Task cancelled after \(deltaCount) deltas")
-                        continuation.finish()
-                        return
+                        break
                     }
 
-                    if let reasoning = StreamingReasoningHint.decode(delta) {
+                    if case .reasoning(let reasoning) = event {
                         deltaCount += 1
                         reasoningHintCount += 1
                         let estimated = TokenEstimator.estimate(reasoning)
@@ -1272,36 +1555,43 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                                 )
                             }
                         }
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
 
-                    if StreamingBillingHint.decode(delta) != nil {
+                    if case .billing = event {
                         billingHintCount += 1
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
 
-                    if StreamingPrefillProgressHint.decode(delta) != nil {
+                    if case .prefill = event {
                         prefillHintCount += 1
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
 
                     // Artifacts returned by a teammate's host (Mode 2): pass
                     // through for `ChatSession` to import; not tokens.
-                    if StreamingArtifactHint.decode(delta) != nil {
-                        continuation.yield(delta)
+                    if case .artifact = event {
+                        continuation.yield(element)
                         continue
                     }
 
                     // Pass through tool-hint sentinels without counting as tokens
-                    if StreamingToolHint.isSentinel(delta) {
+                    if case .control = event {
                         toolHintCount += 1
-                        continuation.yield(delta)
+                        continuation.yield(element)
                         continue
                     }
 
+                    if case .drainFailure(let message) = event {
+                        finishReason = .error
+                        errorMsg = message
+                        continuation.yield(element)
+                        continue
+                    }
+                    guard case .text(let delta) = event else { continue }
                     deltaCount += 1
                     let now = Date()
                     let timeSinceStart = now.timeIntervalSince(startTime)
@@ -1339,7 +1629,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             )
                         }
                     }
-                    continuation.yield(delta)
+                    continuation.yield(element)
                 }
 
                 let totalTime = Date().timeIntervalSince(startTime)
@@ -1357,7 +1647,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 // almost certainly that error (the global handler swallowed the
                 // would-be fatalError, so generation just produced nothing).
                 // Surface it as a failed stream rather than an empty success.
-                if deltaCount == 0, let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch) {
+                if Task.isCancelled, !lifecycle.snapshot().terminalStatsObserved {
+                    finishReason = .cancelled
+                    continuation.finish(throwing: CancellationError())
+                } else if deltaCount == 0, let mlxErr = MLXErrorRecovery.errorSince(mlxErrorEpoch) {
                     print("[Osaurus][Stream] Empty stream after MLX error: \(mlxErr)")
                     finishReason = .error
                     errorMsg = mlxErr
@@ -1383,16 +1676,23 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 // Check if this is a CancellationError (expected when consumer stops)
                 if Task.isCancelled || error is CancellationError {
                     print("[Osaurus][Stream] Stream cancelled after \(deltaCount) deltas")
-                    continuation.finish()
-                    return
+                    if !lifecycle.snapshot().terminalStatsObserved { finishReason = .cancelled }
+                    continuation.finish(throwing: CancellationError())
+                } else {
+                    print("[Osaurus][Stream] Stream error after \(deltaCount) deltas: \(error.localizedDescription)")
+                    finishReason = .error
+                    errorMsg = error.localizedDescription
+                    continuation.finish(throwing: error)
                 }
-                print("[Osaurus][Stream] Stream error after \(deltaCount) deltas: \(error.localizedDescription)")
-                finishReason = .error
-                errorMsg = error.localizedDescription
-                continuation.finish(throwing: error)
             }
 
-            // Log the completed inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
+            // A terminal event may already be buffered when the consumer
+            // cancels. Keep any real measured usage, but do not turn that
+            // pre-terminal cancellation race into a natural-stop log.
+            if lifecycle.snapshot().consumerCancelledBeforeTerminal { finishReason = .cancelled }
+
+            // Log once for every terminal outcome, including cancellation.
+            // HTTP requests are logged by HTTPHandler instead.
             if shouldLogToInsights {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 let toolCallsLog = toolInvocation.map {
@@ -1413,6 +1713,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 // `/agents/{addr}/run` body with `model:"default"`. nil for
                 // local routes (no probe).
                 let wireSnapshot = wireProbe?.snapshot()
+                let destination = Self.inferenceLogDestination(
+                    connection: connection, path: logPath ?? "/chat/completions",
+                    endpointURL: wireProbe?.acceptedRequestEndpointURL ?? wireProbe?.requestEndpointURL
+                )
 
                 InsightsService.logInference(
                     source: source,
@@ -1420,8 +1724,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     parentTurnId: parentTurnId,
                     requestId: requestId,
                     model: model,
-                    inputTokens: resolvedInputTokens,
-                    outputTokens: outputTokenCount,
+                    inputTokens: authoritativeInputTokens,
+                    outputTokens: authoritativeOutputTokens,
                     durationMs: durationMs,
                     temperature: temperature,
                     maxTokens: maxTokens,
@@ -1439,8 +1743,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         parsedToolNames: parsedToolNames,
                         secretToolWasExposed: secretToolWasExposed
                     ),
-                    connection: connection,
-                    path: logPath ?? "/chat/completions",
+                    connection: destination.connection,
+                    path: destination.path,
                     privacy: wireProbe?.privacyOutcome,
                     agentId: attribution.agentId,
                     agentName: attribution.agentName,
@@ -1454,10 +1758,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         continuation.onTermination = { @Sendable termination in
             switch termination {
             case .cancelled:
-                let sawTerminalStats = terminalStatsObserved.withLock { $0 }
-                if !Self.shouldCancelProducerOnConsumerCancellation(
-                    terminalStatsObserved: sawTerminalStats
-                ) {
+                if !lifecycle.consumerDidCancel() {
                     // Logical generation is complete.  Keep the producer
                     // alive long enough to drain the runtime-owned terminal
                     // work; the vMLX solo lease and Metal gate are released
@@ -1571,6 +1872,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 // turns historically reported no tok/s.
                 var toolStepTokensPerSecond: Double?
                 var toolStepTokenCount: Int?
+                var toolStepCachedInputTokens: Int?
                 var text = ""
                 var reasoning = ""
                 do {
@@ -1593,6 +1895,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             resolvedInputTokens = stats.inputTokenCount ?? resolvedInputTokens
                             toolStepTokensPerSecond = stats.tokensPerSecond
                             toolStepTokenCount = stats.tokenCount
+                            toolStepCachedInputTokens =
+                                stats.cachedInputTokenCount ?? toolStepCachedInputTokens
                             if let stopReason = stats.stopReason, !stopReason.isEmpty {
                                 terminalStopReason = stopReason
                             }
@@ -1640,7 +1944,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         prompt_tokens: resolvedInputTokens,
                         completion_tokens: outputTokens,
                         total_tokens: resolvedInputTokens + outputTokens,
-                        tokens_per_second: toolStepTokensPerSecond
+                        tokens_per_second: toolStepTokensPerSecond,
+                        prompt_tokens_details: Usage.cachedPromptDetails(
+                            toolStepCachedInputTokens, promptTokens: resolvedInputTokens)
                     )
 
                     let response = ChatCompletionResponse(
@@ -1691,6 +1997,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         maxTokens: maxTokens,
                         tokensPerSecond: toolStepTokensPerSecond,
                         completionTokens: toolStepTokenCount,
+                        cachedInputTokens: toolStepCachedInputTokens,
                         content: params.collectCompleteToolResponse && !text.isEmpty ? text : nil,
                         reasoningContent: params.collectCompleteToolResponse && !reasoning.isEmpty ? reasoning : nil,
                         turnId: Self.loggedTurnId(request),
@@ -1716,6 +2023,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         maxTokens: maxTokens,
                         tokensPerSecond: toolStepTokensPerSecond,
                         completionTokens: toolStepTokenCount,
+                        cachedInputTokens: toolStepCachedInputTokens,
                         content: params.collectCompleteToolResponse && !text.isEmpty ? text : nil,
                         reasoningContent: params.collectCompleteToolResponse && !reasoning.isEmpty ? reasoning : nil,
                         turnId: Self.loggedTurnId(request),
@@ -1747,6 +2055,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             var terminalStopReason = "stop"
             var authoritativeOutputTokens: Int?
             var authoritativeTokensPerSecond: Double?
+            var authoritativeCachedInputTokens: Int?
             for try await delta in stream {
                 try Task.checkCancellation()
                 if let count = StreamingInputTokenHint.decode(delta) {
@@ -1757,6 +2066,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     resolvedInputTokens = stats.inputTokenCount ?? resolvedInputTokens
                     authoritativeOutputTokens = stats.tokenCount
                     authoritativeTokensPerSecond = stats.tokensPerSecond
+                    authoritativeCachedInputTokens =
+                        stats.cachedInputTokenCount ?? authoritativeCachedInputTokens
                     if let stopReason = stats.stopReason, !stopReason.isEmpty {
                         terminalStopReason = stopReason
                     }
@@ -1790,7 +2101,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 prompt_tokens: resolvedInputTokens,
                 completion_tokens: outputTokens,
                 total_tokens: resolvedInputTokens + outputTokens,
-                tokens_per_second: authoritativeTokensPerSecond
+                tokens_per_second: authoritativeTokensPerSecond,
+                prompt_tokens_details: Usage.cachedPromptDetails(
+                    authoritativeCachedInputTokens, promptTokens: resolvedInputTokens)
             )
 
             let response = ChatCompletionResponse(

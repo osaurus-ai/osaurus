@@ -72,7 +72,7 @@ enum SubagentReportBack {
                 // drain them (the ack already returned), so promote them
                 // right before the report lands.
                 await session.promoteWorkerSharedArtifacts()
-                session.send(report)
+                session.send(report, taskIntent: .hostContinuation)
                 return
             }
             try? await Task.sleep(for: idlePollInterval)

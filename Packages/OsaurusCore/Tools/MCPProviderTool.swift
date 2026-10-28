@@ -278,6 +278,12 @@ final class MCPProviderTool: OsaurusTool, PermissionedTool, ArgumentAwarePerCall
         return String(raw.prefix(maxDescriptionLength)) + "..."
     }
 
+    /// `MCPProviderManager.callMCPTool` owns the deadline: an idle timeout
+    /// that `notifications/progress` restarts, up to the provider's hard cap,
+    /// plus a `notifications/cancelled` to the server. The registry's fixed
+    /// 120s race would cut a call off while it is still reporting progress.
+    var bypassRegistryTimeout: Bool { true }
+
     func execute(argumentsJSON: String) async throws -> String {
         // Delegate execution to MCPProviderManager
         return try await MCPProviderManager.shared.executeTool(

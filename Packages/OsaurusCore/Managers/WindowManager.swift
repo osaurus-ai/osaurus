@@ -416,11 +416,8 @@ public final class WindowManager: NSObject, ObservableObject {
 
         window.contentViewController = hostingController
 
-        // Pre-layout to avoid jank
-        hostingController.view.layoutSubtreeIfNeeded()
-
-        // Force set content size again to ensure we start with the intended size
-        // This prevents the window from starting at 0x0 or wrong size if layoutSubtreeIfNeeded did something unexpected
+        // Explicitly set the content size so the window starts at the intended
+        // dimensions rather than 0x0 before SwiftUI's first layout pass.
         window.setContentSize(defaultSize)
 
         if let autosaveKey = config.autosaveKey {

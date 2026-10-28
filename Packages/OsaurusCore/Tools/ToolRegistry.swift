@@ -1888,10 +1888,9 @@ public final class ToolRegistry: ObservableObject {
         )
     }
 
-    /// Default per-tool wall-clock cap (seconds). Mirrors
-    /// `PluginHostAPI.toolExecutionTimeout` so the chat-side and plugin-side
-    /// loops have matching semantics. Tools that need a tighter or looser
-    /// budget (e.g. sandbox shell, MCP provider) still set their own.
+    /// Default per-tool wall-clock cap (seconds), shared by chat, plugin,
+    /// HTTP and bridge callers. Streaming-aware tools opt out through
+    /// `bypassRegistryTimeout` and own their wait/termination lifecycle.
     public static let defaultToolTimeoutSeconds: TimeInterval = 120
 
     /// Trampoline that executes the tool outside of MainActor isolation,
@@ -3038,6 +3037,30 @@ public final class ToolRegistry: ObservableObject {
             toolName: guessedName,
             retryable: true
         ).toJSONString()
+    }
+
+    /// Which portable group owns a tool, for the declarative config
+    /// document: MCP tools by server NAME, external / sandbox plugin tools
+    /// by plugin id. Built-in, runtime-managed, channel and declared
+    /// capability-group tools return nil (they are addressed by tool name).
+    func portableToolGroup(for toolName: String) -> PortableToolGroup? {
+        guard let tool = toolsByName[toolName] else { return nil }
+        if let mcp = tool as? MCPProviderTool { return .mcpServer(mcp.providerName) }
+        if let ext = tool as? ExternalTool { return .plugin(ext.pluginId) }
+        if let sandbox = tool as? SandboxPluginTool { return .plugin(sandbox.plugin.id) }
+        return nil
+    }
+
+    /// Every registered tool name keyed by its portable group. Tools with
+    /// no group are omitted. Snapshot for the declarative exporter/applier.
+    func portableToolGroups() -> [PortableToolGroup: [String]] {
+        var groups: [PortableToolGroup: [String]] = [:]
+        for name in toolsByName.keys {
+            guard let group = portableToolGroup(for: name) else { continue }
+            groups[group, default: []].append(name)
+        }
+        for key in groups.keys { groups[key]?.sort() }
+        return groups
     }
 
     /// Returns the plugin or provider name that a tool belongs to, if any.

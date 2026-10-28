@@ -206,9 +206,9 @@ public final class ManagementBadgeStore: ObservableObject {
         // not probe identity/Keychain from this path; startup badge
         // freshness is less important than avoiding password prompts while
         // local chat boots.
-        let models = ModelManager.shared.availableModels
+        let inventoryCandidates = ModelManager.shared.deduplicatedModels()
         Task.detached(priority: .utility) { [weak self] in
-            let downloadedModels = models.filter { $0.isDownloaded }.count
+            let downloadedModels = Self.modelsBadgeCount(inventoryCandidates: inventoryCandidates)
             let imageModels = (try? await ImageGenerationService.shared.availableModels().count) ?? 0
             let pinned = (try? MemoryDatabase.shared.pinnedFactStats()) ?? 0
             // Pending knowledge proposals drive the "review needed"
@@ -230,6 +230,19 @@ public final class ManagementBadgeStore: ObservableObject {
     /// Tabs whose count is resolved in the detached background task and
     /// therefore carried over between recomputes rather than recalculated.
     nonisolated static let backgroundResolvedTabs: [ManagementTab] = [.models, .imageGeneration, .memory]
+
+    /// The Local Models badge: the installed inventory, the same
+    /// `ModelManager.installedModels(among:)` the Models page header and On
+    /// Device tab count. `inventoryCandidates` is
+    /// `ModelManager.deduplicatedModels()` captured on the main actor; the
+    /// `isDownloaded` probe runs wherever this is called (off main from
+    /// `recompute`). Before this the badge counted `availableModels` while the
+    /// page counted a differently deduplicated list, and the two disagreed
+    /// (91 vs 63) whenever an installed external bundle shared an id with a
+    /// catalog suggestion.
+    nonisolated static func modelsBadgeCount(inventoryCandidates: [MLXModel]) -> Int {
+        ModelManager.installedModels(among: inventoryCandidates).count
+    }
 
     /// The synchronous, main-actor part of the badge computation as a pure
     /// function of the inputs so the "what does each badge count" contract

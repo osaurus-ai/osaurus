@@ -221,14 +221,6 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.foundation())
         }
 
-        // Cheap `isExecutableFile` stat, so it stays on the main actor with
-        // the other synchronous gates rather than paying a detached hop.
-        if ClaudeCodeConfiguration.isAvailable() {
-            for model in ClaudeCodeModel.allCases {
-                options.append(.claudeCode(model))
-            }
-        }
-
         let localModels = await Task.detached(priority: .userInitiated) {
             // Exclude embedding/encoder-only bundles (e.g. potion-base-4M
             // pulled into the HF cache by the memory feature): they can't
@@ -237,7 +229,7 @@ final class ModelPickerItemCache: ObservableObject {
             // `isEmbedding` here also warms its memoized verdict off the
             // main actor, like the `isVLM` warm-up below.
             let models = ModelManager.discoverLocalModels()
-                .filter { !$0.isEmbedding }
+                .filter { !$0.isEmbedding && !$0.isDecision }
             // Warm the memoized VLM + MLX-format verdicts while still off the
             // main actor: `fromMLXModel` below reads both `isVLM` and
             // `isMLXFormat` on the MainActor, and a cold cache would otherwise
@@ -307,6 +299,8 @@ final class ModelPickerItemCache: ObservableObject {
     ///   per-model reasoning capabilities (keyed by bare slug).
     /// - The official `api.openai.com` Open Responses (API-key) route
     ///   attaches the documented GPT-5.6 public reasoning profile.
+    /// - Native Anthropic providers attach the thinking/effort contract,
+    ///   context window, and lifecycle the Models API advertised per model.
     /// - Custom OpenAI-compatible providers are never assumed to support
     ///   either contract.
     /// Returns the picker items plus the full-id keyed capability map used to
@@ -316,7 +310,10 @@ final class ModelPickerItemCache: ObservableObject {
         codexMetadata: [String: CodexModelMetadata],
         osaurusRouterProviderId: UUID,
         routerMetadata: (String) -> OsaurusRouterModel?,
-        remoteContextLength: (UUID, String) -> Int? = { _, _ in nil }
+        remoteContextLength: (UUID, String) -> Int? = { _, _ in nil },
+        anthropicModelInfo: (UUID, String) -> AnthropicModelInfo? = {
+            AnthropicModelCatalog.info(providerId: $0, modelId: $1)
+        }
     ) -> (items: [ModelPickerItem], reasoningCapabilities: [String: ModelReasoningCapabilities]) {
         var items: [ModelPickerItem] = []
         var capabilities: [String: ModelReasoningCapabilities] = [:]
@@ -353,6 +350,22 @@ final class ModelPickerItemCache: ObservableObject {
                         modelId: modelId,
                         providerName: providerInfo.providerName,
                         providerId: providerInfo.providerId
+                    )
+                } else if providerInfo.providerType == .anthropic {
+                    let bareId = unprefixedRouterModelId(modelId)
+                    let info = anthropicModelInfo(providerInfo.providerId, bareId)
+                    let advertisedInput = info?.max_input_tokens.flatMap { $0 > 0 ? $0 : nil }
+                    item = .fromRemoteModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId,
+                        contextLength: remoteContextLength(providerInfo.providerId, bareId)
+                            ?? advertisedInput,
+                        reasoningCapabilities: AnthropicReasoningContract.capabilities(
+                            from: info?.capabilities
+                        ),
+                        displayName: info.flatMap { $0.display_name.isEmpty ? nil : $0.display_name },
+                        description: info?.isDeprecated == true ? "Deprecated" : nil
                     )
                 } else {
                     item = .fromRemoteModel(

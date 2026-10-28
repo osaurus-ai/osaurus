@@ -135,6 +135,13 @@ public struct DoctorCommand: Command {
                 + " [\(report.modelRootSource)]"
                 + (report.modelRootReadable ? "" : " (not readable)")
         )
+        if let legacy = report.strandedLegacyModels {
+            lines.append(
+                "Warning: \(legacy.complete ? "" : "at least ")\(legacy.count) model directory/directories in \(legacy.path)"
+                    + " are outside the app's selected model folder. Move them to \(report.modelRoot)"
+                    + " or select that legacy folder in Settings. No files were changed."
+            )
+        }
         lines.append("Next step: \(report.recommendation)")
         return lines.joined(separator: "\n")
     }

@@ -76,8 +76,19 @@ final class PhoneChatHandoff {
 
     private static let pollInterval: TimeInterval = 2
 
+    /// The system readings are synchronous IPC to the window server, which can
+    /// stall for seconds around lock / unlock / wake; they run here, never on
+    /// the main thread.
+    private nonisolated static let readingQueue = DispatchQueue(
+        label: "ai.osaurus.connect.phoneChatHandoff.readings",
+        qos: .utility
+    )
+
     private var tracker = PhoneChatHandoffTracker()
     private var timer: Timer?
+    /// A reading is in flight; ticks are skipped until it lands so a slow
+    /// window server cannot pile up queued readings.
+    private var isReading = false
 
     private init() {}
 
@@ -111,12 +122,24 @@ final class PhoneChatHandoff {
         self.timer = timer
     }
 
+    /// Read the Mac off the main thread, then apply the reading on the main
+    /// actor.
     private func tick() {
-        let sessionId = tracker.observe(
-            now: Date(),
-            idle: Self.secondsSinceLastInput(),
-            locked: Self.isScreenLocked()
-        )
+        guard !isReading else { return }
+        isReading = true
+        Self.readingQueue.async {
+            let idle = Self.secondsSinceLastInput()
+            let locked = Self.isScreenLocked()
+            let now = Date()
+            Task { @MainActor in
+                self.apply(now: now, idle: idle, locked: locked)
+            }
+        }
+    }
+
+    private func apply(now: Date, idle: TimeInterval, locked: Bool) {
+        isReading = false
+        let sessionId = tracker.observe(now: now, idle: idle, locked: locked)
         if !tracker.isWatching {
             timer?.invalidate()
             timer = nil
@@ -140,13 +163,13 @@ final class PhoneChatHandoff {
 
     // MARK: System readings
 
-    private static func secondsSinceLastInput() -> TimeInterval {
+    private nonisolated static func secondsSinceLastInput() -> TimeInterval {
         // kCGAnyInputEventType: keyboard, mouse, trackpad, tablet.
         guard let anyInput = CGEventType(rawValue: ~0) else { return 0 }
         return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
     }
 
-    private static func isScreenLocked() -> Bool {
+    private nonisolated static func isScreenLocked() -> Bool {
         guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
         return session["CGSSessionScreenIsLocked"] as? Bool ?? false
     }

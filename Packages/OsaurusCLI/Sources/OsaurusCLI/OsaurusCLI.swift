@@ -27,6 +27,7 @@ struct OsaurusCLI {
         case bundle([String])
         case coord([String])
         case config([String])
+        case importCmd([String])
         case version
         case help
     }
@@ -57,6 +58,7 @@ struct OsaurusCLI {
         case "bundle": return .bundle(rest)
         case "coord": return .coord(rest)
         case "config": return .config(rest)
+        case "import": return .importCmd(rest)
         case "version", "--version", "-v": return .version
         case "help", "-h", "--help": return .help
         default: return nil
@@ -104,6 +106,8 @@ struct OsaurusCLI {
             await CoordCommand.execute(args: args)
         case .config(let args):
             await ConfigCommand.execute(args: args)
+        case .importCmd(let args):
+            await ImportCommand.execute(args: args)
         case .version:
             await VersionCommand.execute(args: [])
         case .help:
@@ -178,7 +182,14 @@ struct OsaurusCLI {
               osaurus config apply <file.yaml> [--prune] [--yes]
                                       Apply a declarative YAML document (--yes confirms
                                       high-risk changes)
+              osaurus import validate|install|update --from <bundle> [agent|skill|mcp] [name ...]
+                                      Install agents, skills and MCP servers from an Osaurus
+                                      bundle folder (see `osaurus import help`)
+              osaurus import remove --bundle <id> [name ...] / osaurus import list
+                                      Remove or list what a bundle installed
               osaurus help            Show this help
+
+            Bundle author guide: docs/OSAURUS_BUNDLES.md
 
             """
         print(usage)

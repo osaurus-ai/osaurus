@@ -563,7 +563,7 @@ struct SpawnConfigurationEditor: View {
             }
             budgetStepper(
                 title: "Max output tokens per subagent",
-                help: "Output tokens one subagent may produce per turn. Long reports need more.",
+                help: "Total generated tokens per model turn, including reasoning and the final answer. Reasoning can use the entire limit; this does not reserve answer tokens or set a separate thinking budget.",
                 keyPath: \.maxDelegateTokens,
                 range: SubagentBudgets.tokenBounds,
                 step: 256,
@@ -818,10 +818,7 @@ struct SpawnConfigurationEditor: View {
                 forPickerModelId: item.id,
                 providerId: providerId
             )
-        // Claude Code routes locally by its `claude-code/…` picker id (no
-        // provider UUID to canonicalize against), so it keys the same way as
-        // the other local backends.
-        case .local, .foundation, .imageGeneration, .claudeCode:
+        case .local, .foundation, .imageGeneration:
             return item.id
         }
     }
@@ -869,7 +866,7 @@ struct SpawnConfigurationEditor: View {
         if modelCandidates.contains(where: { item in
             guard item.id == current else { return false }
             switch item.source {
-            case .local, .foundation, .imageGeneration, .claudeCode: return true
+            case .local, .foundation, .imageGeneration: return true
             case .remote: return false
             }
         }) {

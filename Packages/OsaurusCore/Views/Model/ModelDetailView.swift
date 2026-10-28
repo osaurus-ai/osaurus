@@ -391,7 +391,7 @@ struct ModelDetailView: View, Identifiable {
     /// Badge showing whether model is LLM or VLM
     private var modelTypeBadge: some View {
         let isVLM = detectIsVLM()
-        let typeLabel = isVLM ? "VLM" : "LLM"
+        let typeLabel = model.isDecision ? "D3" : (isVLM ? "VLM" : "LLM")
         let color: Color = isVLM ? .purple : theme.accentColor
 
         return Text(typeLabel)

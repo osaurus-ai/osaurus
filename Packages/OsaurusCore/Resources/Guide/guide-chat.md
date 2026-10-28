@@ -61,6 +61,14 @@ Settings → General → Advanced → Data & Storage → **File History** contro
 
 On macOS 26+, the sandbox toggle on the input bar runs shell/code work inside an isolated Linux VM instead of your Mac. Combined with a working folder, the host folder is read-only and execution happens in the VM.
 
+## Agent generation defaults
+
+Set persistent generation overrides under Settings → Agents → the custom agent → General → Configure → Advanced Settings → Generation Overrides. The chat input bar has no Next turn control. These defaults stay specific to the agent; the model picker's shared per-model settings are unchanged.
+
+Inherit leaves a parameter unset. Explicit request or workflow overrides take priority over the saved agent default. A submitted message captures its defaults for its tool steps, queue and regeneration, including after reopening the chat. Editing the agent affects later submissions.
+
+Template parameters (JSON) passes an object to a supporting model's own chat template. The template defines each variable's type; nested null values are preserved. Conversation, tool-list and special-token variables cannot be replaced. A shared workspace agent uses its host's settings.
+
 ## Useful chat extras
 
 - `/screenshot` captures your main display into the chat's artifacts (needs Screen Recording permission).

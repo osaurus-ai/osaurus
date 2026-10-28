@@ -157,6 +157,7 @@ enum LocalReasoningCapability {
     static func invalidate() {
         cache.invalidate()
         DeclaredReasoningEffort.invalidate()
+        DSV41ModelDetection.invalidate()
     }
 
     // MARK: - Detection

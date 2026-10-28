@@ -76,6 +76,7 @@ public final class OsaurusLocalClient: Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue(LocalAPIKeyPolicy.appSessionToken, forHTTPHeaderField: LocalAPIKeyPolicy.appTokenHeaderName)
 
         let body: [String: Any] = [
             "model": "default",
@@ -134,6 +135,7 @@ public final class OsaurusLocalClient: Sendable {
         var request = URLRequest(url: base.appendingPathComponent("agents/\(id)/dispatch"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(LocalAPIKeyPolicy.appSessionToken, forHTTPHeaderField: LocalAPIKeyPolicy.appTokenHeaderName)
 
         // `/dispatch` requires a non-empty prompt. When the intent supplies no
         // input, fall back to a minimal kickoff so the agent still starts.

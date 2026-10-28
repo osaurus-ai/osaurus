@@ -372,7 +372,7 @@ struct ModelPickerItemCacheTests {
         #expect(sol.contextLength == 1_050_000)
 
         // Official API key route, GPT-6 Astra: documented `low`…`max` set
-        // (no `none` — Astra rejects it), 1.05M window from the family table.
+        // (no `none` — Astra rejects it), budgeted against the 922k max input.
         let astra = try #require(byId["openai/gpt-6-astra"])
         #expect(astra.displayName == "gpt-6-astra")
         #expect(astra.reasoningCapabilities == .officialOpenAIGPT6Astra)
@@ -380,7 +380,7 @@ struct ModelPickerItemCacheTests {
             astra.reasoningCapabilities?.levels.map(\.id) == ["low", "medium", "high", "xhigh", "max"]
         )
         #expect(astra.reasoningCapabilities?.defaultLevelId == "medium")
-        #expect(astra.contextLength == 1_050_000)
+        #expect(astra.contextLength == 922_000)
 
         // Official route, non-GPT-5.6/6 id: no documented profile.
         let gpt41 = try #require(byId["openai/gpt-4.1"])
@@ -405,6 +405,33 @@ struct ModelPickerItemCacheTests {
         )
     }
 
+    /// GPT-6 effort ranges differ per model on the official route: Astra and
+    /// 6.1 Sol start at `low`; 6 Sol, Terra and Luna also accept `none`.
+    @Test func officialOpenAIGPT6EffortTableIsPerModel() {
+        let withNone = ["none", "low", "medium", "high", "xhigh", "max"]
+        let lowFloored = ["low", "medium", "high", "xhigh", "max"]
+        let cases: [(String, [String])] = [
+            ("gpt-6-astra", lowFloored),
+            ("openai/gpt-6.1-sol", lowFloored),
+            ("gpt-6-sol", withNone),
+            ("gpt-6.1-terra", withNone),
+            ("gpt-6-luna-2026-10-01", withNone),
+            ("gpt-6.2-unknown", lowFloored),
+        ]
+        for (modelId, levels) in cases {
+            let capabilities = ModelPickerItem.officialOpenAIReasoningCapabilities(forModelId: modelId)
+            #expect(capabilities?.levels.map(\.id) == levels, "\(modelId)")
+            #expect(capabilities?.defaultLevelId == "medium", "\(modelId)")
+        }
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-6.1-terra"))
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.6-sol"))
+        #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-6-astra"))
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.5"))
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.1"))
+        #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "o3"))
+        #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5-mini"))
+    }
+
     /// A catalog refetch that changes metadata while model ids stay identical
     /// must still produce different items (so `ChatView.applyPickerItems`
     /// re-normalizes options) and an updated capability map.
@@ -413,7 +440,8 @@ struct ModelPickerItemCacheTests {
     /// nil (never a guessed number) so resolution defers to the configured
     /// fallback instead of asserting a wrong window.
     @Test func officialOpenAIContextWindow_resolvesByLongestPrefixMatch() {
-        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-6-astra") == 1_050_000)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-6-astra") == 922_000)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-6.1-terra") == 922_000)
         #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.6-luna") == 1_050_000)
         #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.5-2026-01-01") == 1_050_000)
         // "gpt-5.2" must not fall through to the shorter "gpt-5" entry.

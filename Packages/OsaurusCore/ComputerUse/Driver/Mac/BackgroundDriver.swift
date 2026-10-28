@@ -11,6 +11,7 @@ import AppKit
 import CoreGraphics
 import Darwin
 import Foundation
+import MLXLMCommon
 import os
 
 // MARK: - Input Diagnostics
@@ -30,7 +31,7 @@ enum InputDebug {
         guard isEnabled else { return }
         let text = message()
         logger.debug("\(text, privacy: .public)")
-        FileHandle.standardError.write(Data("[cu-input] \(text)\n".utf8))
+        RuntimeDiagnostics.write(Data("[cu-input] \(text)\n".utf8))
     }
 }
 

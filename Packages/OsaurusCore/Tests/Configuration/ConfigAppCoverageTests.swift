@@ -55,8 +55,8 @@ struct ConfigAppBehaviorEnumTests {
         // The per-agent capability toggles stay declarative.
         #expect(schema.contains("computer_use_enabled"))
         #expect(schema.contains("browser_use_enabled"))
-        // The 16-section roster after scope reduction 2.
-        #expect(ConfigSectionID.allNames.count == 16, "\(ConfigSectionID.allNames)")
+        // The 16-section roster after scope reduction 2, plus harness_runtimes.
+        #expect(ConfigSectionID.allNames.count == 17, "\(ConfigSectionID.allNames)")
     }
 }
 

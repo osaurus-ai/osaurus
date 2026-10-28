@@ -129,4 +129,136 @@ struct ChatSessionDispatchModelTests {
         #expect(session.selectedModel == "mlx-test/new-default")
         await cleanup()
     }
+
+    /// Restored tabs hydrate before the asynchronous catalog is ready.
+    private func makeSessionBeforeCatalog(agentId: UUID, source: SessionSource = .chat) async -> ChatSession {
+        let session = ChatSession()
+        session.agentId = agentId
+        await drainInitialCacheSnapshot()
+        session.applyPickerItems([])
+        session.load(from: ChatSessionData(selectedModel: "mlx-test/saved", agentId: agentId, source: source))
+        return session
+    }
+
+    @Test func restoredWindowModelSurvivesLateCatalogAndLaterDiscovery() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeSessionBeforeCatalog(agentId: agent.id)
+        session.applyPickerItems([localItem("mlx-test/default")])
+        #expect(session.selectedModel == "mlx-test/default")
+        session.applyPickerItems([localItem("mlx-test/default"), localItem("mlx-test/saved")])
+        #expect(session.selectedModel == "mlx-test/saved")
+        session.applyPickerItems([
+            localItem("mlx-test/default"), localItem("mlx-test/saved"), localItem("mlx-test/other"),
+        ])
+        #expect(session.selectedModel == "mlx-test/saved")
+        #expect(AgentManager.shared.effectiveModel(for: agent.id) == "mlx-test/default")
+        await cleanup()
+    }
+
+    @Test func restoredAvailableWindowModelSurvivesCatalogExpansion() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "mlx-test/saved",
+            items: [localItem("mlx-test/default"), localItem("mlx-test/saved")]
+        )
+        #expect(session.selectedModel == "mlx-test/saved")
+        session.applyPickerItems([
+            localItem("mlx-test/default"), localItem("mlx-test/saved"), localItem("mlx-test/other"),
+        ])
+        #expect(session.selectedModel == "mlx-test/saved")
+        await cleanup()
+    }
+
+    @Test func manualReplacementBeforeSavedModelArrivesWins() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeSessionBeforeCatalog(agentId: agent.id)
+        session.applyPickerItems([localItem("mlx-test/default"), localItem("mlx-test/manual")])
+        session.selectedModel = "mlx-test/manual"
+        AgentManager.shared.updateDefaultModel(for: agent.id, model: "mlx-test/default")
+        session.applyPickerItems([
+            localItem("mlx-test/default"), localItem("mlx-test/manual"), localItem("mlx-test/saved"),
+        ])
+        #expect(session.selectedModel == "mlx-test/manual")
+        // Once the manual model is unavailable, do not revive the older saved choice.
+        session.applyPickerItems([localItem("mlx-test/default"), localItem("mlx-test/saved")])
+        #expect(session.selectedModel == "mlx-test/default")
+        await cleanup()
+    }
+
+    @Test func unavailableSavedModelUsesAgentDefaultWithoutRewritingIt() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeSessionBeforeCatalog(agentId: agent.id)
+        session.applyPickerItems([localItem("mlx-test/default")])
+        #expect(session.selectedModel == "mlx-test/default")
+        #expect(AgentManager.shared.effectiveModel(for: agent.id) == "mlx-test/default")
+        await cleanup()
+    }
+
+    @Test func resetDiscardsPendingRestoredWindowChoice() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeSessionBeforeCatalog(agentId: agent.id)
+        session.reset()
+        session.applyPickerItems([localItem("mlx-test/default"), localItem("mlx-test/saved")])
+        #expect(session.selectedModel == "mlx-test/default")
+        await cleanup()
+    }
+
+    @Test func loadingAnotherConversationReplacesPendingRestoredChoice() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeSessionBeforeCatalog(agentId: agent.id)
+        session.load(from: ChatSessionData(selectedModel: "mlx-test/second", agentId: agent.id, source: .chat))
+        session.applyPickerItems([
+            localItem("mlx-test/default"), localItem("mlx-test/saved"), localItem("mlx-test/second"),
+        ])
+        #expect(session.selectedModel == "mlx-test/second")
+        await cleanup()
+    }
+
+    @Test func lateCatalogHeadlessDispatchStillUsesCurrentDefault() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeSessionBeforeCatalog(agentId: agent.id, source: .channel)
+        session.applyPickerItems([localItem("mlx-test/default"), localItem("mlx-test/saved")])
+        session.applyAgentDefaultModelForDispatch()
+        #expect(session.selectedModel == "mlx-test/default")
+        session.applyPickerItems([
+            localItem("mlx-test/default"), localItem("mlx-test/saved"), localItem("mlx-test/other"),
+        ])
+        #expect(session.selectedModel == "mlx-test/default")
+        await cleanup()
+    }
+
+    @Test func newWindowChatStillFollowsAgentDefault() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = ChatSession()
+        session.agentId = agent.id
+        await drainInitialCacheSnapshot()
+        session.applyPickerItems([localItem("mlx-test/saved"), localItem("mlx-test/default")])
+        #expect(session.selectedModel == "mlx-test/default")
+        await cleanup()
+    }
+
+    @Test func restoredWindowConvertedToHeadlessKeepsDispatchDefaultOnRefresh() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeSessionBeforeCatalog(agentId: agent.id)
+        session.applyPickerItems([localItem("mlx-test/default"), localItem("mlx-test/saved")])
+        #expect(session.selectedModel == "mlx-test/saved")
+        session.source = .channel
+        session.applyAgentDefaultModelForDispatch()
+        session.applyPickerItems([
+            localItem("mlx-test/default"), localItem("mlx-test/saved"), localItem("mlx-test/other"),
+        ])
+        #expect(session.selectedModel == "mlx-test/default")
+        await cleanup()
+    }
+
+    @Test func loadingUnpinnedConversationClearsPreviousRestoredChoice() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeSessionBeforeCatalog(agentId: agent.id)
+        session.load(from: ChatSessionData(selectedModel: nil, agentId: agent.id, source: .chat))
+        session.applyPickerItems([localItem("mlx-test/default"), localItem("mlx-test/saved")])
+        #expect(session.selectedModel == "mlx-test/default")
+        await cleanup()
+    }
 }

@@ -14,18 +14,19 @@ Osaurus's entities can be configured from a single YAML document that describes 
 
 ## Sections
 
-The document has 16 sections (plus `version`):
+The document has 17 sections (plus `version`):
 
 - `memory` — persistent memory: enabled, token budget, retention days.
-- `default_agent` — the built-in Default agent (the Orchestrator): display name, model, temperature, max tokens, persona.
+- `harness_runtimes` — external agent harnesses (Settings → Agents → Runtimes): `name`, `kind` (`claude_code` or `pi_rpc`; required to add, fixed after), `executable`, `arguments` (`{chat_id}`, `{agent_id}`, `{cwd}`, `{system_prompt_file}` are filled per launch), and `environment` (plain values, merged; never secrets). `builtin` is reserved. Adding one, or changing its command line or environment, is high risk: every chat of an agent on it runs that program.
+- `default_agent` — the built-in Default agent (the Orchestrator): display name, model, temperature, max tokens, persona, and `runtime` / `claude_code` (as on `agents`, plus `claude_code.allow_osaurus_config_writes`).
 - `new_chat_agent` — which agent **new** chats open with: `default` or a custom agent's name. (`active_agent` is still accepted as a legacy spelling; exports write `new_chat_agent`.)
-- `agents` — custom agents: prompt, model, sampling, and per-agent capability toggles (tools, web search, browser, computer use, relay, knowledge collections, `apple_apps`, …). `capabilities.apple_apps` is the list of built-in Apple apps the agent may use (`calendar`, `reminders`, `contacts`, `notes`, `mail`, `messages`, `maps`, `music`, `shortcuts`); the full list replaces the set and `[]` turns them all off. Enabling `mail`, `messages`, or `shortcuts` adds a risk line to the plan. `template: coder | researcher | writer | assistant | productivity` fills in the system prompt when omitted; `description` is an optional one-line routing summary (generated in the background from the system prompt when omitted); an omitted `model` means the Orchestrator's current model.
+- `agents` — custom agents: prompt, model, sampling, and per-agent capability toggles (tools, web search, browser, computer use, relay, knowledge collections, `apple_apps`, …). `skills` is the agent's skill allow-list: omit it to leave it unchanged, `null` for every installed skill, or a list of skill names or slugs (`[]` means none); only listed skills appear in the agent's prompt, `capabilities_load`, and slash commands. `tools` with `mode: manual` is the exact tool list: an export lists a fully selected plugin or MCP group under `plugins` / `mcp_servers`, and a partly selected group as its exact tool names under `tools.enabled`. `capabilities.apple_apps` is the list of built-in Apple apps the agent may use (`calendar`, `reminders`, `contacts`, `notes`, `mail`, `messages`, `maps`, `music`, `shortcuts`); the full list replaces the set and `[]` turns them all off. Enabling `mail`, `messages`, or `shortcuts` adds a risk line to the plan. `template: coder | researcher | writer | assistant | productivity` fills in the system prompt when omitted; `description` is an optional one-line routing summary (generated in the background from the system prompt when omitted); an omitted `model` means the Orchestrator's current model. `runtime` is `builtin` (Osaurus's own loop) or a `harness_runtimes` name; a name that isn't registered (and isn't added by the same document) fails validation rather than falling back to the built-in loop. `claude_code` (`model`, `mode: agent | text_only`, `allow_writes`, `allow_shell`, `allow_osaurus_tools`) applies when the runtime is Claude Code; only listed keys change.
 - `tools` — global tool enablement and per-tool policies (`auto` / `ask` / `deny`). Tools that send or delete as the user (`messages_send`, `calendar_delete_event`, `reminders_delete`, `delete_knowledge`) ask on every call regardless; `auto` on them is stored but has no effect, and the plan says so. `mail_compose` / `mail_reply` on `auto` covers drafts only — `send: true` still asks.
 - `delegation` — the Orchestrator's pool and limits: `spawnable_agents` (custom agent names), `spawnable_workspace_agents` (teammates' shared agents), `workspace_auto_join`, `permission_defaults` (`spawn`, `spawn_workspace`, …), the per-subagent budgets (`budget_max_tokens`, `budget_max_turns`, `budget_max_seconds`, `budget_max_parallel_spawns`, `budget_max_remote_parallel_spawns`), RAM-safety preflight. See "Delegation" below.
 - `commands` — user slash-command templates.
 - `knowledge_collections` — folder-backed knowledge collections with include/exclude globs.
 - `channels` — messaging platforms (Telegram, Slack, …): read limits, allowlists, write enables, and the global write kill switch.
-- `mcp_servers` — MCP servers, HTTP or stdio (`command` / `args` / `env`), with `token_ref` / `secret_env_refs` for credentials.
+- `mcp_servers` — MCP servers, HTTP or stdio (`command` / `args` / `env`), with `token_ref` (HTTP bearer token), `secret_header_refs` (HTTP custom headers such as `X-API-Key`, header name → reference), and `secret_env_refs` (stdio environment) for credentials.
 - `models` — the desired-state list of installed local model ids; adding an id starts the download, pruning deletes from disk.
 - `plugins` — installed plugin ids.
 - `providers` — cloud model providers, including endpoint fields (create-only) and `api_key_ref` / `set_api_key`.
@@ -64,7 +65,7 @@ delegation:
 - **Prune is explicit and destructive.** Prune is a *tool/CLI argument*, never a document key. Applying with prune additionally deletes entries *not* listed in the sections the document declares — it never touches undeclared sections. A prune that would delete an agent while a surviving schedule or watcher still runs on it is refused; delete or reassign them in the same document.
 - **Validation is all-or-nothing.** Any invalid key, value, or reference fails the whole document with every issue listed — nothing is half-applied.
 - **Model ids are grounded.** `default_agent.model` and `agents[].model` accept `foundation` (the built-in Apple Foundation on-device model), an installed local model id, or a cloud model as `<provider>/<model>` (the provider name lowercased, e.g. `anthropic/claude-x`). A bare cloud id is auto-prefixed when exactly one provider offers it; an id nothing offers fails validation instead of silently leaving the agent without a working model.
-- **High-risk changes always require approval**: prune deletions, screen/browser grants, agent relay exposure, new MCP endpoints, stdio MCP commands, channel write enables, setting a tool policy to `auto`, loosening delegation permissions (including `spawn_workspace` to `always_allow`).
+- **High-risk changes always require approval**: prune deletions, screen/browser grants, agent relay exposure, new MCP endpoints, stdio MCP commands, harness runtime commands and environment, moving an agent onto a harness, Claude Code shell or configuration-change permission, channel write enables, setting a tool policy to `auto`, loosening delegation permissions (including `spawn_workspace` to `always_allow`).
 - **JSON works everywhere YAML does.** `export` and `schema` accept `format: json` (CLI: `--format json`), and `plan`/`apply` accept a JSON document in the same field — JSON is a YAML subset, with the same strict unknown-key validation.
 
 ## Secrets
@@ -73,7 +74,7 @@ Secrets never appear in a document — exports contain none, and applies never a
 
 Two ways to wire credentials:
 
-- **Secret references.** `api_key_ref` (providers), `token_ref` (MCP servers), `secret_env_refs` (stdio MCP env), and `bot_token_ref` (channels) accept `env:VAR_NAME` or `keychain:SERVICE/ACCOUNT`. Apply resolves the reference at apply time; the document only ever carries the pointer.
+- **Secret references.** `api_key_ref` (providers), `token_ref` and `secret_header_refs` (MCP servers), `secret_env_refs` (stdio MCP env), and `bot_token_ref` (channels) accept `env:VAR_NAME` or `keychain:SERVICE/ACCOUNT`. Apply resolves the reference at apply time; the document only ever carries the pointer.
 - **The credential sheet.** Creating a cloud provider opens the native credential sheet during apply. To set or rotate an *existing* provider's key, add `set_api_key: true` to its entry: apply opens the same secure sheet even when the provider already has working credentials. The flag is a one-shot request — never exported, and the secret itself still never touches the document.
 
 ## Typical flows
@@ -81,6 +82,7 @@ Two ways to wire credentials:
 - "Give my research agent web search and switch to it" — the assistant writes the minimal document, shows the plan, and applies after your approval.
 - "Export my setup" — saves a shareable snapshot; re-applying it later (or on another machine) recreates the configuration, prompting only for credentials.
 - Templates: `export` with a save-as name stores the document under `~/.osaurus/templates/`; later say "apply my research-setup template".
+- Agent templates: single-agent templates from Agents → Templates. `templates` lists the ones shown to the Orchestrator; `plan` / `apply` with `template: "<name>"` plus `overrides: {name, description, system_prompt, model}` creates an agent from one. The `agents[]` entity carries the portable keys (`tools`, `mcp_servers`, `plugins`, `plugin_instructions`, `sandbox`, `subagents`, `working_folder`) that make this work across machines. `orchestrator_spawnable: false` on an entry that creates an agent keeps it out of Settings → Orchestrator → Subagents → Allowed subagents; it is ignored when the entry patches an existing agent, and a `delegation.spawnable_agents` list in the same document still wins.
 
 ## CLI
 
@@ -89,6 +91,10 @@ osaurus config export [-o file.yaml] [--format json]  # snapshot current state
 osaurus config plan <file.yaml|.json> [--prune]       # dry-run: show the diff
 osaurus config apply <file.yaml|.json> [--prune] [--yes]
 ```
+
+When Settings → Server → Settings → Authentication → **Require Access Key for Local Admin Routes** is on, the `/admin/config/*` endpoints need an access key even from this Mac: pass `--access-key KEY` or set `OSAURUS_API_KEY` (a missing or rejected key exits `1` with a hint).
+
+To install agents, skills, MCP servers, and harness runtimes from a vendor's Osaurus bundle (an installer-shipped folder with `osaurus-bundle.json`), use `osaurus import install --from <folder>`; see `docs/OSAURUS_BUNDLES.md` in the repository. A bundle can also switch **Require Access Key for Local Admin Routes** and add to **Allowed Origins (CORS)** through its `settings` object; no other setting is provisioned that way.
 
 High-risk applies are refused until re-run with `--yes` (the risks are printed first). Exit codes: `0` fully applied, `1` a change failed or was cancelled, `3` applied but a step must be finished in the app (typically credentials).
 
@@ -100,5 +106,5 @@ Ask the assistant to "show the configuration schema" (it calls `osaurus_config` 
 
 Two classes, both by design:
 
-- **Removed from the declarative surface** (Settings UI only): server runtime (port, network exposure, generation defaults, caches, concurrency, model exposure), chat behavior (core model), app shell (login item, dock icon, appearance/themes/toasts), voice/wake words, global computer-use presets, sandbox resources, privacy filter, image-generation targets, the Orchestrator's working folder, and the agent-target model override. Per-agent capability *toggles* (computer use, browser, relay, …) remain declarative under `agents[].capabilities`. Skills are read-only via `osaurus_inspect` — installing a skill is content acquisition, not configuration state.
+- **Removed from the declarative surface** (Settings UI only): server runtime (port, network exposure, generation defaults, caches, concurrency, model exposure), chat behavior (core model), app shell (login item, dock icon, appearance/themes/toasts), voice/wake words, global computer-use presets, sandbox resources, privacy filter, image-generation targets, the Orchestrator's working folder, and the agent-target model override. Per-agent capability *toggles* (computer use, browser, relay, …) remain declarative under `agents[].capabilities`. Skills are read-only via `osaurus_inspect` — installing a skill is content acquisition, not configuration state (an agent's allow-list is `agents[].skills`; third-party installers ship skills in an Osaurus bundle with `osaurus import`).
 - **Inherently interactive**: macOS permission (TCC) grants, OAuth sign-in and device pairing, hotkey capture, folder pickers/bookmarks, download progress, destructive resets, and payment.

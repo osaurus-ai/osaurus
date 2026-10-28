@@ -499,6 +499,144 @@ struct InboundSharedRunBridgeTests {
         }
     }
 
+    @Test(arguments: ["responses", "anthropic"])
+    func streamedCompletionRetainsNativeStateAndFoldedWholeToolBatch(provider: String) async throws {
+        try await ChatHistoryTestStorage.run {
+            let (bridge, manager, _) = makeBridge()
+            let ctx = workspaceContext()
+            let handle = bridge.begin(
+                runKey: "native-merge-\(UUID().uuidString)", agentId: UUID(), context: ctx,
+                externalKey: key(ctx, "native-merge"), requestMessages: request, stop: {}
+            )
+            defer {
+                bridge.finish(handle, success: true, summary: "Completed")
+                manager.finalizeTask(handle.taskId)
+                ChatSessionsManager.shared.delete(id: handle.taskId)
+            }
+            bridge.streamDelta(handle, content: "Checking.", reasoning: "actual reasoning")
+            let session = try #require(manager.backgroundTasks[handle.taskId]?.chatSession)
+            let streamed = try #require(session.turns.last)
+            let streamedID = streamed.id
+            // These measured fields already arrived through the live path;
+            // a ChatMessage with no usage/duration carrier must not erase them.
+            streamed.toolCallDurations = ["call_b": 1.25]
+            streamed.inputTokenCount = 1024
+            streamed.cachedInputTokenCount = 900
+            streamed.generationTokenCount = 77
+            streamed.generationTokensPerSecond = 12.5
+            let attachment = Attachment.document(filename: "streamed.txt", content: "existing", fileSize: 8)
+            let artifact = SharedArtifact(
+                contextId: handle.taskId.uuidString, contextType: .chat, filename: "streamed.txt",
+                mimeType: "text/plain", fileSize: 8, hostPath: "/fixture/streamed.txt", content: "existing"
+            )
+            streamed.attachments = [attachment]
+            streamed.sharedArtifacts = [artifact]
+            let assistant = ChatMessage(
+                role: "assistant", content: "Checking.", tool_calls: ResponsesHistoryFixture.calls, tool_call_id: nil,
+                reasoning_content: "actual reasoning",
+                reasoning_item_id: provider == "responses" ? "rs_original" : nil,
+                reasoning_encrypted: provider == "responses" ? "opaque+/==" : nil,
+                responses_output_items: provider == "responses" ? try ResponsesHistoryFixture.items() : nil,
+                anthropic_thinking_blocks: provider == "anthropic" ? try ResponsesHistoryFixture.signedBlocks() : nil
+            )
+            bridge.appendMessages(handle, [
+                assistant,
+                ChatMessage(role: "tool", content: "file a", tool_calls: nil, tool_call_id: "call_a"),
+                ChatMessage(role: "tool", content: "seven", tool_calls: nil, tool_call_id: "call_b"),
+            ])
+            #expect(session.turns.filter { $0.role == .assistant }.count == 1)
+            #expect(streamed.id == streamedID && streamed.content == "Checking.")
+            #expect(streamed.thinking == "actual reasoning")
+            #expect(streamed.toolCalls?.map(\.id) == ["call_b", "call_a"])
+            #expect(streamed.toolCalls?.first?.function.arguments == #"{"count":"7"}"#)
+            #expect(streamed.toolResults == ["call_a": "file a", "call_b": "seven"])
+            #expect(streamed.toolCallDurations == ["call_b": 1.25])
+            #expect(streamed.inputTokenCount == 1024 && streamed.cachedInputTokenCount == 900)
+            #expect(streamed.generationTokenCount == 77 && streamed.generationTokensPerSecond == 12.5)
+            #expect(streamed.attachments == [attachment])
+            #expect(streamed.sharedArtifacts == [artifact])
+            #expect(streamed.reasoningItemId == assistant.reasoning_item_id)
+            #expect(streamed.reasoningEncrypted == assistant.reasoning_encrypted)
+            #expect(streamed.responsesOutputItems == (assistant.responses_output_items ?? []))
+            #expect(streamed.anthropicThinkingBlocks == (assistant.anthropic_thinking_blocks ?? []))
+            // Commit the snapshots queued by the real session.save path on
+            // its existing FIFO database queue before opening another handle.
+            // An independent migration transaction racing that writer is not
+            // a relaunch. Do not substitute a direct test-only snapshot save.
+            ChatSessionStore.flushPendingSaves()
+            try #require(!ChatSessionStore._hasPendingSaveForTesting(handle.taskId))
+            let expected = ChatTurnData(from: streamed)
+            let committed = try #require(
+                ChatHistoryDatabase.shared.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID }
+            )
+            let committedDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(committed, expected)
+            #expect(committedDifferences.isEmpty)
+            // Drain/close the actual writer and clear pending overlays, then
+            // read through an independent connection as after process restart.
+            ChatSessionStore._resetForTesting()
+            let disk = ChatHistoryDatabase()
+            try disk.open()
+            defer { disk.close() }
+            let loaded = try #require(disk.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID })
+            let reloadedDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(loaded, expected)
+            #expect(reloadedDifferences.isEmpty)
+        }
+    }
+
+    @Test func completedSnapshotMergeCopiesActualMetricsAndRejectsDifferentVisibleAnswer() throws {
+        let completed = try ResponsesHistoryFixture.turn()
+        let streamed = ChatTurn(role: .assistant, content: completed.content)
+        let id = streamed.id
+        InboundSharedRunBridge.mergeCompletedTurn(completed, into: streamed)
+        #expect(streamed.id == id && streamed.content == completed.content)
+        #expect(streamed.responsesOutputItems == completed.responsesOutputItems)
+        #expect(streamed.toolCallDurations == completed.toolCallDurations)
+        #expect(streamed.inputTokenCount == 1024 && streamed.cachedInputTokenCount == 900)
+        #expect(streamed.generationTokenCount == 77 && streamed.generationTokensPerSecond == 12.5)
+        #expect(streamed.completedAt == completed.completedAt && streamed.lastOutputAt == completed.lastOutputAt)
+        let different = ChatTurn(role: .assistant, content: "A different answer")
+        InboundSharedRunBridge.mergeCompletedTurn(completed, into: different)
+        #expect(different.content == "A different answer" && different.responsesOutputItems.isEmpty)
+        #expect(different.inputTokenCount == nil && different.toolCalls == nil)
+    }
+
+    @Test func completedNonemptyMediaListsRemainAuthoritativeAndKeepTheirOrder() {
+        let streamed = ChatTurn(role: .assistant, content: "Done")
+        streamed.attachments = [.document(filename: "earlier.txt", content: "old", fileSize: 3)]
+        streamed.sharedArtifacts = [SharedArtifact(
+            contextId: "fixture", contextType: .chat, filename: "earlier.txt", mimeType: "text/plain",
+            fileSize: 3, hostPath: "/fixture/earlier.txt", content: "old"
+        )]
+        let attachments = [
+            Attachment.document(filename: "second.txt", content: "second", fileSize: 6),
+            Attachment.document(filename: "first.txt", content: "first", fileSize: 5),
+        ]
+        let artifacts = ["second", "first"].map { name in
+            SharedArtifact(contextId: "fixture", contextType: .chat, filename: "\(name).txt",
+                mimeType: "text/plain", fileSize: name.utf8.count, hostPath: "/fixture/\(name).txt", content: name)
+        }
+        let completed = ChatTurnData(role: .assistant, content: "Done", attachments: attachments, sharedArtifacts: artifacts)
+        InboundSharedRunBridge.mergeCompletedTurn(completed, into: streamed)
+        #expect(streamed.attachments == attachments)
+        #expect(streamed.sharedArtifacts == artifacts)
+    }
+
+    @Test func prefixMatchAllowsOmittedReasoningButDetectsExplicitNativeChanges() throws {
+        let observed = try ResponsesHistoryFixture.turn()
+        let omitted = ChatTurnData(role: .assistant, content: observed.content, toolCalls: observed.toolCalls)
+        #expect(InboundSharedRunBridge.isUnchangedPrefix([observed], of: [omitted]))
+        var incoming = observed
+        #expect(InboundSharedRunBridge.isUnchangedPrefix([observed], of: [incoming]))
+        incoming.reasoningEncrypted = "different opaque state"
+        #expect(!InboundSharedRunBridge.isUnchangedPrefix([observed], of: [incoming]))
+        incoming = observed
+        incoming.responsesOutputItems.reverse()
+        #expect(!InboundSharedRunBridge.isUnchangedPrefix([observed], of: [incoming]))
+        incoming = observed
+        incoming.anthropicThinkingBlocks = try ResponsesHistoryFixture.signedBlocks()
+        #expect(!InboundSharedRunBridge.isUnchangedPrefix([observed], of: [incoming]))
+    }
+
     // MARK: - stop
 
     @Test func cancelTaskOnManager_routesStopThroughSharedBridge() async throws {

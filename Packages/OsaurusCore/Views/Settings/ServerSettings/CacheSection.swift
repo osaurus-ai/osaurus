@@ -12,6 +12,8 @@
 import SwiftUI
 
 struct CacheSection: View {
+    @Environment(\.theme) private var theme
+
     @Binding var draft: VMLXServerRuntimeSettings
     @Binding var metadataFallbackTokens: Int?
     @Binding var contextLengthCap: Int?
@@ -245,7 +247,6 @@ struct CacheSection: View {
     private var resolvedDiskCacheLabel: String {
         guard let result = diskCacheResolution else { return "—" }
         let effective = DiskCacheUsage.format(bytes: Int(clamping: result.capBytes))
-        let requested = DiskCacheUsage.format(bytes: Int(clamping: result.requestedBytes))
         let label: String
         switch result.rule {
         case .automatic:
@@ -257,10 +258,19 @@ struct CacheSection: View {
         case .unknownVolume:
             label = String(format: L("Disk measurement unavailable: %@ fallback"), effective)
         }
-        let limit = result.limitedByHost
-            ? String(format: L("Requested %@; limited to 25%% of free space plus this cache."), requested) : ""
-        let warning = result.lowFreeSpace && ModelRuntime.cacheDiskDirectoryOverride(for: draft.cache) != nil ? L("Disk space is low. SSD caching remains enabled.") : ""
-        return [label, limit, warning].filter { !$0.isEmpty }.joined(separator: "\n")
+        let warning: String
+        if result.exceedsAvailableSpace {
+            warning = L("The cache limit exceeds currently available space. Other files may prevent the cache from reaching this size.")
+        } else if result.lowFreeSpace {
+            warning = L("Disk space is low. SSD caching remains enabled.")
+        } else {
+            warning = ""
+        }
+        return [label, warning].filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    private var hasDiskSpaceWarning: Bool {
+        diskCacheResolution.map { $0.exceedsAvailableSpace || $0.lowFreeSpace } ?? false
     }
 
     private var diskCachePercentBinding: Binding<Double?> {
@@ -298,7 +308,7 @@ struct CacheSection: View {
             OptionalDoubleField(
                 label: "Disk Cache Size (% of disk)",
                 placeholder: "Blank = Automatic (30% of available space)",
-                help: "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size, bounded by 25% of free space plus this cache. Saving a size change updates loaded models without unloading them; a lower cap is enforced on the next cache write.",
+                help: "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size without a free-space cap. This is a maximum cache size, not reserved space. Saving updates loaded models without unloading them; a lower cap applies on the next cache write.",
                 value: diskCachePercentBinding,
                 format: "%g"
             )
@@ -315,7 +325,7 @@ struct CacheSection: View {
             .settingsLandingAnchor("settings.server.diskCacheAutomatic")
             Text(verbatim: resolvedDiskCacheLabel)
                 .font(.system(size: 10))
-                .foregroundColor(.secondary)
+                .foregroundColor(hasDiskSpaceWarning ? theme.errorColor : .secondary)
             HStack(spacing: 10) {
                 Button {
                     Task {

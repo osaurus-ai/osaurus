@@ -240,6 +240,53 @@ struct ModelManagerSuggestedTests {
         }
     }
 
+    /// The reported Mac: six installed OsaurusAI bundles, a sidebar count of
+    /// 1 and spawn setup checks that "cannot find" the model. The org fetch
+    /// landed before the local scan, so the scan's exact-id hit refreshed the
+    /// suggestion and skipped the installed inventory.
+    @Test @MainActor func installedOrgModelKnownOnlyAsSuggestionJoinsTheInstalledInventory() async {
+        await withIsolatedModelSizeCache {
+            let manager = ModelManager()
+            let id = "OsaurusAI/Inventory-Probe-125B-A6B-JANGH2"
+            let fetched = MLXModel(
+                id: id,
+                name: "Inventory Probe",
+                description: "From OsaurusAI on Hugging Face.",
+                downloadURL: "https://huggingface.co/\(id)"
+            )
+            manager.applyOsaurusOrgFetch(autoFetched: [fetched])
+            #expect(!manager.availableModels.contains { $0.id == id })
+
+            let local = MLXModel(id: id, name: "Inventory-Probe", description: "", downloadURL: "")
+            manager.mergeAvailable(with: [local], refreshLocalInstallationMetadata: true)
+            #expect(manager.availableModels.filter { $0.id == id }.count == 1)
+            #expect(manager.availableModels.first { $0.id == id }?.description == fetched.description)
+
+            // A rescan neither duplicates it nor changes what the page lists.
+            manager.mergeAvailable(with: [local], refreshLocalInstallationMetadata: true)
+            #expect(manager.availableModels.filter { $0.id == id }.count == 1)
+            #expect(manager.deduplicatedModels().filter { $0.id == id }.count == 1)
+        }
+    }
+
+    /// Registry and Hub merges carry no installation evidence and must not
+    /// move a suggestion into the installed inventory.
+    @Test @MainActor func nonLocalMergeLeavesASuggestionOutOfTheInstalledInventory() async {
+        await withIsolatedModelSizeCache {
+            let manager = ModelManager()
+            let id = "OsaurusAI/Inventory-Probe-Remote-Only"
+            let fetched = MLXModel(
+                id: id,
+                name: "Remote Only",
+                description: "From OsaurusAI on Hugging Face.",
+                downloadURL: "https://huggingface.co/\(id)"
+            )
+            manager.applyOsaurusOrgFetch(autoFetched: [fetched])
+            manager.mergeAvailable(with: [fetched])
+            #expect(!manager.availableModels.contains { $0.id == id })
+        }
+    }
+
     @Test @MainActor func applyOsaurusOrgFetch_curatedEntryWinsOnDuplicateId() async {
         await withIsolatedModelSizeCache {
             let manager = ModelManager()
@@ -586,5 +633,39 @@ struct ModelManagerSuggestedTests {
             #expect(eighteenGB?.id == raptorId)
             #expect(twentyFourGB?.id == raptorId)
         }
+    }
+
+    // MARK: - HF timestamp parsing
+
+    @Test func parseHFTimestamp_parsesFractionalSeconds() {
+        let date = ModelManager.parseHFTimestamp("2024-05-01T12:34:56.789Z")
+        #expect(date != nil)
+        if let date {
+            #expect(abs(date.timeIntervalSince1970 - 1_714_566_896.789) < 0.01)
+        }
+    }
+
+    @Test func parseHFTimestamp_parsesWithoutFractionalSeconds() {
+        let date = ModelManager.parseHFTimestamp("2024-05-01T12:34:56Z")
+        #expect(date?.timeIntervalSince1970 == 1_714_566_896)
+    }
+
+    @Test func parseHFTimestamp_returnsNilForMissingOrInvalidInput() {
+        #expect(ModelManager.parseHFTimestamp(nil) == nil)
+        #expect(ModelManager.parseHFTimestamp("") == nil)
+        #expect(ModelManager.parseHFTimestamp("not-a-date") == nil)
+    }
+
+    @Test func parseHFTimestamp_isSafeOffMainActor() async {
+        let results = await withTaskGroup(of: Date?.self) { group in
+            for _ in 0..<32 {
+                group.addTask { ModelManager.parseHFTimestamp("2024-05-01T12:34:56.000Z") }
+            }
+            var collected: [Date?] = []
+            for await value in group { collected.append(value) }
+            return collected
+        }
+        #expect(results.count == 32)
+        #expect(results.allSatisfy { $0?.timeIntervalSince1970 == 1_714_566_896 })
     }
 }

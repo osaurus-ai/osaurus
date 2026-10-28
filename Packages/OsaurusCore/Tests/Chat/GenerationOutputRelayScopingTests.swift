@@ -2,13 +2,10 @@
 //  GenerationOutputRelayScopingTests.swift
 //  OsaurusCoreTests
 //
-//  `GenerationOutputRelay` is process-wide: every local generation announces
-//  its output completion there. A chat step must only accept the completion
-//  of its OWN session's generation — a title / follow-up / memory job or a
-//  foreign session finishing after the step started used to mark the turn
-//  complete before its model had emitted a token, which hid the typing
-//  indicator ("Loading Model..."), the cursor, and pushed every delta through
-//  the non-streaming table path.
+//  The relay's standalone identity matcher remains tested for its consumers.
+//  Chat now settles only at its own ordered typed completion, so even a
+//  same-session global announcement cannot outrun buffered output. Gated
+//  typed streams cover completion, producer tail and Stop independently.
 //
 
 import Foundation
@@ -97,8 +94,8 @@ struct GenerationOutputRelaySessionScopingTests {
     private static let asyncTimeout: Duration = .seconds(10)
 
     /// A foreign or utility completion arriving mid-step must leave the
-    /// live turn streaming (typing indicator up, `outputComplete` false);
-    /// the session's own completion must settle it.
+    /// live turn streaming (typing indicator up, `outputComplete` false).
+    /// Only its ordered typed completion may settle it.
     @Test
     func foreignCompletionsDoNotEndTheLiveTurn() async throws {
         try await ChatHistoryTestStorage.run {
@@ -143,7 +140,7 @@ struct GenerationOutputRelaySessionScopingTests {
                 modelName: "local/model", generationTokens: 3,
                 sessionId: nil, activitySource: .httpAPI, auxiliary: false
             )
-            // Longer than the relay sink's quiet window (0.15 s) plus a margin.
+            // Give any obsolete relay-driven UI path time to fire.
             try await Task.sleep(for: .milliseconds(600))
             #expect(!session.outputComplete, "foreign completions must not end this session's step")
             #expect(session.isStreaming)
@@ -155,12 +152,17 @@ struct GenerationOutputRelaySessionScopingTests {
                 "the typing indicator must stay up while this turn's model is still working"
             )
 
-            // The session's own completion settles the step.
+            // Even an own-session global announcement can run ahead of
+            // buffered typed deltas. It cannot settle this ordered stream.
             GenerationOutputRelay.shared.announce(
                 modelName: "local/model", generationTokens: 3,
                 sessionId: ownSessionId, activitySource: .chatUI, auxiliary: false
             )
+            try await Task.sleep(for: .milliseconds(250))
+            #expect(!session.outputComplete)
+            await engine.complete(with: "done")
             try await waitUntil(timeout: Self.asyncTimeout) { session.outputComplete }
+            #expect(session.turns.last?.content == "done")
 
             // Output complete but the stream (engine tail) is still open: the
             // run is live, so the turn must keep a progress row — now in the
@@ -171,7 +173,7 @@ struct GenerationOutputRelaySessionScopingTests {
                 "the engine tail must be labelled, not blank"
             )
 
-            await engine.finish(with: "done")
+            await engine.finish()
             try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
             #expect(session.turns.last?.content == "done")
             // Run closed: no indicator of either phase remains.
@@ -197,12 +199,8 @@ struct GenerationOutputRelaySessionScopingTests {
             try await waitUntil(timeout: Self.asyncTimeout) {
                 session.isStreaming && session.turns.last?.role == .assistant
             }
-            let ownSessionId = try #require(session.sessionId?.uuidString)
 
-            GenerationOutputRelay.shared.announce(
-                modelName: "local/model", generationTokens: 3,
-                sessionId: ownSessionId, activitySource: .chatUI, auxiliary: false
-            )
+            await engine.complete(with: "done")
             try await waitUntil(timeout: Self.asyncTimeout) { session.outputComplete }
             #expect(Self.typingPhases(in: session.visibleBlocks) == [.finishing])
 
@@ -214,17 +212,14 @@ struct GenerationOutputRelaySessionScopingTests {
             #expect(session.turns.last?.terminalStopReason == "cancelled")
 
             // Release the gated engine so the harness does not leak the stream.
-            await engine.finish(with: "")
+            await engine.finish()
         }
     }
 
-    /// Stop while a local tool step sits on the engine tail: the model has
-    /// named the tool (pending chip up), output is complete, but the parsed
-    /// invocation is still withheld. The chip must go with the run AND the
-    /// cancelled turn must render its "Interrupted" record — the ephemeral
-    /// `pendingToolName` used to survive the stop and suppress that notice,
-    /// leaving a header-only row until a reload.
-    @Test("Stop during a pending-tool engine tail clears the chip and renders the cancelled record")
+    /// A name preview absent from the complete batch is not executable.
+    /// Completion clears it and shows the real finishing phase; Stop during
+    /// that producer tail still clears the row and records interruption.
+    @Test("Typed completion clears an abandoned preview before producer drain")
     func stopDuringPendingToolTailRendersInterruptedNotice() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
@@ -239,22 +234,17 @@ struct GenerationOutputRelaySessionScopingTests {
             try await waitUntil(timeout: Self.asyncTimeout) {
                 session.isStreaming && session.turns.last?.role == .assistant
             }
-            let ownSessionId = try #require(session.sessionId?.uuidString)
 
-            await engine.yield(StreamingToolHint.encode("osaurus_inspect"))
+            await engine.yield(.functionNamePreview("osaurus_inspect"))
             try await waitUntil(timeout: Self.asyncTimeout) {
                 session.turns.last?.pendingToolName == "osaurus_inspect"
                     && Self.hasPendingToolChip(session.visibleBlocks)
             }
 
-            GenerationOutputRelay.shared.announce(
-                modelName: "local/model", generationTokens: 3,
-                sessionId: ownSessionId, activitySource: .chatUI, auxiliary: false
-            )
+            await engine.complete()
             try await waitUntil(timeout: Self.asyncTimeout) { session.outputComplete }
-            // The chip owns the tail for a tool step — no finishing row on top.
-            #expect(Self.hasPendingToolChip(session.visibleBlocks))
-            #expect(Self.typingPhases(in: session.visibleBlocks).isEmpty)
+            #expect(!Self.hasPendingToolChip(session.visibleBlocks))
+            #expect(Self.typingPhases(in: session.visibleBlocks) == [.finishing])
 
             session.stop()
             try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
@@ -274,7 +264,7 @@ struct GenerationOutputRelaySessionScopingTests {
                 }
             )
 
-            await engine.finish(with: "")
+            await engine.finish()
         }
     }
 
@@ -293,32 +283,42 @@ struct GenerationOutputRelaySessionScopingTests {
     }
 }
 
-/// Holds the stream open (like a model still loading / prefilling) until
-/// `finish(with:)` releases it.
+/// Holds the typed stream open across logical completion and producer drain.
 private actor GatedChatEngine: ChatEngineProtocol {
-    private var continuation: AsyncThrowingStream<String, Error>.Continuation?
+    private var continuation: AsyncThrowingStream<ResponsesGenerationEvent, Error>.Continuation?
     private(set) var requestCount = 0
 
-    func streamChat(request _: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+    func streamResponses(request _: ResponsesInferenceRequest) async throws
+        -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
+    {
         requestCount += 1
-        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
-        self.continuation = continuation
-        return stream
+        let pair = AsyncThrowingStream<ResponsesGenerationEvent, Error>.makeStream()
+        continuation = pair.continuation
+        return pair.stream
     }
 
-    /// Push one delta while keeping the stream open.
-    func yield(_ text: String) {
-        continuation?.yield(text)
+    func yield(_ event: ResponsesGenerationEvent) { continuation?.yield(event) }
+
+    func complete(with text: String = "") {
+        if !text.isEmpty { continuation?.yield(.outputTextDelta(text)) }
+        continuation?.yield(.responseCompleted(.init(
+            responseID: "resp_visual_fixture", status: .completed, functionCalls: [],
+            tokenCount: 3, tokensPerSecond: 30, unclosedReasoning: false,
+            stopReason: "stop", promptTokensPerSecond: nil, mtp: nil
+        )))
     }
 
-    func finish(with text: String) {
-        continuation?.yield(text)
+    func finish() {
+        continuation?.yield(.drained)
         continuation?.finish()
         continuation = nil
     }
 
+    func streamChat(request _: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        throw NSError(domain: "unexpected-legacy-stream", code: 1)
+    }
     func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {
-        throw NSError(domain: "GatedChatEngine", code: 1)
+        throw NSError(domain: "unexpected-legacy-completion", code: 1)
     }
 }
 

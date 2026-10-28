@@ -10,7 +10,6 @@
 //
 
 import AppKit
-import Combine
 import QuartzCore
 
 // MARK: - NativeTypingIndicatorView
@@ -25,13 +24,11 @@ final class NativeTypingIndicatorView: NSView {
     private let memoryLabel = NSTextField(labelWithString: "")
     private var memoryStack: NSStackView?
     /// Inline prefill token counter rendered as a small status badge next to the
-    /// RAM indicator. Kept separate from `loadingLabel` so prefill never hides
-    /// the bouncing dots; it augments the existing indicator instead of
-    /// replacing it.
+    /// RAM indicator. Runtime progress augments the pending dots instead
+    /// of replacing them or borrowing another request's loading phase.
     private let prefillBadge = NSStackView()
     private let prefillTitleLabel = NSTextField(labelWithString: "Prefill")
     private let prefillCountLabel = NSTextField(labelWithString: "")
-    private let loadingLabel = NSTextField(labelWithString: "")
     /// "Finishing up…" caption shown beside the dots in the `.finishing`
     /// phase: the model's output is complete, the run is still open on the
     /// engine's post-generation tail (Stop live, input locked). Replaces the
@@ -43,33 +40,25 @@ final class NativeTypingIndicatorView: NSView {
     nonisolated(unsafe) private var bounceTimer: Timer?
     nonisolated(unsafe) private var memoryPollTimer: Timer?
     private var currentDot = 0
-    private var cancellables: [Any] = []  // Combine sinks
 
     // MARK: State
 
     private var theme: (any ThemeProtocol)?
-    private var isShowingLoadingLabel = false
     /// Which wait this row stands for (see `TypingIndicatorPhase`). Set by
     /// the cell from the block; `.finishing` overrides every global loading
     /// phase, because once THIS step's output is done any model load or
     /// prefill in flight belongs to another request and must not relabel it.
     private var phase: TypingIndicatorPhase = .generating
 
-    /// Latest prefill state, captured from the Combine stream's emitted value
-    /// rather than re-read from the singleton. Prefill updates can arrive in a
-    /// tight burst (e.g. a cold prompt where vmlx buffers prompt-processing
-    /// events and releases them together); re-reading the singleton in a
-    /// deferred sink would collapse those to the final (already-cleared) state,
-    /// dropping every intermediate percentage. Carrying the value keeps each
-    /// delivered frame honest.
-    private var cachedPrefill: PrefillProgressState?
+    /// Only this row's typed request can supply progress. A global model
+    /// load, warm-up or another window's prefill is not this turn's phase.
+    private var scopedPrefill: PrefillProgressState?
 
     // MARK: Init
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         buildViews()
-        observeModelLoading()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -93,11 +82,14 @@ final class NativeTypingIndicatorView: NSView {
         }
     }
 
-    func configure(theme: any ThemeProtocol, phase: TypingIndicatorPhase = .generating) {
-        if phase != self.phase {
-            self.phase = phase
-            refreshLoadingPhase()
-        }
+    func configure(
+        theme: any ThemeProtocol,
+        phase: TypingIndicatorPhase = .generating,
+        prefillProgress: PrefillProgressState? = nil
+    ) {
+        self.phase = phase
+        scopedPrefill = phase == .generating ? prefillProgress : nil
+        refreshLoadingPhase()
         guard self.theme == nil || !isSameTheme(theme) else { return }
         self.theme = theme
         updateColors(theme)
@@ -136,17 +128,6 @@ final class NativeTypingIndicatorView: NSView {
             dotStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
-        // "Loading Model..." label (hidden by default, shown during model load)
-        loadingLabel.stringValue = "Loading Model..."
-        loadingLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
-        loadingLabel.isHidden = true
-        addSubview(loadingLabel)
-        NSLayoutConstraint.activate([
-            loadingLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            loadingLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-
         // "Finishing up…" caption beside the dots (hidden unless `.finishing`).
         // Sits where the RAM indicator does in the generating phase.
         statusLabel.stringValue = L("Finishing up…")
@@ -176,144 +157,13 @@ final class NativeTypingIndicatorView: NSView {
         updateMemoryLabel(monitor: monitor)
     }
 
-    /// Mutually-exclusive loading states. Order of evaluation in
-    /// `currentLoadingPhase` encodes priority: sandbox provisioning blocks the
-    /// rest of the turn, so it wins over a raw model-load tick.
-    private enum LoadingPhase {
-        case sandbox
-        case prefill(PrefillProgressState)
-        case modelLoad
-
-        var replacementText: String? {
-            switch self {
-            case .sandbox:
-                return L("Sandbox is still loading...")
-            case .prefill:
-                return nil
-            case .modelLoad:
-                return L("Loading Model...")
-            }
-        }
-    }
-
-    private func observeModelLoading() {
-        // Merge every truth source the label depends on into a single Void
-        // tick stream and recompute synchronously in the sink. Evaluating
-        // eagerly against the MainActor singletons is cleaner than threading
-        // six values through CombineLatest, especially since the sandbox
-        // gate also requires a per-agent `effectiveAutonomousExec` lookup.
-        let progress = InferenceProgressManager.shared
-        let sandbox = SandboxManager.State.shared
-        let agents = AgentManager.shared
-
-        cachedPrefill = progress.prefillProgress
-
-        // Prefill is observed on its own so the emitted value is captured
-        // directly (see `cachedPrefill`), instead of being flattened to a Void
-        // tick that forces a stale re-read of the singleton.
-        cancellables.append(
-            progress.$prefillProgress
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] state in
-                    self?.cachedPrefill = state
-                    self?.refreshLoadingPhase()
-                }
-        )
-
-        let triggers: [AnyPublisher<Void, Never>] = [
-            progress.$loadInFlightCount.map { _ in () }.eraseToAnyPublisher(),
-            sandbox.$status.map { _ in () }.eraseToAnyPublisher(),
-            sandbox.$isProvisioning.map { _ in () }.eraseToAnyPublisher(),
-            agents.$activeAgentId.map { _ in () }.eraseToAnyPublisher(),
-            agents.$agents.map { _ in () }.eraseToAnyPublisher(),
-            // Warm-up generations run with `suppressProgressUI` and publish
-            // load/prefill progress to this side channel instead of the
-            // global HUD. A send waiting on the pre-send handshake shows this
-            // indicator, so the warm-up's model load must surface here too.
-            WarmupProgressHub.shared.$phases.map { _ in () }.eraseToAnyPublisher(),
-        ]
-
-        cancellables.append(
-            Publishers.MergeMany(triggers)
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in self?.refreshLoadingPhase() }
-        )
-    }
-
-    /// Recompute and apply the current loading phase. Must be called on
-    /// the main thread — caller is responsible for hopping there.
     private func refreshLoadingPhase() {
-        // Finishing wins outright: no replacement label, no prefill badge,
-        // no RAM indicator — dots + the status caption only.
-        if phase == .finishing {
-            applyLoadingPhase(nil)
-            memoryStack?.isHidden = true
-            statusLabel.isHidden = false
-            return
-        }
-        statusLabel.isHidden = true
-        applyLoadingPhase(currentLoadingPhase())
-        // The RAM indicator (hidden by a prior finishing phase on a reused
-        // cell) comes back on the next memory poll tick.
-    }
-
-    private func currentLoadingPhase() -> LoadingPhase? {
-        let progress = InferenceProgressManager.shared
-        let sandbox = SandboxManager.State.shared
-        let agents = AgentManager.shared
-
-        let agentUsesSandbox =
-            agents.effectiveAutonomousExec(for: agents.activeAgentId)?.enabled == true
-        let sandboxBooting = sandbox.status == .starting || sandbox.isProvisioning
-
-        if agentUsesSandbox && sandboxBooting { return .sandbox }
-        if let prefillProgress = cachedPrefill { return .prefill(prefillProgress) }
-        if progress.loadInFlightCount > 0 { return .modelLoad }
-
-        // Fall back to warm-up progress: while a send waits on the pre-send
-        // handshake, the model load/prefill in flight belongs to a suppressed
-        // warm-up request whose progress only reaches WarmupProgressHub.
-        let warmupPhases = WarmupProgressHub.shared.phases.values
-        if warmupPhases.contains(.loadingModel) { return .modelLoad }
-        if case .prefilling(let state)? = warmupPhases.first(where: {
-            if case .prefilling = $0 { return true }
-            return false
-        }) {
-            return .prefill(state)
-        }
-        return nil
-    }
-
-    private func applyLoadingPhase(_ phase: LoadingPhase?) {
-        // Prefill is rendered inline next to the RAM indicator (`completed/total`)
-        // and keeps the bouncing dots visible. The coarse phases (sandbox boot,
-        // model load) still take over the whole row with a replacement label.
-        if case .prefill(let progress) = phase {
-            applyReplacementLabel(nil)
-            updatePrefillBadge(progress)
-            return
-        }
-        updatePrefillBadge(nil)
-        applyReplacementLabel(phase)
-    }
-
-    /// Drive the full-width replacement label used for the coarse loading phases
-    /// (sandbox / model load). When `phase` is nil the dots + RAM indicator are
-    /// restored.
-    private func applyReplacementLabel(_ phase: LoadingPhase?) {
-        let showing = phase != nil
-        let expectedText = phase?.replacementText ?? loadingLabel.stringValue
-
-        guard
-            showing != isShowingLoadingLabel
-                || (showing && loadingLabel.stringValue != expectedText)
-        else { return }
-
-        isShowingLoadingLabel = showing
-        loadingLabel.stringValue = expectedText
-        loadingLabel.isHidden = !showing
-        dotStack.isHidden = showing
-        memoryStack?.isHidden = showing
+        // Logical completion and producer drain are separate. This row keeps
+        // Stop/input state honest while no longer animating a typing cursor.
+        let finishing = phase == .finishing
+        statusLabel.isHidden = !finishing
+        updatePrefillBadge(finishing ? nil : scopedPrefill)
+        if finishing { memoryStack?.isHidden = true }
     }
 
     /// Show/refresh the inline prefill token counter next to the RAM indicator.
@@ -327,7 +177,7 @@ final class NativeTypingIndicatorView: NSView {
             return
         }
         prefillTitleLabel.stringValue = progress.stage.localizedDisplayTitle
-        prefillCountLabel.stringValue = "\(progress.completedUnitCount)/\(progress.totalUnitCount)"
+        prefillCountLabel.stringValue = "\(progress.completedUnitCount)/\(progress.totalUnitCount) · \(Int(progress.percentCompleted))%"
         prefillBadge.isHidden = false
         // The counter lives inside the RAM stack, so make sure that stack is
         // visible even if the periodic memory poll hasn't fired yet.
@@ -335,7 +185,7 @@ final class NativeTypingIndicatorView: NSView {
     }
 
     private func updateMemoryLabel(monitor: SystemMonitorService) {
-        guard monitor.totalMemoryGB > 0, !isShowingLoadingLabel, phase != .finishing else {
+        guard monitor.totalMemoryGB > 0, phase != .finishing else {
             memoryStack?.isHidden = true
             return
         }
@@ -366,7 +216,7 @@ final class NativeTypingIndicatorView: NSView {
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         memoryStack = stack
-        updatePrefillBadge(cachedPrefill)
+        updatePrefillBadge(scopedPrefill)
     }
 
     private func configureMemoryViews() {
@@ -410,7 +260,6 @@ final class NativeTypingIndicatorView: NSView {
         for (i, dot) in dots.enumerated() {
             dot.backgroundColor = (i == currentDot ? primary : secondary).cgColor
         }
-        loadingLabel.textColor = NSColor(theme.secondaryText)
         statusLabel.textColor = NSColor(theme.secondaryText)
         applyPrefillBadgeColors()
     }

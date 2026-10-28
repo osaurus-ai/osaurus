@@ -598,13 +598,16 @@ extension EvalRunner {
                 fail: "ctx tokens \(prompt) > max \(maxPrompt)"
             )
         }
-        if let maxTotal = exp.scoredMaxTotalTokens, let prompt = transcript.promptTokensTotal {
-            let total = prompt + (transcript.completionTokens ?? 0)
-            score.check(
-                total <= maxTotal,
-                pass: "total tokens \(total) <= max \(maxTotal)",
-                fail: "total tokens \(total) > max \(maxTotal)"
-            )
+        if let maxTotal = exp.scoredMaxTotalTokens {
+            switch EvalTokenCost.ceiling(maxTotal, estimatedPrompt: transcript.promptTokensTotal,
+                reportedCompletion: transcript.completionTokens) {
+            case .within(let total):
+                score.check(true, pass: "estimated input + reported output tokens \(total) <= max \(maxTotal)", fail: "")
+            case .exceeded(let total):
+                score.check(false, pass: "", fail: "estimated input + reported output tokens \(total) > max \(maxTotal)")
+            case .unreported:
+                score.check(false, pass: "", fail: "total-cost gate unverified: prompt estimate or reported completion count unavailable")
+            }
         }
 
         // 2c. Capability-store outcomes (isolated per-eval-agent stores;
@@ -777,18 +780,19 @@ extension EvalRunner {
                 context: transcript.contextAttribution
             ),
             query: resolvedQuery,
-            includeSuccessful: exp.spawnSummaries != nil || exp.spawnWave != nil
+            expectations: exp
         )
     }
 
     /// Hand the full loop transcript to the transcript store (a no-op
-    /// unless `--transcripts` configured it). RAM/batch proof callers retain
-    /// successful rows too. Returns the report unchanged so call sites
+    /// unless `--transcripts` configured it). Rubric and RAM/batch proof
+    /// retain successful rows too, so grades remain auditable. Returns the report unchanged so call sites
     /// stay single-expression returns.
-    private static func persistAgentLoopTranscript(
+    static func persistAgentLoopTranscript(
         _ transcript: AgentLoopTranscript,
         for report: EvalCaseReport,
         query: String,
+        expectations: EvalCase.AgentLoopExpectations? = nil,
         includeSuccessful: Bool = false
     ) -> EvalCaseReport {
         EvalTranscriptStore.persistIfEnabled(
@@ -837,6 +841,9 @@ extension EvalRunner {
                 },
                 error: transcript.error
             ), includeSuccessful: includeSuccessful
+                || expectations?.spawnSummaries != nil
+                || expectations?.spawnWave != nil
+                || !(expectations?.rubric?.isEmpty ?? true)
         )
         return report
     }
@@ -845,15 +852,14 @@ extension EvalRunner {
     /// report's telemetry block (resource metrics — peak RAM, KV delta —
     /// are folded in later by `EvalRunner.runOne`). Returns nil when the
     /// run captured no streaming stats (remote/non-streaming).
-    private static func telemetry(
+    static func telemetry(
         from transcript: AgentLoopTranscript,
         mtpResolution: EvalMTPResolution? = nil
     ) -> EvalCaseTelemetry? {
-        // Total = input + output. Only meaningful once we have an input
-        // estimate; completion is 0 on remote/non-streaming runs that never
-        // surfaced a stats hint, which is the existing `completionTokens`
-        // semantic — so the total there is the input estimate alone.
-        let total = transcript.promptTokensTotal.map { $0 + (transcript.completionTokens ?? 0) }
+        // Estimated input + reported output. Keep this unavailable when a
+        // component is missing; prompt-only attribution remains separate.
+        let total = EvalTokenCost.total(estimatedPrompt: transcript.promptTokensTotal,
+            reportedCompletion: transcript.completionTokens)
         let mtpSteps = transcript.stepDiagnostics.filter { $0.mtpDepth != nil }
         let t = EvalCaseTelemetry(
             decodeTokensPerSecond: transcript.decodeTokensPerSecond,

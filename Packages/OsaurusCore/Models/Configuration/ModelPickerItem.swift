@@ -20,11 +20,6 @@ struct ModelPickerItem: Identifiable, Hashable {
         case foundation
         case local  // MLX models
         case imageGeneration  // on-device image models (vMLXFlux)
-        /// The locally-installed Claude Code CLI, driven as a subprocess.
-        /// Local in the sense that matters here — no Osaurus-held credential
-        /// and no Osaurus-managed connection — but it does reach the network
-        /// through the user's own signed-in CLI.
-        case claudeCode
         case remote(providerName: String, providerId: UUID)
 
         var displayName: String {
@@ -35,8 +30,6 @@ struct ModelPickerItem: Identifiable, Hashable {
                 return "Local Models"
             case .imageGeneration:
                 return "Image Models"
-            case .claudeCode:
-                return "Claude Code"
             case .remote(let providerName, _):
                 return providerName
             }
@@ -48,7 +41,6 @@ struct ModelPickerItem: Identifiable, Hashable {
             case .foundation: return "foundation"
             case .local: return "local"
             case .imageGeneration: return "image"
-            case .claudeCode: return "claude-code"
             case .remote(_, let providerId): return "remote-\(providerId.uuidString)"
             }
         }
@@ -61,8 +53,6 @@ struct ModelPickerItem: Identifiable, Hashable {
                 return 1
             case .imageGeneration:
                 return 2
-            case .claudeCode:
-                return 3
             case .remote:
                 return 4
             }
@@ -111,6 +101,7 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// model2vec, etc.). Set from `MLXModel.isEmbedding` for local items so
     /// `isLikelyChatCapable` can exclude them without re-reading config.json.
     let isEmbedding: Bool
+    let isDecision: Bool
     /// Provider-scoped chat endpoint support. OpenAI's `/v1/models` listing
     /// exposes only ids, so those rows remain explicitly unknown instead of a
     /// successful listing being misrepresented as a chat capability claim.
@@ -175,6 +166,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         modelType: String? = nil,
         isMLXFormat: Bool = true,
         isEmbedding: Bool = false,
+        isDecision: Bool = false,
         chatEndpointCapability: ModelChatEndpointCapability = .supported,
         description: String? = nil,
         externalSource: String? = nil,
@@ -201,6 +193,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.modelType = modelType
         self.isMLXFormat = isMLXFormat
         self.isEmbedding = isEmbedding
+        self.isDecision = isDecision
         self.chatEndpointCapability = chatEndpointCapability
         self.description = description
         self.externalSource = externalSource
@@ -246,17 +239,6 @@ extension ModelPickerItem {
         )
     }
 
-    /// Create a picker item for one Claude Code CLI model alias.
-    static func claudeCode(_ model: ClaudeCodeModel) -> ModelPickerItem {
-        ModelPickerItem(
-            id: model.pickerId,
-            displayName: model.displayName,
-            source: .claudeCode,
-            description: L("Runs through your signed-in Claude Code CLI"),
-            supportsToolCalling: true
-        )
-    }
-
     /// Create a local MLX model picker item from an MLXModel.
     static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
         return ModelPickerItem(
@@ -269,6 +251,7 @@ extension ModelPickerItem {
             modelType: model.modelType,
             isMLXFormat: model.isMLXFormat,
             isEmbedding: model.isEmbedding,
+            isDecision: model.isDecision,
             description: model.description,
             externalSource: model.externalSource
         )
@@ -301,12 +284,15 @@ extension ModelPickerItem {
         providerName: String,
         providerId: UUID,
         contextLength: Int? = nil,
-        reasoningCapabilities: ModelReasoningCapabilities? = nil
+        reasoningCapabilities: ModelReasoningCapabilities? = nil,
+        displayName catalogDisplayName: String? = nil,
+        description: String? = nil
     ) -> ModelPickerItem {
         ModelPickerItem(
             id: modelId,
-            displayName: displayName(fromModelId: modelId),
+            displayName: catalogDisplayName ?? displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId),
+            description: description,
             contextLength: contextLength,
             reasoningCapabilities: reasoningCapabilities
         )
@@ -379,9 +365,35 @@ extension ModelPickerItem {
     /// by model family. Nil for families without a documented profile (they
     /// fall through to the static `ModelProfile` registry).
     static func officialOpenAIReasoningCapabilities(forModelId modelId: String) -> ModelReasoningCapabilities? {
-        if isPublicGPT6ModelId(modelId) { return .officialOpenAIGPT6Astra }
+        if isPublicGPT6ModelId(modelId) {
+            let bare = (modelId.split(separator: "/").last.map(String.init) ?? modelId).lowercased()
+            let acceptsNone = officialOpenAIGPT6NoneModels.contains { bare.hasPrefix($0) }
+            return acceptsNone ? .officialOpenAIGPT6WithNone : .officialOpenAIGPT6Astra
+        }
         if isPublicGPT56ModelId(modelId) { return .officialOpenAIGPT56 }
         return nil
+    }
+
+    /// GPT-6 models whose effort range starts at `none` (verified live). Every
+    /// other GPT-6 slug (`gpt-6-astra`, `gpt-6.1-sol`, unknown snapshots)
+    /// gets the `low`-floored profile, which never sends a value the model
+    /// rejects.
+    private static let officialOpenAIGPT6NoneModels = ["gpt-6.1-terra", "gpt-6-luna", "gpt-6-sol"]
+
+    /// Whether the official API accepts `none` as a real effort for the
+    /// model, so it must reach the wire instead of being stripped. Families
+    /// without a documented profile (GPT-5.1 … 5.5) answer from the static
+    /// profile that offers them `none`; dropping it would fall back to the
+    /// API default (`medium` on GPT-5.5) and keep reasoning on.
+    static func officialOpenAIAcceptsNoneEffort(modelId: String) -> Bool {
+        if let capabilities = officialOpenAIReasoningCapabilities(forModelId: modelId) {
+            return capabilities.levels.contains { $0.id == "none" }
+        }
+        guard let profile = ModelProfileRegistry.profile(for: modelId),
+            let option = profile.options.first(where: { $0.id == "reasoningEffort" }),
+            case .segmented(let segments) = option.kind
+        else { return false }
+        return segments.contains { $0.id == "none" }
     }
 
     /// Context window (tokens) for known `api.openai.com` model families,
@@ -393,8 +405,11 @@ extension ModelPickerItem {
     /// `developers.openai.com/api/docs/models/<slug>`; update when OpenAI ships
     /// a new family. Scoped to the official host only — never applied to
     /// OpenAI-compatible proxies, whose `id` values aren't OpenAI's to trust.
+    /// GPT-6 uses the documented maximum *input* (922,000): its 1.05M window
+    /// includes output, and prompts budgeted against the full window are
+    /// rejected before compaction kicks in.
     private static let officialOpenAIContextWindows: [(prefix: String, tokens: Int)] = [
-        ("gpt-6", 1_050_000),
+        ("gpt-6", 922_000),
         ("gpt-5.6", 1_050_000),
         ("gpt-5.5", 1_050_000),
         ("gpt-5.4", 1_050_000),
@@ -572,13 +587,11 @@ extension ModelPickerItem {
             // Non-MLX bundles can't load locally, so never auto-pick one.
             // AppleScript bundles only ever emit AppleScript (a dedicated
             // subagent model), so they are never a chat pick either.
-            return !isEmbedding && isMLXFormat && !isAppleScriptCatalogModel
+            return !isEmbedding && !isDecision && isMLXFormat && !isAppleScriptCatalogModel
         case .imageGeneration:
             // Image models produce images, not chat completions — never a
             // default chat pick (but still selectable to enter image mode).
             return false
-        case .claudeCode:
-            return true
         case .remote:
             return !Self.isLikelyEmbeddingOrRerankerID(id)
         }
@@ -648,8 +661,6 @@ extension ModelPickerItem {
             return 5
         case .foundation:
             return 10
-        case .claudeCode:
-            return 12
         case .remote:
             return isLikelyChatCapable ? 15 : 30
         }
@@ -982,15 +993,6 @@ extension Array where Element == ModelPickerItem {
             case .local, .imageGeneration:
                 // On-device image models live in the Local tab alongside LLMs.
                 localModels.append(model)
-            case .claudeCode:
-                // Its own tab rather than the Local one: these models are not
-                // on-device, and grouping them under "Local" would misrepresent
-                // where the prompt actually goes.
-                let key = model.source.uniqueKey
-                if remoteModels[key] == nil {
-                    remoteOrder.append((key: key, title: model.source.displayName))
-                }
-                remoteModels[key, default: []].append(model)
             case .remote(let providerName, _):
                 let key = model.source.uniqueKey
                 if remoteModels[key] == nil {
@@ -1111,9 +1113,9 @@ extension Array where Element == ModelPickerItem {
             // remote models (Anthropic-like provider)
             let anthropicProviderId = UUID()
             let anthropicModels = [
-                ("claude-opus-4", "Most capable Claude model", false),
-                ("claude-sonnet-3.5", "Balanced performance and speed", false),
-                ("claude-haiku-3.5", "Fast and efficient", false),
+                ("claude-opus-5-5", "Most capable Claude model", false),
+                ("claude-sonnet-5-5", "Balanced performance and speed", false),
+                ("claude-haiku-5-5", "Fast and efficient", false),
             ]
 
             for (modelId, desc, isVLM) in anthropicModels {

@@ -92,7 +92,6 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 {{ system_message | trim + '\n\n' }}
             {%- endif -%}
             {{ 'You have access to the following functions.\n' }}
-            {{ 'When a function call is required, do not explain, do not summarize, and do not answer in prose.\n' }}
             {{ 'Output exactly one function call using this grammar:\n' }}
             {{ '<start_function_call>call:FUNCTION_NAME{ARGUMENT_NAME:<escape>ARGUMENT_VALUE<escape>}<end_function_call>\n' }}
             {{ 'Example:\nUser asks: Count the lines in this text: alpha\nbeta\ngamma\n' }}
@@ -107,12 +106,6 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     {{ 'Parameters: ' + (fn['parameters'] | tojson) + '\n' }}
                 {%- endif -%}
             {%- endfor -%}
-            {%- if tool_choice is defined and tool_choice == 'required' -%}
-                {{ '\nThe current assistant response MUST be a function call.' }}
-                {%- if tool_choice_name is defined and tool_choice_name -%}
-                    {{ ' Use the `' + tool_choice_name + '` function.' }}
-                {%- endif -%}
-            {%- endif -%}
             {{ '<end_of_turn>\n' }}
         {%- endif -%}
         {%- for message in loop_messages -%}
@@ -221,6 +214,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         additionalContext: [String: any Sendable]?,
         addGenerationPrompt: Bool
     ) throws -> [Int] {
+        var additionalContext = additionalContext
+        let requiresConfiguredTemplate = additionalContext?.removeValue(
+            forKey: ChatTemplateParameters.explicitContextKey) as? Bool == true
         let env = ProcessInfo.processInfo.environment
         let chatTemplateTools = Self.normalizedToolsForChatTemplate(tools)
         if let path = env["VMLX_CHAT_TEMPLATE_OVERRIDE"], !path.isEmpty,
@@ -547,7 +543,10 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 additionalContext: adjustedContext
             )
         } catch VMLXTokenizers.TokenizerError.missingChatTemplate {
-            guard (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
+            // Explicit template variables require that bundle's template. A
+            // generic fallback could silently turn extraction into plain chat.
+            guard !requiresConfiguredTemplate,
+                (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
                 throw MLXLMCommon.TokenizerError.missingChatTemplate
             }
             if hasLagunaSentinel {
@@ -601,15 +600,11 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     (chatTemplateTools?.isEmpty ?? true) || modelTypeIsGemma3n
                     ? MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal
                     : MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools
-                let fallbackMessages =
-                    Self.requiresToolChoice(adjustedContext)
-                    ? Self.compactCompletedToolHistoryForRequiredChoice(messages)
-                    : messages
                 let fallbackTools = modelTypeIsGemma3n ? nil : chatTemplateTools
                 return try fallback(
                     label: "Gemma4",
                     template: template,
-                    messages: fallbackMessages,
+                    messages: messages,
                     tools: fallbackTools,
                     additionalContext: adjustedContext,
                     addGenerationPrompt: addGenerationPrompt
@@ -629,7 +624,8 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
             throw MLXLMCommon.TokenizerError.missingChatTemplate
         } catch {
-            guard (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
+            guard !requiresConfiguredTemplate,
+                (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
                 throw error
             }
             let isGemma = upstream.bosToken == "<bos>" && !hasZayaToolChatSentinel
@@ -1159,13 +1155,20 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             effort = nil
         }
 
-        var prompt = MLXLMCommon.DeepseekV4ChatEncoder().encode(
+        // DeepSeek-V4.1 bundles use their own prompt contract (numeric
+        // `Reasoning Effort: N` inside <｜System｜>, V4.1 DSML tool tags);
+        // everything else stays on the DSV4-0731 contract.
+        let family = MLXLMCommon.DeepseekV4ChatFamily(modelType: modelType)
+        var prompt = MLXLMCommon.DeepseekV4ChatEncoder(family: family).encode(
             messages: dsv4Messages,
             thinkingMode: thinkingMode,
             reasoningEffort: effort,
             dropEarlierReasoning: true,
             toolChoiceRequired: toolChoiceRequired,
-            toolChoiceName: toolChoiceName
+            toolChoiceName: toolChoiceName,
+            reasoningBudget: family == .deepseekV41 && thinkingMode == .thinking
+                ? MLXLMCommon.DeepseekV4ChatEncoder.reasoningBudget(from: additionalContext)
+                : nil
         )
         if !addGenerationPrompt,
             let lastRole = dsv4Messages.last?.role,
@@ -1271,7 +1274,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         addGenerationPrompt: Bool
     ) throws -> [Int] {
         if (ProcessInfo.processInfo.environment["VMLX_CHAT_TEMPLATE_FALLBACK_LOG"] ?? "0") == "1" {
-            FileHandle.standardError.write(
+            RuntimeDiagnostics.write(
                 "[osaurus] chat-template fallback engaged: \(label)\n"
                     .data(using: .utf8)!
             )

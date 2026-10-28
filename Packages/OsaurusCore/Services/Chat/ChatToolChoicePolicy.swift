@@ -51,6 +51,21 @@ final class ForcedToolChoiceGate: @unchecked Sendable {
 }
 
 enum ChatToolChoicePolicy {
+    /// Resolve only from the actual task. App-added delivery instructions may
+    /// name tools without the caller requesting any tool invocation.
+    static func resolve(
+        tools: [Tool],
+        taskIntent: ChatTaskIntent,
+        attempt: Int
+    ) -> ToolChoiceOption? {
+        switch taskIntent {
+        case .userRequest(let text):
+            return resolve(tools: tools, userText: text, attempt: attempt)
+        case .hostContinuation:
+            return tools.isEmpty ? nil : .auto
+        }
+    }
+
     static func resolve(
         tools: [Tool],
         userText: String,

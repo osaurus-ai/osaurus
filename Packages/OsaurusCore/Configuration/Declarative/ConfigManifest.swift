@@ -52,8 +52,12 @@ public indirect enum ConfigValueSpec: Sendable {
     case scalar(ConfigScalarType, example: String, allowed: [String]? = nil, nullable: Bool = false)
     /// A list of scalars (`models`, `plugins`, ranking, UUID lists).
     case scalarList(ConfigScalarType, example: [String])
+    case nullableScalarList(ConfigScalarType, example: [String])
     /// Fixed-key mapping — unknown keys are validation errors.
     case mapping([ConfigKeySpec])
+    case nullableMapping([ConfigKeySpec])
+    /// An object whose values may be arbitrary JSON, including nested nulls and arrays.
+    case jsonObject(nullable: Bool)
     /// A list of fixed-key mappings. Items match existing entities by
     /// `requiredKey` (case-insensitive), which every item must carry.
     case entityList([ConfigKeySpec], requiredKey: String)
@@ -123,6 +127,35 @@ public enum ConfigManifest {
             ])),
 
         ConfigSectionSpec(
+            .harnessRuntimes,
+            comment: "external agent harnesses an agent can run on (Agents → Runtimes)",
+            value: .entityList(
+                [
+                    ConfigKeySpec(
+                        "name", .scalar(.string, example: "Spotlight"),
+                        comment: "agents name it in `runtime`; \"builtin\" is reserved"),
+                    ConfigKeySpec(
+                        "kind",
+                        .scalar(.string, example: "pi_rpc", allowed: ConfigHarness.kindKeys),
+                        comment: "claude_code | pi_rpc; required to create;",
+                        moreComments: ["immutable after"]),
+                    ConfigKeySpec(
+                        "executable", .scalar(.string, example: "~/.local/bin/spotlight"),
+                        comment: "command on PATH or a path; launching it is",
+                        moreComments: ["HIGH RISK (runs a local program)"]),
+                    ConfigKeySpec(
+                        "arguments", .scalarList(.string, example: ["--mode", "rpc", "--session-id", "\"{chat_id}\""]),
+                        comment: "replaces the list; {chat_id} {agent_id} {cwd}",
+                        moreComments: ["{system_prompt_file} are filled per launch"]),
+                    ConfigKeySpec(
+                        "environment",
+                        .freeformMap(.string, exampleKey: "PI_LOG_LEVEL", exampleValue: "info"),
+                        comment: "plain values only (exported; never secrets);",
+                        moreComments: ["merge; OSAURUS_* variables always win"]),
+                ],
+                requiredKey: "name")),
+
+        ConfigSectionSpec(
             .defaultAgent,
             comment: "the built-in Default agent (the Orchestrator)",
             value: .mapping([
@@ -144,6 +177,12 @@ public enum ConfigManifest {
                 ConfigKeySpec(
                     "system_prompt", .scalar(.string, example: "\"\""),
                     comment: "the persona"),
+                ConfigKeySpec(
+                    "runtime", .scalar(.string, example: "builtin"),
+                    comment: "\"builtin\" or a harness_runtimes name"),
+                ConfigKeySpec(
+                    "claude_code", .mapping(ConfigManifest.claudeCodeKeys(includeConfigWrites: true)),
+                    comment: "used when runtime is a claude_code harness"),
             ])),
 
         ConfigSectionSpec(
@@ -173,6 +212,9 @@ public enum ConfigManifest {
                         comment: "0..2"),
                     ConfigKeySpec(
                         "max_tokens", .scalar(.integer, example: "null", nullable: true)),
+                    ConfigKeySpec(
+                        "generation_settings", .nullableMapping(agentGenerationKeys),
+                        comment: "replaces advanced overrides; absent preserves, null clears"),
                     ConfigKeySpec(
                         "capabilities",
                         .mapping([
@@ -220,6 +262,87 @@ public enum ConfigManifest {
                                 ]),
                         ]),
                         comment: "only provided keys change"),
+                    ConfigKeySpec(
+                        "tools",
+                        .mapping([
+                            ConfigKeySpec(
+                                "mode", .scalar(.string, example: "manual", allowed: ["auto", "manual"]),
+                                comment: "auto = RAG-picked, manual = only `enabled`"),
+                            ConfigKeySpec(
+                                "enabled", .scalarList(.string, example: ["get_current_time", "web_search"]),
+                                comment: "tool names; MCP/plugin tools go under mcp_servers / plugins"),
+                        ]),
+                        comment: "per-agent tool selection"),
+                    ConfigKeySpec(
+                        "mcp_servers",
+                        .mapping([
+                            ConfigKeySpec("enabled", .scalarList(.string, example: [])),
+                            ConfigKeySpec("disabled", .scalarList(.string, example: [])),
+                        ]),
+                        comment: "MCP server NAMES; enabled adds all its tools, disabled removes them"),
+                    ConfigKeySpec(
+                        "plugins",
+                        .mapping([
+                            ConfigKeySpec("enabled", .scalarList(.string, example: [])),
+                            ConfigKeySpec("disabled", .scalarList(.string, example: [])),
+                        ]),
+                        comment: "plugin registry ids; same semantics as mcp_servers"),
+                    ConfigKeySpec(
+                        "skills", .scalarList(.string, example: ["code-review"]),
+                        comment: "skill allow-list by name or slug; the list REPLACES the set;",
+                        moreComments: ["null = every installed skill (the default); [] = none"]),
+                    ConfigKeySpec(
+                        "plugin_instructions",
+                        .freeformMap(.string, exampleKey: "osaurus.notes", exampleValue: "\"\""),
+                        comment: "plugin id -> extra instructions for that plugin's tools"),
+                    ConfigKeySpec(
+                        "sandbox",
+                        .mapping([
+                            ConfigKeySpec("enabled", .scalar(.boolean, example: "true")),
+                            ConfigKeySpec(
+                                "network_enabled", .scalar(.boolean, example: "true"),
+                                comment: "outbound network from the sandbox VM"),
+                            ConfigKeySpec(
+                                "allowed_domains", .scalarList(.string, example: []),
+                                comment: "egress allowlist; empty = unrestricted"),
+                            ConfigKeySpec("max_commands_per_turn", .scalar(.integer, example: "10")),
+                            ConfigKeySpec(
+                                "background_process_enabled", .scalar(.boolean, example: "false")),
+                            ConfigKeySpec("plugin_create", .scalar(.boolean, example: "true")),
+                        ]),
+                        comment: "autonomous code execution sandbox"),
+                    ConfigKeySpec(
+                        "subagents",
+                        .mapping([
+                            ConfigKeySpec(
+                                "enabled", .scalar(.boolean, example: "false"),
+                                comment: "exposes spawn tools to this agent"),
+                            ConfigKeySpec(
+                                "agents", .scalarList(.string, example: []),
+                                comment: "agent NAMES this agent may spawn"),
+                            ConfigKeySpec(
+                                "models", .scalarList(.string, example: []),
+                                comment: "deprecated, ignored: spawning by model id was removed"),
+                        ]),
+                        comment: "per-agent delegation (Default agent uses `delegation`)"),
+                    ConfigKeySpec(
+                        "orchestrator_spawnable", .scalar(.boolean, example: "true"),
+                        comment: "creation only: false keeps a new agent out of the",
+                        moreComments: ["Orchestrator's delegation list; ignored when patching"]),
+                    ConfigKeySpec(
+                        "working_folder", .scalar(.string, example: "null", nullable: true),
+                        comment: "folder PATH hint; attached when it exists locally,",
+                        moreComments: ["otherwise the apply asks the user to pick it"]),
+                    ConfigKeySpec(
+                        "source_template", .scalar(.string, example: "\"\""),
+                        comment: "provenance: agent template this agent came from"),
+                    ConfigKeySpec(
+                        "runtime", .scalar(.string, example: "builtin"),
+                        comment: "\"builtin\" or a harness_runtimes name; a harness",
+                        moreComments: ["runs this agent's chats (HIGH RISK: local program)"]),
+                    ConfigKeySpec(
+                        "claude_code", .mapping(ConfigManifest.claudeCodeKeys(includeConfigWrites: false)),
+                        comment: "used when runtime is a claude_code harness"),
                 ],
                 requiredKey: "name")),
 
@@ -434,6 +557,14 @@ public enum ConfigManifest {
                             "values are read at apply and stored in the",
                             "Keychain; keys become secret env — never exported",
                         ]),
+                    ConfigKeySpec(
+                        "secret_header_refs",
+                        .freeformMap(.string, exampleKey: "X-API-Key", exampleValue: "keychain:com.example/api-key"),
+                        comment: "write-only (http): request header -> secret ref;",
+                        moreComments: [
+                            "values are read at apply and stored in the",
+                            "Keychain; headers become secret headers — never exported",
+                        ]),
                 ],
                 requiredKey: "name")),
 
@@ -603,6 +734,50 @@ public enum ConfigManifest {
                 requiredKey: "name")),
     ]
 
+    static func claudeCodeKeys(includeConfigWrites: Bool) -> [ConfigKeySpec] {
+        var keys = [
+            ConfigKeySpec(
+                "model", .scalar(.string, example: "sonnet"),
+                comment: "sonnet | opus | fable | haiku | a full model id"),
+            ConfigKeySpec(
+                "effort", .scalar(.string, example: "default", allowed: ConfigHarness.effortKeys),
+                comment: "default | low | medium | high | xhigh | max"),
+            ConfigKeySpec(
+                "mode", .scalar(.string, example: "agent", allowed: ConfigHarness.modeKeys),
+                comment: "agent | text_only"),
+            ConfigKeySpec(
+                "allow_writes", .scalar(.boolean, example: "false"),
+                comment: "file edits, limited to the chat folder"),
+            ConfigKeySpec(
+                "allow_shell", .scalar(.boolean, example: "false"),
+                comment: "HIGH RISK: unconfined shell on this Mac"),
+            ConfigKeySpec(
+                "allow_osaurus_tools", .scalar(.boolean, example: "false"),
+                comment: "osaurus_help / osaurus_inspect over MCP"),
+        ]
+        if includeConfigWrites {
+            keys.append(
+                ConfigKeySpec(
+                    "allow_osaurus_config_writes", .scalar(.boolean, example: "false"),
+                    comment: "HIGH RISK: osaurus_config (Default agent only)"))
+        }
+        return keys
+    }
+
+    private static let agentGenerationKeys: [ConfigKeySpec] = [
+        ConfigKeySpec("top_p", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("top_k", .scalar(.integer, example: "null", nullable: true)),
+        ConfigKeySpec("min_p", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("repetition_penalty", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("frequency_penalty", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("presence_penalty", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("seed", .scalar(.integer, example: "null", nullable: true)),
+        ConfigKeySpec("stop", .nullableScalarList(.string, example: [])),
+        ConfigKeySpec("enable_thinking", .scalar(.boolean, example: "null", nullable: true)),
+        ConfigKeySpec("reasoning_effort", .scalar(.string, example: "null", nullable: true)),
+        ConfigKeySpec("template_kwargs", .jsonObject(nullable: true)),
+    ]
+
     // MARK: - Derived: strict validation tables
 
     /// Keys allowed in each mapping of the document, addressed by a
@@ -621,9 +796,9 @@ public enum ConfigManifest {
         path: String, value: ConfigValueSpec, into out: inout [String: Set<String>]
     ) {
         switch value {
-        case .scalar, .scalarList, .freeformMap:
+        case .scalar, .scalarList, .nullableScalarList, .freeformMap, .jsonObject:
             return
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             out[path] = Set(keys.map { $0.key })
             for key in keys {
                 collectKnownKeys(path: "\(path).\(key.key)", value: key.value, into: &out)
@@ -649,9 +824,9 @@ public enum ConfigManifest {
         path: String, value: ConfigValueSpec, into out: inout [String: String]
     ) {
         switch value {
-        case .scalar, .scalarList, .freeformMap:
+        case .scalar, .scalarList, .nullableScalarList, .freeformMap, .jsonObject:
             return
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             for key in keys {
                 collectRequiredKeys(path: "\(path).\(key.key)", value: key.value, into: &out)
             }
@@ -677,11 +852,11 @@ public enum ConfigManifest {
         path: String, value: ConfigValueSpec, into out: inout [String: [String]]
     ) {
         switch value {
-        case .scalar, .scalarList:
+        case .scalar, .scalarList, .nullableScalarList, .jsonObject:
             return
         case .freeformMap(_, let allowedValues, _, _):
             if let allowedValues { out[path] = allowedValues }
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             for key in keys {
                 collectFreeformConstraints(
                     path: "\(path).\(key.key)", value: key.value, into: &out)
@@ -749,6 +924,14 @@ public enum ConfigManifest {
                 "type": "array",
                 "items": ["type": type.jsonType],
             ]
+        case .nullableScalarList(let type, _):
+            return ["type": ["array", "null"], "items": ["type": type.jsonType]]
+        case .jsonObject(let nullable):
+            return ["type": nullable ? ["object", "null"] : ["object"], "additionalProperties": true]
+        case .nullableMapping(let keys):
+            var schema = jsonSchema(for: .mapping(keys))
+            schema["type"] = ["object", "null"]
+            return schema
         case .mapping(let keys):
             var properties: [String: Any] = [:]
             for key in keys {
@@ -832,13 +1015,13 @@ public enum ConfigManifest {
                     "\(section.id.rawValue): \(example)", comment: section.comment,
                     moreComments: [])
             ]
-        case .scalarList(_, let example):
+        case .scalarList(_, let example), .nullableScalarList(_, let example):
             var lines = [withComment("\(section.id.rawValue):", comment: section.comment, moreComments: [])]
             for item in example {
                 lines.append("  - \(item)")
             }
             return lines
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             var lines = [withComment("\(section.id.rawValue):", comment: section.comment, moreComments: [])]
             for key in keys {
                 lines.append(contentsOf: renderKey(key, indent: 2, listItemHead: false))
@@ -848,6 +1031,8 @@ public enum ConfigManifest {
             var lines = [withComment("\(section.id.rawValue):", comment: section.comment, moreComments: [])]
             lines.append(contentsOf: renderEntityItem(keys, indent: 2))
             return lines
+        case .jsonObject:
+            return ["\(section.id.rawValue): {}"]
         case .freeformMap:
             return [withComment("\(section.id.rawValue):", comment: section.comment, moreComments: [])]
         }
@@ -876,7 +1061,7 @@ public enum ConfigManifest {
                     "\(pad)\(prefix)\(key.key): \(example)",
                     comment: key.comment, moreComments: key.moreComments)
             ]
-        case .scalarList(_, let example):
+        case .scalarList(_, let example), .nullableScalarList(_, let example):
             if example.isEmpty {
                 return [
                     withComment(
@@ -890,7 +1075,7 @@ public enum ConfigManifest {
                     "\(pad)\(prefix)\(key.key): [\(inline)]",
                     comment: key.comment, moreComments: key.moreComments)
             ]
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             var lines = [
                 withComment(
                     "\(pad)\(prefix)\(key.key):",
@@ -910,6 +1095,8 @@ public enum ConfigManifest {
             ]
             lines.append(contentsOf: renderEntityItem(keys, indent: indent + 2))
             return lines
+        case .jsonObject:
+            return [withComment("\(pad)\(prefix)\(key.key): {}", comment: key.comment, moreComments: key.moreComments)]
         case .freeformMap(_, _, let exampleKey, let exampleValue):
             var lines = [
                 withComment(
@@ -961,9 +1148,9 @@ public enum ConfigManifest {
 
     private static func collectKeywords(value: ConfigValueSpec, add: (String) -> Void) {
         switch value {
-        case .scalar, .scalarList, .freeformMap:
+        case .scalar, .scalarList, .nullableScalarList, .freeformMap, .jsonObject:
             return
-        case .mapping(let keys), .entityList(let keys, _):
+        case .mapping(let keys), .nullableMapping(let keys), .entityList(let keys, _):
             for key in keys {
                 add(key.key)
                 collectKeywords(value: key.value, add: add)

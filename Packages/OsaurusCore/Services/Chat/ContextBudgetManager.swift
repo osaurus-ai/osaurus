@@ -275,6 +275,11 @@ public struct ContextBudgetManager: Sendable {
     /// and the unit the incremental drop loop subtracts.
     static func estimateTokens(forMessage msg: ChatMessage) -> Int {
         var msgTokens = TokenEstimator.estimate(msg.content)
+        // Retained reasoning is forwarded with assistant history even when
+        // thinking is disabled for the next response. Count its known text
+        // once; do not estimate native-item JSON or encrypted state that may
+        // mirror it as additional model-visible text.
+        msgTokens += TokenEstimator.estimate(msg.reasoning_content)
         if let toolCalls = msg.tool_calls {
             for tc in toolCalls {
                 msgTokens += TokenEstimator.estimate(tc.function.arguments)
