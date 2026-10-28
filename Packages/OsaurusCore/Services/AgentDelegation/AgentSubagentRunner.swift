@@ -165,6 +165,8 @@ enum AgentSubagentRunner {
         deadline: Date,
         sessionId: String,
         temperature: Float? = nil,
+        agentMaxTokens: Int? = nil,
+        generationSettings: AgentGenerationSettings? = nil,
         enableThinking: Bool? = nil,
         reasoningEffort: String? = nil,
         isAgentRequest: Bool = true,
@@ -182,6 +184,10 @@ enum AgentSubagentRunner {
         var usage = AgentSubagentUsage()
         var iterationsSeen = 0
         var recordedCancelCause: SubagentCancelCause?
+        // The target can tighten the launcher's output ceiling, never lift it.
+        // Unlike the real ChatSession branch, this in-memory seam has no
+        // DelegatedRunContract; preserve the same tighten-only semantics.
+        let effectiveMaxTokens = maxTokens.map { min(agentMaxTokens ?? $0, $0) } ?? agentMaxTokens
 
         let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: modelName)
         // Whether the child's model can view images. Gates both what
@@ -200,7 +206,7 @@ enum AgentSubagentRunner {
             contextWindow: contextWindow,
             systemPromptChars: messages.first?.content?.count ?? 0,
             toolTokens: toolTokens,
-            maxResponseTokens: maxTokens
+            maxResponseTokens: effectiveMaxTokens
         )
         let watermark = CompactionWatermark()
         let engine = ChatEngine(source: .chatUI, activitySource: .agent)
@@ -241,16 +247,17 @@ enum AgentSubagentRunner {
                     input: effective,
                     generation: ResponsesGenerationOptions(
                         temperature: temperature,
-                        maxOutputTokens: maxTokens,
+                        maxOutputTokens: effectiveMaxTokens,
                         enableThinking: enableThinking,
                         reasoningEffort: reasoningEffort
                     ),
                     tools: toolset?.specs,
                     sessionID: sessionId
                 )
-                // Same posture as the main chat surface: a per-agent
-                // temperature override rides along, everything else stays on
-                // the model bundle's own generation defaults.
+                // Target-agent defaults outrank the launcher's inherited
+                // reasoning choices. Omitted target fields retain inheritance
+                // or the model's native defaults on every tool iteration.
+                generationSettings?.apply(to: &request.generation)
                 request.context.admissionPositionLimit = admissionPositionLimit ?? contextWindow
                 request.context.samplingParametersAreImplicit = true
                 request.context.isAgentRequest = isAgentRequest

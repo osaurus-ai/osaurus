@@ -236,6 +236,8 @@ final class TextSubagentKind:
     /// The target agent's user-set temperature override (agent mode only;
     /// `nil` keeps the model bundle's own generation defaults).
     private var temperature: Float?
+    private var targetMaxTokens: Int?
+    private var generationSettings: AgentGenerationSettings?
     /// The residency plan resolved at `resolveModel` time (reject-before-evict),
     /// consumed by `makeHandoff()`. `.none` when no swap is needed.
     private var residencyPlan: ResidencyPlan = .none
@@ -539,6 +541,8 @@ final class TextSubagentKind:
         self.systemPrompt = ""
         self.agentToolSpecs = []
         self.temperature = nil
+        self.targetMaxTokens = nil
+        self.generationSettings = nil
         self.residencyPlan = .none
         self.delegatedContract = nil
         self.minimumAdmissionContextPositions = nil
@@ -615,6 +619,11 @@ final class TextSubagentKind:
         }
         self.resolvedAgentName = agent.name
         self.resolvedAgentId = agent.id
+        // These values belong to one target-agent snapshot, taken by the
+        // main-actor lookup above rather than re-read across later awaits.
+        self.temperature = agent.temperature
+        self.targetMaxTokens = agent.maxTokens
+        self.generationSettings = agent.generationSettings
         // The persona's tool policy rides along with its prompt + model
         // (the design contract: a subagent IS the agent, bounded). Tool
         // EXECUTION still flows through `ToolRegistry.execute`, so per-tool
@@ -644,13 +653,6 @@ final class TextSubagentKind:
             persona: agent.systemPrompt,
             knowledgeSection: knowledgeSection
         )
-        // The target agent's own sampling override rides along (a user-set
-        // value, consistent with "defaults come from the model bundle unless
-        // the user explicitly overrides").
-        self.temperature = await MainActor.run {
-            AgentManager.shared.effectiveTemperature(for: agent.id)
-        }
-
         // One shared path for precedence (eval seam → per-agent `spawn` override
         // → the target agent's own model), fail-closed override availability,
         // and the live residency decision (reject-before-evict). The override
@@ -1062,6 +1064,8 @@ final class TextSubagentKind:
                 deadline: deadline,
                 sessionId: sessionId,
                 temperature: temperature,
+                agentMaxTokens: targetMaxTokens,
+                generationSettings: generationSettings,
                 enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
                     reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
                     isInterrupted: { interrupt.isInterrupted },

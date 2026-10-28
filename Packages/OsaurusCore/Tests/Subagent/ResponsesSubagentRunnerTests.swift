@@ -185,6 +185,109 @@ struct ResponsesSubagentRunnerTests {
         #expect(await script.requests.count == 1)
     }
 
+    @Test func targetGenerationDefaultsAndTighterOutputCapSurviveEveryToolIteration() async throws {
+        let settings = AgentGenerationSettings(
+            topP: 0, topK: 0, minP: 0.05, repetitionPenalty: 1.1,
+            frequencyPenalty: 0, presencePenalty: -0.25, seed: -7,
+            stop: ["END"], enableThinking: false, reasoningEffort: "low",
+            templateKwargs: ["custom": .object(["enabled": .bool(false), "value": .null])]
+        )
+        // A smaller target cap tightens the launcher; a larger or absent
+        // target cap cannot raise it. Inspect the real rebuilt requests.
+        let targetCaps: [Int?] = [32, 128, nil]
+        for targetCap in targetCaps {
+            let script = Script()
+            let toolset = AgentSubagentToolset(
+                specs: [
+                    Tool(type: "function", function: ToolFunction(name: "lookup", description: nil, parameters: nil))
+                ],
+                execute: { call in await script.execute(call) }
+            )
+            let result = try await AgentSubagentRunner.run(
+                modelName: "responses-spawn-fixture",
+                seedMessages: [ChatMessage(role: "user", content: "Look up the answer.")],
+                maxTokens: 64,
+                admissionPositionLimit: 8192,
+                maxIterations: 3,
+                deadline: Date().addingTimeInterval(5),
+                sessionId: "responses-spawn-agent-defaults",
+                temperature: 0,
+                agentMaxTokens: targetCap,
+                generationSettings: settings,
+                enableThinking: true,
+                reasoningEffort: "high",
+                toolset: toolset,
+                responsesStreamProvider: { request in await script.stream(request) }
+            )
+            #expect(result.exit == .finalResponse)
+            #expect(result.digest == "42")
+            #expect(await script.executions == ["call_fixture"])
+            let requests = await script.requests
+            #expect(requests.count == 2)
+            for request in requests {
+                #expect(request.generation.maxOutputTokens == min(targetCap ?? 64, 64))
+                #expect(request.generation.temperature == 0)
+                #expect(request.generation.topP == settings.topP)
+                #expect(request.generation.topK == 0)
+                #expect(request.generation.minP == settings.minP)
+                #expect(request.generation.repetitionPenalty == settings.repetitionPenalty)
+                #expect(request.generation.frequencyPenalty == 0)
+                #expect(request.generation.presencePenalty == settings.presencePenalty)
+                #expect(request.generation.seed == -7)
+                #expect(request.generation.stop == ["END"])
+                #expect(request.generation.enableThinking == false)
+                #expect(request.generation.reasoningEffort == "low")
+                #expect(request.generation.templateKwargs == settings.templateKwargs)
+                let legacy = request.chatCompletionsCompatibilityRequest()
+                #expect(legacy.max_tokens == request.generation.maxOutputTokens)
+                #expect(legacy.top_p == 0)
+                #expect(legacy.top_k == 0)
+                #expect(legacy.min_p == settings.minP)
+                #expect(legacy.repetition_penalty == settings.repetitionPenalty)
+                #expect(legacy.frequency_penalty == 0)
+                #expect(legacy.presence_penalty == settings.presencePenalty)
+                #expect(legacy.seed == -7)
+                #expect(legacy.stop == settings.stop)
+                #expect(legacy.enable_thinking == false)
+                #expect(legacy.reasoning_effort == "low")
+                #expect(legacy.chat_template_kwargs == settings.templateKwargs)
+            }
+        }
+    }
+
+    @Test func reasoningOnlyLengthStopRemainsIncompleteWithTargetDefaults() async throws {
+        let result = try await AgentSubagentRunner.run(
+            modelName: "responses-spawn-fixture",
+            seedMessages: [ChatMessage(role: "user", content: "Answer.")],
+            maxTokens: 64,
+            maxIterations: 3,
+            deadline: Date().addingTimeInterval(5),
+            sessionId: "responses-spawn-reasoning-length",
+            agentMaxTokens: 16,
+            generationSettings: AgentGenerationSettings(enableThinking: true),
+            enableThinking: false,
+            responsesStreamProvider: { request in
+                #expect(request.generation.maxOutputTokens == 16)
+                #expect(request.generation.enableThinking == true)
+                return AsyncThrowingStream { producer in
+                    producer.yield(.reasoningDelta("Still considering the problem."))
+                    producer.yield(.responseCompleted(.init(
+                        responseID: "resp_reasoning_length", status: .incomplete,
+                        functionCalls: [], tokenCount: 16, tokensPerSecond: 40,
+                        unclosedReasoning: true, stopReason: "length",
+                        promptTokensPerSecond: nil, mtp: nil
+                    )))
+                    producer.yield(.drained)
+                    producer.finish()
+                }
+            }
+        )
+        #expect(result.exit == .lengthExhausted)
+        #expect(result.digest == nil)
+        #expect(result.iterations == 1)
+        #expect(result.usage.completionTokens == 16)
+    }
+
     @Test func providerCancellationIsNotAttributedToUserParentOrDeadline() async throws {
         let result = try await AgentSubagentRunner.run(
             modelName: "responses-spawn-fixture",
