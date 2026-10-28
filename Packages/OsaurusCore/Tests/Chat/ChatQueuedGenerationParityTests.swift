@@ -6,11 +6,13 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct ChatQueuedGenerationParityTests {
-    @Test(arguments: ["temperature", "topP", "topK", "agent", "outputCap", "thinking", "effort", "template"])
+    @Test(arguments: ["temperature", "topP", "topK", "minP", "repetition", "frequency", "presence",
+        "seed", "stop", "outputCap", "thinking", "effort", "template", "modelThinking", "modelEffort"])
     func changedGenerationDefaultsStayQueued(field: String) async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
-            let active = ChatTurnGenerationControls.capture(activeModelOptions: [:])
+            var active = ChatTurnGenerationControls.capture(activeModelOptions: [:])
+            active.agentDefaultsCaptured = true
             let user = ChatTurn(role: .user, content: "active task")
             user.generationControls = active
             session.turns = [user]
@@ -19,11 +21,21 @@ struct ChatQueuedGenerationParityTests {
             case "temperature": pending.temperature = 0
             case "topP": pending.topP = 0.8
             case "topK": pending.topK = 0
-            case "agent": pending.agentSettings = .init(minP: 0, repetitionPenalty: 1.1,
-                frequencyPenalty: 0, presencePenalty: 0.2, seed: 0, stop: ["END"])
-            case "outputCap": pending.maxOutputTokens = 128; pending.agentDefaultsCaptured = true
+            case "minP": pending.agentSettings = .init(minP: 0)
+            case "repetition": pending.agentSettings = .init(repetitionPenalty: 1.1)
+            case "frequency": pending.agentSettings = .init(frequencyPenalty: 0)
+            case "presence": pending.agentSettings = .init(presencePenalty: 0.2)
+            case "seed": pending.agentSettings = .init(seed: 0)
+            case "stop": pending.agentSettings = .init(stop: [])
+            case "outputCap": pending.maxOutputTokens = 128
             case "thinking": pending.agentSettings = .init(enableThinking: false)
             case "effort": pending.agentSettings = .init(reasoningEffort: "low")
+            case "modelThinking":
+                pending = .capture(activeModelOptions: ["disableThinking": .bool(true)])
+                pending.agentDefaultsCaptured = true
+            case "modelEffort":
+                pending = .capture(activeModelOptions: ["reasoningEffort": .string("low")])
+                pending.agentDefaultsCaptured = true
             default: pending.agentSettings = .init(templateKwargs: ["format": .string("record")])
             }
             session.queuedSend = QueuedSend(text: "follow-up", attachments: [], generationControls: pending)
@@ -105,6 +117,33 @@ struct ChatQueuedGenerationParityTests {
             session.queuedSend = QueuedSend(text: "follow-up", attachments: [], generationControls: pending)
             #expect(!session.injectQueuedSteerIfEligible())
             #expect(session.queuedSend != nil)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func steeredUserTurnRetainsActiveControlsForRetryAfterPersistence(remoteOnly: Bool) async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            var active = ChatTurnGenerationControls.capture(activeModelOptions: [:])
+            active.hasResolvedReasoning = true
+            active.temperature = 0
+            active.agentSettings = .init(topP: 0.8, seed: 0, enableThinking: false)
+            active.maxOutputTokens = 128
+            active.agentDefaultsCaptured = true
+            let user = ChatTurn(role: .user, content: "active task")
+            user.generationControls = active
+            session.turns = [user]
+            if remoteOnly {
+                session.remoteSteers = ["remote update"]
+            } else {
+                session.queuedSend = QueuedSend(text: "follow-up", attachments: [], generationControls: active)
+            }
+            #expect(session.injectQueuedSteerIfEligible())
+            #expect(session.turns.last?.generationControls == active)
+            session.save()
+            let id = try #require(session.sessionId)
+            let restored = try #require(ChatSessionStore.load(id: id))
+            #expect(restored.turns.last?.generationControls == active)
         }
     }
 }
