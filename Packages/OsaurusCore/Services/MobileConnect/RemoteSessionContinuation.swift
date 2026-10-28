@@ -199,13 +199,21 @@ enum RemoteSessionContinuation {
     /// Whether `session` is one of the phone's chats: one it started (see
     /// `startPhoneChat`), or an older hosted row (see `isFromPairedPhone`).
     static func isFromPairedPhone(_ session: ChatSessionData) -> Bool {
-        if session.source == .chat, session.externalSessionKey == phoneChatKey { return true }
+        if session.source == .chat, isPhoneChatKey(session.externalSessionKey) { return true }
         return session.workspace.map(isFromPairedPhone) ?? false
     }
 
     /// Marks a chat the phone started. It is otherwise an ordinary chat:
     /// no workspace stamp, so the Mac can open and continue it as its own.
     static let phoneChatKey = "osaurus-connect-phone"
+
+    /// Whether `key` marks a chat the phone started. Chats started while
+    /// several phones could pair (reverted in 5b29a6bd9) carry
+    /// `:<device id>` after it, and are still the owner's phone chats.
+    static func isPhoneChatKey(_ key: String?) -> Bool {
+        guard let key else { return false }
+        return key == phoneChatKey || key.hasPrefix("\(phoneChatKey):")
+    }
 
     /// Whether the caller's access key is the one the phone was paired with.
     static func isPairedPhoneKey(_ keyNonce: String?) -> Bool {

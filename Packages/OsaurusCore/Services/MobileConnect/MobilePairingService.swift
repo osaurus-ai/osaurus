@@ -171,6 +171,8 @@ final class MobilePairingService: ObservableObject {
         self.defaults = defaults
         if let data = defaults.data(forKey: Self.pairedDeviceDefaultsKey) {
             pairedDevice = try? JSONDecoder().decode(PairedMobileDevice.self, from: data)
+        } else {
+            adoptMultiPhonePairing()
         }
         refreshKeepAwake()
         // A key that lapsed while the app was closed ends the pairing now.
@@ -481,6 +483,35 @@ final class MobilePairingService: ObservableObject {
         else { return false }
         revokeDevice()
         return true
+    }
+
+    /// Builds from the short-lived multi-phone pairing (reverted in
+    /// 5b29a6bd9) moved the paired phone into a list under this key and
+    /// deleted `pairedDeviceDefaultsKey`, so a Mac that ran one saw no phone
+    /// paired at all: the phone's key still worked, but its chats were no
+    /// longer recognised (each reply a new chat, without the ones before),
+    /// and the relay and keep-awake turned off. One phone per Mac again: the
+    /// most recently paired iPhone is kept (a simulator only when there is
+    /// nothing else), and the others' keys are revoked, as pairing a new
+    /// phone always did.
+    private static let multiPhoneDevicesDefaultsKey = "mobileConnectPairedDevices"
+    private static let multiPhoneNamesDefaultsKey = "mobileConnectPhoneNames"
+
+    private func adoptMultiPhonePairing() {
+        guard let data = defaults.data(forKey: Self.multiPhoneDevicesDefaultsKey) else { return }
+        let devices = (try? JSONDecoder().decode([PairedMobileDevice].self, from: data)) ?? []
+        let byRecency = devices.sorted { $0.pairedAt > $1.pairedAt }
+        let kept = byRecency.first { $0.isSimulator != true } ?? byRecency.first
+        for device in devices where device.keyId != kept?.keyId {
+            APIKeyManager.shared.revoke(id: device.keyId)
+        }
+        defaults.removeObject(forKey: Self.multiPhoneDevicesDefaultsKey)
+        defaults.removeObject(forKey: Self.multiPhoneNamesDefaultsKey)
+        MobileConnectLog.write(
+            "pairing: carried over \(kept?.name ?? "no phone") from the multi-phone list of \(devices.count), "
+                + "revoked \(devices.count - (kept == nil ? 0 : 1))"
+        )
+        if let kept { setPairedDevice(kept) }
     }
 
     func revokeDevice() {

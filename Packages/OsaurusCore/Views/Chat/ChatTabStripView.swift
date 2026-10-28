@@ -556,7 +556,7 @@ private struct ChatTabItemView: View {
     /// A chat from the paired iPhone: one it started, or an older workspace
     /// row that is the owner's own, so its tab reads as the iPhone's.
     private var isFromPairedPhone: Bool {
-        if session.source == .chat, session.externalSessionKey == RemoteSessionContinuation.phoneChatKey {
+        if session.source == .chat, RemoteSessionContinuation.isPhoneChatKey(session.externalSessionKey) {
             return true
         }
         return session.workspaceContext.map(RemoteSessionContinuation.isFromPairedPhone) ?? false
