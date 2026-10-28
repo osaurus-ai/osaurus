@@ -23,7 +23,7 @@ public struct ChatTurnOverrides: Codable, Equatable, Sendable {
 
     var isEmpty: Bool {
         temperature == nil && topP == nil && topK == nil && reasoningEffort == nil
-            && enableThinking == nil && (templateKwargs?.isEmpty != false)
+            && enableThinking == nil && templateKwargs == nil
     }
 
     enum ValidationError: LocalizedError {

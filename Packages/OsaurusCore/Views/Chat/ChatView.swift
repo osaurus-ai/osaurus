@@ -2881,7 +2881,7 @@ final class ChatSession: ObservableObject {
     /// — no Stop required. Called by the agent loop's `buildMessages` hook
     /// at each iteration boundary.
     ///
-    /// Only text-only payloads are eligible: attachments and one-off skills
+    /// Only text-only payloads with the active run's controls are eligible: attachments and one-off skills
     /// need the full `send(...)` path (media gating, skill compose), so they
     /// stay queued for the run-end flush / Send Now. The injected text rides
     /// the normal outbound request pipeline, so the privacy filter scrubs it
@@ -2891,12 +2891,22 @@ final class ChatSession: ObservableObject {
     /// composer's, in arrival order.
     @discardableResult
     func injectQueuedSteerIfEligible() -> Bool {
+        guard queuedSend != nil || !remoteSteers.isEmpty else { return false }
+        let activeControls = turns.last(where: { $0.role == .user && $0.generationControls != nil })?.generationControls
+        let controlsMatch: Bool
+        if let pendingControls = queuedSend?.generationControls, let activeControls {
+            controlsMatch = pendingControls.matchesForSteering(activeControls)
+        } else {
+            // Preserve legacy sends/chats that predate captured controls.
+            controlsMatch = true
+        }
         var texts = remoteSteers
         remoteSteers = []
         if let pending = queuedSend,
             pending.attachments.isEmpty,
             pending.oneOffSkillId == nil,
             pending.generationControls?.overrides.isEmpty != false,
+            controlsMatch,
             !pending.text.isEmpty
         {
             queuedSend = nil
@@ -2904,6 +2914,9 @@ final class ChatSession: ObservableObject {
         }
         guard !texts.isEmpty else { return false }
         let turn = ChatTurn(role: .user, content: texts.joined(separator: "\n\n"))
+        // A steered user turn becomes the regeneration anchor. Preserve the
+        // active snapshot instead of re-reading changed defaults on retry.
+        turn.generationControls = activeControls
         appendMidRunUserTurn(turn)
         isDirty = true
         rebuildVisibleBlocks()

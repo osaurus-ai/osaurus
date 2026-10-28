@@ -30,6 +30,24 @@ struct ChatTurnGenerationControls: Sendable, Equatable, Codable {
         overrides.reasoningEffort ?? agentSettings?.reasoningEffort ?? modelOptions?["reasoningEffort"]?.stringValue
     }
 
+    /// A steer shares the active logical run's requests. Never consume a
+    /// submission whose captured defaults need a different generation request.
+    /// Ignore only the transient cold-capability-resolution bookkeeping.
+    func matchesForSteering(_ active: ChatTurnGenerationControls) -> Bool {
+        var pending = self
+        var active = active
+        pending.hasResolvedReasoning = false
+        active.hasResolvedReasoning = false
+        // Compare serialized prompt values byte-for-byte: Swift String equality
+        // considers NFC/NFD equivalent, but a tokenizer need not do so. Sorted
+        // keys make dictionary insertion order irrelevant without normalizing text.
+        let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: false)
+        guard let pendingBytes = try? encoder.encode(pending),
+            let activeBytes = try? encoder.encode(active)
+        else { return false }
+        return pendingBytes == activeBytes
+    }
+
     static func capture(
         activeModelOptions: [String: ModelOptionValue]
     ) -> ChatTurnGenerationControls {
