@@ -578,6 +578,9 @@ enum ConfigApplier {
             agent.temperature = entry.temperature.valueOrNil.map(Float.init)
         }
         if entry.maxTokens.isSpecified { agent.maxTokens = entry.maxTokens.valueOrNil }
+        if entry.generationSettings.isSpecified {
+            agent.generationSettings = entry.generationSettings.valueOrNil
+        }
         patchToolSelection(&agent, from: entry, options: options, outcome: &outcome)
         patchSkills(&agent, from: entry.skills, outcome: &outcome)
         if let instructions = entry.pluginInstructions {

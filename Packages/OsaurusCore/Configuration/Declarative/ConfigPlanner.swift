@@ -439,6 +439,8 @@ enum ConfigPlanner {
                 }
                 checkRange(entry.temperature, 0.0...2.0, "agents[\(entry.name)].temperature", &issues)
                 checkRange(entry.maxTokens, 1...10_000_000, "agents[\(entry.name)].max_tokens", &issues)
+                do { try entry.generationSettings.valueOrNil?.validate() }
+                catch { issues.append("agents[\(entry.name)].generation_settings: \(error.localizedDescription)") }
                 checkRuntimeReference(
                     entry.runtime, claudeCode: entry.claudeCode, label: "agents[\(entry.name)]",
                     document: document, prune: prune, into: &issues)
@@ -1350,6 +1352,7 @@ enum ConfigPlanner {
     /// Create-time summary of the portable keys, so the approval card shows
     /// what the new agent will be able to reach.
     private static func summarizePortableSettings(_ entry: AgentEntry, into changes: inout [String]) {
+        if entry.generationSettings.valueOrNil != nil { changes.append("generation_settings: configured") }
         if let tools = entry.tools {
             if let mode = tools.mode { changes.append("tools.mode: \(mode)") }
             if let enabled = tools.enabled, !enabled.isEmpty {
@@ -1403,6 +1406,9 @@ enum ConfigPlanner {
                 diff(
                     "max_tokens", desired: entry.maxTokens,
                     current: agent.maxTokens.map { ConfigField.value($0) } ?? .null, into: &changes)
+                diff(
+                    "generation_settings", desired: entry.generationSettings,
+                    current: agent.generationSettings.map { ConfigField.value($0) } ?? .null, into: &changes)
                 if let caps = entry.capabilities {
                     diffCapabilities(caps, agent: agent, into: &changes, risks: &risks)
                 }

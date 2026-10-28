@@ -52,8 +52,12 @@ public indirect enum ConfigValueSpec: Sendable {
     case scalar(ConfigScalarType, example: String, allowed: [String]? = nil, nullable: Bool = false)
     /// A list of scalars (`models`, `plugins`, ranking, UUID lists).
     case scalarList(ConfigScalarType, example: [String])
+    case nullableScalarList(ConfigScalarType, example: [String])
     /// Fixed-key mapping — unknown keys are validation errors.
     case mapping([ConfigKeySpec])
+    case nullableMapping([ConfigKeySpec])
+    /// An object whose values may be arbitrary JSON, including nested nulls and arrays.
+    case jsonObject(nullable: Bool)
     /// A list of fixed-key mappings. Items match existing entities by
     /// `requiredKey` (case-insensitive), which every item must carry.
     case entityList([ConfigKeySpec], requiredKey: String)
@@ -208,6 +212,9 @@ public enum ConfigManifest {
                         comment: "0..2"),
                     ConfigKeySpec(
                         "max_tokens", .scalar(.integer, example: "null", nullable: true)),
+                    ConfigKeySpec(
+                        "generation_settings", .nullableMapping(agentGenerationKeys),
+                        comment: "replaces advanced overrides; absent preserves, null clears"),
                     ConfigKeySpec(
                         "capabilities",
                         .mapping([
@@ -757,6 +764,20 @@ public enum ConfigManifest {
         return keys
     }
 
+    private static let agentGenerationKeys: [ConfigKeySpec] = [
+        ConfigKeySpec("top_p", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("top_k", .scalar(.integer, example: "null", nullable: true)),
+        ConfigKeySpec("min_p", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("repetition_penalty", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("frequency_penalty", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("presence_penalty", .scalar(.number, example: "null", nullable: true)),
+        ConfigKeySpec("seed", .scalar(.integer, example: "null", nullable: true)),
+        ConfigKeySpec("stop", .nullableScalarList(.string, example: [])),
+        ConfigKeySpec("enable_thinking", .scalar(.boolean, example: "null", nullable: true)),
+        ConfigKeySpec("reasoning_effort", .scalar(.string, example: "null", nullable: true)),
+        ConfigKeySpec("template_kwargs", .jsonObject(nullable: true)),
+    ]
+
     // MARK: - Derived: strict validation tables
 
     /// Keys allowed in each mapping of the document, addressed by a
@@ -775,9 +796,9 @@ public enum ConfigManifest {
         path: String, value: ConfigValueSpec, into out: inout [String: Set<String>]
     ) {
         switch value {
-        case .scalar, .scalarList, .freeformMap:
+        case .scalar, .scalarList, .nullableScalarList, .freeformMap, .jsonObject:
             return
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             out[path] = Set(keys.map { $0.key })
             for key in keys {
                 collectKnownKeys(path: "\(path).\(key.key)", value: key.value, into: &out)
@@ -803,9 +824,9 @@ public enum ConfigManifest {
         path: String, value: ConfigValueSpec, into out: inout [String: String]
     ) {
         switch value {
-        case .scalar, .scalarList, .freeformMap:
+        case .scalar, .scalarList, .nullableScalarList, .freeformMap, .jsonObject:
             return
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             for key in keys {
                 collectRequiredKeys(path: "\(path).\(key.key)", value: key.value, into: &out)
             }
@@ -831,11 +852,11 @@ public enum ConfigManifest {
         path: String, value: ConfigValueSpec, into out: inout [String: [String]]
     ) {
         switch value {
-        case .scalar, .scalarList:
+        case .scalar, .scalarList, .nullableScalarList, .jsonObject:
             return
         case .freeformMap(_, let allowedValues, _, _):
             if let allowedValues { out[path] = allowedValues }
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             for key in keys {
                 collectFreeformConstraints(
                     path: "\(path).\(key.key)", value: key.value, into: &out)
@@ -903,6 +924,14 @@ public enum ConfigManifest {
                 "type": "array",
                 "items": ["type": type.jsonType],
             ]
+        case .nullableScalarList(let type, _):
+            return ["type": ["array", "null"], "items": ["type": type.jsonType]]
+        case .jsonObject(let nullable):
+            return ["type": nullable ? ["object", "null"] : ["object"], "additionalProperties": true]
+        case .nullableMapping(let keys):
+            var schema = jsonSchema(for: .mapping(keys))
+            schema["type"] = ["object", "null"]
+            return schema
         case .mapping(let keys):
             var properties: [String: Any] = [:]
             for key in keys {
@@ -986,13 +1015,13 @@ public enum ConfigManifest {
                     "\(section.id.rawValue): \(example)", comment: section.comment,
                     moreComments: [])
             ]
-        case .scalarList(_, let example):
+        case .scalarList(_, let example), .nullableScalarList(_, let example):
             var lines = [withComment("\(section.id.rawValue):", comment: section.comment, moreComments: [])]
             for item in example {
                 lines.append("  - \(item)")
             }
             return lines
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             var lines = [withComment("\(section.id.rawValue):", comment: section.comment, moreComments: [])]
             for key in keys {
                 lines.append(contentsOf: renderKey(key, indent: 2, listItemHead: false))
@@ -1002,6 +1031,8 @@ public enum ConfigManifest {
             var lines = [withComment("\(section.id.rawValue):", comment: section.comment, moreComments: [])]
             lines.append(contentsOf: renderEntityItem(keys, indent: 2))
             return lines
+        case .jsonObject:
+            return ["\(section.id.rawValue): {}"]
         case .freeformMap:
             return [withComment("\(section.id.rawValue):", comment: section.comment, moreComments: [])]
         }
@@ -1030,7 +1061,7 @@ public enum ConfigManifest {
                     "\(pad)\(prefix)\(key.key): \(example)",
                     comment: key.comment, moreComments: key.moreComments)
             ]
-        case .scalarList(_, let example):
+        case .scalarList(_, let example), .nullableScalarList(_, let example):
             if example.isEmpty {
                 return [
                     withComment(
@@ -1044,7 +1075,7 @@ public enum ConfigManifest {
                     "\(pad)\(prefix)\(key.key): [\(inline)]",
                     comment: key.comment, moreComments: key.moreComments)
             ]
-        case .mapping(let keys):
+        case .mapping(let keys), .nullableMapping(let keys):
             var lines = [
                 withComment(
                     "\(pad)\(prefix)\(key.key):",
@@ -1064,6 +1095,8 @@ public enum ConfigManifest {
             ]
             lines.append(contentsOf: renderEntityItem(keys, indent: indent + 2))
             return lines
+        case .jsonObject:
+            return [withComment("\(pad)\(prefix)\(key.key): {}", comment: key.comment, moreComments: key.moreComments)]
         case .freeformMap(_, _, let exampleKey, let exampleValue):
             var lines = [
                 withComment(
@@ -1115,9 +1148,9 @@ public enum ConfigManifest {
 
     private static func collectKeywords(value: ConfigValueSpec, add: (String) -> Void) {
         switch value {
-        case .scalar, .scalarList, .freeformMap:
+        case .scalar, .scalarList, .nullableScalarList, .freeformMap, .jsonObject:
             return
-        case .mapping(let keys), .entityList(let keys, _):
+        case .mapping(let keys), .nullableMapping(let keys), .entityList(let keys, _):
             for key in keys {
                 add(key.key)
                 collectKeywords(value: key.value, add: add)

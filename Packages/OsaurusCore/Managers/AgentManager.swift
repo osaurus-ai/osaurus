@@ -549,6 +549,7 @@ public final class AgentManager: ObservableObject {
             defaultModel: agent.defaultModel,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
+            generationSettings: agent.generationSettings,
             chatQuickActions: agent.chatQuickActions,
             chatGreeting: agent.chatGreeting,
             chatSubtitle: agent.chatSubtitle,
@@ -1503,6 +1504,12 @@ extension AgentManager {
         }
 
         return agent.maxTokens
+    }
+
+    /// Custom-agent overrides only; the built-in agent keeps its existing configuration contract.
+    public func effectiveGenerationSettings(for agentId: UUID) -> AgentGenerationSettings? {
+        guard let agent = agent(for: agentId), agent.id != Agent.defaultId else { return nil }
+        return agent.generationSettings
     }
 
     /// Resolve every per-agent capability flag in one place, applying the

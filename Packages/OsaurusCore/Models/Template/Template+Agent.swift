@@ -83,6 +83,7 @@ extension Template {
             if overrides.model.isSpecified { entry.model = overrides.model }
             if overrides.temperature.isSpecified { entry.temperature = overrides.temperature }
             if overrides.maxTokens.isSpecified { entry.maxTokens = overrides.maxTokens }
+            if overrides.generationSettings.isSpecified { entry.generationSettings = overrides.generationSettings }
             if overrides.workingFolder.isSpecified { entry.workingFolder = overrides.workingFolder }
             if let v = overrides.capabilities { entry.capabilities = merge(entry.capabilities, v) }
             if let v = overrides.tools { entry.tools = v }

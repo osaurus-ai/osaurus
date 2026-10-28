@@ -132,6 +132,7 @@ enum ConfigExporter {
         entry.model = agent.defaultModel.map { .value($0) } ?? .null
         entry.temperature = agent.temperature.map { .value(Double($0)) } ?? .null
         entry.maxTokens = agent.maxTokens.map { .value($0) } ?? .null
+        entry.generationSettings = agent.generationSettings.map { .value($0) } ?? .null
         var caps = AgentCapabilitiesEntry()
         caps.toolsEnabled = agent.toolsEnabled
         caps.memoryEnabled = agent.memoryEnabled
