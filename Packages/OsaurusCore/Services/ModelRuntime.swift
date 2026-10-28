@@ -6261,7 +6261,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
-                try ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.makeMLXChatMessages(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -6424,7 +6424,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         return try await generateEventStream(
             chatBuilder: {
-                try ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.makeMLXChatMessages(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -7172,7 +7172,7 @@ public actor ModelRuntime {
     /// XML-in-content workaround (which raised
     /// `TemplateException: "Message has tool role, but there was no
     /// previous assistant message with a tool call!"` on MiniMax).
-    nonisolated static func mapOpenAIChatToMLX(
+    nonisolated static func makeMLXChatMessages(
         _ msgs: [ChatMessage],
         trace: TTFTTrace? = nil,
         preserveStructuredToolHistory: Bool = true
@@ -7211,7 +7211,7 @@ public actor ModelRuntime {
             case "assistant":
                 let content = m.content ?? ""
                 let reasoningContent = m.reasoning_content
-                let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil
+                let toolCalls = preserveStructuredToolHistory ? makeMLXToolCalls(m.tool_calls) : nil
                 // Skip fully-empty assistant turns. Reasoning-only assistant
                 // turns are NOT empty for local MLX templates: ZAYA,
                 // Nemotron-H/Omni, MiniMax and DSV4 read
@@ -7298,7 +7298,7 @@ public actor ModelRuntime {
     /// the vmlx `MLXLMCommon.ToolCall` list (arguments: `[String: JSONValue]`).
     /// Returns `nil` for a nil/empty input so callers can pass the result
     /// straight into `Chat.Message(toolCalls:)`.
-    nonisolated private static func toMLXToolCalls(
+    nonisolated private static func makeMLXToolCalls(
         _ calls: [ToolCall]?
     ) -> [MLXLMCommon.ToolCall]? {
         guard let calls, !calls.isEmpty else { return nil }

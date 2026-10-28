@@ -1610,7 +1610,7 @@ struct RuntimePolicySourceTests {
             "ModelRuntime must not preserve structured assistant/tool history when the request is routed with no active tool schemas."
         )
         #expect(
-            runtime.contains("let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil"),
+            runtime.contains("let toolCalls = preserveStructuredToolHistory ? makeMLXToolCalls(m.tool_calls) : nil"),
             "Assistant tool_calls must be omitted from the MLX template context when structured tool history is disabled."
         )
         #expect(

@@ -930,8 +930,7 @@ It tops out around 18% of one window at bf16. Past that point every store must
 evict earlier boundaries of the SAME conversation, so reuse collapses precisely
 as context grows — which is the reported symptom.
 
-For comparison, oMLX (installed at /Applications/oMLX.app, sources readable
-under Contents/Resources/omlx) defaults `ssd_cache_max_size = "auto"`, defined
+For comparison, the reference runtime defaults `ssd_cache_max_size = "auto"`, defined
 as **10% of SSD capacity** (settings.py:246, :274); its non-auto default is
 `"100GB"` (config.py:110). On this machine 10% of a 3721 GB volume is ~372 GB —
 roughly 37x our default.

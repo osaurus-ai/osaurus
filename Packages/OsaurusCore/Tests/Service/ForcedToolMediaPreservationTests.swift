@@ -89,7 +89,7 @@ struct ForcedToolMediaPreservationTests {
         let actualParts = try #require(result.contentParts)
         #expect(try Self.encoded(Array(actualParts.prefix(parts.count))) == Self.encoded(parts))
         #expect(actualParts.count == parts.count)
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([result])
+        let mapped = try ModelRuntime.makeMLXChatMessages([result])
         #expect(mapped.first?.content == expectedText && mapped.first?.images.count == 3)
         let decoded = try JSONDecoder().decode(ChatMessage.self, from: Self.encoded(result))
         #expect(decoded.content == expectedText)
@@ -108,7 +108,7 @@ struct ForcedToolMediaPreservationTests {
         )
         #expect(result.first?.content == nil)
         #expect(result.first?.imageUrls == [Self.firstImage])
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX(result)
+        let mapped = try ModelRuntime.makeMLXChatMessages(result)
         #expect(mapped.first?.images.count == 1)
         #expect(mapped.first?.content == "")
     }

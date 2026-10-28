@@ -551,7 +551,7 @@ extension ChatMessage {
     /// modality. Audio bytes encode as `input_audio` with explicit
     /// format hint; video bytes encode as `video_url` with
     /// `data:video/<container>` URL. All three flow into the
-    /// OpenAI-compatible JSON shape that `mapOpenAIChatToMLX` lowers through
+    /// OpenAI-compatible JSON shape that `makeMLXChatMessages` lowers through
     /// `extractAudioSources` / `extractVideoSources`.
     init(
         role: String,
