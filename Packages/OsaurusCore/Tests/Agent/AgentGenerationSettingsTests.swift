@@ -114,6 +114,9 @@ struct AgentGenerationSettingsPersistenceTests {
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
             AgentStore.save(owner)
+            // A cached load can precede the queued mkdir/write. This disk read
+            // drains pending writes before the fixture writes adjacent backups.
+            #expect(try AgentStore.loadPersisted(id: owner.id).id == owner.id)
             #expect(AgentStore.load(id: owner.id) != nil)
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
