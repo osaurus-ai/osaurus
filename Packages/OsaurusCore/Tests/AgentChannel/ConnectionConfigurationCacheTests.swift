@@ -111,11 +111,16 @@ struct ConnectionConfigurationCacheTests {
             try AgentChannelConfigurationStore.save(AgentChannelConfiguration(schemaVersion: 7))
             #expect(AgentChannelConfigurationStore.load().schemaVersion == 7)
 
-            // Rewrite the file but keep its mtime: load() must not re-read it.
+            // Pin the file's mtime to a whole-second value so restoring it
+            // after a rewrite round-trips exactly (setAttributes/utimes does
+            // not preserve the filesystem's nanosecond precision).
             let url = AgentChannelConfigurationStore.configurationFileURL()
-            let originalDate = try #require(
-                FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
-            )
+            let originalDate = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 60)
+            try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: url.path)
+            // New mtime -> one re-read of the (unchanged) saved file primes the cache.
+            #expect(AgentChannelConfigurationStore.load().schemaVersion == 7)
+
+            // Rewrite the file but keep its mtime: load() must not re-read it.
             try #"{"schemaVersion": 9}"#.write(to: url, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: url.path)
             #expect(AgentChannelConfigurationStore.load().schemaVersion == 7)
