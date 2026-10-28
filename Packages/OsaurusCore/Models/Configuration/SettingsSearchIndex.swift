@@ -306,8 +306,8 @@ public enum SettingsSearchIndex {
         .init(
             id: "settings.connect.pairedDevice",
             tab: .connect,
-            section: "Paired iPhones",
-            title: "Paired iPhones",
+            section: "Paired iPhone",
+            title: "Paired iPhone",
             keywords: ["unpair", "revoke phone", "paired device", "remove iphone", "mobile access"]
         ),
         .init(

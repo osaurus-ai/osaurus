@@ -2762,17 +2762,11 @@ private struct SessionRow: View {
 
     /// Compact icon-only badge that surfaces the session's `SessionSource`
     /// (plugin / http / schedule / watcher). Chat-source rows hide it.
-    /// A chat from a paired iPhone: an ordinary chat the phone started, or
+    /// A chat from the paired iPhone: an ordinary chat the phone started, or
     /// an older `.workspace` row (from the shared-agent path), which is the
     /// owner's own chat, not a teammate's. Either is shown as the iPhone's.
     private var isFromPairedPhone: Bool {
         RemoteSessionContinuation.isFromPairedPhone(session)
-    }
-
-    /// The phone a phone chat came from, when it was started after phones
-    /// were told apart.
-    private var phoneName: String? {
-        RemoteSessionContinuation.phoneName(externalSessionKey: session.externalSessionKey)
     }
 
     private var sourceBadge: some View {
@@ -2794,7 +2788,7 @@ private struct SessionRow: View {
         // A phone chat's key is the pairing key's nonce plus the phone's own
         // id: noise to a reader, so it names the iPhone and stops there.
         if isFromPairedPhone {
-            parts.append("via \(phoneName ?? "iPhone")")
+            parts.append("via iPhone")
             return parts.joined(separator: " · ")
         }
         let pluginName = session.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
@@ -2831,7 +2825,7 @@ private struct SessionRow: View {
         switch session.source {
         case .chat:
             if isFromPairedPhone {
-                return phoneName.map { Text(verbatim: $0) } ?? Text("Mobile", bundle: .module)
+                return Text("Mobile", bundle: .module)
             }
             return Text("Chat", bundle: .module)
         case .plugin:

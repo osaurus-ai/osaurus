@@ -126,7 +126,7 @@ struct MobilePairingV2Tests {
             phoneIdentity: PairingSPAKE2.phoneIdentity(deviceId: "device-1", deviceName: "Test iPhone")
         )
         #expect(Data(base64urlEncoded: started.confirm) == keys.macConfirmation)
-        #expect(service.pairedDevices.isEmpty)
+        #expect(service.pairedDevice == nil)
 
         let confirm = MobilePairConfirmRequest(
             v: 2,
@@ -141,7 +141,7 @@ struct MobilePairingV2Tests {
         let plaintext = try PairingSPAKE2.open(response.sealed, key: keys.sessionKey, deviceId: "device-1")
         let payload = try JSONDecoder().decode(MobilePairPayload.self, from: plaintext)
         #expect(payload.apiKey == "osk-v1.secret")
-        #expect(service.pairedDevices.first?.deviceId == "device-1")
+        #expect(service.pairedDevice?.deviceId == "device-1")
         #expect(service.activeCode == nil)
     }
 
@@ -169,7 +169,7 @@ struct MobilePairingV2Tests {
         let response = try JSONDecoder().decode(MobilePairConfirmResponse.self, from: Data(body.utf8))
         let opened = try? PairingSPAKE2.open(response.sealed, key: keys.sessionKey, deviceId: " device-1")
         #expect(opened != nil)
-        #expect(service.pairedDevices.first?.name.count == 80)
+        #expect(service.pairedDevice?.name.count == 80)
     }
 
     @Test func wrongCodeNeverPairs() throws {
@@ -188,7 +188,7 @@ struct MobilePairingV2Tests {
             confirm: keys.phoneConfirmation.base64urlEncoded
         )
         #expect(service.confirmExchange(confirm) == .invalidCode)
-        #expect(service.pairedDevices.isEmpty)
+        #expect(service.pairedDevice == nil)
         #expect(service.activeCode != nil)
     }
 
