@@ -238,6 +238,7 @@ struct ResponsesSubagentRunnerTests {
                 #expect(request.generation.enableThinking == false)
                 #expect(request.generation.reasoningEffort == "low")
                 #expect(request.generation.templateKwargs == settings.templateKwargs)
+                #expect(request.context.agentReasoningDefaults?.settings == AgentGenerationSettings(enableThinking: false, reasoningEffort: "low"))
                 let legacy = request.chatCompletionsCompatibilityRequest()
                 #expect(legacy.max_tokens == request.generation.maxOutputTokens)
                 #expect(legacy.top_p == 0)

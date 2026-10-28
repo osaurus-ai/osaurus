@@ -258,6 +258,7 @@ enum AgentSubagentRunner {
                 // reasoning choices. Omitted target fields retain inheritance
                 // or the model's native defaults on every tool iteration.
                 generationSettings?.apply(to: &request.generation)
+                request.context.agentReasoningDefaults = AgentReasoningDefaults(settings: generationSettings)
                 request.context.admissionPositionLimit = admissionPositionLimit ?? contextWindow
                 request.context.samplingParametersAreImplicit = true
                 request.context.isAgentRequest = isAgentRequest

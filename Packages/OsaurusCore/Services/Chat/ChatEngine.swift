@@ -15,6 +15,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
     private let reasoningCapabilityProvider: @Sendable (String) -> LocalReasoningCapability.Capability
     private let agentModelOptionsProvider:
         @Sendable (String) async -> [String: ModelOptionValue]?
+    private let agentReasoningChoicesProvider:
+        @Sendable (String, Bool) async -> AgentGenerationReasoningChoices
 
     /// Host execution source controls residency as well as attribution. The
     /// evaluation override is scoped to this run, never sticky on a reused engine.
@@ -83,6 +85,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     ModelOptionsStore.shared.loadOptions(for: modelId)
                 }
             },
+        agentReasoningChoicesProvider:
+            @escaping @Sendable (String, Bool) async -> AgentGenerationReasoningChoices = { modelId, isLocal in
+                await AgentGenerationReasoningChoices.resolve(modelID: modelId, isLocal: isLocal)
+            },
         source: InferenceSource = .httpAPI,
         activitySource: InferenceSource? = nil,
         privacyReviewMode: PrivacyReviewMode = .interactive
@@ -92,6 +98,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         self.remoteServicesProvider = remoteServicesProvider
         self.reasoningCapabilityProvider = reasoningCapabilityProvider
         self.agentModelOptionsProvider = agentModelOptionsProvider
+        self.agentReasoningChoicesProvider = agentReasoningChoicesProvider
         self.baseInferenceSource = source
         self.activitySource = activitySource
         self.privacyReviewMode = privacyReviewMode
@@ -171,6 +178,23 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         let route: ModelRoute
         let params: GenerationParameters
         let remoteServices: [ModelService]
+    }
+
+    /// Validate original saved values against the route already selected below.
+    /// Legacy parameter normalization may have run, but provenance retains the
+    /// exact agent values. Unmarked API and model-option requests are unchanged.
+    private func validateAgentReasoningDefaults(
+        request: ResponsesInferenceRequest,
+        service: ModelService,
+        effectiveModel: String
+    ) async throws {
+        guard let defaults = request.context.agentReasoningDefaults else { return }
+        guard !request.context.runAsRemoteAgent else {
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "Configure saved reasoning defaults on the remote agent's host; its effective model is owned there.")
+        }
+        let choices = await agentReasoningChoicesProvider(effectiveModel, service is MLXService)
+        try choices.validate(settings: defaults.settings)
     }
 
     /// Build the shared dispatch context for `streamChat` / `completeChat`.
@@ -357,6 +381,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 RemoteAgentRunLog.client(
                     "dispatch route=provider providerId=\(agentProviderId.uuidString) effectiveModel=\(effective) reqModel=\(request.model)"
                 )
+                try await validateAgentReasoningDefaults(
+                    request: request, service: agentService, effectiveModel: effective)
                 return Dispatch(
                     route: .service(service: agentService, effectiveModel: effective),
                     params: params,
@@ -376,12 +402,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             services: services,
             remoteServices: []
         )
-        if case .service(let service, _) = localRoute {
+        if case .service(let service, let effectiveModel) = localRoute {
             try Self.validateSamplingExtensions(params, for: service)
             if jsonSchema != nil && !(service is MLXService) {
                 throw EngineError(kind: .invalidStructuredOutput(
                     "JSON schema output is currently supported only by the local MLX runtime."))
             }
+            try await validateAgentReasoningDefaults(
+                request: request, service: service, effectiveModel: effectiveModel)
             return Dispatch(route: localRoute, params: params, remoteServices: [])
         }
 
@@ -400,6 +428,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             services: services,
             remoteServices: remoteServices
         )
+        if case .service(let service, let effectiveModel) = route {
+            try await validateAgentReasoningDefaults(
+                request: request, service: service, effectiveModel: effectiveModel)
+        }
         return Dispatch(route: route, params: params, remoteServices: remoteServices)
     }
 

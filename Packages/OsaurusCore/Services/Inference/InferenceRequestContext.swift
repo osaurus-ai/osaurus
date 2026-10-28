@@ -1,5 +1,22 @@
 import Foundation
 
+/// Saved custom-agent reasoning fields that still contribute after explicit
+/// turn overrides. Host-only provenance: API requests never synthesize it.
+struct AgentReasoningDefaults: Sendable, Equatable {
+    let enableThinking: Bool?
+    let reasoningEffort: String?
+
+    init?(settings: AgentGenerationSettings?, overrides: ChatTurnOverrides = .init()) {
+        enableThinking = overrides.enableThinking == nil ? settings?.enableThinking : nil
+        reasoningEffort = overrides.reasoningEffort == nil ? settings?.reasoningEffort : nil
+        if enableThinking == nil && reasoningEffort == nil { return nil }
+    }
+
+    var settings: AgentGenerationSettings {
+        AgentGenerationSettings(enableThinking: enableThinking, reasoningEffort: reasoningEffort)
+    }
+}
+
 /// App-owned execution context shared by inference request adapters.
 ///
 /// This value has no wire encoding. Provider requests carry model input and
@@ -7,6 +24,7 @@ import Foundation
 /// on the host. In particular, a Responses adapter must never re-derive an
 /// explicit admission budget or turn a background load into an interactive one.
 struct InferenceRequestContext: Sendable {
+    var agentReasoningDefaults: AgentReasoningDefaults? = nil
     var modelOptions: [String: ModelOptionValue]? = nil
     var ttftTrace: TTFTTrace? = nil
     var turnId: UUID? = nil
