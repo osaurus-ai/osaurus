@@ -470,9 +470,12 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
             let hits = directURLs.map {
                 SearchHit(title: $0, url: $0, snippet: "", engine: "direct_url")
             }
+            // On a call, as many pages as a call's search extracts at most;
+            // the rest are listed without their text.
             let results = await enrichedResults(
                 hits: hits,
-                extractCount: directURLs.count,
+                extractCount: VoiceCallSearch.isActive
+                    ? min(directURLs.count, VoiceCallSearch.maxExtractCount) : directURLs.count,
                 timeout: timeout,
                 hostedTexts: hostedTexts
             )
@@ -744,6 +747,12 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
                             extraction.markdown, maxCharacters: VoiceCallSearch.pageLimit)
                         entry["markdown"] = text
                         entry["truncated"] = extraction.truncated || cut
+                        if cut {
+                            // What the model actually gets; the page's own count
+                            // stays as the total.
+                            entry["word_count"] = text.split(whereSeparator: \.isWhitespace).count
+                            if entry["word_count_total"] == nil { entry["word_count_total"] = extraction.wordCount }
+                        }
                     } else {
                         entry["markdown"] = extraction.markdown
                         entry["truncated"] = extraction.truncated
