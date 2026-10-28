@@ -317,12 +317,15 @@ public actor ModelRuntime {
         var selectedDFlash2 = false
         /// A `uno/` self-speculation adapter in the bundle that fits it (validated by the engine).
         var bundledUno = false
-        var hasCompatibleDFlash2: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno }
-        var speculationAvailable: Bool { hasCompatibleDFlash2 || (bundleHasMTP && isTargetMTPFamily) }
-        var speculationBlocked: Bool { !hasCompatibleDFlash2 && isBlocked }
-        var familyDefaultOn: Bool { hasCompatibleDFlash2 || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
+        /// DeepSeek V4.1 stores its separate speculative head in `dspark/`.
+        var bundledDSpark = false
+        var hasCompatibleDrafter: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno || bundledDSpark }
+        var speculationAvailable: Bool { hasCompatibleDrafter || (bundleHasMTP && isTargetMTPFamily) }
+        var speculationBlocked: Bool { !hasCompatibleDrafter && isBlocked }
+        var familyDefaultOn: Bool { hasCompatibleDrafter || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
         var speculationCapabilityDescription: String {
             if selectedDFlash2 { return "Compatible selected DFlash 2 drafter detected" }
+            if bundledDSpark { return "Bundled DSpark drafter detected" }
             if bundledUno { return "Bundled Uno self-speculation adapter detected" }
             if bundledDFlash2 { return "Compatible bundled DFlash 2 drafter detected" }
             if !bundleHasMTP { return "No MTP head or compatible drafter detected" }
@@ -364,6 +367,12 @@ public actor ModelRuntime {
             configData: config, bundleDirectory: directory) != nil
         let bundledUno = VMLXServerRuntimeSettings().bundledUnoAdapter(
             configData: config, bundleDirectory: directory) != nil
+        // Use the runtime's bundle resolver, not a second architecture/name list.
+        // Capability stays visible under Off; execution still follows the saved mode.
+        var availabilitySettings = VMLXServerRuntimeSettings()
+        availabilitySettings.mtp.mode = .familyDefault
+        let bundledDSpark = availabilitySettings.bundledDSparkDrafter(
+            configData: config, bundleDirectory: directory) != nil
         // Availability remains discoverable under Off, so re-enabling never
         // requires loading weights. The selected mode controls execution/display.
         var selectedSettings = ServerRuntimeSettingsStore.snapshot()
@@ -379,6 +388,7 @@ public actor ModelRuntime {
             bundledDFlash2: bundledDFlash2,
             selectedDFlash2: selectedDFlash2,
             bundledUno: bundledUno,
+            bundledDSpark: bundledDSpark,
             statusLine: status.statusLine
         )
     }
@@ -6261,7 +6271,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
-                try ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.makeMLXChatMessages(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -6424,7 +6434,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         return try await generateEventStream(
             chatBuilder: {
-                try ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.makeMLXChatMessages(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -7172,7 +7182,7 @@ public actor ModelRuntime {
     /// XML-in-content workaround (which raised
     /// `TemplateException: "Message has tool role, but there was no
     /// previous assistant message with a tool call!"` on MiniMax).
-    nonisolated static func mapOpenAIChatToMLX(
+    nonisolated static func makeMLXChatMessages(
         _ msgs: [ChatMessage],
         trace: TTFTTrace? = nil,
         preserveStructuredToolHistory: Bool = true
@@ -7211,7 +7221,7 @@ public actor ModelRuntime {
             case "assistant":
                 let content = m.content ?? ""
                 let reasoningContent = m.reasoning_content
-                let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil
+                let toolCalls = preserveStructuredToolHistory ? makeMLXToolCalls(m.tool_calls) : nil
                 // Skip fully-empty assistant turns. Reasoning-only assistant
                 // turns are NOT empty for local MLX templates: ZAYA,
                 // Nemotron-H/Omni, MiniMax and DSV4 read
@@ -7298,7 +7308,7 @@ public actor ModelRuntime {
     /// the vmlx `MLXLMCommon.ToolCall` list (arguments: `[String: JSONValue]`).
     /// Returns `nil` for a nil/empty input so callers can pass the result
     /// straight into `Chat.Message(toolCalls:)`.
-    nonisolated private static func toMLXToolCalls(
+    nonisolated private static func makeMLXToolCalls(
         _ calls: [ToolCall]?
     ) -> [MLXLMCommon.ToolCall]? {
         guard let calls, !calls.isEmpty else { return nil }

@@ -199,6 +199,100 @@ struct NativeMTPPreloadDetectionTests {
         #expect(bundled.speculationCapabilityDescription == "Compatible bundled DFlash 2 drafter detected")
     }
 
+    @Test("DeepSeek V4.1 bundled DSpark is discoverable without a native head or model load")
+    func bundledDSparkCapabilityBeforeLoad() throws {
+        for type in ["deepseek_v41", "deepseek_v41_text"] {
+            let directory = try fixture(modelType: type, includeHead: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let absent = try #require(ModelRuntime.inspectLoadingModelMTP(name: "local-alias", directory: directory))
+            #expect(!absent.speculationAvailable)
+
+            let drafter = directory.appendingPathComponent("dspark")
+            try FileManager.default.createDirectory(at: drafter, withIntermediateDirectories: true)
+            // Discovery uses the same artifact-presence rule as runtime resolution;
+            // no weights are loaded by this fixture.
+            try Data([0]).write(to: drafter.appendingPathComponent("dspark.safetensors"))
+            let present = try #require(ModelRuntime.inspectLoadingModelMTP(name: "local-alias", directory: directory))
+            #expect(!present.bundleHasMTP)
+            #expect(!present.isTargetMTPFamily)
+            #expect(present.speculationAvailable)
+            #expect(present.familyDefaultOn)
+            #expect(!present.speculationBlocked)
+            #expect(present.speculationCapabilityDescription == "Bundled DSpark drafter detected")
+
+            try FileManager.default.removeItem(at: drafter)
+            let removed = try #require(ModelRuntime.inspectLoadingModelMTP(name: "local-alias", directory: directory))
+            #expect(!removed.speculationAvailable)
+        }
+    }
+
+    @Test("a DSpark-named folder cannot enable another architecture")
+    func unrelatedBundledDSparkRejected() throws {
+        for type in ["deepseek_v4", "qwen3_5", "llama"] {
+            let directory = try fixture(modelType: type, includeHead: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let drafter = directory.appendingPathComponent("dspark")
+            try FileManager.default.createDirectory(at: drafter, withIntermediateDirectories: true)
+            try Data([0]).write(to: drafter.appendingPathComponent("dspark.safetensors"))
+            let status = try #require(ModelRuntime.inspectLoadingModelMTP(name: "DeepSeek-V4.1", directory: directory))
+            #expect(!status.speculationAvailable)
+        }
+    }
+
+    @Test("LiLiCorr remains discoverable before loading a Nemotron target")
+    func bundledLiLiCorrCapabilityBeforeLoad() throws {
+        for type in ["nemotron_h", "nemotron_h_text"] {
+            let directory = try fixture(modelType: type, includeHead: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try JSONSerialization.data(withJSONObject: ["model_type": type])
+                .write(to: directory.appendingPathComponent("config.json"))
+            let absent = try #require(ModelRuntime.inspectLoadingModelMTP(name: "local-alias", directory: directory))
+            #expect(!absent.speculationAvailable)
+
+            let drafter = directory.appendingPathComponent("lilicorr")
+            try FileManager.default.createDirectory(at: drafter, withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: [
+                "num_hidden_layers": 2, "dflash_config": ["projector_type": "lilicorr"],
+            ]).write(to: drafter.appendingPathComponent("config.json"))
+            // Header-only discovery fixture. This does not exercise a drafter forward.
+            let header = try JSONSerialization.data(withJSONObject: [
+                "lilicorr.context_proj.weight": ["dtype": "F32", "shape": [1, 1], "data_offsets": [0, 4]],
+            ])
+            var length = UInt64(header.count).littleEndian
+            var weights = withUnsafeBytes(of: &length) { Data($0) }
+            weights.append(header)
+            weights.append(Data(repeating: 0, count: 4))
+            try weights.write(to: drafter.appendingPathComponent("model.safetensors"))
+            let present = try #require(ModelRuntime.inspectLoadingModelMTP(name: "local-alias", directory: directory))
+            #expect(present.bundleHasMTP)
+            #expect(present.isTargetMTPFamily)
+            #expect(present.speculationAvailable)
+            #expect(!present.speculationBlocked)
+
+            try FileManager.default.removeItem(at: drafter.appendingPathComponent("model.safetensors"))
+            let removed = try #require(ModelRuntime.inspectLoadingModelMTP(name: "local-alias", directory: directory))
+            #expect(!removed.speculationAvailable)
+        }
+    }
+
+    @Test("bundled and selected drafters retain their capability independently of native tuning")
+    func drafterPresentationParity() {
+        for strategy in ["dflash2", "selected", "uno", "dspark"] {
+            var status = ModelRuntime.LoadingModelMTPStatus(
+                name: "local-alias", bundleHasMTP: false, isTargetMTPFamily: false,
+                isBlocked: true, measuredFamilyAutoDepth: nil, statusLine: "mtp: none")
+            switch strategy {
+            case "dflash2": status.bundledDFlash2 = true
+            case "selected": status.selectedDFlash2 = true
+            case "uno": status.bundledUno = true
+            default: status.bundledDSpark = true
+            }
+            #expect(status.speculationAvailable)
+            #expect(status.familyDefaultOn)
+            #expect(!status.speculationBlocked)
+        }
+    }
+
     private func fixture(
         modelType: String,
         format: String = "affine",

@@ -47,7 +47,7 @@ automatic tool selection is solved: the AIFF tools-enabled row still selected
 irrelevant web search after first transcribing the phrase correctly.
 
 Source trace found no image/audio overwrite in the mixed-media path.
-`ModelRuntime.mapOpenAIChatToMLX` extracts images, videos, and audio separately
+`ModelRuntime.makeMLXChatMessages` extracts images, videos, and audio separately
 into the same message; `MLXBatchAdapter` preserves those fields while
 pre-encoding audio; `NemotronHOmniProcessor.prepare` and
 `NemotronHOmni.prepare` process and splice visual and audio placeholders

@@ -1145,7 +1145,7 @@ struct MLXBatchAdapter {
     ///
     /// Preserves media plus `reasoningContent`, `toolCalls`, `toolCallId`, and
     /// `contentParts` through the rebuild. Dropping any of these fields silently
-    /// unwinds the structured handoff set up by `ModelRuntime.mapOpenAIChatToMLX`:
+    /// unwinds the structured handoff set up by `ModelRuntime.makeMLXChatMessages`:
     /// ZAYA, Nemotron-H/Omni, MiniMax, and DSV4 templates read
     /// `message.reasoning_content`; MiniMax and other templates read
     /// `message.tool_calls[i]`; omni/VL processors read media arrays; the

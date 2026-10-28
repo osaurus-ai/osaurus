@@ -197,7 +197,7 @@ is gated by `ModelMediaCapabilities.supportsAudio`.
   stale-count guard rejects mismatched samples, and simulates the composer
   submit path by storing the final PCM snapshot under the same attachment id,
   building `ChatSession.buildUserChatMessage(...)`, and requiring
-  `ModelRuntime.mapOpenAIChatToMLX(...)` to consume `.preEncoded` audio.
+  `ModelRuntime.makeMLXChatMessages(...)` to consume `.preEncoded` audio.
   Local run with `OSAURUS_MLX_METALLIB` passed again after rebase with
   `warm_ms=2780`, `samples=80620`, `encode_ms=1310`,
   `embedding_shape=[63, 2688]`, and `composer_submit=preencoded`. The prior

@@ -820,7 +820,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "cac3a4357b6e55d1b473a6d048d0c0764b79c0fb"
+        let expectedRuntimeHardenedRevision = "887d428c3431597cea48fb4f14251f48d303be96"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -830,7 +830,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the required vmlx-swift revision cac3a435 for the LFM3 text, vision, video and speech-input runtime, including native audio text-stop handling, on top of the existing runtime hardening. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the required vmlx-swift revision 83079035 for declared bundle thinking/effort defaults, on top of the LFM3 text, vision, video and speech-input runtime, native audio text-stop handling and existing runtime hardening. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -1610,7 +1610,7 @@ struct RuntimePolicySourceTests {
             "ModelRuntime must not preserve structured assistant/tool history when the request is routed with no active tool schemas."
         )
         #expect(
-            runtime.contains("let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil"),
+            runtime.contains("let toolCalls = preserveStructuredToolHistory ? makeMLXToolCalls(m.tool_calls) : nil"),
             "Assistant tool_calls must be omitted from the MLX template context when structured tool history is disabled."
         )
         #expect(

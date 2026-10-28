@@ -125,7 +125,7 @@ struct NativeTokenizerPrefixParityTests {
 
         let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: bundle)
         let controllable = try #require(tokenizer as? any GenerationPromptControllableTokenizer)
-        let chat = try ModelRuntime.mapOpenAIChatToMLX(request.input, preserveStructuredToolHistory: true)
+        let chat = try ModelRuntime.makeMLXChatMessages(request.input, preserveStructuredToolHistory: true)
         let tools = ModelRuntime.makeTokenizerTools(tools: request.tools, toolChoice: request.toolChoice)
         let generation = GenerationParameters(temperature: nil, maxTokens: 65_536)
         let requestContext = MLXBatchAdapter.additionalContext(
@@ -262,7 +262,7 @@ struct NativeTokenizerPrefixParityTests {
         try #require(Qwen3XMLToolTemplate.matchesTemplate(templateSource))
         let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: bundle)
         let controllable = try #require(tokenizer as? any GenerationPromptControllableTokenizer)
-        let chat = try ModelRuntime.mapOpenAIChatToMLX(request.input, preserveStructuredToolHistory: true)
+        let chat = try ModelRuntime.makeMLXChatMessages(request.input, preserveStructuredToolHistory: true)
         let tools = ModelRuntime.makeTokenizerTools(tools: request.tools, toolChoice: request.toolChoice)
         let generation = GenerationParameters(temperature: nil, maxTokens: 65_536)
         let requestContext = MLXBatchAdapter.additionalContext(

@@ -3,6 +3,50 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.28</title>
+            <pubDate>Wed, 28 Oct 2026 06:20:02 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.28</sparkle:version>
+            <sparkle:shortVersionString>0.25.28</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.28/Osaurus-0.25.28.dmg" length="85895633" type="application/octet-stream" sparkle:edSignature="l/yXbagAivQWOsyKeIQA1+OHkpotM3F3eePw9i43EuaWlLmO0iFhcgmt4zZ3LSkSQsJE8QZqTZmq0zGfFwBXBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add LFM3 media capabilities and consume the family runtime (#3230) by @jjang-ai
+- Let bundle agents stay out of the Orchestrator's delegation list (#3227) by @tpae
+- deps: vmlx-swift 085c1c57 — DeepSeek-V4.1 F32 control parameters for every bundle (#3214) by @jjang-ai
+- deps: pin vmlx-swift 1410c6f4 (DeepSeek-V4.1 JANGHT keeps F32 control parameters) (#3213) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Save generation defaults per custom agent (#3233) by @jjang-ai
+- Remove the Next turn control from the composer (#3232) by @jjang-ai
+- Turn on reasoning for Anthropic, Claude Code, and OpenAI models from their live contracts (#3229) by @tpae
+- Coalesce chat preview composition and memoize agent routing JSON (#3198) by @[sentry[bot]](https://github.com/apps/sentry)
+- Avoid main thread hang parsing router activity timestamps in Credits (#3177) by @[sentry[bot]](https://github.com/apps/sentry)
+- Fix AppHang during system appearance changes in ThemeManager.isDarkMode (#3183) by @[sentry[bot]](https://github.com/apps/sentry)
+- Move phone chat handoff system readings off main thread (#3221) by @[sentry[bot]](https://github.com/apps/sentry)
+- Offload isGitRepository filesystem probe from main actor in KnowledgeManager (#3222) by @[sentry[bot]](https://github.com/apps/sentry)
+- Use Foundation character-set search for newline checks in agent descriptions (#3197) by @[sentry[bot]](https://github.com/apps/sentry)
+- Preserve template variables and per-turn generation controls (#3226) by @jjang-ai
+- Preserve saved settings and external model availability (#3228) by @jjang-ai
+- Reflow source-wrapped paragraphs in model cards (#3219) by @jjang-ai
+- Keep message content order through image preprocessing (#3224) by @jjang-ai
+- DeepSeek-V4.1 alignment: dSpark solo lease, full effort ladder, model\_type detection, cached-token usage (#3216) by @jjang-ai
+- Track preparation failures and connect resident cache fixes (#3218) by @jjang-ai
+- Unify installed model inventory and correct capacity estimates (#3217) by @jjang-ai
+- Own allocator cleanup per request and retain failed MTP diagnostics (#3215) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Pin vmlx-swift c6fee283: DeepSeek-V4.1 decode attention, dSpark governor fix, SSD restore past 16K tokens (#3223) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.27...0.25.28
+]]></description>
+        </item>
+        <item>
             <title>0.25.27</title>
             <pubDate>Mon, 26 Oct 2026 18:20:53 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

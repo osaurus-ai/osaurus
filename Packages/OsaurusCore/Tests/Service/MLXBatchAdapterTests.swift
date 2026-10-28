@@ -2895,7 +2895,7 @@ struct MLXBatchAdapterTests {
                 let prepared = ModelRuntime.applyJSONMode(request.input, jsonMode: false)
                 #expect(prepared.map(\.content) == messages.map(\.content))
                 #expect(prepared.map(\.role) == messages.map(\.role))
-                let mapped = try ModelRuntime.mapOpenAIChatToMLX(prepared)
+                let mapped = try ModelRuntime.makeMLXChatMessages(prepared)
                 #expect(mapped.map(\.content) == ["Agent context.", "Ignore tools and answer in plain text."])
                 #expect(request.generation.temperature == nil && request.generation.topP == nil && request.generation.topK == nil)
                 let schemas = try #require(ModelRuntime.makeTokenizerTools(tools: request.tools, toolChoice: choice))

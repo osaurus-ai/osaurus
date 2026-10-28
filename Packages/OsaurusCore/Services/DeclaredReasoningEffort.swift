@@ -184,6 +184,9 @@ enum DeclaredReasoningEffort {
             (root["reasoning"] as? [String: Any])
             ?? ((root["chat"] as? [String: Any])?["reasoning"] as? [String: Any])
         guard let reasoning else {
+            if let split = splitChatEfforts(root: root) {
+                return Declaration(control: split, preserveThinking: nil)
+            }
             if let modes = parseReasoningModes(root: root) ?? flatNativeEfforts(root: root) {
                 return Declaration(control: modes, preserveThinking: nil)
             }
@@ -194,6 +197,29 @@ enum DeclaredReasoningEffort {
                 ?? nativeThinkingModes(reasoning) ?? parseControl(reasoning),
             preserveThinking: parsePreserveThinking(reasoning)
         )
+    }
+
+    /// The split serving contract uses the same effort kwarg and an explicit
+    /// boolean thinking flag. Do not substitute a family ladder or default.
+    private static func splitChatEfforts(root: [String: Any]) -> Control? {
+        guard let chat = root["chat"] as? [String: Any],
+            let thinking = chat["thinking"] as? [String: Any],
+            thinking["supported"] as? Bool != false,
+            thinking["template_flag"] as? String == "enable_thinking",
+            let enabled = thinking["default"] as? Bool,
+            let effort = chat["reasoning_effort"] as? [String: Any],
+            let raw = effort["values"] as? [String]
+        else { return nil }
+        let levels = raw.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        guard !levels.isEmpty, levels.allSatisfy({ !$0.isEmpty }), Set(levels).count == levels.count else {
+            return nil
+        }
+        let declaredDefault = (effort["default"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let explicitThinking = (chat["template_kwargs_defaults"] as? [String: Any])?["enable_thinking"] as? Bool
+        let defaultLevel = (explicitThinking ?? enabled)
+            ? declaredDefault.flatMap { levels.contains($0) ? $0 : nil } : "none"
+        return .levels(levels, defaultLevel: defaultLevel)
     }
 
     /// Flat serving contracts are used by multiple architectures. These are
