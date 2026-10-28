@@ -64,19 +64,14 @@ enum PhoneContextUsage {
     }
 
     static func compute(sessionId: UUID?, agentId: UUID, model: String?) async -> Response {
-        var turns: [ChatTurn] = []
-        var summary: ConversationSummary?
-        if let sessionId, let data = await ChatSessionStore.loadAsync(id: sessionId) {
-            turns = data.turns.map(ChatTurn.init(from:))
-            summary = data.conversationSummary.flatMap {
-                ContextCompactionService.summaryIsValid($0, for: turns) ? $0 : nil
-            }
-        }
-        // With a compaction summary the model sees it instead of the turns it covers.
-        let covered = Set(summary?.coveredTurnIds ?? [])
-        let visible = covered.isEmpty ? turns : turns.filter { !covered.contains($0.id) }
-        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: visible)
-        let conversationTokens = ContextBudgetManager.estimateTokens(for: visible) - outputTokens
+        var data: ChatSessionData?
+        if let sessionId { data = await ChatSessionStore.loadAsync(id: sessionId) }
+        let saved = data
+        // A long chat is hundreds of turns to rebuild and price: off the
+        // main thread, which the phone would otherwise stall on every refresh.
+        let priced = await Task.detached(priority: .userInitiated) { priceConversation(saved) }.value
+        let outputTokens = priced.output
+        let conversationTokens = priced.conversation
 
         let model = model ?? AgentManager.shared.effectiveModel(for: agentId)
         let context = SystemPromptComposer.composePreviewContext(
@@ -92,11 +87,11 @@ enum PhoneContextUsage {
             outputTokens: outputTokens
         )
         breakdown.disable = context.contextDisable
-        if let summary {
+        if let summaryTokens = priced.summary {
             breakdown.setTokens(
                 for: "summary",
                 in: \.messages,
-                tokens: ContextBudgetManager.estimateTokens(for: summary.contextMessageText),
+                tokens: summaryTokens,
                 label: L("Summary"),
                 tint: .teal
             )
@@ -132,6 +127,33 @@ enum PhoneContextUsage {
             context: breakdown.context.map(Entry.init),
             messages: breakdown.messages.map(Entry.init),
             auto_disabled: disabled
+        )
+    }
+
+    /// The saved chat's share of the next send: its turns (a valid compaction
+    /// summary standing in for those it covers, as the model sees it), the
+    /// assistant's output among them, and the summary's own tokens.
+    private nonisolated static func priceConversation(
+        _ data: ChatSessionData?
+    ) -> (conversation: Int, output: Int, summary: Int?) {
+        guard let data else { return (0, 0, nil) }
+        let turns = data.turns.map(ChatTurn.init(from:))
+        // As `ContextCompactionService.summaryIsValid`, which is main-actor
+        // bound: the summary covers a prefix of the turns, in order.
+        let summary = data.conversationSummary.flatMap { summary -> ConversationSummary? in
+            let covered = summary.coveredTurnIds
+            guard !covered.isEmpty, covered.count <= turns.count,
+                zip(covered, turns).allSatisfy({ $0 == $1.id })
+            else { return nil }
+            return summary
+        }
+        let covered = Set(summary?.coveredTurnIds ?? [])
+        let visible = covered.isEmpty ? turns : turns.filter { !covered.contains($0.id) }
+        let output = ContextBudgetManager.estimateOutputTokens(for: visible)
+        return (
+            ContextBudgetManager.estimateTokens(for: visible) - output,
+            output,
+            summary.map { ContextBudgetManager.estimateTokens(for: $0.contextMessageText) }
         )
     }
 
