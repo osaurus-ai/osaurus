@@ -690,11 +690,20 @@ public actor ModelRuntime {
     /// chat window closes. `nil` (never generated — e.g. a warm preload) is
     /// treated as chat-sourced, since preloads are chat-driven.
     private var lastUseSource: [String: RequestSource] = [:]
-    /// Models whose latest generation was a turn of the owner's phone call
-    /// (`ChatExecutionContext.isVoiceCall`): kept loaded a while longer, as the
-    /// phone speaks each reply before the next turn comes (see
-    /// `voiceCallIdleResidency`).
-    private var voiceCallModels: Set<String> = []
+    /// When each model last served a turn of the owner's phone call
+    /// (`ChatExecutionContext.isVoiceCall`), or was warmed for one: kept
+    /// loaded a while longer, as the phone speaks each reply before the next
+    /// turn comes (see `voiceCallIdleResidency`). By time rather than by the
+    /// latest generation, so a title, memory or Mac chat generation on the
+    /// same model mid-call doesn't drop it back to the short wait.
+    private var voiceCallTurnAt: [String: Date] = [:]
+
+    /// Whether `modelName` served a call turn recently enough to still be on
+    /// that call: within one call residency of the turn.
+    private func isOnVoiceCall(_ modelName: String) -> Bool {
+        guard let last = voiceCallTurnAt[modelName] else { return false }
+        return Date().timeIntervalSince(last) < TimeInterval(Self.voiceCallResidencySeconds)
+    }
 
     /// Grace period applied when the last chat window referencing a model
     /// closes. Zero: closing the chat evicts the model immediately — the
@@ -1325,8 +1334,10 @@ public actor ModelRuntime {
     /// Whether a generation on `name` would load an installed local model
     /// first: a phone run says so on its stream while it waits.
     func needsLoad(_ name: String) -> Bool {
-        guard let found = ModelManager.findInstalledModel(named: name) else { return false }
-        return modelCache[found.name] == nil
+        // Resident under any name the generation would find it by (the
+        // requested one, the canonical one, or a case or repo-tail match).
+        if residentKey(matching: name) != nil { return false }
+        return ModelManager.findInstalledModel(named: name) != nil
     }
 
     /// Loads a local model as the owner's phone call connects (`POST
@@ -1337,7 +1348,7 @@ public actor ModelRuntime {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let found = ModelManager.findInstalledModel(named: trimmed) else { return nil }
         let already = modelCache[found.name] != nil
-        voiceCallModels.insert(found.name)
+        voiceCallTurnAt[found.name] = Date()
         try await preload(name: found.name)
         return already
     }
@@ -2945,7 +2956,7 @@ public actor ModelRuntime {
             hasHandoffOwner: hasHandoffOwner
         )
         let policy =
-            voiceCallModels.contains(modelName)
+            isOnVoiceCall(modelName)
             ? Self.voiceCallIdleResidency(resolved, configured: configured) : resolved
         genLog.info(
             "idleResidency: model=\(modelName, privacy: .public) policy=\(String(describing: policy), privacy: .public) handoffOwned=\(hasHandoffOwner, privacy: .public) chatReferenced=\(referencedByChat, privacy: .public)"
@@ -6081,9 +6092,7 @@ public actor ModelRuntime {
             preserveExisting: parameters.preserveExistingResidencyOwner
         )
         if ChatExecutionContext.isVoiceCall {
-            voiceCallModels.insert(modelName)
-        } else {
-            voiceCallModels.remove(modelName)
+            voiceCallTurnAt[modelName] = Date()
         }
 
         // Scoped start/finish around ONLY a cold container load. Hot
