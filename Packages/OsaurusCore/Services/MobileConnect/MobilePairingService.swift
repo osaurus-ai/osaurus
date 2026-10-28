@@ -171,8 +171,13 @@ final class MobilePairingService: ObservableObject {
         self.defaults = defaults
         if let data = defaults.data(forKey: Self.pairedDeviceDefaultsKey) {
             pairedDevice = try? JSONDecoder().decode(PairedMobileDevice.self, from: data)
-        } else {
-            adoptMultiPhonePairing()
+        } else if let adopted = adoptMultiPhonePairing() {
+            pairedDevice = adopted
+            if let data = try? JSONEncoder().encode(adopted) {
+                defaults.set(data, forKey: Self.pairedDeviceDefaultsKey)
+            }
+            // The relay was turned off while no phone seemed paired.
+            syncRelay()
         }
         refreshKeepAwake()
         // A key that lapsed while the app was closed ends the pairing now.
@@ -497,21 +502,29 @@ final class MobilePairingService: ObservableObject {
     private static let multiPhoneDevicesDefaultsKey = "mobileConnectPairedDevices"
     private static let multiPhoneNamesDefaultsKey = "mobileConnectPhoneNames"
 
-    private func adoptMultiPhonePairing() {
-        guard let data = defaults.data(forKey: Self.multiPhoneDevicesDefaultsKey) else { return }
+    /// The phone to keep from the multi-phone list, if there is one; the
+    /// caller records it. Runs as the service is first made, on the main
+    /// actor, so the others' keys are revoked off it: that reads and writes
+    /// the Keychain.
+    private func adoptMultiPhonePairing() -> PairedMobileDevice? {
+        guard let data = defaults.data(forKey: Self.multiPhoneDevicesDefaultsKey) else { return nil }
         let devices = (try? JSONDecoder().decode([PairedMobileDevice].self, from: data)) ?? []
         let byRecency = devices.sorted { $0.pairedAt > $1.pairedAt }
         let kept = byRecency.first { $0.isSimulator != true } ?? byRecency.first
-        for device in devices where device.keyId != kept?.keyId {
-            APIKeyManager.shared.revoke(id: device.keyId)
-        }
+        let dropped = devices.filter { $0.keyId != kept?.keyId }
         defaults.removeObject(forKey: Self.multiPhoneDevicesDefaultsKey)
         defaults.removeObject(forKey: Self.multiPhoneNamesDefaultsKey)
         MobileConnectLog.write(
-            "pairing: carried over \(kept?.name ?? "no phone") from the multi-phone list of \(devices.count), "
-                + "revoked \(devices.count - (kept == nil ? 0 : 1))"
+            "pairing: one phone per Mac again, kept \(kept?.name ?? "none") of \(devices.count); "
+                + "unpaired \(dropped.isEmpty ? "none" : dropped.map(\.name).joined(separator: ", "))"
         )
-        if let kept { setPairedDevice(kept) }
+        let droppedKeys = dropped.map(\.keyId)
+        if !droppedKeys.isEmpty {
+            Task.detached(priority: .utility) {
+                for keyId in droppedKeys { APIKeyManager.shared.revoke(id: keyId) }
+            }
+        }
+        return kept
     }
 
     func revokeDevice() {
