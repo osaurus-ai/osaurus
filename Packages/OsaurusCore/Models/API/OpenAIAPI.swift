@@ -719,9 +719,9 @@ struct ChatCompletionRequest: Codable, Sendable {
     var min_p: Float? = nil
     /// Explicit multiplicative repetition penalty; absent preserves the model default.
     var repetition_penalty: Float? = nil
-    let frequency_penalty: Float?
-    let presence_penalty: Float?
-    let stop: [String]?
+    var frequency_penalty: Float?
+    var presence_penalty: Float?
+    var stop: [String]?
     let n: Int?
     /// OpenAI tools/function-calling definitions
     let tools: [Tool]?

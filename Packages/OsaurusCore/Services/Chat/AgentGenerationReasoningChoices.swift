@@ -10,11 +10,20 @@ struct AgentGenerationReasoningChoices: Equatable, Sendable {
         let local = isLocal
             ? await LocalReasoningCapability.resolveForDispatch(modelId: modelID)
             : .none
-        return Self(
+        return resolved(
             modelID: modelID,
+            localCapability: local,
             efforts: ModelProfileRegistry.reasoningCapabilities(for: modelID),
-            supportsThinking: local.isToggleableThinking
+            options: ModelProfileRegistry.options(for: modelID)
         )
+    }
+
+    static func resolved(modelID: String, localCapability: LocalReasoningCapability.Capability,
+        efforts: ModelReasoningCapabilities?, options: [ModelOptionDefinition]) -> Self
+    {
+        Self(modelID: modelID, efforts: efforts,
+            supportsThinking: localCapability.isToggleableThinking
+                && options.contains { $0.id == "disableThinking" })
     }
 
     func validate(settings: AgentGenerationSettings) throws {

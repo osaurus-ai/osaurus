@@ -92,6 +92,23 @@ struct AgentGenerationEditorTests {
         }
     }
 
+    @Test("template detection follows the canonical effort control instead of adding a duplicate Thinking switch")
+    func effortAndThinkingAreNotDuplicated() {
+        let local = LocalReasoningCapability.analyze(
+            template: "{% if enable_thinking is false %}{{ '<think></think>' }}{% endif %}")
+        #expect(local.isToggleableThinking)
+        let efforts = ModelReasoningCapabilities(
+            levels: ["none", "low", "medium", "xhigh"].map { .init(id: $0) }, defaultLevelId: "xhigh")
+        let effortChoices = AgentGenerationReasoningChoices.resolved(modelID: "effort-fixture",
+            localCapability: local, efforts: efforts, options: [efforts.reasoningOptionDefinition])
+        #expect(effortChoices.efforts?.levels.map(\.id) == ["none", "low", "medium", "xhigh"])
+        #expect(!effortChoices.supportsThinking)
+        let toggleChoices = AgentGenerationReasoningChoices.resolved(modelID: "Qwen3-toggle-fixture",
+            localCapability: local, efforts: nil, options: QwenThinkingProfile.options)
+        #expect(toggleChoices.supportsThinking)
+        #expect(toggleChoices.efforts == nil)
+    }
+
     @Test("captured raw agent cap cannot overwrite a tighter delegated request cap")
     func capRemainsTightened() {
         var controls = ChatTurnGenerationControls.capture(activeModelOptions: [:])
