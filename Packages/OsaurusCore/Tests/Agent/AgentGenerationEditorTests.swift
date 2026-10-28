@@ -93,7 +93,7 @@ struct AgentGenerationEditorTests {
     }
 
     @Test("template detection follows the canonical effort control instead of adding a duplicate Thinking switch")
-    func effortAndThinkingAreNotDuplicated() {
+    func effortAndThinkingAreNotDuplicated() throws {
         let local = LocalReasoningCapability.analyze(
             template: "{% if enable_thinking is false %}{{ '<think></think>' }}{% endif %}")
         #expect(local.isToggleableThinking)
@@ -102,10 +102,13 @@ struct AgentGenerationEditorTests {
         let effortChoices = AgentGenerationReasoningChoices.resolved(modelID: "effort-fixture",
             localCapability: local, efforts: efforts, options: [efforts.reasoningOptionDefinition])
         #expect(effortChoices.efforts?.levels.map(\.id) == ["none", "low", "medium", "xhigh"])
-        #expect(!effortChoices.supportsThinking)
+        #expect(!effortChoices.showsThinkingControl)
+        #expect(effortChoices.supportsThinking)
+        try effortChoices.validate(settings: .init(enableThinking: false))
         let toggleChoices = AgentGenerationReasoningChoices.resolved(modelID: "Qwen3-toggle-fixture",
             localCapability: local, efforts: nil, options: QwenThinkingProfile.options)
         #expect(toggleChoices.supportsThinking)
+        #expect(toggleChoices.showsThinkingControl)
         #expect(toggleChoices.efforts == nil)
     }
 

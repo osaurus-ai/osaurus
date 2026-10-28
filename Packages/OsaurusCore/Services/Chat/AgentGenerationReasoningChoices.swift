@@ -5,6 +5,10 @@ struct AgentGenerationReasoningChoices: Equatable, Sendable {
     var modelID: String? = nil
     var efforts: ModelReasoningCapabilities?
     var supportsThinking: Bool
+    /// Presentation can use a single effort picker while the native template still accepts a boolean.
+    var thinkingControlIsCanonical: Bool? = nil
+
+    var showsThinkingControl: Bool { supportsThinking && thinkingControlIsCanonical != false }
 
     static func resolve(modelID: String, isLocal: Bool) async -> Self {
         let local = isLocal
@@ -22,8 +26,8 @@ struct AgentGenerationReasoningChoices: Equatable, Sendable {
         efforts: ModelReasoningCapabilities?, options: [ModelOptionDefinition]) -> Self
     {
         Self(modelID: modelID, efforts: efforts,
-            supportsThinking: localCapability.isToggleableThinking
-                && options.contains { $0.id == "disableThinking" })
+            supportsThinking: localCapability.isToggleableThinking,
+            thinkingControlIsCanonical: options.contains { $0.id == "disableThinking" })
     }
 
     func validate(settings: AgentGenerationSettings) throws {

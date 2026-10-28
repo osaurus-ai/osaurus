@@ -135,7 +135,7 @@ struct AgentGenerationSettingsEditor: View {
             } else if !draft.reasoningEffort.isEmpty {
                 unsupportedReasoning
             }
-            if choices.supportsThinking {
+            if choices.showsThinkingControl {
                 Picker(L("Thinking"), selection: $draft.thinking) {
                     Text(localized: "Inherit").tag("inherit")
                     Text(localized: "On").tag("on")
@@ -143,7 +143,14 @@ struct AgentGenerationSettingsEditor: View {
                 }
                 .settingsLandingAnchor("agents.generation.thinking")
             } else if draft.thinking != "inherit" {
-                unsupportedReasoning
+                if choices.supportsThinking {
+                    HStack {
+                        Text(localized: "Thinking")
+                        Text(draft.thinking == "on" ? L("On") : L("Off"))
+                        Spacer()
+                        Button(L("Use Inherit")) { draft.thinking = "inherit" }.buttonStyle(.borderless)
+                    }
+                } else { unsupportedReasoning }
             }
         } else {
             HStack(spacing: 8) {
@@ -170,7 +177,8 @@ struct AgentGenerationSettingsEditor: View {
     {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(L(title)).font(.system(size: 11, weight: .medium)).foregroundColor(theme.secondaryText)
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .font(.system(size: 11, weight: .medium)).foregroundColor(theme.secondaryText)
                 Spacer(minLength: 4)
                 Toggle(L("Custom"), isOn: value.isCustom).toggleStyle(.checkbox)
                     .font(.system(size: 11))
