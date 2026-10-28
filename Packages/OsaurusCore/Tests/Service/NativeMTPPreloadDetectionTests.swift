@@ -199,6 +199,46 @@ struct NativeMTPPreloadDetectionTests {
         #expect(bundled.speculationCapabilityDescription == "Compatible bundled DFlash 2 drafter detected")
     }
 
+    @Test("DeepSeek V4.1 bundled DSpark is discoverable without a native head or model load")
+    func bundledDSparkCapabilityBeforeLoad() throws {
+        for type in ["deepseek_v41", "deepseek_v41_text"] {
+            let directory = try fixture(modelType: type, includeHead: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let absent = try #require(ModelRuntime.inspectLoadingModelMTP(name: "local-alias", directory: directory))
+            #expect(!absent.speculationAvailable)
+
+            let drafter = directory.appendingPathComponent("dspark")
+            try FileManager.default.createDirectory(at: drafter, withIntermediateDirectories: true)
+            // Discovery uses the same artifact-presence rule as runtime resolution;
+            // no weights are loaded by this fixture.
+            try Data([0]).write(to: drafter.appendingPathComponent("dspark.safetensors"))
+            let present = try #require(ModelRuntime.inspectLoadingModelMTP(name: "local-alias", directory: directory))
+            #expect(!present.bundleHasMTP)
+            #expect(!present.isTargetMTPFamily)
+            #expect(present.speculationAvailable)
+            #expect(present.familyDefaultOn)
+            #expect(!present.speculationBlocked)
+            #expect(present.speculationCapabilityDescription == "Bundled DSpark drafter detected")
+
+            try FileManager.default.removeItem(at: drafter)
+            let removed = try #require(ModelRuntime.inspectLoadingModelMTP(name: "local-alias", directory: directory))
+            #expect(!removed.speculationAvailable)
+        }
+    }
+
+    @Test("a DSpark-named folder cannot enable another architecture")
+    func unrelatedBundledDSparkRejected() throws {
+        for type in ["deepseek_v4", "qwen3_5", "llama"] {
+            let directory = try fixture(modelType: type, includeHead: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let drafter = directory.appendingPathComponent("dspark")
+            try FileManager.default.createDirectory(at: drafter, withIntermediateDirectories: true)
+            try Data([0]).write(to: drafter.appendingPathComponent("dspark.safetensors"))
+            let status = try #require(ModelRuntime.inspectLoadingModelMTP(name: "DeepSeek-V4.1", directory: directory))
+            #expect(!status.speculationAvailable)
+        }
+    }
+
     private func fixture(
         modelType: String,
         format: String = "affine",

@@ -2519,7 +2519,7 @@ extension FloatingInputCard {
                     "Speculative decoding is disabled for this bundle because its MTP head is not safe for production use."
                 )
                 : L(
-                    "Off uses ordinary autoregressive decoding. On uses a compatible bundled or selected DFlash 2 drafter, or adaptive native MTP when supported. Ineligible requests continue with ordinary decoding; see Speculative Decoding settings for the resolved reason. Sampling stays unchanged."
+                    "Off uses ordinary autoregressive decoding. On uses a compatible bundled drafter (DSpark, Uno or DFlash 2), a selected DFlash 2 drafter, or adaptive native MTP when supported. Ineligible requests continue with ordinary decoding; see Speculative Decoding settings for the resolved reason. Sampling stays unchanged."
                 )
         )
     }

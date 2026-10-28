@@ -317,12 +317,15 @@ public actor ModelRuntime {
         var selectedDFlash2 = false
         /// A `uno/` self-speculation adapter in the bundle that fits it (validated by the engine).
         var bundledUno = false
-        var hasCompatibleDFlash2: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno }
-        var speculationAvailable: Bool { hasCompatibleDFlash2 || (bundleHasMTP && isTargetMTPFamily) }
-        var speculationBlocked: Bool { !hasCompatibleDFlash2 && isBlocked }
-        var familyDefaultOn: Bool { hasCompatibleDFlash2 || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
+        /// DeepSeek V4.1 stores its separate speculative head in `dspark/`.
+        var bundledDSpark = false
+        var hasCompatibleDrafter: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno || bundledDSpark }
+        var speculationAvailable: Bool { hasCompatibleDrafter || (bundleHasMTP && isTargetMTPFamily) }
+        var speculationBlocked: Bool { !hasCompatibleDrafter && isBlocked }
+        var familyDefaultOn: Bool { hasCompatibleDrafter || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
         var speculationCapabilityDescription: String {
             if selectedDFlash2 { return "Compatible selected DFlash 2 drafter detected" }
+            if bundledDSpark { return "Bundled DSpark drafter detected" }
             if bundledUno { return "Bundled Uno self-speculation adapter detected" }
             if bundledDFlash2 { return "Compatible bundled DFlash 2 drafter detected" }
             if !bundleHasMTP { return "No MTP head or compatible drafter detected" }
@@ -364,6 +367,12 @@ public actor ModelRuntime {
             configData: config, bundleDirectory: directory) != nil
         let bundledUno = VMLXServerRuntimeSettings().bundledUnoAdapter(
             configData: config, bundleDirectory: directory) != nil
+        // Use the runtime's bundle resolver, not a second architecture/name list.
+        // Capability stays visible under Off; execution still follows the saved mode.
+        var availabilitySettings = VMLXServerRuntimeSettings()
+        availabilitySettings.mtp.mode = .familyDefault
+        let bundledDSpark = availabilitySettings.bundledDSparkDrafter(
+            configData: config, bundleDirectory: directory) != nil
         // Availability remains discoverable under Off, so re-enabling never
         // requires loading weights. The selected mode controls execution/display.
         var selectedSettings = ServerRuntimeSettingsStore.snapshot()
@@ -379,6 +388,7 @@ public actor ModelRuntime {
             bundledDFlash2: bundledDFlash2,
             selectedDFlash2: selectedDFlash2,
             bundledUno: bundledUno,
+            bundledDSpark: bundledDSpark,
             statusLine: status.statusLine
         )
     }
