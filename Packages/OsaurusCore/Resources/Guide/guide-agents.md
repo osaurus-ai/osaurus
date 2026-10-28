@@ -55,6 +55,18 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - Each agent can have its own theme (activating the agent applies it), avatar, greeting, quick actions, and voice.
 - Custom agents are stored as JSON under `~/.osaurus/agents/<uuid>.json`. The Orchestrator's own settings (name, persona, temperature, max tokens, delegation helpers) live in Settings → Orchestrator, or ask the assistant to change them.
 
+## Generation defaults for each custom agent
+
+Use Create Agent → Advanced Settings, or open an existing custom agent → General → Configure → Advanced Settings → Generation Overrides. Each field can inherit existing defaults or use a custom value. Temperature and Max Tokens keep their existing saved fields; Top P, Top K, Min P, repetition/frequency/presence penalties, seed, stop sequences and template parameters are saved with the same agent.
+
+The selected model is inspected for its supported Thinking switch and exact Reasoning effort choices. An effort from a different model cannot be saved until it is changed to a supported choice or Inherit. No effort ladder or independent thinking-token budget is invented when the model has no such contract. The model's shared settings are never changed by this editor.
+
+Use Save generation defaults when editing an existing agent; Create Agent saves the creation draft. Defaults apply to chat, scheduled work and delegated execution. Explicit request/workflow values win; delegation limits can tighten an agent's Max Tokens. A submitted turn freezes its settings for tools, queued work and regeneration. External harnesses own their generation settings and do not use this section.
+
+Agent export, templates and config apply carry the defaults. In YAML, temperature and max_tokens keep their existing fields. generation_settings contains the other optional snake_case fields. Omit the group to preserve it, use null to clear it, or supply a replacement group. template_kwargs accepts a JSON object; conversation, tools and special-token variables are reserved.
+
+Max Tokens and Max output tokens per subagent cap total generated output per model turn, including reasoning. A model can exhaust the limit before producing a final answer. This cap does not reserve answer tokens and is not a separate thinking budget.
+
 ## Subagents and delegation
 
 Agents can delegate work to other agents with `spawn_agent` — several calls in one message run in parallel as one wave — with limits and permission modes you control. Targets are your custom agents and, in workspaces you belong to, teammates' shared agents (`Name@Workspace`; see the Workspaces topic). The Orchestrator's allowed subagents, permissions, and limits live in Settings → Orchestrator → Subagents; each custom agent's "Delegate to subagents" settings live in its own Subagents tab. Deleting an agent removes it from every allow-list at once.

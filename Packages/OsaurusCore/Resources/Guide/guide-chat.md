@@ -61,13 +61,13 @@ Settings → General → Advanced → Data & Storage → **File History** contro
 
 On macOS 26+, the sandbox toggle on the input bar runs shell/code work inside an isolated Linux VM instead of your Mac. Combined with a working folder, the host folder is read-only and execution happens in the VM.
 
-## Parameters for the next turn
+## Agent generation defaults
 
-Use **Next turn** in the input bar to set Temperature, Top P, Top K, or the model’s available Thinking/Reasoning Effort controls for one submitted message. Blank fields and **Inherit** keep your existing defaults; **0** is an explicit value (Top K 0 disables that filter). **Reset to inherited** clears the one-turn choices without changing your agent, model, or server settings.
+Set persistent generation overrides under Settings → Agents → the custom agent → General → Configure → Advanced Settings → Generation Overrides. The chat input bar has no Next turn control. These defaults stay specific to the agent; the model picker's shared per-model settings are unchanged.
 
-The choices stay with that message through its tool steps and regeneration, including after reopening the chat. A queued message keeps its own choices and waits for a new run when they differ from the active turn. Choices you prepare for a later draft are kept separately.
+Inherit leaves a parameter unset. Explicit request or workflow overrides take priority over the saved agent default. A submitted message captures its defaults for its tool steps, queue and regeneration, including after reopening the chat. Editing the agent affects later submissions.
 
-**Template parameters (JSON)** passes a JSON object to a supporting model’s own chat template, for example `{"template":"{\"city\":\"\"}"}` for NuExtract. The model’s template defines each variable’s type; nested `null` values are preserved. The object cannot replace the conversation, tool list, generation-prompt structure, or tokenizer-owned special tokens. Unsupported provider or shared-workspace-agent controls are reported rather than silently ignored; a shared agent uses its host’s settings.
+Template parameters (JSON) passes an object to a supporting model's own chat template. The template defines each variable's type; nested null values are preserved. Conversation, tool-list and special-token variables cannot be replaced. A shared workspace agent uses its host's settings.
 
 ## Useful chat extras
 

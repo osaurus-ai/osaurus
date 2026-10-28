@@ -241,3 +241,7 @@ unset so the runtime uses the first prepared reference (and crops a padded singl
 Up to ten ordered references are supported. Negative prompt and Guidance controls are hidden because the
 distilled model has no unconditional pass; supplied API/tool negative prompts are accepted and ignored.
 Memory estimates are advisory for this family. The license is **FLUX Kommunity (non-commercial)**.
+
+## Per-agent generation defaults
+
+Settings → Agents → a custom agent → General → Configure → Advanced Settings → Generation Overrides holds Temperature, Max Tokens, Top P, Top K and the model's supported Thinking / Reasoning effort choices. More sampling parameters contains Min P, repetition/frequency/presence penalties, seed and stop sequences; Template parameters (JSON) supplies model-template variables. Create Agent also has an Advanced Settings disclosure. Inherit preserves existing defaults; custom values save per agent. External harnesses keep their own generation settings.

@@ -335,7 +335,7 @@ struct AgentsView: View {
     /// cold-mounted Agents tab never sees the `onChange`.
     private func routeSettingsLanding(_ pending: String?) {
         guard let pending, pending.hasPrefix("agents.") else { return }
-        if pending == "agents.description",
+        if (pending == "agents.description" || pending.hasPrefix("agents.generation.")),
             let target = detailAgent ?? customAgents.first
         {
             selectedRemoteAgentId = nil
@@ -1437,6 +1437,7 @@ struct AgentDetailView: View {
     @State private var systemPrompt: String = ""
     @State private var temperature: String = ""
     @State private var maxTokens: String = ""
+    @State private var generationSettings: AgentGenerationSettings?
     @State private var claudeCodeConfig: ClaudeCodeAgentConfig = .default
     @State private var agentRuntime: AgentRuntime = .builtIn
     @ObservedObject private var harnessRuntimeStore = HarnessRuntimeStore.shared
@@ -1917,6 +1918,9 @@ struct AgentDetailView: View {
             loadMemoryData()
             loadAgentSecrets()
             selectedModel = currentAgent.defaultModel
+            if settingsLandingPending?.hasPrefix("agents.generation.") == true {
+                showAdvancedSettings = true
+            }
             refreshDetailCaches()
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
@@ -1924,6 +1928,12 @@ struct AgentDetailView: View {
         }
         .task(id: abilityDraft) {
             await refreshAbilityContextPreview()
+        }
+        .onChange(of: settingsLandingPending) { _, pending in
+            if pending?.hasPrefix("agents.generation.") == true {
+                selectedTab = .builtIn(.configure)
+                showAdvancedSettings = true
+            }
         }
         .onDisappear {
             abilityContextDeltaDismissTask?.cancel()
@@ -2681,7 +2691,9 @@ struct AgentDetailView: View {
     /// this disclosure.
     private var advancedSummary: String {
         var parts: [String] = []
-        if !temperature.isEmpty || !maxTokens.isEmpty { parts.append("generation") }
+        if !temperature.isEmpty || !maxTokens.isEmpty || generationSettings?.isEmpty == false {
+            parts.append("generation")
+        }
         return parts.isEmpty ? L("Defaults") : parts.joined(separator: " · ")
     }
 
@@ -3668,41 +3680,30 @@ struct AgentDetailView: View {
     /// 90% case.
     private var generationOverridesSection: some View {
         AgentDetailSection(title: L("Generation Overrides"), icon: "slider.horizontal.3") {
-            VStack(spacing: 12) {
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label {
-                            Text("Temperature", bundle: .module)
-                        } icon: {
-                            Image(systemName: "thermometer.medium")
-                        }
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-
-                        StyledTextField(placeholder: "0.7", text: $temperature, icon: nil)
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label {
-                            Text("Max Tokens", bundle: .module)
-                        } icon: {
-                            Image(systemName: "number")
-                        }
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-
-                        StyledTextField(placeholder: "4096", text: $maxTokens, icon: nil)
-                    }
-                }
-
-                Text("Leave empty to use default values from global settings.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if agentRuntime != .builtIn {
+                Text("These generation defaults apply to Osaurus (built-in). The selected external runtime owns its generation settings.", bundle: .module)
+                    .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+            } else {
+            AgentGenerationSettingsEditor(
+                modelID: generationModelID,
+                modelIsLocal: pickerItems.first(where: { $0.id == generationModelID })?.source == .local,
+                catalogCapabilities: pickerItems.first(where: { $0.id == generationModelID })?.reasoningCapabilities,
+                savedTemperature: Float(temperature), savedMaxTokens: Int(maxTokens),
+                savedSettings: generationSettings
+            ) { values in
+                temperature = values.temperature.map { String($0) } ?? ""
+                maxTokens = values.maxTokens.map { String($0) } ?? ""
+                generationSettings = values.settings
+                saveAgent()
             }
-            .onChange(of: temperature) { debouncedSave() }
-            .onChange(of: maxTokens) { debouncedSave() }
+            }
         }
+    }
+
+    private var generationModelID: String? {
+        var draftAgent = currentAgent
+        draftAgent.defaultModel = selectedModel
+        return agentManager.effectiveModel(for: draftAgent)
     }
 
     // MARK: - Voice
@@ -7362,6 +7363,7 @@ struct AgentDetailView: View {
         systemPrompt = agent.systemPrompt
         temperature = agent.temperature.map { String($0) } ?? ""
         maxTokens = agent.maxTokens.map { String($0) } ?? ""
+        generationSettings = agent.generationSettings
         claudeCodeConfig = agentManager.effectiveClaudeCodeConfig(for: agent.id)
         agentRuntime = agentManager.effectiveRuntime(for: agent.id)
         selectedThemeId = agent.themeId
@@ -7580,6 +7582,7 @@ struct AgentDetailView: View {
             defaultModel: selectedModel,
             temperature: Float(temperature),
             maxTokens: Int(maxTokens),
+            generationSettings: generationSettings,
             chatQuickActions: chatQuickActions,
             chatGreeting: {
                 let trimmed = chatGreetingDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -8584,6 +8587,8 @@ private struct AgentEditorSheet: View {
     @State private var selectedModel: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker: Bool = false
+    @State private var generationDraft = AgentGenerationDraft()
+    @State private var generationChoices: AgentGenerationReasoningChoices?
     @State private var showAddModelWarning: Bool = false
     @State private var hasAppeared: Bool = false
 
@@ -8612,7 +8617,35 @@ private struct AgentEditorSheet: View {
     private var agentColor: Color { agentColorFor(name) }
 
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let values = try? generationDraft.validated() else { return false }
+        if let settings = values.settings,
+            settings.reasoningEffort != nil || settings.enableThinking != nil
+        {
+            guard let generationChoices, generationChoices.modelID == generationModelID else { return false }
+            return (try? generationChoices.validate(settings: settings)) != nil
+        }
+        return true
+    }
+
+    private var generationModelID: String? {
+        AgentManager.shared.effectiveModel(for: Agent(name: "", defaultModel: selectedModel))
+    }
+
+    private var generationField: some View {
+        DisclosureGroup(L("Advanced Settings")) {
+            AgentGenerationSettingsEditor(
+                modelID: generationModelID,
+                modelIsLocal: pickerItems.first(where: { $0.id == generationModelID })?.source == .local,
+                catalogCapabilities: pickerItems.first(where: { $0.id == generationModelID })?.reasoningCapabilities,
+                savedTemperature: nil, savedMaxTokens: nil, savedSettings: nil,
+                onSave: { _ in }, showsSaveButton: false,
+                onDraftChange: { generationDraft = $0 },
+                onReasoningChoicesChange: { generationChoices = $0 },
+                initialDraft: generationDraft
+            )
+            .padding(.top, 12)
+        }
     }
 
     var body: some View {
@@ -8691,6 +8724,7 @@ private struct AgentEditorSheet: View {
             || !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || selectedTemplate != .blank
             || selectedAvatar != nil
+            || generationDraft != AgentGenerationDraft()
     }
 
     /// "Add Model" in the picker switches the Management window to the Models
@@ -8753,6 +8787,7 @@ private struct AgentEditorSheet: View {
                 modelField
                 capabilitiesField
                 promptField
+                generationField
             }
             .padding(20)
         }
@@ -9205,6 +9240,10 @@ private struct AgentEditorSheet: View {
             themeId: nil,
             defaultModel: selectedModel
         )
+        guard canSave, let generation = try? generationDraft.validated() else { return }
+        agent.temperature = generation.temperature
+        agent.maxTokens = generation.maxTokens
+        agent.generationSettings = generation.settings
         agent.toolSelectionMode = draftMode
         agent.manualToolNames = Array(draftToolNames)
         agent.avatar = selectedAvatar

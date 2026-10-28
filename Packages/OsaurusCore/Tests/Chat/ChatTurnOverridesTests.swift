@@ -271,6 +271,74 @@ struct ChatTurnOverridesTests {
         }
     }
 
+    @Test func customAgentDefaultsAndCapsAreFrozenForQueuedWork() async throws {
+        try await ChatHistoryTestStorage.run {
+            var agent = Agent(name: "Generation queue fixture", temperature: 0, maxTokens: 128,
+                generationSettings: .init(topP: 0.8, topK: 0, seed: 17, enableThinking: false),
+                autonomousExec: AutonomousExecConfig(enabled: false), toolsEnabled: false, memoryEnabled: false)
+            AgentStore.save(agent)
+            AgentManager.shared.refresh()
+            let session = ChatSession()
+            session.agentId = agent.id
+            session.enqueueSend("queued", attachments: [])
+            let frozen = try #require(session.queuedSend?.generationControls)
+            #expect(frozen.temperature == 0)
+            #expect(frozen.maxOutputTokens == 128)
+            #expect(frozen.agentDefaultsCaptured == true)
+            #expect(frozen.agentSettings == agent.generationSettings)
+            agent.temperature = 1.5
+            agent.maxTokens = 2048
+            agent.generationSettings = .init(topP: 0.9, topK: 10, seed: 23, enableThinking: true)
+            AgentManager.shared.update(agent)
+            #expect(session.queuedSend?.generationControls == frozen)
+            let next = session.captureGenerationControls()
+            #expect(next.temperature == 1.5)
+            #expect(next.maxOutputTokens == 2048)
+            #expect(next.agentSettings == agent.generationSettings)
+        }
+    }
+
+    @Test func customAgentDefaultsReachTheRealChatDispatchAndSurviveRegeneration() async throws {
+        try await ChatHistoryTestStorage.run {
+            var agent = Agent(name: "Generation dispatch fixture", temperature: 0, maxTokens: 128,
+                generationSettings: .init(topP: 0.8, topK: 0, minP: 0.02, repetitionPenalty: 1.1,
+                    presencePenalty: 0.3, seed: 17, templateKwargs: ["format": .string("fixture")]),
+                autonomousExec: AutonomousExecConfig(enabled: false), toolsEnabled: false, memoryEnabled: false)
+            AgentStore.save(agent)
+            AgentManager.shared.refresh()
+            let engine = TurnParameterRecordingEngine()
+            let session = ChatSession()
+            session.agentId = agent.id
+            session.forceChatEngineRouteForTests = true
+            session.chatEngineFactory = { _ in engine }
+            session.send("Hello")
+            try await waitForCompletion(session)
+            let request = try #require(await engine.requests.first)
+            #expect(request.generation.temperature == 0)
+            #expect(request.generation.maxOutputTokens == 128)
+            #expect(request.generation.topP == 0.8)
+            #expect(request.generation.topK == 0)
+            #expect(request.generation.minP == 0.02)
+            #expect(request.generation.repetitionPenalty == 1.1)
+            #expect(request.generation.presencePenalty == 0.3)
+            #expect(request.generation.seed == 17)
+            #expect(request.generation.templateKwargs == agent.generationSettings?.templateKwargs)
+            let assistant = try #require(session.turns.last(where: { $0.role == .assistant }))
+            agent.temperature = 1.5
+            agent.maxTokens = 1024
+            agent.generationSettings = nil
+            AgentManager.shared.update(agent)
+            session.regenerate(turnId: assistant.id)
+            try await waitForCompletion(session)
+            let retry = try #require(await engine.requests.last)
+            #expect(retry.generation.temperature == request.generation.temperature)
+            #expect(retry.generation.maxOutputTokens == request.generation.maxOutputTokens)
+            #expect(retry.generation.topK == request.generation.topK)
+            #expect(retry.generation.seed == request.generation.seed)
+            #expect(retry.generation.templateKwargs == request.generation.templateKwargs)
+        }
+    }
+
     private func waitForCompletion(_ session: ChatSession) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while session.isSendActiveForComposer || session.turns.last?.role == .user {

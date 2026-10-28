@@ -405,6 +405,9 @@ final class ChatSession: ObservableObject {
         var controls = ChatTurnGenerationControls.capture(activeModelOptions: activeModelOptions)
         controls.temperature = AgentManager.shared.effectiveTemperature(for: agentId ?? Agent.defaultId)
         controls.topP = ChatConfigurationStore.load().topPOverride
+        controls.agentSettings = AgentManager.shared.effectiveGenerationSettings(for: agentId ?? Agent.defaultId)
+        controls.maxOutputTokens = AgentManager.shared.effectiveMaxTokens(for: agentId ?? Agent.defaultId)
+        controls.agentDefaultsCaptured = true
         controls.overrides = overrides ?? nextTurnOverrides
         controls.storedExplicitOptions = selectedModel.flatMap { ModelOptionsStore.shared.storedExplicitOptions(for: $0) }
         return controls
@@ -6762,6 +6765,9 @@ final class ChatSession: ObservableObject {
             turnGenerationControls.temperature = generationControls.temperature
             turnGenerationControls.topP = generationControls.topP
             turnGenerationControls.topK = generationControls.topK
+            turnGenerationControls.agentSettings = generationControls.agentSettings
+            turnGenerationControls.maxOutputTokens = generationControls.maxOutputTokens
+            turnGenerationControls.agentDefaultsCaptured = generationControls.agentDefaultsCaptured
             turnGenerationControls.overrides = generationControls.overrides
             turnGenerationControls.storedExplicitOptions = generationControls.storedExplicitOptions
             self.turns.last(where: { $0.role == .user })?.generationControls = turnGenerationControls
@@ -7209,9 +7215,9 @@ final class ChatSession: ObservableObject {
                         )
                     }
 
-                                        var effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(
-                                            for: effectiveAgentId
-                                        )
+                    var effectiveMaxTokensForAgent = turnGenerationControls.agentDefaultsCaptured == true
+                        ? turnGenerationControls.maxOutputTokens
+                        : AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
                     let admissionOutputTokensAreImplicit = self.delegationBudget != nil
                         && effectiveMaxTokensForAgent == nil
                     if let delegationBudget = self.delegationBudget {

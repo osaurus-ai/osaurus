@@ -563,7 +563,7 @@ struct SpawnConfigurationEditor: View {
             }
             budgetStepper(
                 title: "Max output tokens per subagent",
-                help: "Output tokens one subagent may produce per turn. Long reports need more.",
+                help: "Total generated tokens per model turn, including reasoning and the final answer. Reasoning can use the entire limit; this does not reserve answer tokens or set a separate thinking budget.",
                 keyPath: \.maxDelegateTokens,
                 range: SubagentBudgets.tokenBounds,
                 step: 256,

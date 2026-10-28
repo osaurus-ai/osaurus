@@ -1891,6 +1891,123 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.generation.temperature",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Temperature",
+            keywords: ["agent temperature", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.maxTokens",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Max Tokens",
+            keywords: ["agent max tokens", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.topP",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Top P",
+            keywords: ["agent top p", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.topK",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Top K",
+            keywords: ["agent top k", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.minP",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Min P",
+            keywords: ["agent min p", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.repetitionPenalty",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Repetition penalty",
+            keywords: ["agent repetition penalty", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.frequencyPenalty",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Frequency penalty",
+            keywords: ["agent frequency penalty", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.presencePenalty",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Presence penalty",
+            keywords: ["agent presence penalty", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.seed",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Seed",
+            keywords: ["agent seed", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.stop",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Stop sequences (JSON array)",
+            keywords: ["agent stop sequences (json array)", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.thinking",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Thinking",
+            keywords: ["agent thinking", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.reasoningEffort",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Reasoning effort",
+            keywords: ["agent reasoning effort", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.generation.templateKwargs",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Template parameters (JSON)",
+            keywords: ["agent template parameters (json)", "per-agent generation", "agent defaults"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            declarativeSection: "agents"
+        ),
+        .init(
             id: "agents.description",
             tab: .agents,
             title: "Brief description (optional)",

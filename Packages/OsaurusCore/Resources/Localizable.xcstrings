@@ -1,6 +1,426 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "A JSON object for the selected model's chat template. Conversation, tools and special-token variables cannot be replaced." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein JSON-Objekt für die Chatvorlage des gewählten Modells. Variablen für Gespräch, Werkzeuge und Spezial-Token können nicht ersetzt werden."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用于所选模型聊天模板的 JSON 对象。不能替换对话、工具和特殊词元变量。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택한 모델의 채팅 템플릿에 전달할 JSON 객체입니다. 대화, 도구 및 특수 토큰 변수는 바꿀 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JSON-объект для шаблона чата выбранной модели. Переменные диалога, инструментов и специальных токенов заменять нельзя."
+          }
+        }
+      }
+    },
+    "Choose a model to detect its reasoning controls." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle ein Modell, um seine Denkoptionen zu erkennen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择模型以检测其推理选项。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델을 선택하면 지원하는 추론 옵션을 확인합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите модель, чтобы определить доступные настройки рассуждений."
+          }
+        }
+      }
+    },
+    "Detecting model reasoning controls…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Denkoptionen des Modells werden erkannt…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在检测模型推理选项…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델의 추론 옵션을 확인하는 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Определение настроек рассуждений модели…"
+          }
+        }
+      }
+    },
+    "Frequency penalty" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Häufigkeitsstrafe"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "频率惩罚"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "빈도 페널티"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Штраф за частоту"
+          }
+        }
+      }
+    },
+    "Inherit keeps the existing model and server defaults. Custom values are saved only for this agent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Übernehmen behält die bestehenden Modell- und Servervorgaben bei. Eigene Werte werden nur für diesen Agenten gespeichert."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继承将保留现有模型和服务器默认值。自定义值仅保存到此智能体。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "상속은 기존 모델 및 서버 기본값을 유지합니다. 사용자 지정 값은 이 에이전트에만 저장됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Наследование сохраняет текущие значения модели и сервера по умолчанию. Собственные значения сохраняются только для этого агента."
+          }
+        }
+      }
+    },
+    "Min P" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Min P"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Min P"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Min P"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Min P"
+          }
+        }
+      }
+    },
+    "More sampling parameters" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weitere Sampling-Parameter"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更多采样参数"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "추가 샘플링 매개변수"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дополнительные параметры сэмплирования"
+          }
+        }
+      }
+    },
+    "Presence penalty" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Präsenzstrafe"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "存在惩罚"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "존재 페널티"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Штраф за присутствие"
+          }
+        }
+      }
+    },
+    "Repetition penalty" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wiederholungsstrafe"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重复惩罚"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "반복 페널티"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Штраф за повторение"
+          }
+        }
+      }
+    },
+    "Save generation defaults" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generierungsvorgaben speichern"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存生成默认值"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "생성 기본값 저장"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить настройки генерации"
+          }
+        }
+      }
+    },
+    "Saved reasoning choices are not supported by the selected model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die gespeicherten Denkoptionen werden vom gewählten Modell nicht unterstützt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选模型不支持已保存的推理选项。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택한 모델은 저장된 추론 옵션을 지원하지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбранная модель не поддерживает сохранённые настройки рассуждений."
+          }
+        }
+      }
+    },
+    "Stop sequences (JSON array)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stoppsequenzen (JSON-Array)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止序列（JSON 数组）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "중지 시퀀스(JSON 배열)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стоп-последовательности (массив JSON)"
+          }
+        }
+      }
+    },
+    "These generation defaults apply to Osaurus (built-in). The selected external runtime owns its generation settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Generierungsvorgaben gelten für Osaurus (integriert). Die gewählte externe Laufzeit verwaltet ihre eigenen Generierungseinstellungen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这些生成默认值适用于 Osaurus（内置）。所选外部运行时使用其自身的生成设置。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 생성 기본값은 Osaurus(내장)에 적용됩니다. 선택한 외부 런타임은 자체 생성 설정을 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эти настройки генерации действуют для встроенной среды Osaurus. Выбранная внешняя среда использует собственные настройки генерации."
+          }
+        }
+      }
+    },
+    "Total generated tokens per model turn, including reasoning and the final answer. Reasoning can use the entire limit; this does not reserve answer tokens or set a separate thinking budget." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gesamtzahl generierter Token pro Modelldurchlauf, einschließlich Denkprozess und endgültiger Antwort. Der Denkprozess kann das gesamte Limit verbrauchen; es werden keine Antwort-Token reserviert und kein separates Denkbudget festgelegt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每次模型调用生成的词元总数，包括推理和最终回答。推理可能用完全部限额；此设置不预留回答词元，也不设置单独的思考预算。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "추론과 최종 답변을 포함하여 모델이 한 차례 생성할 수 있는 총 토큰 수입니다. 추론이 한도를 모두 사용할 수 있습니다. 답변용 토큰을 예약하거나 별도의 사고 예산을 설정하지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общее число генерируемых токенов за один ход модели, включая рассуждения и итоговый ответ. Рассуждения могут исчерпать весь лимит; токены для ответа не резервируются, отдельный бюджет рассуждений не задаётся."
+          }
+        }
+      }
+    },
+    "Use Inherit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorgaben übernehmen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用继承"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "상속 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать наследование"
+          }
+        }
+      }
+    },
     "Next turn" : {
       "localizations" : {
         "de" : {
