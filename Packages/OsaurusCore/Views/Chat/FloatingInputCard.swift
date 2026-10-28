@@ -2819,10 +2819,6 @@ extension FloatingInputCard {
     @ViewBuilder
     private func toggleChipCluster(compact: Bool) -> some View {
         HStack(spacing: 6) {
-            if let turnOverrides, !isRemoteAgentRun {
-                NextTurnControlsButton(overrides: turnOverrides, model: selectedModel,
-                    reasoningCapabilities: inlineEffortCapabilities)
-            }
             if autoSpeakAssistant {
                 autoSpeakToggleChip(compact: compact)
             }
