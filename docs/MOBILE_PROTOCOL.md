@@ -611,8 +611,8 @@ that lists the feature.
 model without it) loads that local model as a call connects, so its first
 turn doesn't wait on the load, and keeps it loaded as a call's turn does. It
 answers once loaded: `{"loaded":true,"already":false}`, or `"already":true`
-when it was in memory. A cloud model has nothing to load:
-`{"loaded":false}`. `404 agent_not_found`, `500 load_failed`. Owner-only,
+when it was in memory. A cloud model, or an agent with no model set, has
+nothing to load: `{"loaded":false}`. `404 agent_not_found`, `500 load_failed`. Owner-only,
 and over the Secure Channel only (§6.2), as it changes what the Mac holds in
 memory.
 
@@ -1487,7 +1487,8 @@ client can show an image while the run is still going, before the chat is
 saved, or open a page or document shared by path. `Content-Type` follows
 the file's extension. Only files in `~/.osaurus/artifacts/` are served:
 `404 artifact_not_found` for a file outside it, a missing one, a directory,
-or a name `share_artifact` would not have written. Owner-only, and over the Secure Channel only (426 otherwise),
+or a name `share_artifact` would not have written. `413 artifact_too_large` for a file over 100 MB:
+the body goes out whole. Owner-only, and over the Secure Channel only (426 otherwise),
 though it is a read.
 
 ### 14.13 `GET /sessions/{id}/context?agent_id=…&model=…`

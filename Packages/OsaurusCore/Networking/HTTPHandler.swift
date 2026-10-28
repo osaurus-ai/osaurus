@@ -6369,12 +6369,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
-            let model: String? = await MainActor.run {
-                guard AgentManager.shared.agent(for: agentId) != nil else { return nil }
-                return requested.flatMap { $0.isEmpty ? nil : $0 } ?? AgentManager.shared.effectiveModel(for: agentId)
+            // An agent with no model set has nothing to warm: that is no
+            // missing agent, so it answers as for a cloud model.
+            let (exists, model): (Bool, String?) = await MainActor.run {
+                guard AgentManager.shared.agent(for: agentId) != nil else { return (false, nil) }
+                let model =
+                    requested.flatMap { $0.isEmpty ? nil : $0 } ?? AgentManager.shared.effectiveModel(for: agentId)
+                return (true, model)
             }
             let outcome: (status: HTTPResponseStatus, json: String)
-            if let model {
+            if !exists {
+                outcome = (.notFound, #"{"error":"agent_not_found"}"#)
+            } else if let model {
                 do {
                     switch try await ModelRuntime.shared.warmForVoiceCall(name: model) {
                     case nil: outcome = (.ok, #"{"loaded":false}"#)
@@ -6384,7 +6390,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     outcome = (.internalServerError, #"{"error":"load_failed"}"#)
                 }
             } else {
-                outcome = (.notFound, #"{"error":"agent_not_found"}"#)
+                outcome = (.ok, #"{"loaded":false}"#)
             }
             hop {
                 self.sendAgentEditResponse(
@@ -8393,6 +8399,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// only even though it is a read: a shared file can be anything the
     /// agent saw. Nothing outside `~/.osaurus/artifacts/` is ever served
     /// (docs/MOBILE_PROTOCOL.md §14.12).
+    /// The largest file `GET /artifacts/…` sends (§14.12).
+    static let maxArtifactFileBytes = 100 * 1024 * 1024
+
     private func handleArtifactFileEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -8422,7 +8431,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let file =
                 components.count == 3 && components[0] == "artifacts"
                 ? SessionTurnImages.artifactFile(contextId: components[1], filename: components[2]) : nil
-            guard let file, let data = try? Data(contentsOf: file) else {
+            // Any file can be shared now, and the body goes out whole (the
+            // phone reads it whole too): past the cap it is refused rather
+            // than held in memory twice over.
+            let size = file.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize } ?? 0
+            if size > Self.maxArtifactFileBytes {
+                hop {
+                    let body = #"{"error":"artifact_too_large"}"#
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .payloadTooLarge,
+                        headers: headers,
+                        body: body
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: body,
+                        responseStatus: 413,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            guard let file, let data = try? Data(contentsOf: file, options: .mappedIfSafe) else {
                 hop {
                     let body = #"{"error":"artifact_not_found"}"#
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -10714,7 +10751,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             await RemoteSessionContinuation.append(
                                 appended,
                                 to: continuedSessionId,
-                                model: runModel
+                                model: runModel,
+                                voiceCall: voiceCall
                             )
                             PhoneChatHandoff.shared.notePhoneRun(
                                 sessionId: continuedSessionId,
