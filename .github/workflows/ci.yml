@@ -8,7 +8,7 @@ on:
     inputs:
       clear_cache:
         # Re-runs of a failed job already force a cold build automatically
-        # (see "Wipe restored caches" step). This input is for the rare case
+        # (see "Restore dependency DerivedData cache"). This input is for the rare case
         # where you want to start a brand-new run with a cold build — e.g.
         # after a CACHE_SALT bump on `main` to verify the cold path before
         # PR runs hit it.
@@ -39,7 +39,7 @@ jobs:
     timeout-minutes: 45
     outputs:
       artifact-name: ${{ steps.bundle.outputs.artifact-name }}
-      cache-hit: ${{ steps.dd-cache.outputs.cache-hit }}
+      cache-hit: ${{ steps.dd-deps-cache.outputs.cache-hit }}
     env:
       WORKSPACE: osaurus.xcworkspace
       SPM_CACHE: .spm-cache
@@ -63,8 +63,15 @@ jobs:
       - name: Install xcbeautify
         run: brew install xcbeautify
 
-      - name: Cache SPM packages
-        uses: actions/cache@v5
+      # Every cache in this workflow is restored everywhere but SAVED only from
+      # runs on main, and keyed on the dependency graph rather than on
+      # first-party sources. Main's entries are the only ones every branch can
+      # read, and the repo sits at the 10 GB Actions cache cap: per-commit
+      # keys and branch-scoped saves evicted every useful entry within a push
+      # or two.
+      - name: Restore SPM packages
+        id: spm-cache
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.SPM_CACHE }}
           key: spm-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
@@ -72,62 +79,37 @@ jobs:
             spm-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
             spm-${{ runner.os }}-${{ env.CACHE_SALT }}-
 
-      - name: Restore DerivedData cache
-        id: dd-cache
-        # Restore only on main pushes / manual maintainer runs, and only when
-        # the exact source/package hash matches. Pull requests intentionally
-        # cold-build DerivedData.
-        if: ${{ github.event_name != 'pull_request' }}
+      # Third-party compiled output only: the save step at the bottom prunes
+      # every first-party (`Osaurus*` / `osaurus*`) build product before
+      # saving, so OsaurusCore and its tests always compile from this run's
+      # own sources, PRs included. The key covers the whole package graph
+      # plus vendored C sources (the SQLCipher amalgamation) and takes no
+      # restore-keys: a cache from an older graph can contain Swift modules
+      # whose C module dependencies are no longer visible to Xcode ("unable
+      # to resolve module dependency" for CAsyncHTTPClient / CNIOPosix).
+      #
+      # Forcing a cold build is one click: any re-run (`run_attempt != 1`,
+      # the natural landing spot after a suspicious failure) or
+      # `workflow_dispatch` with `clear_cache` skips this restore. The SPM
+      # cache stays: it is source pinned by Package.resolved checksums and
+      # cannot poison a build, and re-downloading it cost ~2 min (PR #951).
+      - name: Restore dependency DerivedData cache
+        id: dd-deps-cache
+        if: ${{ github.run_attempt == '1' && !(github.event_name == 'workflow_dispatch' && inputs.clear_cache) }}
         uses: actions/cache/restore@v5
         with:
           path: ~/Library/Developer/Xcode/DerivedData
-          # Include vendored C sources (currently the SQLCipher amalgamation
-          # under Packages/OsaurusCore/SQLCipher/). Without this, an
-          # SQLCipher bump would land its new sqlite3.{c,h} but CI would
-          # silently re-use a stale cached compile of the old code.
-          key: dd-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/*.swift', 'Packages/**/Package.swift', 'Packages/**/Resources/**', 'Packages/**/*.c', 'Packages/**/*.h') }}
-          # Do not use broad restore keys for DerivedData. A restored cache
-          # from an older package graph can contain Swift modules whose C
-          # module dependencies are no longer visible to Xcode, which shows
-          # up as "unable to resolve module dependency" for transitive C
-          # targets such as CAsyncHTTPClient / CNIOPosix when EventSource
-          # builds. If the exact source/package hash changed, cold-build and
-          # save a fresh cache under the new primary key instead.
+          key: dd-deps-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/Package.swift', 'Packages/**/*.c', 'Packages/**/*.h') }}
 
-      # Make "clear the build cache" a one-click operation. Three triggers:
-      #   1. Pull requests — always cold-build DerivedData so PRs never trust
-      #      a cached Xcode build product from another ref.
-      #   2. `github.run_attempt != '1'` — i.e. a re-run. The default
-      #      "Re-run failed jobs" button is the natural place for someone
-      #      who just saw a build failure to land, so we make that the
-      #      intuitive escape hatch for cache poison: the first attempt
-      #      uses the cache (fast); any re-run forces a cold compile.
-      #   3. `workflow_dispatch.clear_cache=true` — manual force-cold on
-      #      a fresh run (e.g. validating a CACHE_SALT bump before PRs
-      #      start hitting it).
-      #
-      # We wipe ONLY DerivedData, not the SPM cache. DerivedData holds
-      # compiled object files / .swiftmodule / linked binaries — the
-      # actual build outputs that can carry over a stale-source bug across
-      # incremental builds. The SPM cache is just downloaded source code
-      # pinned by `Package.resolved` checksums; it can't be "poisoned" in
-      # any way that affects build correctness, and re-downloading it on
-      # every re-run cost ~2 min in PR #951 run 24937664669 — wasted
-      # budget that contributed to the 30-min cold-build cancellation.
-      #
-      # On main/manual runs we wipe AFTER the restore step (rather than
-      # skipping the restore) so `steps.dd-cache.outputs.cache-primary-key`
-      # stays populated and the `Save DerivedData cache` step at the bottom
-      # can still repopulate the cache on a successful `main` run.
-      - name: Wipe restored DerivedData (PR, re-run, or workflow_dispatch clear_cache)
-        if: ${{ github.event_name == 'pull_request' || github.run_attempt != '1' || (github.event_name == 'workflow_dispatch' && inputs.clear_cache) }}
-        run: |
-          REASON="event=${{ github.event_name }}, run_attempt=${{ github.run_attempt }}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.clear_cache }}" = "true" ]; then
-            REASON="$REASON, workflow_dispatch clear_cache=true"
-          fi
-          echo "::notice title=Cold build forced::Wiping DerivedData before build ($REASON). SPM cache preserved (it's source-only and pinned by Package.resolved)."
-          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"
+      - name: Note forced cold build
+        if: ${{ steps.dd-deps-cache.conclusion == 'skipped' }}
+        run: echo "::notice title=Cold build forced::Skipping the dependency DerivedData cache (event=${{ github.event_name }}, run_attempt=${{ github.run_attempt }}, clear_cache=${{ inputs.clear_cache }})."
+
+      # Restored files get new inodes on a fresh runner, and the build system
+      # otherwise treats every one of them as modified and recompiles
+      # everything, which makes any restored DerivedData worthless.
+      - name: Let the build system reuse restored DerivedData
+        run: defaults write com.apple.dt.XCBuild IgnoreFileSystemDeviceInodeChanges -bool YES
 
       - name: Resolve dependencies
         run: >-
@@ -182,18 +164,42 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # Save compiled output only on `main`; test-core always executes the full
-      # suite independently, including when this exact-source cache is reused.
-      # `actions/cache/save@v5` is a no-op when the key already exists, so a
-      # forced cold re-run on `main` (which wipes DerivedData and rebuilds
-      # from scratch) won't overwrite a known-good cache entry under the
-      # same key. To intentionally invalidate every cache, bump CACHE_SALT.
-      - name: Save DerivedData cache
-        if: ${{ github.ref == 'refs/heads/main' && success() && steps.dd-cache.outputs.cache-primary-key != '' }}
+      - name: Save SPM packages
+        if: ${{ github.ref == 'refs/heads/main' && success() && steps.spm-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.SPM_CACHE }}
+          key: ${{ steps.spm-cache.outputs.cache-primary-key }}
+
+      # Saved only from runs on main, and only when the
+      # dependency graph changed (an exact hit means the entry already
+      # exists). Every first-party build product is removed first so the
+      # cache can never carry OsaurusCore, OsaurusNetworking,
+      # OsaurusRepository, the SQLCipher/ObjC shims, the plugin host, or the
+      # test bundle into another run. The test products were already packed
+      # into the artifact above, so pruning here cannot affect test-core.
+      # To invalidate every entry, bump CACHE_SALT.
+      - name: Prune first-party build products from DerivedData
+        id: dd-deps-prune
+        if: ${{ github.ref == 'refs/heads/main' && success() && steps.dd-deps-cache.outputs.cache-hit != 'true' && steps.dd-deps-cache.outputs.cache-primary-key != '' }}
+        run: |
+          DD="$HOME/Library/Developer/Xcode/DerivedData"
+          for root in "$DD"/*/; do
+            find "$root" -mindepth 1 -iname 'osaurus*' -prune -print -exec rm -rf {} + | sed 's|^|pruned: |'
+            rm -rf "${root}Logs" "${root}Index.noindex"
+          done
+          if find "$DD" -mindepth 2 -iname 'osaurus*' | grep -q .; then
+            echo "::error title=dd-deps prune::First-party build products remain after pruning; refusing to save the dependency cache."
+            exit 1
+          fi
+          du -sh "$DD"
+
+      - name: Save dependency DerivedData cache
+        if: ${{ steps.dd-deps-prune.outcome == 'success' }}
         uses: actions/cache/save@v5
         with:
           path: ~/Library/Developer/Xcode/DerivedData
-          key: ${{ steps.dd-cache.outputs.cache-primary-key }}
+          key: ${{ steps.dd-deps-cache.outputs.cache-primary-key }}
 
   test-core:
     needs: build-core-tests
@@ -367,7 +373,7 @@ jobs:
           if [ ! -d "$XCRESULT_PATH" ]; then
             if [ -z "$XCTEST_BINARY" ]; then
               # Mode A.
-              CACHE_NOTE="_(DerivedData cache hit: \`${DD_CACHE_HIT:-unknown}\`, run attempt: \`${{ github.run_attempt }}\`)_"
+              CACHE_NOTE="_(dependency DerivedData cache hit: \`${DD_CACHE_HIT:-unknown}\`, run attempt: \`${{ github.run_attempt }}\`)_"
               {
                 echo "**Mode A — build phase did not complete (no xctest bundle on disk).**"
                 echo
@@ -697,11 +703,16 @@ jobs:
         with:
           xcode-version: ${{ env.XCODE_VERSION }}
 
-      - name: Cache SwiftPM build
-        uses: actions/cache@v5
+      # Keyed on the dependency graph and saved only from main (see
+      # the cache note in build-core-tests). First-party sources come from a
+      # fresh checkout, so SwiftPM recompiles them regardless of what the
+      # restored .build holds.
+      - name: Restore SwiftPM build
+        id: spm-build-cache
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.SPM_BUILD }}
-          key: statspack-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('Packages/**/Package.swift', 'Packages/**/*.swift', 'Packages/**/*.c', 'Packages/**/*.h') }}
+          key: statspack-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/OsaurusCore/Package.resolved', 'Packages/**/Package.swift', 'Packages/**/*.c', 'Packages/**/*.h') }}
           restore-keys: |
             statspack-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
             statspack-build-${{ runner.os }}-${{ env.CACHE_SALT }}-
@@ -711,6 +722,13 @@ jobs:
           DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
           OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS: "1"
         run: swift test --package-path Packages/OsaurusPlugins/StatsPack
+
+      - name: Save SwiftPM build
+        if: ${{ github.ref == 'refs/heads/main' && success() && steps.spm-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.SPM_BUILD }}
+          key: ${{ steps.spm-build-cache.outputs.cache-primary-key }}
 
       - name: Annotate timing
         if: always()
@@ -742,11 +760,13 @@ jobs:
         with:
           xcode-version: ${{ env.XCODE_VERSION }}
 
-      - name: Cache SwiftPM build
-        uses: actions/cache@v5
+      # Same dependency-keyed, main-only-save policy as test-statspack.
+      - name: Restore SwiftPM build
+        id: spm-build-cache
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.SPM_BUILD }}
-          key: evals-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('Packages/OsaurusEvals/Package.resolved', 'Packages/**/Package.swift', 'Packages/**/*.swift', 'Packages/**/*.c', 'Packages/**/*.h') }}
+          key: evals-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/OsaurusCore/Package.resolved', 'Packages/**/Package.swift', 'Packages/**/*.c', 'Packages/**/*.h') }}
           restore-keys: |
             evals-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
             evals-build-${{ runner.os }}-${{ env.CACHE_SALT }}-
@@ -774,6 +794,13 @@ jobs:
           OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS: "1"
           OSAURUS_TEST_ROOT: /tmp/osaurus-evals-test
         run: make evals-deterministic
+
+      - name: Save SwiftPM build
+        if: ${{ github.ref == 'refs/heads/main' && success() && steps.spm-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.SPM_BUILD }}
+          key: ${{ steps.spm-build-cache.outputs.cache-primary-key }}
 
       - name: Annotate timing
         if: always()
