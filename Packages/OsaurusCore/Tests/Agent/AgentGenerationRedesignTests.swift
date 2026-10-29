@@ -69,6 +69,10 @@ struct AgentGenerationRedesignTests {
             #expect(remote[.topK].source == "")
             #expect(remote[.stop].customText == "[]")
             #expect(remote[.templateKwargs].customText == "{}")
+            let explicitApp = AgentGenerationInheritedValues.resolve(modelID: id, isLocal: false,
+                modelDefaults: .empty, runtime: .init(), appTopP: 0.72, modelOptions: [:], draft: .init())
+            #expect(explicitApp[.topP] == .init(text: "0.72", source: "App", customText: "0.72"))
+            #expect(explicitApp[.temperature].customText == nil)
         }
     }
 

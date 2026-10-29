@@ -27,6 +27,11 @@ struct AgentGenerationInheritedValues {
         var result = Self()
         result.fields[.stop] = .init(text: "No additional stop strings", source: "", customText: "[]")
         result.fields[.templateKwargs] = .init(text: "No additional parameters", source: "", customText: "{}")
+        // App-level Top P is sent to remote providers too; it is known even when
+        // that provider's own defaults are not. Local runtime policy resolves it below.
+        if let appTopP {
+            result.fields[.topP] = .init(text: String(appTopP), source: "App", customText: String(appTopP))
+        }
         guard let modelID, isLocal else { return result }
         var options = modelOptions
         if draft.thinking != "inherit" { options["disableThinking"] = .bool(draft.thinking == "off") }
