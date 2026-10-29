@@ -2654,6 +2654,18 @@ extension FloatingInputCard {
         return declared
     }
 
+    /// Presentation uses the actual agent/request precedence without changing model defaults.
+    private var effectiveReasoningOptions: [String: ModelOptionValue] {
+        guard let model = selectedModel else { return activeModelOptions }
+        var controls = ChatTurnGenerationControls.capture(activeModelOptions: activeModelOptions)
+        controls.agentSettings = agentManager.effectiveGenerationSettings(for: effectiveAgentId)
+        return controls.reasoningOptions(for: model)
+    }
+
+    private var hasAgentReasoningOverride: Bool {
+        agentManager.effectiveGenerationSettings(for: effectiveAgentId)?.hasReasoningOverride == true
+    }
+
     /// The reasoning suffix the model chip should display ("· Extra High",
     /// "· Instruct"): the explicit persisted choice, otherwise the
     /// catalog/profile default (display-only; an unset option sends no
@@ -2663,7 +2675,7 @@ extension FloatingInputCard {
         guard let model = selectedModel else { return nil }
         return ModelProfileRegistry.inlineReasoningSuffixLabel(
             for: model,
-            values: activeModelOptions
+            values: effectiveReasoningOptions
         )
     }
 
@@ -2686,23 +2698,22 @@ extension FloatingInputCard {
     private var inlineThinkingUsesNativeDefault: Bool {
         guard let model = selectedModel, !isRemoteAgentRun else { return false }
         return LocalReasoningCapability.capability(forModelId: model).preservesOmittedThinking
-            && ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions) == nil
+            && ModelProfileRegistry.thinkingEnabled(for: model, values: effectiveReasoningOptions) == nil
     }
 
     /// Keep the chip and picker on the same policy as dispatch. In a local
-    /// tool-capable chat, an untouched toggleable model defaults to direct
-    /// answers; in ordinary no-tool chat, the bundle template still owns the
-    /// default. An explicit persisted UI choice wins in either context.
+    /// tool-capable chat, omitted controls preserve the bundle template default.
+    /// Explicit agent choices compose with the inherited model options.
     private func effectiveThinkingEnabled(for model: String) -> Bool {
         AgentReasoningPolicy.effectiveEnableThinkingForPresentation(
             isAgentOrToolRequest: appliesAgentReasoningDefault,
-            modelOptions: activeModelOptions,
+            modelOptions: effectiveReasoningOptions,
             capability: LocalReasoningCapability.capability(forModelId: model)
         )
     }
 
     private func thinkingPresentationIsReady(for model: String) -> Bool {
-        ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions) != nil
+        ModelProfileRegistry.thinkingEnabled(for: model, values: effectiveReasoningOptions) != nil
             || LocalReasoningCapability.capabilityForPresentation(forModelId: model) != nil
     }
 
@@ -3383,7 +3394,7 @@ extension FloatingInputCard {
 
         // Agent overrides win over the inherited Server mode, just as on dispatch.
         // Neither source belongs in the per-model option store.
-        var values = ModelProfileRegistry.normalizedOptions(for: model, persisted: activeModelOptions)
+        var values = ModelProfileRegistry.normalizedOptions(for: model, persisted: effectiveReasoningOptions)
         var displayDefaults = defaults
         if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
             let identity = Self.mtpIdentity(model)
@@ -3423,6 +3434,11 @@ extension FloatingInputCard {
                 // crashes NSPopover.
                 DispatchQueue.main.async {
                     guard selectedModel == model else { return }
+                    if optionId == "reasoningEffort", hasAgentReasoningOverride {
+                        agentManager.updateReasoning(
+                            enableThinking: nil, effort: newValue?.stringValue, for: effectiveAgentId)
+                        return
+                    }
                     var updated = activeModelOptions
                     if optionId == "reasoningEffort" {
                         updated.removeValue(forKey: "disableThinking")
@@ -3459,7 +3475,7 @@ extension FloatingInputCard {
         else { return nil }
         let explicitEnabled = ModelProfileRegistry.thinkingEnabled(
             for: model,
-            values: activeModelOptions
+            values: effectiveReasoningOptions
         )
         return ModelPickerThinkingControl(
             isEnabled: effectiveThinkingEnabled(for: model),
@@ -3482,6 +3498,10 @@ extension FloatingInputCard {
     /// toggle their raw persisted boolean directly.
     private func persistThinkingOverride(_ enabled: Bool?, for model: String) {
         guard selectedModel == model else { return }
+        if hasAgentReasoningOverride {
+            agentManager.updateReasoning(enableThinking: enabled, effort: nil, for: effectiveAgentId)
+            return
+        }
         guard let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption else {
             return
         }

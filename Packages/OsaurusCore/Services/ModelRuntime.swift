@@ -4679,7 +4679,9 @@ public actor ModelRuntime {
                     restoreOwnershipToken: restoreOwnershipToken,
                     alignmentRepairActivity: alignmentRepairActivity,
                     alignmentRepairSession: alignmentRepairSession, mtp: mtp)
-                try Task.checkCancellation()
+                // A cancelled warmup can already have published this holder. Return it
+                // leased so generation's post-load cancellation cleanup can unload it;
+                // throwing here would orphan the resident graph before that cleanup.
                 if pinForGeneration {
                     await ModelLease.shared.acquire(name)
                     // GC/global settings can suspend this actor too. Never return an evicted graph.

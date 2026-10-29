@@ -1515,10 +1515,31 @@ extension AgentManager {
     /// The chat picker edits an existing agent override, never the shared Server mode.
     /// Nil removes only this override; unrelated saved generation fields remain intact.
     public func updateSpeculativeDecoding(_ enabled: Bool?, for agentId: UUID) {
+        updateGenerationSettings(for: agentId) { $0.speculativeDecoding = enabled }
+    }
+
+    /// Existing agent reasoning overrides stay on the agent when edited in chat.
+    /// Switching control kind replaces only reasoning fields, including their JSON aliases.
+    public func updateReasoning(enableThinking: Bool?, effort: String?, for agentId: UUID) {
+        updateGenerationSettings(for: agentId) { settings in
+            settings.enableThinking = enableThinking
+            settings.reasoningEffort = effort
+            if var kwargs = settings.templateKwargs {
+                for key in ["enable_thinking", "thinking", "reasoning_effort"] {
+                    kwargs.removeValue(forKey: key)
+                }
+                settings.templateKwargs = kwargs.isEmpty ? nil : kwargs
+            }
+        }
+    }
+
+    private func updateGenerationSettings(
+        for agentId: UUID, _ update: (inout AgentGenerationSettings) -> Void
+    ) {
         guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         var settings = agent.generationSettings ?? AgentGenerationSettings()
-        guard settings.speculativeDecoding != enabled else { return }
-        settings.speculativeDecoding = enabled
+        update(&settings)
+        guard settings != (agent.generationSettings ?? AgentGenerationSettings()) else { return }
         agent.generationSettings = settings.isEmpty ? nil : settings
         agent.updatedAt = Date()
         AgentStore.save(agent)

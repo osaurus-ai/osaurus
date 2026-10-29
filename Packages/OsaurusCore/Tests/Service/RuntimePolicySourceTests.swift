@@ -888,6 +888,10 @@ struct RuntimePolicySourceTests {
         #expect(preparation.contains("await ModelLease.shared.acquire(name)"))
         #expect(preparation.contains("guard modelCache[name] === holder"))
         #expect(preparation.contains("await ModelLease.shared.release(name)"))
+        let returnedLoad = try #require(preparation.range(of: "let holder = try await loadContainer("))
+        let acquiredLease = try #require(preparation.range(of: "await ModelLease.shared.acquire(name)"))
+        #expect(!preparation[returnedLoad.upperBound ..< acquiredLease.lowerBound].contains("Task.checkCancellation"),
+            "A published holder must reach post-load cancellation cleanup, never be orphaned by a throw before its lease")
 
         #expect(postLoadWindow.contains("if Task.isCancelled"))
         #expect(postLoadWindow.contains("await ModelResidencyManager.shared.cancel(modelName: modelName)"))

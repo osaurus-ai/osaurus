@@ -52,6 +52,13 @@ public struct AgentGenerationSettings: Codable, Equatable, Sendable {
         case speculativeDecoding = "speculative_decoding"
     }
 
+    var hasReasoningOverride: Bool {
+        enableThinking != nil || reasoningEffort != nil
+            || templateKwargs?["enable_thinking"]?.boolValue != nil
+            || templateKwargs?["thinking"]?.boolValue != nil
+            || templateKwargs?["reasoning_effort"]?.stringValue != nil
+    }
+
     var isEmpty: Bool {
         topP == nil && topK == nil && minP == nil && repetitionPenalty == nil
             && frequencyPenalty == nil && presencePenalty == nil && seed == nil

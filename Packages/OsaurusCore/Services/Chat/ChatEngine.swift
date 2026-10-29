@@ -307,25 +307,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             modelOptions["disableThinking"] = .bool(!agentEnableThinking)
         }
 
-        if isHy3 {
-            if let requestReasoningEffort {
-                modelOptions["reasoningEffort"] = .string(
-                    Hy3ReasoningProfile.normalizedEffort(requestReasoningEffort)
-                )
-            } else if modelOptions["reasoningEffort"] == nil,
-                let enableThinking = explicitEnableThinking
-            {
-                modelOptions["reasoningEffort"] = .string(enableThinking ? "high" : "no_think")
-            }
-            modelOptions.removeValue(forKey: "disableThinking")
-        } else {
-            if let enableThinking = explicitEnableThinking {
-                modelOptions["disableThinking"] = .bool(!enableThinking)
-            }
-            if let requestReasoningEffort {
-                modelOptions["reasoningEffort"] = .string(requestReasoningEffort)
-            }
-        }
+        modelOptions = AgentReasoningPolicy.applyingExplicitReasoning(
+            request.generation, to: modelOptions, modelID: request.model)
         try DeclaredReasoningEffort.validateModeRequest(modelId: request.model, options: modelOptions)
         ComputerUseTraceLog.recordEffectiveDispatch(
             request: request,

@@ -31,6 +31,31 @@ struct AgentSpeculationSettingsTests {
         }
     }
 
+    @Test("chat readout projects the same explicit reasoning as the frozen request")
+    func reasoningReadout() {
+        let model = "allosaurus-v0.1-125b-a6b-jangh2"
+        let inherited: [String: ModelOptionValue] = ["reasoningEffort": .string("xhigh"), "unrelated": .bool(true)]
+        var controls = ChatTurnGenerationControls.capture(activeModelOptions: inherited)
+        #expect(controls.reasoningOptions(for: model) == inherited)
+        controls.agentSettings = .init(reasoningEffort: "low")
+        #expect(controls.reasoningOptions(for: model)["reasoningEffort"] == .string("low"))
+        controls.overrides.reasoningEffort = "medium"
+        #expect(controls.reasoningOptions(for: model)["reasoningEffort"] == .string("medium"))
+        controls.agentSettings = .init(enableThinking: false, templateKwargs: ["thinking": .bool(true)])
+        controls.overrides = .init()
+        #expect(controls.reasoningOptions(for: model)["disableThinking"] == .bool(true))
+        controls.agentSettings = .init(templateKwargs: ["thinking": .bool(true)])
+        #expect(controls.reasoningOptions(for: model)["disableThinking"] == .bool(false))
+        controls = .capture(activeModelOptions: [:])
+        controls.agentSettings = .init(templateKwargs: ["reasoning_effort": .string(" high ")])
+        #expect(controls.reasoningOptions(for: model)["reasoningEffort"] == .string("high"))
+        var request = ResponsesInferenceRequest(model: model, input: [])
+        controls.apply(to: &request)
+        #expect(controls.reasoningOptions(for: model) == AgentReasoningPolicy.applyingExplicitReasoning(
+            request.generation, to: request.context.modelOptions ?? [:], modelID: model))
+        #expect(inherited["reasoningEffort"] == .string("xhigh"))
+    }
+
     @Test("On is adaptive; Off and inheritance do not mutate the original Server snapshot")
     func resolvesWithoutGlobalWrites() {
         var server = VMLXServerMTPSettings()
@@ -145,6 +170,37 @@ struct AgentSpeculationSettingsTests {
 @MainActor
 @Suite(.serialized)
 struct AgentSpeculationPersistenceTests {
+    @Test("reasoning picker replaces only this agent's reasoning and preserves other fields")
+    func reasoningPickerScope() async throws {
+        try await ChatHistoryTestStorage.run {
+            let original = AgentGenerationSettings(topK: 17, enableThinking: false, reasoningEffort: "low",
+                templateKwargs: ["thinking": .bool(false), "extraction_schema": .string("kept")],
+                speculativeDecoding: true)
+            let first = Agent(name: "Reasoning first", generationSettings: original,
+                autonomousExec: .init(enabled: false))
+            let second = Agent(name: "Reasoning second", generationSettings: original,
+                autonomousExec: .init(enabled: false))
+            AgentStore.save(first)
+            AgentStore.save(second)
+            AgentManager.shared.refresh()
+            AgentManager.shared.updateReasoning(enableThinking: nil, effort: "medium", for: first.id)
+            var saved = try #require(AgentStore.load(id: first.id)?.generationSettings)
+            #expect(saved.reasoningEffort == "medium")
+            #expect(saved.enableThinking == nil)
+            #expect(saved.templateKwargs == ["extraction_schema": .string("kept")])
+            #expect(saved.topK == 17 && saved.speculativeDecoding == true)
+            #expect(AgentStore.load(id: second.id)?.generationSettings == original)
+            AgentManager.shared.updateReasoning(enableThinking: false, effort: nil, for: first.id)
+            saved = try #require(AgentStore.load(id: first.id)?.generationSettings)
+            #expect(saved.enableThinking == false && saved.reasoningEffort == nil)
+            AgentManager.shared.updateReasoning(enableThinking: nil, effort: nil, for: first.id)
+            saved = try #require(AgentStore.load(id: first.id)?.generationSettings)
+            #expect(!saved.hasReasoningOverride)
+            #expect(saved.topK == 17 && saved.speculativeDecoding == true)
+            #expect(saved.templateKwargs == ["extraction_schema": .string("kept")])
+        }
+    }
+
     @Test("chat picker updates only this agent and reset preserves unrelated overrides")
     func pickerScope() async throws {
         try await ChatHistoryTestStorage.run {
