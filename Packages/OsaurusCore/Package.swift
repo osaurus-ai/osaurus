@@ -355,10 +355,12 @@ let package = Package(
         // 10-29b: MLX's scheduling limit kept above the live working set at every step (all families), M3 prompt-boundary
         // stores from views of the finished cache (no prompt copy through decode; long-context entries no longer refused
         // by the store budget), no redundant post-answer entry under aligned prefill, runtime receipts
-        // (VMLX_RUNTIME_RECEIPTS=1), DSpark measured width pricing (VMLX_DSPARK_MEASURED_WIDTH=1; off). TEST PIN.
+        // (VMLX_RUNTIME_RECEIPTS=1), DSpark measured width pricing (VMLX_DSPARK_MEASURED_WIDTH=1; off); the floor at
+        // prefill chunk boundaries; fused attention K4 with device-coherent block partials (vMLX 8da26375: garbage on
+        // the M5 Ultra before; fused decode stays off by default). TEST PIN.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "bdc00b7aa99772443b7d0bae56fb65c8c7ab7ab2"
+            revision: "380fdcd50fc9bf99abe4749faf7dbc3f2da1432d"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
