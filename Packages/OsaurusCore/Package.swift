@@ -346,10 +346,12 @@ let package = Package(
         // vmlx-swift feat/minimax-m31-osaurus-pin (main 22848d3b + perf/minimax-m3-aligned-prefix-cache): MiniMax-M3.1
         // (JANGT experts, R8 block-sparse MSA + selection kernels, the dspark/ drafter, aligned-chunk prefix cache),
         // thinking_mode from the thinking toggle, HF-faithful tojson, dSpark verify-width stats, RMSNorm scale cache
-        // (+4.7 % decode), the fused-decode seam (off). TEST PIN.
+        // (+4.7 % decode), per-module config entries without `bits` (JANGT bundles load past the VLM factory's
+        // decode), row-exact 6-bit / 16-row verify qmv, the verify's one-launch MSA, and vMLX's fused decode
+        // kernels (VMLX_M3_FUSED_DECODE=1; off by default), readable JANGH load errors. TEST PIN.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "d447c5fc581e38f023e3854066b537efbfab932b"
+            revision: "7e3f53b445101d965bbe3dc44ebc93ae3174e55b"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
