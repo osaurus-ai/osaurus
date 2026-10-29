@@ -348,10 +348,14 @@ let package = Package(
         // thinking_mode from the thinking toggle, HF-faithful tojson, dSpark verify-width stats, RMSNorm scale cache
         // (+4.7 % decode), per-module config entries without `bits` (JANGT bundles load past the VLM factory's
         // decode), row-exact 6-bit / 16-row verify qmv, the verify's one-launch MSA, and vMLX's fused decode
-        // kernels (VMLX_M3_FUSED_DECODE=1; off by default), readable JANGH load errors. TEST PIN.
+        // kernels (VMLX_M3_FUSED_DECODE=1; off by default), readable JANGH load errors; 10-29: M3 resident-pool memory
+        // policy (no Safe Auto scheduling throttle at long context), recommended prefill step 2048, DSpark row-count
+        // checkpoints (no per-round lane copies), the fused MoE view released with its model, turn-cut prefix cache
+        // (every tool / user turn reuses the previous K), vMLX's fast JANGT decode kernels (VMLX_JANGT_FAST=1; off).
+        // TEST PIN.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "7e3f53b445101d965bbe3dc44ebc93ae3174e55b"
+            revision: "b5b99b59b7d88767419ba69a22fb6008645c8214"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
