@@ -776,6 +776,7 @@ public enum ConfigManifest {
         ConfigKeySpec("enable_thinking", .scalar(.boolean, example: "null", nullable: true)),
         ConfigKeySpec("reasoning_effort", .scalar(.string, example: "null", nullable: true)),
         ConfigKeySpec("template_kwargs", .jsonObject(nullable: true)),
+        ConfigKeySpec("speculative_decoding", .scalar(.boolean, example: "null", nullable: true)),
     ]
 
     // MARK: - Derived: strict validation tables

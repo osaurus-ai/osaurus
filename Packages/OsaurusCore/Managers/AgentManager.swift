@@ -1512,6 +1512,25 @@ extension AgentManager {
         return agent.generationSettings
     }
 
+    /// The chat picker edits an existing agent override, never the shared Server mode.
+    /// Nil removes only this override; unrelated saved generation fields remain intact.
+    public func updateSpeculativeDecoding(_ enabled: Bool?, for agentId: UUID) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
+        var settings = agent.generationSettings ?? AgentGenerationSettings()
+        guard settings.speculativeDecoding != enabled else { return }
+        settings.speculativeDecoding = enabled
+        agent.generationSettings = settings.isEmpty ? nil : settings
+        agent.updatedAt = Date()
+        AgentStore.save(agent)
+        // A picker action changes one record; avoid re-reading every agent on the UI thread.
+        if let index = agentIndex[agentId], agents.indices.contains(index) {
+            var updatedAgents = agents
+            updatedAgents[index] = agent
+            installAgentSnapshot(updatedAgents)
+        }
+        NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+    }
+
     /// Resolve every per-agent capability flag in one place, applying the
     /// default-agent overrides and global memory switch centrally. This is
     /// the single source of truth; the narrower `effective*` accessors and

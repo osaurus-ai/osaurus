@@ -151,6 +151,29 @@ public actor ModelLease {
         }
     }
 
+    /// A queued head upgrade must be cancellable while another agent is generating.
+    /// Reuse the same waiter registry so cancelling one wait never changes active leases.
+    public func waitForZeroCancellable(_ name: String) async throws {
+        while (counts[name] ?? 0) > 0 {
+            try Task.checkCancellation()
+            let id = nextWaiterID
+            nextWaiterID &+= 1
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    if Task.isCancelled || (counts[name] ?? 0) == 0 {
+                        continuation.resume()
+                    } else {
+                        waiters[name, default: []].append(
+                            Waiter(id: id, continuation: continuation, timeoutItem: nil))
+                    }
+                }
+            } onCancel: {
+                Task { await self.timeoutWaiter(name: name, id: id) }
+            }
+        }
+        try Task.checkCancellation()
+    }
+
     /// Bounded variant of `waitForZero` for the app-quit path. Suspends until
     /// no leases are held on `name` OR until `timeoutSeconds` elapses,
     /// whichever comes first.

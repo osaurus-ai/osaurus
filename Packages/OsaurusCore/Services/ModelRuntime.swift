@@ -436,6 +436,7 @@ public actor ModelRuntime {
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
         let nativeMTPAdmission: NativeMTPAdmission
+        let preparedMTP: VMLXServerMTPSettings
         /// Numeric allocator-cache cap resolved from the user-visible
         /// memory-safety plan used for this exact load. `nil` means no numeric
         /// cap; the decode-path-specific admitted-ceiling requirement is
@@ -472,6 +473,7 @@ public actor ModelRuntime {
             nativeMTPStatus: String? = nil,
             nativeMTPReason: String? = nil,
             nativeMTPAdmission: NativeMTPAdmission = .init(),
+            preparedMTP: VMLXServerMTPSettings = .init(),
             allocatorCacheLimitBytes: Int? = nil,
             admittedWorkingSetBytes: UInt64? = nil,
             admittedLoadBudgetBytes: UInt64? = nil,
@@ -490,6 +492,7 @@ public actor ModelRuntime {
             self.nativeMTPStatus = nativeMTPStatus
             self.nativeMTPReason = nativeMTPReason
             self.nativeMTPAdmission = nativeMTPAdmission
+            self.preparedMTP = preparedMTP
             self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
             self.admittedWorkingSetBytes = admittedWorkingSetBytes
             self.admittedLoadBudgetBytes = admittedLoadBudgetBytes
@@ -535,6 +538,8 @@ public actor ModelRuntime {
     // MARK: - State
 
     private var modelCache: [String: SessionHolder] = [:]
+    /// Serializes graph preparation, not generation. Same-model batching resumes after lease acquisition.
+    private var preparationGates: [String: MLXBatchAdapter.SoloGenerationGate] = [:]
     private struct LoadingTaskRecord {
         let id: UInt64
         let task: Task<SessionHolder, Error>
@@ -1305,7 +1310,7 @@ public actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Installed model not found for preload: \(trimmed)"]
             )
         }
-        let loadedHolder = try await loadContainer(
+        let loadedHolder = try await prepareContainer(
             id: found.id,
             name: found.name,
             intent: intent,
@@ -2293,7 +2298,7 @@ public actor ModelRuntime {
         // Use the same bounded allocator window as a visible MTP request so
         // warmup materializes the actual D3 working set, then retain only its
         // most-recently-used portion under the persistent ceiling.
-        let warmupRuntime = await getConfig()
+        let warmupRuntime = await getConfig().withPreparedMTP(holder.preparedMTP)
         let warmupStrategy = try? holder.nativeMTPAdmission.requestStrategy(
             loaded: holder.draftStrategy,
             mtp: warmupRuntime.mtp
@@ -4642,13 +4647,64 @@ public actor ModelRuntime {
         }
     }
 
+    /// The preparation permit spans a possible head upgrade AND acquiring the stream lease.
+    /// This prevents a second request from evicting a holder another request is about to use.
+    /// Existing streams drain naturally; cancellation never cancels another agent's work.
+    private func prepareContainer(
+        id: String,
+        name: String,
+        intent: ModelLoadIntent = .interactive,
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil,
+        alignmentRepairActivity: UUID? = nil,
+        alignmentRepairSession: String? = nil,
+        mtp: VMLXServerMTPSettings? = nil,
+        pinForGeneration: Bool = false
+    ) async throws -> SessionHolder {
+        let gate = preparationGates[name] ?? MLXBatchAdapter.SoloGenerationGate()
+        preparationGates[name] = gate
+        guard let permit = await gate.acquire(modelName: name) else { throw CancellationError() }
+        do {
+            try Task.checkCancellation()
+            if let mtp, let previous = modelCache[name]?.preparedMTP,
+                AgentSpeculationPolicy.requiresPreparation(
+                    previous: previous, next: mtp, hasLoadedStrategy: modelCache[name]?.draftStrategy != nil)
+            {
+                try await ModelLease.shared.waitForZeroCancellable(name)
+                try Task.checkCancellation()
+                try await strictEvict(name)
+            }
+            while true {
+                let holder = try await loadContainer(
+                    id: id, name: name, intent: intent,
+                    restoreOwnershipToken: restoreOwnershipToken,
+                    alignmentRepairActivity: alignmentRepairActivity,
+                    alignmentRepairSession: alignmentRepairSession, mtp: mtp)
+                try Task.checkCancellation()
+                if pinForGeneration {
+                    await ModelLease.shared.acquire(name)
+                    // GC/global settings can suspend this actor too. Never return an evicted graph.
+                    guard modelCache[name] === holder else {
+                        await ModelLease.shared.release(name)
+                        continue
+                    }
+                }
+                await permit.release()
+                return holder
+            }
+        } catch {
+            await permit.release()
+            throw error
+        }
+    }
+
     private func loadContainer(
         id: String,
         name: String,
         intent: ModelLoadIntent = .interactive,
         restoreOwnershipToken: ModelResidencyOwnershipToken? = nil,
         alignmentRepairActivity: UUID? = nil,
-        alignmentRepairSession: String? = nil
+        alignmentRepairSession: String? = nil,
+        mtp: VMLXServerMTPSettings? = nil
     ) async throws -> SessionHolder {
         try Task.checkCancellation()
         let parentRetention = ParentResidencyRetentionContext.current
@@ -5022,7 +5078,8 @@ public actor ModelRuntime {
         // reclaims file cache, so proceeding into a shortfall dies as a
         // Metal command-buffer abort mid-load, not graceful pressure
         // (observed live: available 101 GB loaded clean, 89 GB crashed).
-        let preloadServerSettings = ServerRuntimeSettingsStore.snapshot()
+        var preloadServerSettings = ServerRuntimeSettingsStore.snapshot()
+        if let mtp { preloadServerSettings.mtp = mtp }
         let automaticMemoryLimitsDisabled =
             ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(
                 for: preloadServerSettings
@@ -5158,7 +5215,11 @@ public actor ModelRuntime {
             )
             try Task.checkCancellation()
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
-            let serverSettings = ServerRuntimeSettingsStore.snapshot()
+            let serverSettings: VMLXServerRuntimeSettings = {
+                var settings = ServerRuntimeSettingsStore.snapshot()
+                if let mtp { settings.mtp = mtp }
+                return settings
+            }()
             Self.applyPerformancePolicy(serverSettings)
             let mtpPlan = try Self.resolveNativeMTPLaunchPlan(
                 modelName: name,
@@ -5268,6 +5329,7 @@ public actor ModelRuntime {
                 nativeMTPStatus: mtpPlan.statusLine,
                 nativeMTPReason: mtpPlan.reason,
                 nativeMTPAdmission: mtpPlan.admission,
+                preparedMTP: serverSettings.mtp,
                 // Profile allocator defaults must not replace the dynamic pool.
                 // The total admitted budget also bounds its remaining capacity.
                 // Routing the resolved plan value here folded the profile
@@ -6099,7 +6161,7 @@ public actor ModelRuntime {
         // resident turns still call `loadContainer` to get the holder, but
         // that is a cache hit and must not flash the UI back to
         // "Loading Model..." on every message.
-        let cfg = await getConfig()
+        let cfg = await getConfig().resolvingSpeculation(parameters.speculativeDecoding)
         await MLXBatchAdapter.recordPendingEffectiveGenerationSettings(
             modelName: modelName,
             modelId: modelId,
@@ -6108,7 +6170,11 @@ public actor ModelRuntime {
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
         trace?.mark("load_container_start")
-        let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI
+        let needsPreparation = modelCache[modelName].map {
+            AgentSpeculationPolicy.requiresPreparation(
+                previous: $0.preparedMTP, next: cfg.mtp, hasLoadedStrategy: $0.draftStrategy != nil)
+        } ?? true
+        let shouldReportModelLoad = needsPreparation && !parameters.suppressProgressUI
         if shouldReportModelLoad {
             InferenceProgressManager.shared.modelLoadWillStartAsync()
         }
@@ -6120,18 +6186,25 @@ public actor ModelRuntime {
         let holder: SessionHolder
         let requestStrategy: MLXLMCommon.DraftStrategy?
         do {
-            holder = try await loadContainer(
+            holder = try await prepareContainer(
                 id: modelId,
                 name: modelName,
                 intent: parameters.loadIntent,
                 alignmentRepairActivity: parameters.authorizesAlignmentRepair(for: modelId)
                     ? activityID : nil,
-                alignmentRepairSession: parameters.sessionId
+                alignmentRepairSession: parameters.sessionId,
+                mtp: cfg.mtp,
+                pinForGeneration: true
             )
             // Settings may change without reloading weights (Auto ↔ manual
             // depth). Validate against the evidence belonging to this holder
             // before acquiring a stream lease or submitting GPU work.
-            requestStrategy = try holder.nativeMTPAdmission.requestStrategy(loaded: holder.draftStrategy, mtp: cfg.mtp)
+            do {
+                requestStrategy = try holder.nativeMTPAdmission.requestStrategy(loaded: holder.draftStrategy, mtp: cfg.mtp)
+            } catch {
+                await ModelLease.shared.release(modelName)
+                throw error
+            }
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
@@ -6150,6 +6223,7 @@ public actor ModelRuntime {
         trace?.mark("load_container_done")
 
         if Task.isCancelled {
+            await ModelLease.shared.release(modelName)
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
                 await unload(name: modelName)
@@ -6160,8 +6234,7 @@ public actor ModelRuntime {
             throw CancellationError()
         }
 
-        // Pin the model against eviction for the stream's lifetime.
-        await ModelLease.shared.acquire(modelName)
+        // prepareContainer already pinned this holder for the stream's lifetime.
 
         // `MLXLMCommon.Chat.Message` is non-Sendable but the message array
         // never escapes the producer task. Heap-box the snapshot so the

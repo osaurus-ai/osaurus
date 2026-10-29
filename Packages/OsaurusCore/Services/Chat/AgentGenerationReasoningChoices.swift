@@ -5,21 +5,28 @@ struct AgentGenerationReasoningChoices: Equatable, Sendable {
     var modelID: String? = nil
     var efforts: ModelReasoningCapabilities?
     var supportsThinking: Bool
+    var speculation: ModelRuntime.LoadingModelMTPStatus? = nil
     /// Presentation can use a single effort picker while the native template still accepts a boolean.
     var thinkingControlIsCanonical: Bool? = nil
 
     var showsThinkingControl: Bool { supportsThinking && thinkingControlIsCanonical != false }
 
-    static func resolve(modelID: String, isLocal: Bool) async -> Self {
+    static func resolve(modelID: String, isLocal: Bool, includeSpeculation: Bool = false) async -> Self {
         let local = isLocal
             ? await LocalReasoningCapability.resolveForDispatch(modelId: modelID)
             : .none
-        return resolved(
+        var choices = resolved(
             modelID: modelID,
             localCapability: local,
             efforts: ModelProfileRegistry.reasoningCapabilities(for: modelID),
             options: ModelProfileRegistry.options(for: modelID)
         )
+        if isLocal && includeSpeculation {
+            choices.speculation = await Task.detached(priority: .utility) {
+                ModelRuntime.inspectLoadingModelMTP(name: modelID)
+            }.value
+        }
+        return choices
     }
 
     static func resolved(modelID: String, localCapability: LocalReasoningCapability.Capability,
@@ -31,6 +38,16 @@ struct AgentGenerationReasoningChoices: Equatable, Sendable {
     }
 
     func validate(settings: AgentGenerationSettings) throws {
+        if settings.speculativeDecoding != nil, speculation == nil {
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "The selected model has no local speculation capability information. Choose Inherit.")
+        }
+        if settings.speculativeDecoding == true,
+            speculation?.speculationAvailable != true || speculation?.speculationBlocked == true
+        {
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "The selected model has no eligible adaptive speculation path. Choose Inherit or Off (AR).")
+        }
         if let effort = settings.reasoningEffort,
             efforts?.levels.contains(where: { $0.id == effort }) != true
         {

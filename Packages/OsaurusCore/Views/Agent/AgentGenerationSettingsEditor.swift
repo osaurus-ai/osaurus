@@ -78,6 +78,7 @@ struct AgentGenerationSettingsEditor: View {
                         field: .maxTokens
                     )
                     reasoningControls
+                    speculationControls
                     stopSequences
                 }
                 group("Repetition", subtitle: "Discourage repeated text") {
@@ -124,7 +125,7 @@ struct AgentGenerationSettingsEditor: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(
                                 (choices == nil || choices?.modelID != modelID)
-                                    && (draft.reasoningEffort != "" || draft.thinking != "inherit")
+                                    && (draft.reasoningEffort != "" || draft.thinking != "inherit" || draft.speculation != "inherit")
                             )
                     }
                 }
@@ -174,7 +175,8 @@ struct AgentGenerationSettingsEditor: View {
             modelDefaults = snapshot.1
             defaultsModelID = modelID
             guard let modelID else { return }
-            var resolved = await AgentGenerationReasoningChoices.resolve(modelID: modelID, isLocal: modelIsLocal)
+            var resolved = await AgentGenerationReasoningChoices.resolve(
+                modelID: modelID, isLocal: modelIsLocal, includeSpeculation: true)
             guard !Task.isCancelled else { return }
             if let catalogCapabilities { resolved.efforts = catalogCapabilities }
             choices = resolved
@@ -184,6 +186,37 @@ struct AgentGenerationSettingsEditor: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             capabilityRevision += 1
+        }
+    }
+
+    @ViewBuilder
+    private var speculationControls: some View {
+        if let choices, choices.modelID == modelID {
+            if let status = choices.speculation, status.speculationAvailable {
+                rowLabel("Speculative Decoding", "Off uses ordinary decoding. On requests adaptive drafting without changing sampling.")
+                Picker(L("Speculative Decoding"), selection: $draft.speculation) {
+                    Text(localized: "Inherit").tag("inherit")
+                    Text(localized: "Off (AR)").tag("off")
+                    if !status.speculationBlocked {
+                        Text(localized: "On (Adaptive)").tag("on")
+                    }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                .settingsLandingAnchor("agents.generation.speculativeDecoding")
+                Text(status.speculationCapabilityDescription)
+                    .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if draft.speculation != "inherit",
+                choices.speculation?.speculationAvailable != true
+                    || (draft.speculation == "on" && choices.speculation?.speculationBlocked == true)
+            {
+                HStack {
+                    Text("Saved speculation override is unavailable for this model.", bundle: .module)
+                        .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                    Button(L("Use Inherit")) { draft.speculation = "inherit" }.buttonStyle(.borderless)
+                }
+            }
         }
     }
 
@@ -527,7 +560,7 @@ struct AgentGenerationSettingsEditor: View {
             try draft.commitStopSequence()
             let values = try draft.validated()
             if let settings = values.settings {
-                if settings.reasoningEffort != nil || settings.enableThinking != nil {
+                if settings.reasoningEffort != nil || settings.enableThinking != nil || settings.speculativeDecoding != nil {
                     guard let choices, choices.modelID == modelID else {
                         throw ChatTurnOverrides.ValidationError.invalid(
                             "Choose a model and wait for its reasoning controls to be detected."

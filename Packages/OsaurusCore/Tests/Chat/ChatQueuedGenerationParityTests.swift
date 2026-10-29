@@ -7,7 +7,7 @@ import Testing
 @MainActor
 struct ChatQueuedGenerationParityTests {
     @Test(arguments: ["temperature", "topP", "topK", "minP", "repetition", "frequency", "presence",
-        "seed", "stop", "outputCap", "thinking", "effort", "template", "modelThinking", "modelEffort"])
+        "seed", "stop", "outputCap", "thinking", "effort", "template", "speculation", "modelThinking", "modelEffort"])
     func changedGenerationDefaultsStayQueued(field: String) async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
@@ -26,6 +26,7 @@ struct ChatQueuedGenerationParityTests {
             case "frequency": pending.agentSettings = .init(frequencyPenalty: 0)
             case "presence": pending.agentSettings = .init(presencePenalty: 0.2)
             case "seed": pending.agentSettings = .init(seed: 0)
+            case "speculation": pending.agentSettings = .init(speculativeDecoding: false)
             case "stop": pending.agentSettings = .init(stop: [])
             case "outputCap": pending.maxOutputTokens = 128
             case "thinking": pending.agentSettings = .init(enableThinking: false)

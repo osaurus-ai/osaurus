@@ -193,4 +193,21 @@ struct AgentReasoningDefaultsGuardTests {
         #expect(await capture.choiceModels.isEmpty)
         #expect(await capture.parameters.isEmpty)
     }
+    @Test("local speculation preferences cannot silently dispatch to a remote provider")
+    func speculationRequiresLocalRoute() async throws {
+        let capture = Capture()
+        let service = Service(id: "saved-agent-fixture", capture: capture)
+        let engine = makeEngine(capture: capture, services: [service])
+        for enabled in [false, true] {
+            do {
+                _ = try await engine.completeChat(request: request(settings: .init(speculativeDecoding: enabled)).chatCompletionsCompatibilityRequest())
+                Issue.record("A local execution preference must not be ignored by a provider")
+            } catch {
+                #expect(error.localizedDescription.contains("require a local model"))
+            }
+        }
+        #expect(await capture.parameters.isEmpty)
+        #expect(await capture.choiceModels.isEmpty)
+    }
+
 }

@@ -2537,6 +2537,14 @@ extension FloatingInputCard {
     /// Depth-only changes apply to the next request; changes that require a
     /// different loaded model graph follow the guarded reload lifecycle.
     private func applyNativeMTPSegment(_ segment: String?) {
+        let targetAgentID = effectiveAgentId
+        if agentManager.effectiveGenerationSettings(for: targetAgentID)?.speculativeDecoding != nil,
+            let mode = NativeMTPSelectionDefault.mode(for: segment)
+        {
+            agentManager.updateSpeculativeDecoding(
+                mode == .familyDefault ? nil : mode != .off, for: targetAgentID)
+            return
+        }
         Task { @MainActor in
             // Read the latest settings when the task executes; only an
             // explicit control action writes MTP. Selection is read-only.
@@ -3373,21 +3381,24 @@ extension FloatingInputCard {
             defaults = ModelProfileRegistry.defaults(for: model)
         }
 
-        // MTP lives in GLOBAL server settings, not the per-model option store,
-        // because the depth is consumed when the model loads. Render it from
-        // there so the row cannot disagree with what the engine will do.
+        // Agent overrides win over the inherited Server mode, just as on dispatch.
+        // Neither source belongs in the per-model option store.
         var values = ModelProfileRegistry.normalizedOptions(for: model, persisted: activeModelOptions)
         var displayDefaults = defaults
         if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
             let identity = Self.mtpIdentity(model)
             let mode = ServerController.runtimeSettingsForConfigureTool().settings.mtp.mode
             let familyDefault = nativeMTPFamilyDefaultOnModels.contains(identity) ? "auto" : "off"
-            let shown = mode == .familyDefault ? familyDefault : nativeMTPSelection
+            let inherited = mode == .familyDefault ? familyDefault : nativeMTPSelection
+            let shown = agentManager.effectiveGenerationSettings(for: effectiveAgentId)?
+                .speculativeDecoding.map { $0 ? "auto" : "off" } ?? inherited
             values[Self.nativeMTPOptionID] = .string(
                 nativeMTPManuallyBlockedModels.contains(identity) ? "off" : shown
             )
-            // The default this bundle gets without a user choice (Flash-Next: On).
-            displayDefaults[Self.nativeMTPOptionID] = .string(familyDefault)
+            // Reset removes an agent override; otherwise it restores the bundle policy.
+            let hasAgentOverride = agentManager.effectiveGenerationSettings(for: effectiveAgentId)?
+                .speculativeDecoding != nil
+            displayDefaults[Self.nativeMTPOptionID] = .string(hasAgentOverride ? inherited : familyDefault)
         }
 
         return ModelPickerOptionsControl(
@@ -3397,8 +3408,8 @@ extension FloatingInputCard {
             values: values,
             defaults: displayDefaults,
             onChange: { optionId, newValue in
-                // Routed to server settings, NOT ModelOptionsStore: writing it
-                // per-model would persist a value the load path never reads.
+                // Existing agent overrides stay agent-scoped; inheritance retains the Server path.
+                // Neither is persisted to ModelOptionsStore.
                 if optionId == Self.nativeMTPOptionID {
                     DispatchQueue.main.async {
                         applyNativeMTPSegment(newValue?.stringValue)

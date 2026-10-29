@@ -319,6 +319,7 @@ struct SettingsSearchSelfFindProbe {
             ("Seed", "agents.generation.seed"),
             ("Stop sequences", "agents.generation.stop"),
             ("Thinking", "agents.generation.thinking"),
+            ("Speculative Decoding", "agents.generation.speculativeDecoding"),
             ("Reasoning effort", "agents.generation.reasoningEffort"),
             ("Template parameters (JSON)", "agents.generation.templateKwargs"),
             // Agents → Abilities → Tools: the per-agent skill allow-list card.

@@ -64,6 +64,7 @@ struct AgentGenerationDraft: Equatable {
     var pendingStopSequence = ""
     var thinking = "inherit"
     var reasoningEffort = ""
+    var speculation = "inherit"
 
     init(temperature: Float? = nil, maxTokens: Int? = nil, settings: AgentGenerationSettings? = nil) {
         self.temperature = .init(temperature.map { String($0) })
@@ -77,6 +78,7 @@ struct AgentGenerationDraft: Equatable {
         seed = .init(settings?.seed.map { String($0) })
         thinking = settings?.enableThinking.map { $0 ? "on" : "off" } ?? "inherit"
         reasoningEffort = settings?.reasoningEffort ?? ""
+        speculation = settings?.speculativeDecoding.map { $0 ? "on" : "off" } ?? "inherit"
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         stop = .init(settings?.stop.flatMap { try? encoder.encode($0) }.map { String(decoding: $0, as: UTF8.self) })
@@ -90,6 +92,7 @@ struct AgentGenerationDraft: Equatable {
     var overrideCount: Int {
         AgentGenerationField.allCases.filter { self[keyPath: $0.path].isCustom }.count
             + (thinking == "inherit" ? 0 : 1) + (reasoningEffort.isEmpty ? 0 : 1)
+            + (speculation == "inherit" ? 0 : 1)
     }
 
     func stopSequencesIncludingPending() throws -> [String] {
@@ -145,7 +148,8 @@ struct AgentGenerationDraft: Equatable {
             stop: stops,
             enableThinking: thinking == "inherit" ? nil : thinking == "on",
             reasoningEffort: reasoningEffort.isEmpty ? nil : reasoningEffort,
-            templateKwargs: kwargs
+            templateKwargs: kwargs,
+            speculativeDecoding: speculation == "inherit" ? nil : speculation == "on"
         )
         try settings.validate()
         return Values(temperature: temperature, maxTokens: maxTokens, settings: settings.isEmpty ? nil : settings)
