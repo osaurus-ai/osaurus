@@ -21,6 +21,7 @@ struct AgentGenerationSettingsEditor: View {
     @State private var choices: AgentGenerationReasoningChoices?
     @State private var error: String?
     @State private var capabilityRevision = 0
+    @State private var editorWidth: CGFloat = 0
     @State private var showTemplateParameters = false
     @State private var modelDefaults = LocalGenerationDefaults.Defaults.empty
     @State private var runtimeDefaults = VMLXServerGenerationDefaults()
@@ -105,7 +106,9 @@ struct AgentGenerationSettingsEditor: View {
                 }
                 templateParameters
 
-                if let error {
+                if let error,
+                    !AgentGenerationField.allCases.contains(where: { draft.validationMessage(for: $0) == error })
+                {
                     Text(error).font(.system(size: 11)).foregroundColor(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -131,6 +134,11 @@ struct AgentGenerationSettingsEditor: View {
         .background(theme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.width
+        } action: {
+            editorWidth = $0
+        }
         .onAppear {
             restore(); expandForLanding(pendingLanding)
         }
@@ -195,7 +203,7 @@ struct AgentGenerationSettingsEditor: View {
                             Text(ModelReasoningCapabilities.displayLabel(forEffort: level.id)).tag(level.id)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.segmented).labelsHidden()
                     .settingsLandingAnchor("agents.generation.reasoningEffort")
                     if !draft.reasoningEffort.isEmpty,
                         !capabilities.levels.contains(where: { $0.id == draft.reasoningEffort })
@@ -213,7 +221,7 @@ struct AgentGenerationSettingsEditor: View {
                     Text(localized: "On").tag("on")
                     Text(localized: "Off").tag("off")
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.segmented).labelsHidden()
                 .settingsLandingAnchor("agents.generation.thinking")
             } else if draft.thinking != "inherit" {
                 if choices.supportsThinking {
@@ -251,7 +259,7 @@ struct AgentGenerationSettingsEditor: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "slider.horizontal.3")
                 .font(.system(size: 18, weight: .medium)).foregroundColor(theme.accentColor)
-                .padding(10).background(theme.inputBackground, in: RoundedRectangle(cornerRadius: 10))
+                .padding(10).background(theme.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 6) {
                 Text("Generation Overrides", bundle: .module)
                     .font(.system(size: 16, weight: .semibold)).foregroundColor(theme.primaryText)
@@ -263,10 +271,10 @@ struct AgentGenerationSettingsEditor: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            Text("\(draft.overrideCount) overrides")
+            Text("Overrides: \(draft.overrideCount)", bundle: .module)
                 .font(.system(size: 11, weight: .medium)).foregroundColor(theme.accentColor)
                 .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(theme.inputBackground, in: Capsule())
+                .background(theme.accentColor.opacity(0.10), in: Capsule())
                 .fixedSize()
         }.padding(16)
     }
@@ -318,12 +326,13 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     private func inheritedValue(_ field: AgentGenerationField) -> some View {
-        HStack(spacing: 6) {
-            Text(inherited[field].text).font(.system(size: 12, design: .monospaced))
+        let value = inherited[field]
+        return HStack(spacing: 6) {
+            Text(value.text).font(.system(size: 12, design: .monospaced))
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            if !inherited[field].source.isEmpty {
-                Text(inherited[field].source.uppercased())
+            if !value.source.isEmpty {
+                Text(value.source.uppercased())
                     .font(.system(size: 9, weight: .semibold))
             }
         }.foregroundColor(theme.tertiaryText)
@@ -339,12 +348,15 @@ struct AgentGenerationSettingsEditor: View {
 
     private func parameter(_ title: String, description: String, field: AgentGenerationField) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            ViewThatFits(in: .horizontal) {
+            // Use the card width for every row. Ideal text widths made ViewThatFits
+            // mix horizontal and stacked rows on the same editing screen.
+            if editorWidth >= 600 {
                 HStack(alignment: .top, spacing: 14) {
                     rowLabel(title, description).frame(minWidth: 190)
                     modePicker(title, field: field)
                     parameterValue(title, field: field).frame(width: 160)
                 }
+            } else {
                 VStack(alignment: .leading, spacing: 10) {
                     rowLabel(title, description)
                     HStack(alignment: .top, spacing: 12) {
@@ -413,8 +425,12 @@ struct AgentGenerationSettingsEditor: View {
                                 } label: {
                                     Image(systemName: "xmark").font(.system(size: 10))
                                 }
-                                .buttonStyle(.plain).accessibilityLabel(Text("Remove stop sequence \(index + 1)", bundle: .module))
-                            }.padding(8).background(theme.inputBackground, in: RoundedRectangle(cornerRadius: 8))
+                                .buttonStyle(.plain).accessibilityLabel(
+                                    Text("Remove stop sequence \(index + 1)", bundle: .module)
+                                )
+                            }.padding(8)
+                                .background(theme.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
                         }
                     }
                     HStack {
