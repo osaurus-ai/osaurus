@@ -31,10 +31,19 @@ import os.log
 private let batchAdapterLog = Logger(subsystem: "ai.osaurus", category: "BatchAdapter")
 
 struct MLXBatchAdapter {
-    /// Explicit depth buttons impose a ceiling. Auto may explore only the
-    /// existing adaptive range, further limited by the configured token cap.
-    /// Invalid limits are left invalid for the runtime validator, not repaired
-    /// into an apparently valid activation here.
+    /// "No request-level ceiling": the adaptive top rung is vmlx's runtime top rung for the loaded model (its
+    /// verifier capability, `NativeMTPDepthPolicy.runtimeTopRung`). Equal to vmlx-swift's
+    /// `NativeMTPDepthPolicy.adaptiveToRuntimeCeiling` (`.adaptive(maximumDepth: .max)`).
+    static let nativeMTPAdaptiveNoHostCeiling = Int.max
+
+    /// No hard draft depth (Eric's rule): Adaptive governs the draft depth. An explicit depth button pins it
+    /// (`.fixed`, the user's own choice); every other selection is Adaptive up to the runtime's top rung, which
+    /// vmlx resolves per request from the loaded model. The app sets no ceiling of its own: the former
+    /// `min(draftTokenLimit ?? 5, 5)` capped every model at depth 5, including a LiLiCorr block drafter whose
+    /// blocks verify 7 drafts. `draftTokenLimit` is not a ceiling either: no product control sets it (the
+    /// composer, Settings, the admin API and import all clear it through
+    /// `NativeMTPSelectionDefault.adaptiveSelection`), so a value here is a stale default, and vmlx's launch
+    /// resolver already applies it to the START depth only (`resolvedMTPLaunch`), and validates it there.
     static func nativeMTPDepthPolicy(
         _ settings: VMLXServerMTPSettings
     ) -> NativeMTPDepthPolicy {
@@ -43,7 +52,7 @@ struct MLXBatchAdapter {
         {
             return .fixed
         }
-        return .adaptive(maximumDepth: min(settings.draftTokenLimit ?? 5, 5))
+        return .adaptive(maximumDepth: nativeMTPAdaptiveNoHostCeiling)
     }
 
     /// Native MTP is tuned for real chat prefixes, not tiny cold-start
