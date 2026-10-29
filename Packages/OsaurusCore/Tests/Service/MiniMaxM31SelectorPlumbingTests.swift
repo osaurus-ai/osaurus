@@ -757,7 +757,7 @@ struct MiniMaxM31SpeculativePlumbingTests {
         }
     }
 
-    @Test("Switching the row reloads the model; Off decodes plainly even on a holder loaded with the drafter")
+    @Test("Switching the row is a possible load input; Off decodes plainly even on a holder loaded with the drafter")
     func switchingReloadsAndOffNeverDrafts() throws {
         let bundle = try MiniMaxM31Bundle.materialize()
         defer { MiniMaxM31Bundle.remove(bundle) }
@@ -772,8 +772,10 @@ struct MiniMaxM31SpeculativePlumbingTests {
                     previous: try runtime(previous),
                     next: try runtime(next)
                 )
-                // Every change of the row unloads resident models (including untouched -> On, which loads
-                // the same drafter again for this bundle); re-selecting the same value does not.
+                // Every change of the row is flagged as a possible load input (settings-level, any bundle);
+                // re-selecting the same value is not. Whether THIS bundle's resident model reloads is decided per
+                // model (`ModelRuntime.applySpeculativeLoadChange`): it does not, see
+                // SpeculativeToggleResidencyTests.
                 #expect(reloads == (previous != next), "\(previous ?? "default") -> \(next ?? "default")")
             }
         }
@@ -791,8 +793,9 @@ struct MiniMaxM31SpeculativePlumbingTests {
         #expect(try on.generateParameters(requestMTP: off).draftStrategy == nil)
         #expect(MLXBatchAdapter.nativeMTPDepthPolicy(off) == .fixed)
 
-        // An On request on an Off-loaded holder stays plain (no error, no phantom strategy); the reload
-        // above is what brings the drafter in.
+        // An On request on an Off-loaded holder that was NOT updated stays plain (no error, no phantom
+        // strategy); `applySpeculativeLoadChange` updates the resident holder in place instead of reloading
+        // (SpeculativeToggleResidencyTests).
         let offLoaded = try M31LoadPlan(bundle: bundle, mtp: off)
         #expect(try offLoaded.generateParameters(requestMTP: try m31SavedMTP(segment: "auto")).draftStrategy == nil)
     }

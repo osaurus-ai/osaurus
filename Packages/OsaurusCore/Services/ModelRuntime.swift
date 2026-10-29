@@ -431,11 +431,18 @@ public actor ModelRuntime {
         /// entry cannot outlive them. See `weightsFingerprint(for:)`.
         let weightsFingerprint: String
         let isVLM: Bool
-        let draftStrategy: MLXLMCommon.DraftStrategy?
+        /// The loaded speculative strategy. `var` only for `applySpeculativeLoadChange`: a Speculative Decoding
+        /// change the resident graph already serves (a lazily attached DSpark drafter) updates it in place
+        /// instead of reloading the weights. Mutated on the runtime actor only.
+        var draftStrategy: MLXLMCommon.DraftStrategy?
         let dflash2BlockSize: Int?
-        let nativeMTPStatus: String?
-        let nativeMTPReason: String?
-        let nativeMTPAdmission: NativeMTPAdmission
+        var nativeMTPStatus: String?
+        var nativeMTPReason: String?
+        var nativeMTPAdmission: NativeMTPAdmission
+        /// What the load contained (`SpeculativeLoadFacts`) and where from: lets a later Speculative Decoding
+        /// change be judged against this bundle's own launch plan.
+        var speculativeLoadFacts: SpeculativeLoadFacts?
+        let modelDirectory: URL?
         /// Numeric allocator-cache cap resolved from the user-visible
         /// memory-safety plan used for this exact load. `nil` means no numeric
         /// cap; the decode-path-specific admitted-ceiling requirement is
@@ -476,7 +483,9 @@ public actor ModelRuntime {
             admittedWorkingSetBytes: UInt64? = nil,
             admittedLoadBudgetBytes: UInt64? = nil,
             requiresAdmittedMLXAllocatorCeiling: Bool = false,
-            modelVolumeKind: String? = nil
+            modelVolumeKind: String? = nil,
+            speculativeLoadFacts: SpeculativeLoadFacts? = nil,
+            modelDirectory: URL? = nil
         ) {
             self.name = name
             self.container = container
@@ -494,6 +503,8 @@ public actor ModelRuntime {
             self.admittedWorkingSetBytes = admittedWorkingSetBytes
             self.admittedLoadBudgetBytes = admittedLoadBudgetBytes
             self.requiresAdmittedMLXAllocatorCeiling = requiresAdmittedMLXAllocatorCeiling
+            self.speculativeLoadFacts = speculativeLoadFacts
+            self.modelDirectory = modelDirectory
         }
     }
 
@@ -2892,6 +2903,63 @@ public actor ModelRuntime {
         // A basename is only safe when it identifies one runtime owner. If
         // multiple installed repos share it, do not cancel either idle timer.
         return tailMatches.count == 1 ? tailMatches.first : nil
+    }
+
+    /// A Speculative Decoding change that may alter what a load contains (`ServerController.mtpLoadInputsChanged`,
+    /// with every other load input unchanged). Each resident model is judged against its own bundle's launch plan
+    /// under `settings` (`SpeculativeLoadFacts.keepsResidentWeights`): a model whose loaded graph already serves the
+    /// new selection stays resident and its request strategy follows the new setting (Off (AR) <-> On (Adaptive) on
+    /// a DSpark bundle, the untouched default -> an explicit On that loads the same thing); every other model is
+    /// unloaded and reloads on its next request, as before. In-flight cold loads resolved their plan under the old
+    /// settings and are cancelled, as the full clear did. Returns the number of models unloaded.
+    ///
+    /// A DSpark drafter that was attached stays attached after Off: requests under Off name no strategy, so vmlx
+    /// neither drafts nor verifies with it (the GUI proof's Off turns: `draft=none`, no `[dSpark]` lines). Its
+    /// memory (MiniMax-M3.1: ~2.1 GiB) is released with the model; vmlx has no detach call today.
+    func applySpeculativeLoadChange(settings: VMLXServerRuntimeSettings) async -> Int {
+        let loading = loadingTasks.map { ($0.key, $0.value) }
+        if !loading.isEmpty {
+            await cancelAndDrainLoadingTasks(loading)
+        }
+        var unloaded = 0
+        for name in Array(modelCache.keys) {
+            guard let holder = modelCache[name] else { continue }
+            var keep = false
+            var nextFacts: SpeculativeLoadFacts?
+            if let loadedFacts = holder.speculativeLoadFacts, let directory = holder.modelDirectory,
+                let plan = try? Self.resolveNativeMTPLaunchPlan(
+                    modelName: name, modelDirectory: directory, settings: settings)
+            {
+                let facts = SpeculativeLoadFacts(
+                    loadConfiguration: plan.loadConfiguration, draftStrategy: plan.draftStrategy)
+                nextFacts = facts
+                keep = SpeculativeLoadFacts.keepsResidentWeights(loaded: loadedFacts, next: facts)
+                if keep {
+                    let resident = SpeculativeLoadFacts.residentAfterKeptChange(
+                        resident: .init(
+                            strategy: holder.draftStrategy, admission: holder.nativeMTPAdmission, facts: loadedFacts),
+                        next: .init(strategy: plan.draftStrategy, admission: plan.admission, facts: facts))
+                    holder.draftStrategy = resident.strategy
+                    holder.nativeMTPAdmission = resident.admission
+                    holder.speculativeLoadFacts = resident.facts
+                    holder.nativeMTPStatus = plan.statusLine
+                    holder.nativeMTPReason = plan.reason
+                }
+            }
+            genLog.info(
+                "speculativeChange: model=\(name, privacy: .public) decision=\(keep ? "keep" : "reload", privacy: .public) loaded=\(Self.describeSpeculativeLoadFacts(holder.speculativeLoadFacts), privacy: .public) next=\(Self.describeSpeculativeLoadFacts(nextFacts), privacy: .public)"
+            )
+            if !keep, await unload(name: name, reason: .settingsClear) {
+                unloaded += 1
+            }
+        }
+        return unloaded
+    }
+
+    nonisolated static func describeSpeculativeLoadFacts(_ facts: SpeculativeLoadFacts?) -> String {
+        guard let facts else { return "unknown" }
+        let strategy = facts.strategy.map { $0.kind + ($0.blockSize.map { ":b\($0)" } ?? "") } ?? "none"
+        return "\(strategy)/nativeMTP=\(facts.nativeMTPInGraph)"
     }
 
     /// Invalidates the cached RuntimeConfig so the next request reads fresh values.
@@ -5328,7 +5396,10 @@ public actor ModelRuntime {
                 requiresAdmittedMLXAllocatorCeiling:
                     loadBundleFacts.isPlainDeepseekV4AffineJANG
                     || loadBundleFacts.isDeepseekV41AffineJANG,
-                modelVolumeKind: HandledGPUFailureReport.volumeKind(of: localURL)
+                modelVolumeKind: HandledGPUFailureReport.volumeKind(of: localURL),
+                speculativeLoadFacts: SpeculativeLoadFacts(
+                    loadConfiguration: mtpPlan.loadConfiguration, draftStrategy: mtpPlan.draftStrategy),
+                modelDirectory: localURL
             )
 
             // Install the cache coordinator before the coalesced load task
