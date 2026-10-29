@@ -54,15 +54,18 @@ struct AgentGenerationSettingsEditor: View {
                     parameter("Seed", value: $draft.seed, anchor: "agents.generation.seed")
                 }
                 .padding(.top, 10)
-                parameter("Stop sequences (JSON array)", value: $draft.stop, anchor: "agents.generation.stop", multiline: true)
+                parameter("Stop sequences (JSON array)", value: $draft.stop, anchor: "agents.generation.stop",
+                    multiline: true, inheritedJSON: "[]")
                     .padding(.top, 10)
+                Text("An array of additional stop strings, for example [\"END\"]. Inherit adds none ([]); the model's end-of-turn tokens still apply.", bundle: .module)
+                    .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
             }
 
             DisclosureGroup(L("Template parameters (JSON)"), isExpanded: $showTemplateParameters) {
                 parameter("Template parameters (JSON)", value: $draft.templateKwargs,
-                    anchor: "agents.generation.templateKwargs", multiline: true)
+                    anchor: "agents.generation.templateKwargs", multiline: true, inheritedJSON: "{}")
                     .padding(.top, 10)
-                Text("A JSON object for the selected model's chat template. Conversation, tools and special-token variables cannot be replaced.", bundle: .module)
+                Text("A JSON object of additional parameters, not the chat template itself. Inherit adds none ({}); the model's template defaults still apply. Conversation, tools and special-token variables cannot be replaced.", bundle: .module)
                     .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
             }
 
@@ -173,14 +176,17 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     private func parameter(_ title: String, value: Binding<AgentGenerationFieldDraft>, anchor: String,
-        multiline: Bool = false) -> some View
+        multiline: Bool = false, inheritedJSON: String? = nil) -> some View
     {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(LocalizedStringKey(title), bundle: .module)
                     .font(.system(size: 11, weight: .medium)).foregroundColor(theme.secondaryText)
                 Spacer(minLength: 4)
-                Toggle(L("Custom"), isOn: value.isCustom).toggleStyle(.checkbox)
+                Toggle(L("Custom"), isOn: Binding(
+                    get: { value.wrappedValue.isCustom },
+                    set: { value.wrappedValue.setCustom($0, inheritedText: inheritedJSON) }
+                )).toggleStyle(.checkbox)
                     .font(.system(size: 11))
             }
             if value.wrappedValue.isCustom {

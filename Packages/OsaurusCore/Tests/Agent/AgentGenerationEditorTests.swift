@@ -4,6 +4,56 @@ import Testing
 @testable import OsaurusCore
 
 struct AgentGenerationEditorTests {
+    @Test("enabling custom JSON starts with the inherited no-override values")
+    func customJSONStartsWithInheritedValues() throws {
+        var draft = AgentGenerationDraft()
+        draft.stop.setCustom(true, inheritedText: "[]")
+        draft.templateKwargs.setCustom(true, inheritedText: "{}")
+        #expect(draft.stop.text == "[]")
+        #expect(draft.templateKwargs.text == "{}")
+        let values = try draft.validated()
+        #expect(values.settings?.stop == [])
+        #expect(values.settings?.templateKwargs == [:])
+        draft.stop.setCustom(false)
+        draft.templateKwargs.setCustom(false)
+        #expect(try draft.validated().settings == nil)
+    }
+
+    @Test("custom toggles preserve existing JSON edits and saved values")
+    func customJSONPreservesEdits() throws {
+        var draft = AgentGenerationDraft(settings: .init(stop: ["END"],
+            templateKwargs: ["template": .object(["city": .null])]))
+        let saved = try draft.validated().settings
+        let original = draft
+        draft.stop.setCustom(false)
+        draft.templateKwargs.setCustom(false)
+        draft.stop.setCustom(true, inheritedText: "[]")
+        draft.templateKwargs.setCustom(true, inheritedText: "{}")
+        #expect(draft == original)
+        #expect(try draft.validated().settings == saved)
+        draft.templateKwargs.text = "{invalid JSON"
+        draft.templateKwargs.setCustom(false)
+        draft.templateKwargs.setCustom(true, inheritedText: "{}")
+        #expect(draft.templateKwargs.text == "{invalid JSON")
+        #expect(throws: (any Error).self) { try draft.validated() }
+    }
+
+    @Test("blank custom JSON validation names the visible Custom checkbox")
+    func blankJSONValidationUsesCustomLabel() throws {
+        for field in ["Template parameters", "Stop sequences"] {
+            var value = AgentGenerationFieldDraft()
+            value.isCustom = true
+            value.text = " \n "
+            do {
+                _ = try value.value(named: field)
+                Issue.record("Blank custom JSON must not save")
+            } catch {
+                #expect(error.localizedDescription ==
+                    "Enter a value for \(field), or deselect Custom to inherit defaults.")
+            }
+        }
+    }
+
     @Test("inherit and explicit zero/false survive the agent editor")
     func draftRoundTrip() throws {
         let settings = AgentGenerationSettings(topP: 0, topK: 0, minP: 0,

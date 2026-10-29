@@ -9,11 +9,21 @@ struct AgentGenerationFieldDraft: Equatable {
         text = value ?? ""
     }
 
+    /// Start a new override from the inherited value without discarding an unsaved edit.
+    mutating func setCustom(_ enabled: Bool, inheritedText: String? = nil) {
+        isCustom = enabled
+        if enabled, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let inheritedText
+        {
+            text = inheritedText
+        }
+    }
+
     func value(named name: String) throws -> String? {
         guard isCustom else { return nil }
         let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else {
-            throw ChatTurnOverrides.ValidationError.invalid("Enter a value for \(name), or select Inherit.")
+            throw ChatTurnOverrides.ValidationError.invalid("Enter a value for \(name), or deselect Custom to inherit defaults.")
         }
         return raw
     }

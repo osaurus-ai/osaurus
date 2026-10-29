@@ -245,3 +245,5 @@ Memory estimates are advisory for this family. The license is **FLUX Kommunity (
 ## Per-agent generation defaults
 
 Settings → Agents → a custom agent → General → Configure → Advanced Settings → Generation Overrides holds Temperature, Max Tokens, Top P, Top K and the model's supported Thinking / Reasoning effort choices. More sampling parameters contains Min P, repetition/frequency/presence penalties, seed and stop sequences; Template parameters (JSON) supplies model-template variables. Create Agent also has an Advanced Settings disclosure. Inherit preserves existing defaults; custom values save per agent. External harnesses keep their own generation settings.
+
+Selecting Custom for Stop sequences starts with `[]` (no additional stop strings); selecting it for Template parameters starts with `{}` (no additional template parameters). These fields contain JSON overrides, not the model's full chat template or end-of-turn token list. The model's own template defaults and end-of-turn tokens still apply. Custom toggles preserve existing edits; deselect Custom to inherit defaults again. A blank custom field must be filled or have Custom deselected before saving.
