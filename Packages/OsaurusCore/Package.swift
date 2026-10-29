@@ -357,10 +357,14 @@ let package = Package(
         // by the store budget), no redundant post-answer entry under aligned prefill, runtime receipts
         // (VMLX_RUNTIME_RECEIPTS=1), DSpark measured width pricing (VMLX_DSPARK_MEASURED_WIDTH=1; off); the floor at
         // prefill chunk boundaries; fused attention K4 with device-coherent block partials (vMLX 8da26375: garbage on
-        // the M5 Ultra before; fused decode stays off by default). TEST PIN.
+        // the M5 Ultra before; fused decode stays off by default); 10-29c: M3 cold prefill with the turn cuts as one
+        // layer-major group per chunk (routed experts once per group; bit-identical), lanes reserved once with
+        // allocator headroom, buffer cache kept through the prefill, DSpark taps only in the drafter window, ONE prefix
+        // entry per reusable boundary (K + history cuts, zero-copy; was N / N-1 / N - gpl); native MTP: no
+        // request-level depth ceiling (the runtime's verifier top rung governs Adaptive). TEST PIN.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "380fdcd50fc9bf99abe4749faf7dbc3f2da1432d"
+            revision: "bc5a3b344a67681e375c98b2f8b124354e366b3b"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
