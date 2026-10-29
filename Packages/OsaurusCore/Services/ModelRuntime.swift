@@ -555,6 +555,9 @@ public actor ModelRuntime {
     }
     private var residentMetadata: [String: ResidentMetadata] = [:]
     private var parentRetentions = ParentResidencyRetentions()
+    /// Models a running conversation loop generates with (`ConversationResidencyHold`): no idle timer runs for them
+    /// until the loop exits.
+    private var conversationHolds = ConversationResidencyHolds()
     /// Serializes teardown of one exact published generation. Without this,
     /// two actor-reentrant unload calls can both pass an identity check, then
     /// one can remove/reload the name while the other is suspended draining a
@@ -1160,6 +1163,35 @@ public actor ModelRuntime {
         {
             await scheduleIdleResidency(for: parent.modelName)
         }
+    }
+
+    /// Ends a conversation loop's hold (`AgentToolLoop.run` calls it when the loop exits, on every path). Each model
+    /// no live loop holds anymore gets its configured idle policy now, i.e. its idle timer counts from the loop's
+    /// end. A model still generating keeps its lease; that generation's end schedules it as usual.
+    func releaseConversationResidencyHold(_ hold: ConversationResidencyHold) async {
+        let freed = conversationHolds.release(hold)
+        guard !freed.isEmpty else { return }
+        genLog.info(
+            "conversationHold: release id=\(String(hold.id.uuidString.prefix(8)), privacy: .public) models=\(freed.joined(separator: ","), privacy: .public)"
+        )
+        for name in freed {
+            await scheduleIdleResidency(for: name)
+        }
+    }
+
+    /// Registers the current task's conversation loop (`ConversationResidencyHoldContext.current`), if any, as
+    /// holding `modelName` resident. Called at every generation start; returns the hold when one was registered.
+    @discardableResult
+    func registerConversationGeneration(modelName: String) -> ConversationResidencyHold? {
+        guard let hold = ConversationResidencyHoldContext.current,
+            conversationHolds.register(hold, model: modelName)
+        else { return nil }
+        return hold
+    }
+
+    /// Test/diagnostic view: whether a running conversation loop holds `name`.
+    func isHeldByConversation(_ name: String) -> Bool {
+        conversationHolds.holds(name)
     }
 
     private func validateParentRetention(
@@ -2892,13 +2924,18 @@ public actor ModelRuntime {
     /// AppleScript warm deadline. The handoff's exact-token cleanup, not the
     /// ordinary chat idle timer, releases it. Sharing the resident with a new
     /// request revokes ownership and restores the configured idle policy.
+    ///
+    /// A model a running conversation loop holds (`ConversationResidencyHold`: mid-turn, waiting on a tool result or
+    /// a permission prompt) is not idle either: no timer runs until the loop exits, and the configured policy then
+    /// counts from the loop's end.
     nonisolated static func resolvedIdleResidencyPolicy(
         configured: ModelIdleResidencyPolicy,
         source: RequestSource?,
         referencedByChat: Bool,
-        hasHandoffOwner: Bool
+        hasHandoffOwner: Bool,
+        heldByConversation: Bool = false
     ) -> ModelIdleResidencyPolicy {
-        if hasHandoffOwner { return .never }
+        if hasHandoffOwner || heldByConversation { return .never }
         if case .afterSeconds = configured, source == .chatUI, !referencedByChat {
             return .immediately
         }
@@ -2949,17 +2986,19 @@ public actor ModelRuntime {
         let hasHandoffOwner =
             residentMetadata[modelName]?.childOwnershipToken != nil
             || parentRetentions.holds(residentMetadata[modelName]?.identity)
+        let heldByConversation = conversationHolds.holds(modelName)
         let resolved = Self.resolvedIdleResidencyPolicy(
             configured: configured,
             source: lastUseSource[modelName],
             referencedByChat: referencedByChat,
-            hasHandoffOwner: hasHandoffOwner
+            hasHandoffOwner: hasHandoffOwner,
+            heldByConversation: heldByConversation
         )
         let policy =
             isOnVoiceCall(modelName)
             ? Self.voiceCallIdleResidency(resolved, configured: configured) : resolved
         genLog.info(
-            "idleResidency: model=\(modelName, privacy: .public) policy=\(String(describing: policy), privacy: .public) handoffOwned=\(hasHandoffOwner, privacy: .public) chatReferenced=\(referencedByChat, privacy: .public)"
+            "idleResidency: model=\(modelName, privacy: .public) policy=\(String(describing: policy), privacy: .public) handoffOwned=\(hasHandoffOwner, privacy: .public) chatReferenced=\(referencedByChat, privacy: .public) conversationHeld=\(heldByConversation, privacy: .public)"
         )
         if case .never = policy {
             pendingIdleResidencyDecisions.removeValue(forKey: modelName)
@@ -6072,7 +6111,12 @@ public actor ModelRuntime {
             phase: modelCache[modelName] == nil ? .loading : .queued
         )
 
-        genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
+        // A generation inside a conversation loop keeps its model resident until the loop exits (tool waits,
+        // permission prompts, the next step), not only until this generation ends.
+        let conversationHold = registerConversationGeneration(modelName: modelName)
+        genLog.info(
+            "generateEventStream: start model=\(modelName, privacy: .public) conversationHold=\(conversationHold.map { String($0.id.uuidString.prefix(8)) } ?? "none", privacy: .public)"
+        )
         await markModelActiveForResidency(modelName)
         // Ownership belongs only to the handoff that cold-published this
         // generation. If another surface later reuses it, that surface has
