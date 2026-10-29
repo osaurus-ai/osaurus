@@ -345,10 +345,11 @@ let package = Package(
         // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
         // vmlx-swift feat/minimax-m31-osaurus-pin (main 22848d3b + perf/minimax-m3-aligned-prefix-cache): MiniMax-M3.1
         // (JANGT experts, R8 block-sparse MSA + selection kernels, the dspark/ drafter, aligned-chunk prefix cache),
-        // thinking_mode from the thinking toggle, HF-faithful tojson, dSpark verify-width stats. TEST PIN.
+        // thinking_mode from the thinking toggle, HF-faithful tojson, dSpark verify-width stats, RMSNorm scale cache
+        // (+4.7 % decode), the fused-decode seam (off). TEST PIN.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "aa05a820ff0ab62fae8bd386e72bcf354029e85f"
+            revision: "d447c5fc581e38f023e3854066b537efbfab932b"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
