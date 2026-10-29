@@ -317,7 +317,7 @@ struct SettingsSearchSelfFindProbe {
             ("Frequency penalty", "agents.generation.frequencyPenalty"),
             ("Presence penalty", "agents.generation.presencePenalty"),
             ("Seed", "agents.generation.seed"),
-            ("Stop sequences (JSON array)", "agents.generation.stop"),
+            ("Stop sequences", "agents.generation.stop"),
             ("Thinking", "agents.generation.thinking"),
             ("Reasoning effort", "agents.generation.reasoningEffort"),
             ("Template parameters (JSON)", "agents.generation.templateKwargs"),

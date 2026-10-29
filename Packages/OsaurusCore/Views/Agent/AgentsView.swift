@@ -3679,23 +3679,25 @@ struct AgentDetailView: View {
     /// the Configure tab leads with model + capabilities + system prompt for the
     /// 90% case.
     private var generationOverridesSection: some View {
-        AgentDetailSection(title: L("Generation Overrides"), icon: "slider.horizontal.3") {
+        Group {
             if agentRuntime != .builtIn {
-                Text("These generation defaults apply to Osaurus (built-in). The selected external runtime owns its generation settings.", bundle: .module)
-                    .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                AgentDetailSection(title: L("Generation Overrides"), icon: "slider.horizontal.3") {
+                    Text("These generation defaults apply to Osaurus (built-in). The selected external runtime owns its generation settings.", bundle: .module)
+                        .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                }
             } else {
-            AgentGenerationSettingsEditor(
-                modelID: generationModelID,
-                modelIsLocal: pickerItems.first(where: { $0.id == generationModelID })?.source == .local,
-                catalogCapabilities: pickerItems.first(where: { $0.id == generationModelID })?.reasoningCapabilities,
-                savedTemperature: Float(temperature), savedMaxTokens: Int(maxTokens),
-                savedSettings: generationSettings
-            ) { values in
-                temperature = values.temperature.map { String($0) } ?? ""
-                maxTokens = values.maxTokens.map { String($0) } ?? ""
-                generationSettings = values.settings
-                saveAgent()
-            }
+                AgentGenerationSettingsEditor(
+                    modelID: generationModelID,
+                    modelIsLocal: pickerItems.first(where: { $0.id == generationModelID })?.source == .local,
+                    catalogCapabilities: pickerItems.first(where: { $0.id == generationModelID })?.reasoningCapabilities,
+                    savedTemperature: Float(temperature), savedMaxTokens: Int(maxTokens),
+                    savedSettings: generationSettings
+                ) { values in
+                    temperature = values.temperature.map { String($0) } ?? ""
+                    maxTokens = values.maxTokens.map { String($0) } ?? ""
+                    generationSettings = values.settings
+                    saveAgent()
+                }
             }
         }
     }
@@ -8588,6 +8590,7 @@ private struct AgentEditorSheet: View {
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker: Bool = false
     @State private var generationDraft = AgentGenerationDraft()
+    @State private var showGenerationSettings = false
     @State private var generationChoices: AgentGenerationReasoningChoices?
     @State private var showAddModelWarning: Bool = false
     @State private var hasAppeared: Bool = false
@@ -8633,18 +8636,33 @@ private struct AgentEditorSheet: View {
     }
 
     private var generationField: some View {
-        DisclosureGroup(L("Advanced Settings")) {
-            AgentGenerationSettingsEditor(
-                modelID: generationModelID,
-                modelIsLocal: pickerItems.first(where: { $0.id == generationModelID })?.source == .local,
-                catalogCapabilities: pickerItems.first(where: { $0.id == generationModelID })?.reasoningCapabilities,
-                savedTemperature: nil, savedMaxTokens: nil, savedSettings: nil,
-                onSave: { _ in }, showsSaveButton: false,
-                onDraftChange: { generationDraft = $0 },
-                onReasoningChoicesChange: { generationChoices = $0 },
-                initialDraft: generationDraft
-            )
-            .padding(.top, 12)
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { showGenerationSettings.toggle() }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(showGenerationSettings ? 90 : 0))
+                    Image(systemName: "wrench.adjustable")
+                    Text("Advanced Settings", bundle: .module)
+                    Spacer()
+                }
+                .font(.system(size: 12, weight: .semibold)).foregroundColor(theme.secondaryText)
+                .padding(12).background(theme.cardBackground, in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            if showGenerationSettings {
+                AgentGenerationSettingsEditor(
+                    modelID: generationModelID,
+                    modelIsLocal: pickerItems.first(where: { $0.id == generationModelID })?.source == .local,
+                    catalogCapabilities: pickerItems.first(where: { $0.id == generationModelID })?.reasoningCapabilities,
+                    savedTemperature: nil, savedMaxTokens: nil, savedSettings: nil,
+                    onSave: { _ in }, showsSaveButton: false,
+                    onDraftChange: { generationDraft = $0 },
+                    onReasoningChoicesChange: { generationChoices = $0 },
+                    initialDraft: generationDraft
+                )
+            }
         }
     }
 

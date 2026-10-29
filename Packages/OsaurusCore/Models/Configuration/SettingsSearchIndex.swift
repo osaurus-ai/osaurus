@@ -1975,8 +1975,8 @@ public enum SettingsSearchIndex {
             id: "agents.generation.stop",
             tab: .agents,
             section: "Generation Overrides",
-            title: "Stop sequences (JSON array)",
-            keywords: ["agent stop sequences (json array)", "per-agent generation", "agent defaults", "custom stop strings", "empty array"],
+            title: "Stop sequences",
+            keywords: ["agent stop sequences (json array)", "per-agent generation", "agent defaults", "custom stop strings", "stop chips", "empty array"],
             disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
             declarativeSection: "agents"
         ),
@@ -2003,7 +2003,7 @@ public enum SettingsSearchIndex {
             tab: .agents,
             section: "Generation Overrides",
             title: "Template parameters (JSON)",
-            keywords: ["agent template parameters (json)", "per-agent generation", "agent defaults", "custom template variables", "empty object"],
+            keywords: ["agent template parameters (json)", "per-agent generation", "agent defaults", "custom template variables", "advanced chat template parameters", "empty object"],
             disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
             declarativeSection: "agents"
         ),

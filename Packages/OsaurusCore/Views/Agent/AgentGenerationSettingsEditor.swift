@@ -1,4 +1,5 @@
 import SwiftUI
+@preconcurrency import MLXLMCommon
 
 /// Custom-agent settings only. Editing never writes the shared per-model option store.
 struct AgentGenerationSettingsEditor: View {
@@ -20,8 +21,24 @@ struct AgentGenerationSettingsEditor: View {
     @State private var choices: AgentGenerationReasoningChoices?
     @State private var error: String?
     @State private var capabilityRevision = 0
-    @State private var showMoreSampling = false
     @State private var showTemplateParameters = false
+    @State private var modelDefaults = LocalGenerationDefaults.Defaults.empty
+    @State private var runtimeDefaults = VMLXServerGenerationDefaults()
+    @State private var defaultsModelID: String?
+    @State private var appTopP: Float?
+    @State private var modelOptions: [String: ModelOptionValue] = [:]
+
+    private var inherited: AgentGenerationInheritedValues {
+        .resolve(
+            modelID: defaultsModelID == modelID ? modelID : nil,
+            isLocal: modelIsLocal,
+            modelDefaults: modelDefaults,
+            runtime: runtimeDefaults,
+            appTopP: appTopP,
+            modelOptions: modelOptions,
+            draft: draft
+        )
+    }
 
     private struct CapabilityKey: Hashable {
         let modelID: String?
@@ -31,80 +48,131 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Inherit keeps the existing model and server defaults. Custom values are saved only for this agent.", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 14) {
-                parameter("Temperature", value: $draft.temperature, anchor: "agents.generation.temperature")
-                parameter("Max Tokens", value: $draft.maxTokens, anchor: "agents.generation.maxTokens")
-                parameter("Top P", value: $draft.topP, anchor: "agents.generation.topP")
-                parameter("Top K", value: $draft.topK, anchor: "agents.generation.topK")
-            }
-
-            reasoningControls
-
-            DisclosureGroup(L("More sampling parameters"), isExpanded: $showMoreSampling) {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 14) {
-                    parameter("Min P", value: $draft.minP, anchor: "agents.generation.minP")
-                    parameter("Repetition penalty", value: $draft.repetitionPenalty, anchor: "agents.generation.repetitionPenalty")
-                    parameter("Frequency penalty", value: $draft.frequencyPenalty, anchor: "agents.generation.frequencyPenalty")
-                    parameter("Presence penalty", value: $draft.presencePenalty, anchor: "agents.generation.presencePenalty")
-                    parameter("Seed", value: $draft.seed, anchor: "agents.generation.seed")
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider().overlay(theme.cardBorder)
+            VStack(alignment: .leading, spacing: 24) {
+                group("Sampling", subtitle: "How tokens are chosen") {
+                    parameter(
+                        "Temperature",
+                        description: "Randomness of token choice. Lower is more focused, higher is more varied.",
+                        field: .temperature
+                    )
+                    parameter(
+                        "Top P",
+                        description: "Sample only from tokens within this cumulative probability (0–1).",
+                        field: .topP
+                    )
+                    parameter("Top K", description: "Sample only from the K most likely tokens.", field: .topK)
+                    parameter(
+                        "Min P",
+                        description: "Drop tokens below this fraction of the most likely token's probability.",
+                        field: .minP
+                    )
                 }
-                .padding(.top, 10)
-                parameter("Stop sequences (JSON array)", value: $draft.stop, anchor: "agents.generation.stop",
-                    multiline: true, inheritedJSON: "[]")
-                    .padding(.top, 10)
-                Text("An array of additional stop strings, for example [\"END\"]. Inherit adds none ([]); the model's end-of-turn tokens still apply.", bundle: .module)
-                    .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
-            }
-
-            DisclosureGroup(L("Template parameters (JSON)"), isExpanded: $showTemplateParameters) {
-                parameter("Template parameters (JSON)", value: $draft.templateKwargs,
-                    anchor: "agents.generation.templateKwargs", multiline: true, inheritedJSON: "{}")
-                    .padding(.top, 10)
-                Text("A JSON object of additional parameters, not the chat template itself. Inherit adds none ({}); the model's template defaults still apply. Conversation, tools and special-token variables cannot be replaced.", bundle: .module)
-                    .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
-            }
-
-            if let error {
-                Text(error).font(.system(size: 11)).foregroundColor(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                Button(L("Reset to inherited")) {
-                    draft = AgentGenerationDraft()
-                    save()
+                group("Length & reasoning", subtitle: "How much and when to stop") {
+                    parameter(
+                        "Max Tokens",
+                        description: "Upper limit on tokens generated in one response, including reasoning.",
+                        field: .maxTokens
+                    )
+                    reasoningControls
+                    stopSequences
                 }
-                .buttonStyle(.borderless)
-                if showsSaveButton {
-                    Spacer()
-                    Button(L("Save generation defaults"), action: save)
-                        .buttonStyle(.borderedProminent)
-                        .disabled((choices == nil || choices?.modelID != modelID)
-                            && (draft.reasoningEffort != "" || draft.thinking != "inherit"))
+                group("Repetition", subtitle: "Discourage repeated text") {
+                    parameter(
+                        "Repetition penalty",
+                        description: "Multiplicative penalty on tokens already used. 1.0 means off.",
+                        field: .repetitionPenalty
+                    )
+                    parameter(
+                        "Frequency penalty",
+                        description: "Penalizes tokens in proportion to how often they've appeared.",
+                        field: .frequencyPenalty
+                    )
+                    parameter(
+                        "Presence penalty",
+                        description: "Penalizes tokens that have appeared at least once.",
+                        field: .presencePenalty
+                    )
+                }
+                group("Reproducibility", subtitle: "") {
+                    parameter(
+                        "Seed",
+                        description: "A fixed seed requests repeatable sampling; results also depend on the backend.",
+                        field: .seed
+                    )
+                }
+                templateParameters
+
+                if let error {
+                    Text(error).font(.system(size: 11)).foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Button(L("Reset to inherited")) {
+                        draft = AgentGenerationDraft()
+                        save()
+                    }
+                    .buttonStyle(.borderless)
+                    if showsSaveButton {
+                        Spacer()
+                        Button(L("Save generation defaults"), action: save)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(
+                                (choices == nil || choices?.modelID != modelID)
+                                    && (draft.reasoningEffort != "" || draft.thinking != "inherit")
+                            )
+                    }
                 }
             }
+            .padding(16)
         }
-        .onAppear { restore(); expandForLanding(pendingLanding) }
+        .background(theme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
+        .onAppear {
+            restore(); expandForLanding(pendingLanding)
+        }
         .onChange(of: pendingLanding) { _, value in expandForLanding(value) }
         .onChange(of: draft) { _, value in
             onDraftChange?(value)
             if !showsSaveButton {
-                do { _ = try value.validated(); error = nil }
-                catch { self.error = error.localizedDescription }
+                do { _ = try value.validated(); error = nil } catch { self.error = error.localizedDescription }
             }
         }
         .onChange(of: choices) { _, value in onReasoningChoicesChange?(value) }
-        .task(id: CapabilityKey(modelID: modelID, isLocal: modelIsLocal, catalog: catalogCapabilities, revision: capabilityRevision)) {
+        .task(
+            id: CapabilityKey(
+                modelID: modelID,
+                isLocal: modelIsLocal,
+                catalog: catalogCapabilities,
+                revision: capabilityRevision
+            )
+        ) {
             choices = nil
+            defaultsModelID = nil
+            appTopP = ChatConfigurationStore.load().topPOverride
+            modelOptions = modelID.flatMap { ModelOptionsStore.shared.loadOptions(for: $0) } ?? [:]
+            let id = modelID
+            let local = modelIsLocal
+            let snapshot = await Task.detached(priority: .utility) {
+                let runtime = await RuntimeConfig.snapshot()
+                let bundle = id.flatMap { local ? LocalGenerationDefaults.defaults(forModelId: $0) : nil } ?? .empty
+                return (runtime.generation, bundle)
+            }.value
+            guard !Task.isCancelled else { return }
+            runtimeDefaults = snapshot.0
+            modelDefaults = snapshot.1
+            defaultsModelID = modelID
             guard let modelID else { return }
             var resolved = await AgentGenerationReasoningChoices.resolve(modelID: modelID, isLocal: modelIsLocal)
             guard !Task.isCancelled else { return }
             if let catalogCapabilities { resolved.efforts = catalogCapabilities }
             choices = resolved
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ServerRuntimeSettingsStore.didSaveNotification)) { _ in
+            capabilityRevision += 1
         }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             capabilityRevision += 1
@@ -139,11 +207,13 @@ struct AgentGenerationSettingsEditor: View {
                 unsupportedReasoning
             }
             if choices.showsThinkingControl {
+                rowLabel("Thinking", "Let the model reason before answering, on models that support it.")
                 Picker(L("Thinking"), selection: $draft.thinking) {
                     Text(localized: "Inherit").tag("inherit")
                     Text(localized: "On").tag("on")
                     Text(localized: "Off").tag("off")
                 }
+                .pickerStyle(.segmented)
                 .settingsLandingAnchor("agents.generation.thinking")
             } else if draft.thinking != "inherit" {
                 if choices.supportsThinking {
@@ -153,7 +223,9 @@ struct AgentGenerationSettingsEditor: View {
                         Spacer()
                         Button(L("Use Inherit")) { draft.thinking = "inherit" }.buttonStyle(.borderless)
                     }
-                } else { unsupportedReasoning }
+                } else {
+                    unsupportedReasoning
+                }
             }
         } else {
             HStack(spacing: 8) {
@@ -175,55 +247,275 @@ struct AgentGenerationSettingsEditor: View {
         }
     }
 
-    private func parameter(_ title: String, value: Binding<AgentGenerationFieldDraft>, anchor: String,
-        multiline: Bool = false, inheritedJSON: String? = nil) -> some View
-    {
-        VStack(alignment: .leading, spacing: 6) {
+    private var header: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 18, weight: .medium)).foregroundColor(theme.accentColor)
+                .padding(10).background(theme.inputBackground, in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Generation Overrides", bundle: .module)
+                    .font(.system(size: 16, weight: .semibold)).foregroundColor(theme.primaryText)
+                Text(
+                    "Every setting inherits the model and server defaults. Switch a setting to Custom to override it for this agent only.",
+                    bundle: .module
+                )
+                .font(.system(size: 12)).foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Text("\(draft.overrideCount) overrides")
+                .font(.system(size: 11, weight: .medium)).foregroundColor(theme.accentColor)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(theme.inputBackground, in: Capsule())
+                .fixedSize()
+        }.padding(16)
+    }
+
+    private func group<Content: View>(
+        _ title: String,
+        subtitle: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 11, weight: .medium)).foregroundColor(theme.secondaryText)
-                Spacer(minLength: 4)
-                Toggle(L("Custom"), isOn: Binding(
-                    get: { value.wrappedValue.isCustom },
-                    set: { value.wrappedValue.setCustom($0, inheritedText: inheritedJSON) }
-                )).toggleStyle(.checkbox)
-                    .font(.system(size: 11))
+                Text(LocalizedStringKey(title), bundle: .module).textCase(.uppercase)
+                    .font(.system(size: 10, weight: .bold)).tracking(0.7).foregroundColor(theme.accentColor)
+                Spacer()
+                if !subtitle.isEmpty {
+                    Text(LocalizedStringKey(subtitle), bundle: .module)
+                        .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                }
             }
-            if value.wrappedValue.isCustom {
-                StyledTextField(placeholder: multiline ? "JSON" : L("Value"), text: value.text,
-                    axis: multiline ? .vertical : .horizontal, lineLimit: multiline ? 6 : nil,
-                    monospaced: multiline)
-            } else {
-                Text(localized: "Inherit").font(.system(size: 12)).foregroundColor(theme.tertiaryText)
-                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-            }
+            Divider().overlay(theme.cardBorder)
+            content()
         }
-        .settingsLandingAnchor(anchor)
+    }
+
+    private func rowLabel(_ title: String, _ description: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(LocalizedStringKey(title), bundle: .module)
+                .font(.system(size: 12, weight: .semibold)).foregroundColor(theme.primaryText)
+            if !description.isEmpty {
+                Text(LocalizedStringKey(description), bundle: .module)
+                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func modePicker(_ title: String, field: AgentGenerationField) -> some View {
+        Picker(
+            LocalizedStringKey(title),
+            selection: Binding(
+                get: { draft[keyPath: field.path].isCustom },
+                set: { draft[keyPath: field.path].setCustom($0, inheritedText: inherited[field].customText) }
+            )
+        ) {
+            Text(localized: "Inherit").tag(false)
+            Text(localized: "Custom").tag(true)
+        }.pickerStyle(.segmented).labelsHidden().frame(width: 148)
+            .accessibilityLabel(Text("\(title) mode"))
+    }
+
+    private func inheritedValue(_ field: AgentGenerationField) -> some View {
+        HStack(spacing: 6) {
+            Text(inherited[field].text).font(.system(size: 12, design: .monospaced))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            if !inherited[field].source.isEmpty {
+                Text(inherited[field].source.uppercased())
+                    .font(.system(size: 9, weight: .semibold))
+            }
+        }.foregroundColor(theme.tertiaryText)
+            .padding(.horizontal, 10).padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10).stroke(
+                    theme.inputBorder,
+                    style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                )
+            )
+    }
+
+    private func parameter(_ title: String, description: String, field: AgentGenerationField) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    rowLabel(title, description).frame(minWidth: 190)
+                    modePicker(title, field: field)
+                    parameterValue(title, field: field).frame(width: 160)
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    rowLabel(title, description)
+                    HStack(alignment: .top, spacing: 12) {
+                        modePicker(title, field: field)
+                        parameterValue(title, field: field)
+                    }
+                }
+            }
+            if let message = draft.validationMessage(for: field) { validation(message) }
+        }.settingsLandingAnchor("agents.generation.\(field.rawValue)")
+    }
+
+    @ViewBuilder
+    private func parameterValue(_ title: String, field: AgentGenerationField) -> some View {
+        if draft[keyPath: field.path].isCustom {
+            StyledTextField(
+                placeholder: L("Value"),
+                text: Binding(get: { draft[keyPath: field.path].text }, set: { draft[keyPath: field.path].text = $0 })
+            )
+            .accessibilityLabel(Text(title))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10).stroke(
+                    draft.validationMessage(for: field) == nil ? Color.clear : .red,
+                    lineWidth: 1
+                )
+            )
+        } else {
+            inheritedValue(field)
+        }
+    }
+
+    private func validation(_ message: String) -> some View {
+        Text(message).font(.system(size: 11)).foregroundColor(.red)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var stopSequences: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                rowLabel(
+                    "Stop sequences",
+                    "Generation ends when any additional stop string is produced. Model end-of-turn tokens still apply."
+                )
+                modePicker("Stop sequences", field: .stop)
+            }
+            if draft.stop.isCustom {
+                VStack(alignment: .leading, spacing: 8) {
+                    let values = (try? JSONDecoder().decode([String].self, from: Data(draft.stop.text.utf8))) ?? []
+                    // Adaptive columns keep long exact strings reachable at narrow creation widths.
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 120), alignment: .leading)],
+                        alignment: .leading,
+                        spacing: 6
+                    ) {
+                        ForEach(Array(values.enumerated()), id: \.offset) { index, value in
+                            HStack(spacing: 8) {
+                                Text(String(reflecting: value)).font(.system(size: 11, design: .monospaced))
+                                    .lineLimit(2).help(value)
+                                Spacer(minLength: 0)
+                                Button {
+                                    var edited = values
+                                    edited.remove(at: index)
+                                    do { try draft.setStopSequences(edited) } catch {
+                                        self.error = error.localizedDescription
+                                    }
+                                } label: {
+                                    Image(systemName: "xmark").font(.system(size: 10))
+                                }
+                                .buttonStyle(.plain).accessibilityLabel(Text("Remove stop sequence \(index + 1)"))
+                            }.padding(8).background(theme.inputBackground, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                    HStack {
+                        StyledTextField(
+                            placeholder: L("Type a sequence, press Enter"),
+                            text: $draft.pendingStopSequence,
+                            monospaced: true
+                        )
+                        .accessibilityLabel(Text("New stop sequence"))
+                        .onSubmit(commitStopSequence)
+                        Button(L("Add"), action: commitStopSequence).disabled(draft.pendingStopSequence.isEmpty)
+                    }
+                    Text("Text is kept exactly as entered. Saving also adds a pending sequence.", bundle: .module)
+                        .font(.system(size: 10)).foregroundColor(theme.tertiaryText)
+                }
+            } else {
+                inheritedValue(.stop)
+            }
+            if let message = draft.validationMessage(for: .stop) { validation(message) }
+        }.settingsLandingAnchor("agents.generation.stop")
+    }
+
+    private func commitStopSequence() {
+        do { try draft.commitStopSequence() } catch { self.error = error.localizedDescription }
+    }
+
+    private var templateParameters: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { showTemplateParameters.toggle() }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Advanced: chat template parameters", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold)).foregroundColor(theme.primaryText)
+                        Text(draft.templateKwargs.isCustom ? L("Custom parameters") : L("Inherited from the model"))
+                            .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                    }
+                    Spacer()
+                    Text(showTemplateParameters ? L("Hide") : L("Show")).foregroundColor(theme.accentColor)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            if showTemplateParameters {
+                HStack {
+                    Text("Template parameters (JSON)", bundle: .module).font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    modePicker("Template parameters", field: .templateKwargs)
+                }
+                if draft.templateKwargs.isCustom {
+                    StyledTextField(
+                        placeholder: "{}",
+                        text: $draft.templateKwargs.text,
+                        axis: .vertical,
+                        lineLimit: 8,
+                        monospaced: true
+                    )
+                    .accessibilityLabel(Text("Template parameters JSON"))
+                } else {
+                    Text("{} · No additional parameters", bundle: .module)
+                        .font(.system(size: 12, design: .monospaced)).foregroundColor(theme.tertiaryText)
+                }
+                Text(
+                    "Additional variables for the model's template, not the template itself. Conversation, tools and special-token variables cannot be replaced.",
+                    bundle: .module
+                )
+                .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+            }
+            if let message = draft.validationMessage(for: .templateKwargs) { validation(message) }
+        }.padding(14)
+            .background(theme.inputBackground.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
+            .settingsLandingAnchor("agents.generation.templateKwargs")
     }
 
     private func restore() {
-        draft = initialDraft ?? AgentGenerationDraft(
-            temperature: savedTemperature, maxTokens: savedMaxTokens, settings: savedSettings)
+        draft =
+            initialDraft
+            ?? AgentGenerationDraft(
+                temperature: savedTemperature,
+                maxTokens: savedMaxTokens,
+                settings: savedSettings
+            )
         error = nil
     }
 
     private func expandForLanding(_ id: String?) {
         guard let id else { return }
         if id == "agents.generation.templateKwargs" { showTemplateParameters = true }
-        if ["minP", "repetitionPenalty", "frequencyPenalty", "presencePenalty", "seed", "stop"]
-            .contains(where: { id == "agents.generation.\($0)" })
-        {
-            showMoreSampling = true
-        }
+
     }
 
     private func save() {
         do {
+            try draft.commitStopSequence()
             let values = try draft.validated()
             if let settings = values.settings {
                 if settings.reasoningEffort != nil || settings.enableThinking != nil {
                     guard let choices, choices.modelID == modelID else {
-                        throw ChatTurnOverrides.ValidationError.invalid("Choose a model and wait for its reasoning controls to be detected.")
+                        throw ChatTurnOverrides.ValidationError.invalid(
+                            "Choose a model and wait for its reasoning controls to be detected."
+                        )
                     }
                     try choices.validate(settings: settings)
                 }

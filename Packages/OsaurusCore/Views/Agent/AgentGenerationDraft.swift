@@ -23,7 +23,9 @@ struct AgentGenerationFieldDraft: Equatable {
         guard isCustom else { return nil }
         let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else {
-            throw ChatTurnOverrides.ValidationError.invalid("Enter a value for \(name), or deselect Custom to inherit defaults.")
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "Enter a value for \(name), or select Inherit to use defaults."
+            )
         }
         return raw
     }
@@ -58,6 +60,8 @@ struct AgentGenerationDraft: Equatable {
     var seed = AgentGenerationFieldDraft()
     var stop = AgentGenerationFieldDraft()
     var templateKwargs = AgentGenerationFieldDraft()
+    // Keep unsubmitted chip input in the draft so Create/Save cannot drop it.
+    var pendingStopSequence = ""
     var thinking = "inherit"
     var reasoningEffort = ""
 
@@ -76,9 +80,41 @@ struct AgentGenerationDraft: Equatable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         stop = .init(settings?.stop.flatMap { try? encoder.encode($0) }.map { String(decoding: $0, as: UTF8.self) })
-        templateKwargs = .init(settings?.templateKwargs.flatMap { try? encoder.encode($0) }.map {
-            String(decoding: $0, as: UTF8.self)
-        })
+        templateKwargs = .init(
+            settings?.templateKwargs.flatMap { try? encoder.encode($0) }.map {
+                String(decoding: $0, as: UTF8.self)
+            }
+        )
+    }
+
+    var overrideCount: Int {
+        AgentGenerationField.allCases.filter { self[keyPath: $0.path].isCustom }.count
+            + (thinking == "inherit" ? 0 : 1) + (reasoningEffort.isEmpty ? 0 : 1)
+    }
+
+    func stopSequencesIncludingPending() throws -> [String] {
+        let raw = try stop.value(named: "Stop sequences") ?? "[]"
+        var values = try JSONDecoder().decode([String].self, from: Data(raw.utf8))
+        if !pendingStopSequence.isEmpty { values.append(pendingStopSequence) }
+        return values
+    }
+
+    mutating func commitStopSequence() throws {
+        guard stop.isCustom, !pendingStopSequence.isEmpty else { return }
+        try setStopSequences(stopSequencesIncludingPending())
+        pendingStopSequence = ""
+    }
+
+    mutating func setStopSequences(_ values: [String]) throws {
+        stop.text = String(decoding: try JSONEncoder().encode(values), as: UTF8.self)
+    }
+
+    /// Reuse the save-time rules for inline errors; never maintain a second validator.
+    func validationMessage(for field: AgentGenerationField) -> String? {
+        var isolated = AgentGenerationDraft()
+        isolated[keyPath: field.path] = self[keyPath: field.path]
+        if field == .stop { isolated.pendingStopSequence = pendingStopSequence }
+        do { _ = try isolated.validated(); return nil } catch { return error.localizedDescription }
     }
 
     struct Values {
@@ -94,24 +130,46 @@ struct AgentGenerationDraft: Equatable {
         if let maxTokens, maxTokens < 1 {
             throw ChatTurnOverrides.ValidationError.invalid("Max Tokens must be a positive integer.")
         }
-        let stops = try stop.value(named: "Stop sequences").map {
-            try JSONDecoder().decode([String].self, from: Data($0.utf8))
-        }
+        let stops = stop.isCustom ? try stopSequencesIncludingPending() : nil
         let kwargs = try templateKwargs.value(named: "Template parameters").map {
             try JSONDecoder().decode([String: JSONValue].self, from: Data($0.utf8))
         }
         let settings = AgentGenerationSettings(
-            topP: try topP.float(named: "Top P"), topK: try topK.integer(named: "Top K"),
+            topP: try topP.float(named: "Top P"),
+            topK: try topK.integer(named: "Top K"),
             minP: try minP.float(named: "Min P"),
             repetitionPenalty: try repetitionPenalty.float(named: "Repetition penalty"),
             frequencyPenalty: try frequencyPenalty.float(named: "Frequency penalty"),
             presencePenalty: try presencePenalty.float(named: "Presence penalty"),
-            seed: try seed.integer(named: "Seed"), stop: stops,
+            seed: try seed.integer(named: "Seed"),
+            stop: stops,
             enableThinking: thinking == "inherit" ? nil : thinking == "on",
             reasoningEffort: reasoningEffort.isEmpty ? nil : reasoningEffort,
             templateKwargs: kwargs
         )
         try settings.validate()
         return Values(temperature: temperature, maxTokens: maxTokens, settings: settings.isEmpty ? nil : settings)
+    }
+}
+
+/// Shared field identity for layout, inherited previews and existing save validation.
+enum AgentGenerationField: String, CaseIterable {
+    case temperature, maxTokens, topP, topK, minP, repetitionPenalty
+    case frequencyPenalty, presencePenalty, seed, stop, templateKwargs
+
+    var path: WritableKeyPath<AgentGenerationDraft, AgentGenerationFieldDraft> {
+        switch self {
+        case .temperature: \.temperature
+        case .maxTokens: \.maxTokens
+        case .topP: \.topP
+        case .topK: \.topK
+        case .minP: \.minP
+        case .repetitionPenalty: \.repetitionPenalty
+        case .frequencyPenalty: \.frequencyPenalty
+        case .presencePenalty: \.presencePenalty
+        case .seed: \.seed
+        case .stop: \.stop
+        case .templateKwargs: \.templateKwargs
+        }
     }
 }

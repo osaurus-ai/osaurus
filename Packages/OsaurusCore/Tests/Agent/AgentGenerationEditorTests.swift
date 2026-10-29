@@ -38,7 +38,7 @@ struct AgentGenerationEditorTests {
         #expect(throws: (any Error).self) { try draft.validated() }
     }
 
-    @Test("blank custom JSON validation names the visible Custom checkbox")
+    @Test("blank custom JSON validation names the visible Inherit choice")
     func blankJSONValidationUsesCustomLabel() throws {
         for field in ["Template parameters", "Stop sequences"] {
             var value = AgentGenerationFieldDraft()
@@ -49,7 +49,7 @@ struct AgentGenerationEditorTests {
                 Issue.record("Blank custom JSON must not save")
             } catch {
                 #expect(error.localizedDescription ==
-                    "Enter a value for \(field), or deselect Custom to inherit defaults.")
+                    "Enter a value for \(field), or select Inherit to use defaults.")
             }
         }
     }
