@@ -413,7 +413,7 @@ struct AgentGenerationSettingsEditor: View {
                                 } label: {
                                     Image(systemName: "xmark").font(.system(size: 10))
                                 }
-                                .buttonStyle(.plain).accessibilityLabel(Text("Remove stop sequence \(index + 1)"))
+                                .buttonStyle(.plain).accessibilityLabel(Text("Remove stop sequence \(index + 1)", bundle: .module))
                             }.padding(8).background(theme.inputBackground, in: RoundedRectangle(cornerRadius: 8))
                         }
                     }
@@ -423,7 +423,7 @@ struct AgentGenerationSettingsEditor: View {
                             text: $draft.pendingStopSequence,
                             monospaced: true
                         )
-                        .accessibilityLabel(Text("New stop sequence"))
+                        .accessibilityLabel(Text("New stop sequence", bundle: .module))
                         .onSubmit(commitStopSequence)
                         Button(L("Add"), action: commitStopSequence).disabled(draft.pendingStopSequence.isEmpty)
                     }
@@ -471,7 +471,7 @@ struct AgentGenerationSettingsEditor: View {
                         lineLimit: 8,
                         monospaced: true
                     )
-                    .accessibilityLabel(Text("Template parameters JSON"))
+                    .accessibilityLabel(Text("Template parameters JSON", bundle: .module))
                 } else {
                     Text("{} · No additional parameters", bundle: .module)
                         .font(.system(size: 12, design: .monospaced)).foregroundColor(theme.tertiaryText)
