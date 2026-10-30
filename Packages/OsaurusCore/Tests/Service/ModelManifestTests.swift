@@ -244,8 +244,7 @@ struct ModelManifestTests {
             HuggingFaceService.MatchedFile(path: "generation_config.json", size: 100),
         ]
         #expect(
-            ModelDownloadService.filesToFetch(remote: files, under: directory, intent: .automatic).map(\.path)
-                == ["generation_config.json"]
+            ModelDownloadService.filesToFetch(remote: files, under: directory, intent: .automatic).isEmpty
         )
         #expect(ModelDownloadService.filesToFetch(remote: files, under: directory, intent: .explicitRepair).count == 2)
     }
