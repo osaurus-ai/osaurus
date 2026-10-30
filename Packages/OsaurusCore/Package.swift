@@ -343,29 +343,8 @@ let package = Package(
         // vmlx-swift#667: SSD restore retries, capacity estimates and nested vision configuration.
         // vmlx-swift#668: DeepSeek-V4.1 split-by-keys decode attention; dSpark governor cost as a ratio of EMAs.
         // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
-        // vmlx-swift feat/minimax-m31-osaurus-pin (main 22848d3b + perf/minimax-m3-aligned-prefix-cache): MiniMax-M3.1
-        // (JANGT experts, R8 block-sparse MSA + selection kernels, the dspark/ drafter, aligned-chunk prefix cache),
-        // thinking_mode from the thinking toggle, HF-faithful tojson, dSpark verify-width stats, RMSNorm scale cache
-        // (+4.7 % decode), per-module config entries without `bits` (JANGT bundles load past the VLM factory's
-        // decode), row-exact 6-bit / 16-row verify qmv, the verify's one-launch MSA, and vMLX's fused decode
-        // kernels (VMLX_M3_FUSED_DECODE=1; off by default), readable JANGH load errors; 10-29: M3 resident-pool memory
-        // policy (no Safe Auto scheduling throttle at long context), recommended prefill step 2048, DSpark row-count
-        // checkpoints (no per-round lane copies), the fused MoE view released with its model, turn-cut prefix cache
-        // (every tool / user turn reuses the previous K), vMLX's fast JANGT decode kernels (VMLX_JANGT_FAST=1; off);
-        // 10-29b: MLX's scheduling limit kept above the live working set at every step (all families), M3 prompt-boundary
-        // stores from views of the finished cache (no prompt copy through decode; long-context entries no longer refused
-        // by the store budget), no redundant post-answer entry under aligned prefill, runtime receipts
-        // (VMLX_RUNTIME_RECEIPTS=1), DSpark measured width pricing (VMLX_DSPARK_MEASURED_WIDTH=1; off); the floor at
-        // prefill chunk boundaries; fused attention K4 with device-coherent block partials (vMLX 8da26375: garbage on
-        // the M5 Ultra before; fused decode stays off by default); 10-29c: M3 cold prefill with the turn cuts as one
-        // layer-major group per chunk (routed experts once per group; bit-identical), lanes reserved once with
-        // allocator headroom, buffer cache kept through the prefill, DSpark taps only in the drafter window, ONE prefix
-        // entry per reusable boundary (K + history cuts, zero-copy; was N / N-1 / N - gpl); native MTP: no
-        // request-level depth ceiling (the runtime's verifier top rung governs Adaptive); the cut pieces' row-wise ops
-        // batched per group and their routed experts on the sorted tiles from 18 rows (vMLX Python's rule); 10-29d:
-        // MiniMax-M3.1 image input (vision stack from vision_config, the bundle processor's preprocessing, image runs
-        // never split across prefill forwards, text follow-ups restore the image turn; `m3vision` receipts; rotary on
-        // Metal precise pow: features == vMLX Python bit for bit). TEST PIN.
+        // vmlx-swift#687: MiniMax-M3.1-Flash (JANGT experts, block-sparse MSA, dspark/ drafter, aligned prefix cache,
+        // thinking_mode, image input).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
             revision: "46cc6f6f88cd0189fb106875f813872ee00de1fa"

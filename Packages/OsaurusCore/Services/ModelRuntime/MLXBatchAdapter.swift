@@ -36,7 +36,7 @@ struct MLXBatchAdapter {
     /// `NativeMTPDepthPolicy.adaptiveToRuntimeCeiling` (`.adaptive(maximumDepth: .max)`).
     static let nativeMTPAdaptiveNoHostCeiling = Int.max
 
-    /// No hard draft depth (Eric's rule): Adaptive governs the draft depth. An explicit depth button pins it
+    /// No hard draft depth: Adaptive governs the draft depth. An explicit depth button pins it
     /// (`.fixed`, the user's own choice); every other selection is Adaptive up to the runtime's top rung, which
     /// vmlx resolves per request from the loaded model. The app sets no ceiling of its own: the former
     /// `min(draftTokenLimit ?? 5, 5)` capped every model at depth 5, including a LiLiCorr block drafter whose
