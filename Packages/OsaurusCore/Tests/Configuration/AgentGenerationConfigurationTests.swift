@@ -23,6 +23,7 @@ struct AgentGenerationConfigurationTests {
                   stop: []
                   enable_thinking: false
                   reasoning_effort: low
+                  speculative_decoding: false
                   template_kwargs:
                     custom:
                       enabled: false
@@ -87,7 +88,7 @@ struct AgentGenerationConfigurationTests {
         let fields = try #require(group["properties"] as? [String: Any])
         #expect(Set(fields.keys) == Set([
             "top_p", "top_k", "min_p", "repetition_penalty", "frequency_penalty",
-            "presence_penalty", "seed", "stop", "enable_thinking", "reasoning_effort", "template_kwargs",
+            "presence_penalty", "seed", "stop", "enable_thinking", "reasoning_effort", "template_kwargs", "speculative_decoding",
         ]))
         let kwargs = try #require(fields["template_kwargs"] as? [String: Any])
         #expect(kwargs["type"] as? [String] == ["object", "null"])

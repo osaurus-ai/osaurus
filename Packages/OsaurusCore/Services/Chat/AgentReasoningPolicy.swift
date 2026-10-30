@@ -9,6 +9,35 @@
 import Foundation
 
 enum AgentReasoningPolicy {
+    /// Project explicit request reasoning onto runtime options. Shared with the chat
+    /// readout so saved agent defaults and template kwargs display what dispatch uses.
+    /// Omitted controls do not manufacture model defaults.
+    static func applyingExplicitReasoning(
+        _ generation: ResponsesGenerationOptions,
+        to options: [String: ModelOptionValue],
+        modelID: String
+    ) -> [String: ModelOptionValue] {
+        var options = options
+        let enabled = generation.enableThinking
+            ?? generation.templateKwargs?["enable_thinking"]?.boolValue
+            ?? generation.templateKwargs?["thinking"]?.boolValue
+        let effort = (generation.reasoningEffort
+            ?? generation.templateKwargs?["reasoning_effort"]?.stringValue)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if Hy3ReasoningProfile.matches(modelId: modelID) {
+            if let effort, !effort.isEmpty {
+                options["reasoningEffort"] = .string(Hy3ReasoningProfile.normalizedEffort(effort))
+            } else if options["reasoningEffort"] == nil, let enabled {
+                options["reasoningEffort"] = .string(enabled ? "high" : "no_think")
+            }
+            options.removeValue(forKey: "disableThinking")
+        } else {
+            if let enabled { options["disableThinking"] = .bool(!enabled) }
+            if let effort, !effort.isEmpty { options["reasoningEffort"] = .string(effort) }
+        }
+        return options
+    }
+
     /// Return the thinking override an agent/tool request should add, or nil
     /// when the caller/model contract must remain untouched.
     ///

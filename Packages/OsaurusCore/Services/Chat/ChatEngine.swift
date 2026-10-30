@@ -188,11 +188,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         service: ModelService,
         effectiveModel: String
     ) async throws {
-        guard let defaults = request.context.agentReasoningDefaults else { return }
+        let defaults = request.context.agentReasoningDefaults
+        guard defaults != nil || request.context.speculativeDecoding != nil else { return }
         guard !request.context.runAsRemoteAgent else {
             throw ChatTurnOverrides.ValidationError.invalid(
                 "Configure saved reasoning defaults on the remote agent's host; its effective model is owned there.")
         }
+        if request.context.speculativeDecoding != nil, !(service is MLXService) {
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "Saved speculative decoding controls require a local model on this host. Choose Inherit for a remote model.")
+        }
+        // Speculation eligibility is re-evaluated by the real load/admission plan. Do not rescan
+        // safetensor headers on every tool iteration just to validate saved reasoning values.
+        guard let defaults else { return }
         let choices = await agentReasoningChoicesProvider(effectiveModel, service is MLXService)
         try choices.validate(settings: defaults.settings)
     }
@@ -299,25 +307,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             modelOptions["disableThinking"] = .bool(!agentEnableThinking)
         }
 
-        if isHy3 {
-            if let requestReasoningEffort {
-                modelOptions["reasoningEffort"] = .string(
-                    Hy3ReasoningProfile.normalizedEffort(requestReasoningEffort)
-                )
-            } else if modelOptions["reasoningEffort"] == nil,
-                let enableThinking = explicitEnableThinking
-            {
-                modelOptions["reasoningEffort"] = .string(enableThinking ? "high" : "no_think")
-            }
-            modelOptions.removeValue(forKey: "disableThinking")
-        } else {
-            if let enableThinking = explicitEnableThinking {
-                modelOptions["disableThinking"] = .bool(!enableThinking)
-            }
-            if let requestReasoningEffort {
-                modelOptions["reasoningEffort"] = .string(requestReasoningEffort)
-            }
-        }
+        modelOptions = AgentReasoningPolicy.applyingExplicitReasoning(
+            request.generation, to: modelOptions, modelID: request.model)
         try DeclaredReasoningEffort.validateModeRequest(modelId: request.model, options: modelOptions)
         ComputerUseTraceLog.recordEffectiveDispatch(
             request: request,
@@ -345,6 +336,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             jsonSchema: jsonSchema,
             modelOptions: modelOptions,
             templateKwargs: request.generation.templateKwargs,
+            speculativeDecoding: request.context.speculativeDecoding,
             sessionId: request.sessionID,
             activitySource: activitySource,
             ttftTrace: trace,

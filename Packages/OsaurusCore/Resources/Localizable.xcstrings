@@ -1,6 +1,62 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Off uses ordinary decoding. On requests adaptive drafting without changing sampling." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus verwendet reguläre Dekodierung. Ein nutzt adaptive Entwürfe ohne Änderung des Samplings."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭使用普通解码。开启请求自适应推测生成，不改变采样设置。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "끔은 일반 디코딩을 사용합니다. 켬은 샘플링을 변경하지 않고 적응형 초안 생성을 요청합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выкл. использует обычное декодирование. Вкл. включает адаптивные черновики без изменения сэмплирования."
+          }
+        }
+      }
+    },
+    "Saved speculation override is unavailable for this model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die gespeicherte Einstellung für spekulative Dekodierung ist für dieses Modell nicht verfügbar."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型不支持已保存的推测解码覆盖设置。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 모델에서는 저장된 추측 디코딩 재정의를 사용할 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранённое переопределение спекулятивного декодирования недоступно для этой модели."
+          }
+        }
+      }
+    },
     "Overrides: %lld" : {
       "localizations" : {
         "de" : {

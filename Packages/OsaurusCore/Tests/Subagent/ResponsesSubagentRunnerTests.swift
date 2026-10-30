@@ -190,7 +190,8 @@ struct ResponsesSubagentRunnerTests {
             topP: 0, topK: 0, minP: 0.05, repetitionPenalty: 1.1,
             frequencyPenalty: 0, presencePenalty: -0.25, seed: -7,
             stop: ["END"], enableThinking: false, reasoningEffort: "low",
-            templateKwargs: ["custom": .object(["enabled": .bool(false), "value": .null])]
+            templateKwargs: ["custom": .object(["enabled": .bool(false), "value": .null])],
+            speculativeDecoding: false
         )
         // A smaller target cap tightens the launcher; a larger or absent
         // target cap cannot raise it. Inspect the real rebuilt requests.
@@ -237,6 +238,7 @@ struct ResponsesSubagentRunnerTests {
                 #expect(request.generation.stop == ["END"])
                 #expect(request.generation.enableThinking == false)
                 #expect(request.generation.reasoningEffort == "low")
+                #expect(request.context.speculativeDecoding == false)
                 #expect(request.generation.templateKwargs == settings.templateKwargs)
                 #expect(request.context.agentReasoningDefaults?.settings == AgentGenerationSettings(enableThinking: false, reasoningEffort: "low"))
                 let legacy = request.chatCompletionsCompatibilityRequest()

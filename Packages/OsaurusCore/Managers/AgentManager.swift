@@ -1512,6 +1512,46 @@ extension AgentManager {
         return agent.generationSettings
     }
 
+    /// The chat picker edits an existing agent override, never the shared Server mode.
+    /// Nil removes only this override; unrelated saved generation fields remain intact.
+    public func updateSpeculativeDecoding(_ enabled: Bool?, for agentId: UUID) {
+        updateGenerationSettings(for: agentId) { $0.speculativeDecoding = enabled }
+    }
+
+    /// Existing agent reasoning overrides stay on the agent when edited in chat.
+    /// Switching control kind replaces only reasoning fields, including their JSON aliases.
+    public func updateReasoning(enableThinking: Bool?, effort: String?, for agentId: UUID) {
+        updateGenerationSettings(for: agentId) { settings in
+            settings.enableThinking = enableThinking
+            settings.reasoningEffort = effort
+            if var kwargs = settings.templateKwargs {
+                for key in ["enable_thinking", "thinking", "reasoning_effort"] {
+                    kwargs.removeValue(forKey: key)
+                }
+                settings.templateKwargs = kwargs.isEmpty ? nil : kwargs
+            }
+        }
+    }
+
+    private func updateGenerationSettings(
+        for agentId: UUID, _ update: (inout AgentGenerationSettings) -> Void
+    ) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
+        var settings = agent.generationSettings ?? AgentGenerationSettings()
+        update(&settings)
+        guard settings != (agent.generationSettings ?? AgentGenerationSettings()) else { return }
+        agent.generationSettings = settings.isEmpty ? nil : settings
+        agent.updatedAt = Date()
+        AgentStore.save(agent)
+        // A picker action changes one record; avoid re-reading every agent on the UI thread.
+        if let index = agentIndex[agentId], agents.indices.contains(index) {
+            var updatedAgents = agents
+            updatedAgents[index] = agent
+            installAgentSnapshot(updatedAgents)
+        }
+        NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+    }
+
     /// Resolve every per-agent capability flag in one place, applying the
     /// default-agent overrides and global memory switch centrally. This is
     /// the single source of truth; the narrower `effective*` accessors and

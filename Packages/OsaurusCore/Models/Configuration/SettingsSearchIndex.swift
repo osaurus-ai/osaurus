@@ -1999,6 +1999,15 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.generation.speculativeDecoding",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Speculative Decoding",
+            keywords: ["agent native mtp", "adaptive on off ar", "dspark", "dflash", "drafter", "per-agent speculation"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Eligible local bundles only. Inherit uses Server settings; Off uses AR; On requests adaptive drafting for this agent without changing shared defaults.",
+            declarativeSection: "agents"
+        ),
+        .init(
             id: "agents.generation.templateKwargs",
             tab: .agents,
             section: "Generation Overrides",

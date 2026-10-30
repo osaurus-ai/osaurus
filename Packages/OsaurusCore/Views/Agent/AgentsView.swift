@@ -8623,7 +8623,7 @@ private struct AgentEditorSheet: View {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             let values = try? generationDraft.validated() else { return false }
         if let settings = values.settings,
-            settings.reasoningEffort != nil || settings.enableThinking != nil
+            settings.reasoningEffort != nil || settings.enableThinking != nil || settings.speculativeDecoding != nil
         {
             guard let generationChoices, generationChoices.modelID == generationModelID else { return false }
             return (try? generationChoices.validate(settings: settings)) != nil

@@ -872,13 +872,26 @@ struct RuntimePolicySourceTests {
     func cancelledColdLoadUnloadsBeforeStreamSetup() throws {
         let source = try Self.source("Services/ModelRuntime.swift")
         let loadDone = try #require(source.range(of: #"trace?.mark("load_container_done")"#))
-        let leaseAcquire = try #require(
+        let streamSetup = try #require(
             source.range(
-                of: "await ModelLease.shared.acquire(modelName)",
+                of: "let buildChat:",
                 range: loadDone.upperBound ..< source.endIndex
             )
         )
-        let postLoadWindow = String(source[loadDone.lowerBound ..< leaseAcquire.lowerBound])
+        let postLoadWindow = String(source[loadDone.lowerBound ..< streamSetup.lowerBound])
+        // Graph preparation now pins before returning. A cancelled request must release that
+        // pin before attempting the same cold-load cleanup; no producer may start in between.
+        #expect(postLoadWindow.contains("await ModelLease.shared.release(modelName)"))
+        let preparationStart = try #require(source.range(of: "private func prepareContainer("))
+        let preparationEnd = try #require(source.range(of: "private func loadContainer("))
+        let preparation = String(source[preparationStart.lowerBound ..< preparationEnd.lowerBound])
+        #expect(preparation.contains("await ModelLease.shared.acquire(name)"))
+        #expect(preparation.contains("guard modelCache[name] === holder"))
+        #expect(preparation.contains("await ModelLease.shared.release(name)"))
+        let returnedLoad = try #require(preparation.range(of: "let holder = try await loadContainer("))
+        let acquiredLease = try #require(preparation.range(of: "await ModelLease.shared.acquire(name)"))
+        #expect(!preparation[returnedLoad.upperBound ..< acquiredLease.lowerBound].contains("Task.checkCancellation"),
+            "A published holder must reach post-load cancellation cleanup, never be orphaned by a throw before its lease")
 
         #expect(postLoadWindow.contains("if Task.isCancelled"))
         #expect(postLoadWindow.contains("await ModelResidencyManager.shared.cancel(modelName: modelName)"))
@@ -2823,7 +2836,13 @@ struct RuntimePolicySourceTests {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
         #expect(runtime.contains("MTPBundleInspector.inspect("))
-        #expect(runtime.contains("let serverSettings = ServerRuntimeSettingsStore.snapshot()"))
+        let loadSettingsStart = try #require(runtime.range(of: "let serverSettings: VMLXServerRuntimeSettings = {"))
+        let loadSettingsEnd = try #require(runtime.range(
+            of: "Self.applyPerformancePolicy(serverSettings)", range: loadSettingsStart.upperBound ..< runtime.endIndex))
+        let loadSettings = String(runtime[loadSettingsStart.lowerBound ..< loadSettingsEnd.lowerBound])
+        #expect(loadSettings.contains("var settings = ServerRuntimeSettingsStore.snapshot()"))
+        #expect(loadSettings.contains("if let mtp { settings.mtp = mtp }"))
+        #expect(loadSettings.contains("return settings"))
         #expect(runtime.contains("settings: serverSettings"))
         #expect(!runtime.contains("settings.mtp.mode = .auto"))
         #expect(runtime.contains("resolvedMTPLaunch("))
@@ -3379,9 +3398,12 @@ struct RuntimePolicySourceTests {
     func residentSameModelTurnsDoNotFlashModelLoadingUI() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
+        #expect(runtime.contains("let needsPreparation = modelCache[modelName].map"))
+        #expect(runtime.contains("previous: $0.preparedMTP, next: cfg.mtp, hasLoadedStrategy: $0.draftStrategy != nil"))
+
         #expect(
             runtime.contains(
-                "let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI"
+                "let shouldReportModelLoad = needsPreparation && !parameters.suppressProgressUI"
             )
         )
         #expect(
