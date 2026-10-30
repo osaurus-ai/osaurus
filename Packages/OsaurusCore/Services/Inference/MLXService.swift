@@ -17,6 +17,14 @@ private struct LocalModelRef {
 
 actor MLXService: ToolCapableService, ResponsesGenerationService {
 
+    enum OneShotError: Error, Equatable, LocalizedError {
+        case outputTruncated
+
+        var errorDescription: String? {
+            "The local model reached its output limit before completing the response"
+        }
+    }
+
     /// Shared instance for convenience (actor is stateless, delegates to ModelRuntime.shared)
     static let shared = MLXService()
 
@@ -97,7 +105,14 @@ actor MLXService: ToolCapableService, ResponsesGenerationService {
             requestedModel: requestedModel,
             stopSequences: []
         )
+        return try await Self.collectOneShot(stream, parameters: parameters)
+    }
+
+    nonisolated static func collectOneShot(
+        _ stream: AsyncThrowingStream<String, Error>, parameters: GenerationParameters
+    ) async throws -> String {
         var out = ""
+        var stopReason: String?
         for try await s in stream {
             // `streamDeltas` wraps `ModelRuntime.streamWithTools`, which
             // encodes non-token events (reasoning, stats, tool calls) as
@@ -113,6 +128,7 @@ actor MLXService: ToolCapableService, ResponsesGenerationService {
             // tool/args/done, reasoning, stats, and any future sentinel
             // that adheres to the `\u{FFFE}` prefix contract.
             if let stats = StreamingStatsHint.decode(s) {
+                stopReason = stats.stopReason
                 if parameters.auxiliaryCacheIntent,
                     ProcessInfo.processInfo.environment["OSAURUS_UTILITY_GENERATION_TRACE"] == "1"
                 {
@@ -127,6 +143,12 @@ actor MLXService: ToolCapableService, ResponsesGenerationService {
             }
             if StreamingToolHint.isSentinel(s) { continue }
             out += s
+        }
+        // Drain first so a real upstream error takes precedence over terminal
+        // stats. Reasoning-only truncation is incomplete even without visible text.
+        if parameters.requireCompleteOutput {
+            if stopReason == "length" { throw OneShotError.outputTruncated }
+            if stopReason == "cancelled" { throw CancellationError() }
         }
         return out
     }

@@ -96,7 +96,7 @@ struct CompactionRequestContractTests {
         let params = ContextCompactionService.summaryParameters(
             sessionId: UUID(), requestSource: .chatUI, remote: false)
         #expect(params.modelOptions.isEmpty)
-        #expect(!params.requireCompleteOutput)
+        #expect(params.requireCompleteOutput)
     }
 
     @Test func truncationIsALoudCompactionError() {
