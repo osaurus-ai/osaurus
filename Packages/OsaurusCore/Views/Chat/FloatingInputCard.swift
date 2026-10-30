@@ -5363,23 +5363,29 @@ extension FloatingInputCard {
     }
 
     /// Placeholder text for the input field.
+    ///
+    /// Evaluated from the composer body on every keystroke, so it must stay
+    /// cheap: the keys are a fixed set and go through the memoized `LCached`
+    /// (an uncached `L` lookup here was the leaf of main-thread hang
+    /// APPLE-MACOS-1E7), and the image check inspects attachment kinds
+    /// instead of hydrating spilled image blobs from disk.
     private var placeholderText: String {
         if let media = selectedMediaPickerItem?.mediaModel {
             switch media.kind {
             case .image:
-                return L("Describe the image...")
+                return LCached("Describe the image...")
             case .textToVideo:
-                return L("Describe the video...")
+                return LCached("Describe the video...")
             case .imageToVideo:
-                return pendingAttachments.loadImages().isEmpty
-                    ? L("Attach one image, then describe the video...")
-                    : L("Describe how the image should move...")
+                return pendingAttachments.contains(where: \.isImage)
+                    ? LCached("Describe how the image should move...")
+                    : LCached("Attach one image, then describe the video...")
             }
         }
         if selectedImagePickerItem != nil {
-            return L("Describe the image...")
+            return LCached("Describe the image...")
         }
-        return L("Message or attach files...")
+        return LCached("Message or attach files...")
     }
 
     // MARK: - Image Composer Controls
