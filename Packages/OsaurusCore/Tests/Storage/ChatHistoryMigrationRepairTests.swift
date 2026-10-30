@@ -578,6 +578,48 @@ struct ChatHistoryMigrationRepairTests {
         }
     }
 
+    @Test
+    func v23CompactionSummaryUpgradeSurvivesDatabaseReopen() async throws {
+        try await runWithPlaintextRoot {
+            let session = ChatSessionData(
+                title: "legacy compaction",
+                turns: [
+                    ChatTurnData(role: .user, content: "old question"),
+                    ChatTurnData(role: .assistant, content: "old answer"),
+                ]
+            )
+            let initial = ChatHistoryDatabase()
+            try initial.open()
+            try initial.saveSession(session)
+            initial.close()
+            try self.seedChatHistoryDB([
+                "ALTER TABLE sessions DROP COLUMN conversation_summary",
+                "PRAGMA user_version = 23",
+            ])
+            let upgraded = ChatHistoryDatabase()
+            try upgraded.open()
+            var loaded = try #require(upgraded.loadSession(id: session.id))
+            #expect(loaded.conversationSummary == nil)
+            #expect(loaded.turns.map(\.id) == session.turns.map(\.id))
+            let summary = ConversationSummary(
+                summaryText: "Retained accepted facts",
+                coveredTurnIds: session.turns.map(\.id),
+                modelIdentifier: "summary-model",
+                savedTokensEstimate: 100
+            )
+            loaded.conversationSummary = summary
+            try upgraded.saveSession(loaded)
+            upgraded.close()
+            let reopened = ChatHistoryDatabase()
+            try reopened.open()
+            defer { reopened.close() }
+            let restored = try #require(reopened.loadSession(id: session.id))
+            #expect(restored.conversationSummary == summary)
+            #expect(restored.turns.map(\.content) == ["old question", "old answer"])
+            #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
+        }
+    }
+
     // MARK: - Helpers
 
     /// Run `body` with an isolated temp root in plaintext storage posture,
