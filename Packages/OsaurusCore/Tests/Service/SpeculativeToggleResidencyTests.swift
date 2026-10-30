@@ -73,6 +73,36 @@ struct SpeculativeToggleResidencyTests {
         }
     }
 
+    @Test("A kept switch is not undone by the per-request preparation check (requiresPreparation)")
+    func m31KeptSwitchNeedsNoRequestPreparation() throws {
+        let bundle = try MiniMaxM31Bundle.materialize()
+        defer { MiniMaxM31Bundle.remove(bundle) }
+        let chain: [String?] = ["auto", "off", nil, "off", "auto", nil, "auto"]
+        for start in Self.segments {
+            let startMTP = try m31SavedMTP(segment: start)
+            var state = resident(try M31LoadPlan(bundle: bundle, mtp: startMTP))
+            var prepared = startMTP
+            for segment in chain where segment != start {
+                let mtp = try m31SavedMTP(segment: segment)
+                let next = resident(try M31LoadPlan(bundle: bundle, mtp: mtp))
+                let label = "\(start ?? "default") ... -> \(segment ?? "default")"
+                #expect(SpeculativeLoadFacts.keepsResidentWeights(loaded: state.facts, next: next.facts), "\(label)")
+                state = SpeculativeLoadFacts.residentAfterKeptChange(resident: state, next: next)
+                prepared = AgentSpeculationPolicy.preparedAfterKeptChange(previous: prepared, next: mtp)
+                #expect(
+                    !AgentSpeculationPolicy.requiresPreparation(
+                        previous: prepared, next: mtp, hasLoadedStrategy: state.strategy != nil), "\(label)")
+            }
+        }
+        // Control: had the holder kept the Off it was loaded with, the next On request would evict and reload the
+        // graph it was just kept with.
+        let off = try m31SavedMTP(segment: "off")
+        let on = try m31SavedMTP(segment: "auto")
+        #expect(AgentSpeculationPolicy.requiresPreparation(previous: off, next: on, hasLoadedStrategy: true))
+        #expect(AgentSpeculationPolicy.preparedAfterKeptChange(previous: off, next: on) == on)
+        #expect(AgentSpeculationPolicy.preparedAfterKeptChange(previous: on, next: off) == on)
+    }
+
     @Test("Controls: a change of the loaded graph or of the drafter still reloads")
     func realLoadChangesStillReload() {
         let dspark = SpeculativeLoadFacts.identity(.dspark(drafterPath: URL(fileURLWithPath: "/b/dspark")))

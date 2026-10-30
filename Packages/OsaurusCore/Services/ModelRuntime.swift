@@ -439,7 +439,10 @@ public actor ModelRuntime {
         var nativeMTPStatus: String?
         var nativeMTPReason: String?
         var nativeMTPAdmission: NativeMTPAdmission
-        let preparedMTP: VMLXServerMTPSettings
+        /// The MTP settings this holder's graph serves (`AgentSpeculationPolicy.requiresPreparation` compares a
+        /// request's selection against it). `var` only for `applySpeculativeLoadChange`, which records a kept,
+        /// non-Off selection here so the next request does not reload the graph it just kept.
+        var preparedMTP: VMLXServerMTPSettings
         /// What the load contained (`SpeculativeLoadFacts`) and where from: lets a later Speculative Decoding
         /// change be judged against this bundle's own launch plan.
         var speculativeLoadFacts: SpeculativeLoadFacts?
@@ -2949,6 +2952,8 @@ public actor ModelRuntime {
                     holder.speculativeLoadFacts = resident.facts
                     holder.nativeMTPStatus = plan.statusLine
                     holder.nativeMTPReason = plan.reason
+                    holder.preparedMTP = AgentSpeculationPolicy.preparedAfterKeptChange(
+                        previous: holder.preparedMTP, next: settings.mtp)
                 }
             }
             genLog.info(
