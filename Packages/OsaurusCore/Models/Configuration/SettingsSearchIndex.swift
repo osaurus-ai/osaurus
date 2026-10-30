@@ -343,9 +343,10 @@ public enum SettingsSearchIndex {
             keywords: [
                 "compaction", "compact", "summarize", "context", "summary model",
                 "auto compact", "compact conversation", "fallback", "context full",
+                "summary thinking off", "empty summary", "truncated summary",
             ],
             disambiguation:
-                "Which model writes the summary. Unset means the chat's current model. Compaction runs automatically near the limit and from the Compact button in the context budget popover."
+                "Which model writes the summary. Unset means the chat's current model. Summary requests use Thinking Off when supported; chat and agent settings are unchanged. Compaction runs automatically near the limit and from the Compact button in the context budget popover."
         ),
         .init(
             id: "settings.orchestrator.temperature",

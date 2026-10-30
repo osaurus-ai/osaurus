@@ -288,19 +288,19 @@ final class ContextCompactionService {
 
     /// The summarize request's generation parameters.
     ///
-    /// Remote routes turn reasoning off: a remote thinking model otherwise
-    /// spends the whole budget reasoning and returns no content (#3036), and
-    /// the output must be complete — a cut-off summary is never applied over
-    /// the conversation. Local routes keep their generation options: the local
-    /// engine renders the bundle's own chat template and generation defaults,
-    /// and complete-output validation does not change how a bundle is prompted.
+    /// Summaries request thinking off through the model's supported template
+    /// switch. A model without that capability keeps its native contract.
+    /// This is scoped to the summary request, never chat or saved agent defaults.
+    /// Complete-output validation rejects truncation on every route.
     nonisolated static func summaryParameters(
-        sessionId: UUID?, requestSource: RequestSource, remote: Bool
+        sessionId: UUID?, requestSource: RequestSource, remote: Bool,
+        localThinkingCapability: LocalReasoningCapability.Capability = .none
     ) -> GenerationParameters {
         GenerationParameters(
             temperature: Float(Self.summaryTemperature),
             maxTokens: Self.summaryMaxTokens,
-            modelOptions: remote ? ["disableThinking": .bool(true)] : [:],
+            modelOptions: remote || localThinkingCapability.isToggleableThinking
+                ? ["disableThinking": .bool(true)] : [:],
             sessionId: sessionId?.uuidString,
             requestSource: requestSource,
             // The scoped handoff, not a general interactive eviction, owns
@@ -374,16 +374,18 @@ final class ContextCompactionService {
             ChatMessage(role: "system", content: Self.systemPrompt),
             ChatMessage(role: "user", content: Self.userPrompt(transcript: transcript)),
         ]
+        let remoteConn = ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false)
+        let localThinkingCapability = service is MLXService
+            ? await LocalReasoningCapability.resolveForDispatch(modelId: modelId) : .none
         let params = Self.summaryParameters(
             sessionId: sessionId, requestSource: invocation.source?.inferenceSource ?? .chatUI,
-            remote: ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false) != nil)
+            remote: remoteConn != nil, localThinkingCapability: localThinkingCapability)
 
         onPhase(.summarizing)
         let startedAt = Date()
         // Activity-log attribution: where the transcript went (local model or
         // which cloud provider), the real post-scrub wire bytes, and the
         // Privacy Filter outcome. The probe is only attached for remote sends.
-        let remoteConn = ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false)
         let wireProbe: WireTransportProbe? = remoteConn != nil ? WireTransportProbe() : nil
         let logContext = InsightsLogContext(
             source: invocation.source?.inferenceSource ?? .chatUI,

@@ -262,7 +262,7 @@ struct ChatSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     compactionModelPicker
                     Text(
-                        "Model used to summarize older messages when a chat outgrows its context window. Runs automatically near the limit and on demand from the context budget popover. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes.",
+                        "Model used to summarize older messages when a chat outgrows its context window. Runs automatically near the limit and on demand from the context budget popover. Compaction requests Thinking Off when supported, without changing chat or agent settings. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes.",
                         bundle: .module
                     )
                     .font(.system(size: 11))
