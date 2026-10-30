@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import CoreText
 import SwiftUI
 
 // MARK: - Typography Spacing Constants
@@ -798,6 +799,50 @@ struct SelectableTextView: NSViewRepresentable {
         return cache
     }()
 
+    /// Bounded cache for cascade-wrapped fonts.
+    private static let cascadeFontCache = NSCache<NSString, NSFont>()
+
+    /// Wrap a theme font with an explicit CJK-capable cascade entry.
+    ///
+    /// macOS TextKit bug (verified on macOS 27.0.1 / 26A434): glyph generation for runs whose
+    /// substituted font is one of the hidden ".XXXInterface" fonts (e.g.
+    /// `.HiraginoSansGBInterface-W6`, which the cascade picks for bold simplified
+    /// Chinese under an SF Pro or Georgia theme font) permanently degrades to
+    /// notdef once a view has been re-laid-out repeatedly during streaming. The
+    /// dropped glyphs then stay blank in every later layout of the process —
+    /// fresh views included — so one streamed reply poisons all subsequent chat
+    /// rendering. Handing the layout engine a real font in an explicit cascade
+    /// resolves CJK without ever consulting the broken substitution path.
+    /// Non-CJK scripts still fall through the system's own fallback after the
+    /// explicit entry (verified: Cyrillic, Greek, Arabic, Thai, emoji).
+    static func withCjkCascade(_ font: NSFont) -> NSFont {
+        let size = font.pointSize
+        let weightTrait: Double = font.fontDescriptor.symbolicTraits.contains(.bold) ? 0.3 : 0.0
+        let key = "\(font.fontName)|\(size)|\(weightTrait)" as NSString
+        if let cached = Self.cascadeFontCache.object(forKey: key) {
+            return cached
+        }
+        let name = font.fontName.lowercased()
+        let serifMarkers = [
+            "georgia", "times", "palatino", "baskerville", "didot", "hoefler", "charter", "songti", "mincho", "serif",
+        ]
+        let family = serifMarkers.contains { name.contains($0) } ? "Songti SC" : "PingFang SC"
+        let entry = CTFontDescriptorCreateWithAttributes(
+            [
+                kCTFontFamilyNameAttribute: family,
+                kCTFontSizeAttribute: Double(size),
+                kCTFontTraitsAttribute: [kCTFontWeightTrait: weightTrait],
+            ] as CFDictionary
+        )
+        let descriptor = CTFontDescriptorCreateCopyWithAttributes(
+            CTFontCopyFontDescriptor(font as CTFont),
+            [kCTFontCascadeListAttribute: [entry] as CFArray] as CFDictionary
+        )
+        let wrapped = CTFontCreateWithFontDescriptor(descriptor, size, nil) as NSFont
+        Self.cascadeFontCache.setObject(wrapped, forKey: key)
+        return wrapped
+    }
+
     private func cachedFont(size: CGFloat, weight: NSFont.Weight, italic: Bool) -> NSFont {
         let key = "\(theme.primaryFontName)-\(size)-\(weight.rawValue)-\(italic)" as NSString
         if let cached = Self.fontCache.object(forKey: key) {
@@ -926,7 +971,7 @@ struct SelectableTextView: NSViewRepresentable {
             if italic {
                 font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
             }
-            return font
+            return Self.withCjkCascade(font)
         }
 
         // Custom font
@@ -944,11 +989,11 @@ struct SelectableTextView: NSViewRepresentable {
                     weight: weightValue,
                     size: size
                 ) ?? font
-            return font
+            return Self.withCjkCascade(font)
         }
 
         // Fallback
-        return NSFont.systemFont(ofSize: size, weight: weight)
+        return Self.withCjkCascade(NSFont.systemFont(ofSize: size, weight: weight))
     }
 
     private func nsMonoFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
@@ -956,16 +1001,16 @@ struct SelectableTextView: NSViewRepresentable {
 
         // System mono font
         if fontName.lowercased().contains("sf mono") || fontName.isEmpty {
-            return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+            return Self.withCjkCascade(NSFont.monospacedSystemFont(ofSize: size, weight: weight))
         }
 
         // Custom mono font
         if let customFont = NSFont(name: fontName, size: size) {
-            return customFont
+            return Self.withCjkCascade(customFont)
         }
 
         // Fallback
-        return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+        return Self.withCjkCascade(NSFont.monospacedSystemFont(ofSize: size, weight: weight))
     }
 
     private func weightToNumber(_ weight: NSFont.Weight) -> Int {
