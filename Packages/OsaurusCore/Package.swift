@@ -362,10 +362,12 @@ let package = Package(
         // allocator headroom, buffer cache kept through the prefill, DSpark taps only in the drafter window, ONE prefix
         // entry per reusable boundary (K + history cuts, zero-copy; was N / N-1 / N - gpl); native MTP: no
         // request-level depth ceiling (the runtime's verifier top rung governs Adaptive); the cut pieces' row-wise ops
-        // batched per group and their routed experts on the sorted tiles from 18 rows (vMLX Python's rule). TEST PIN.
+        // batched per group and their routed experts on the sorted tiles from 18 rows (vMLX Python's rule); 10-29d:
+        // MiniMax-M3.1 image input (vision stack from vision_config, the bundle processor's preprocessing, image runs
+        // never split across prefill forwards, text follow-ups restore the image turn; `m3vision` receipts). TEST PIN.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "3ba6a3389b3c27d20efd5defca73c8ede341e3de"
+            revision: "a9a7f95f142bf881d1b00abc212d005353002cb7"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
