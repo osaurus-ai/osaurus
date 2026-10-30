@@ -345,7 +345,7 @@ let package = Package(
         // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "6c4baa83d991a1c909d7db41e242b4897b3f272f"
+            revision: "48fdbb82e1b52aa5c2a7d893fc5f368fe7b0d327"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
