@@ -343,9 +343,11 @@ let package = Package(
         // vmlx-swift#667: SSD restore retries, capacity estimates and nested vision configuration.
         // vmlx-swift#668: DeepSeek-V4.1 split-by-keys decode attention; dSpark governor cost as a ratio of EMAs.
         // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
+        // vmlx-swift#687: MiniMax-M3.1-Flash (JANGT experts, block-sparse MSA, dspark/ drafter, aligned prefix cache,
+        // thinking_mode, image input).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "88e25dc6735b03d51fdcb495aaaede7b0e77fd26"
+            revision: "46cc6f6f88cd0189fb106875f813872ee00de1fa"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

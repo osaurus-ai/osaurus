@@ -560,13 +560,18 @@ final class ServerController: ObservableObject {
             saveConfiguration()
         }
 
-        let unloadedModelCount =
-            loadedModelRefreshNeeded
-            ? await ModelRuntime.shared.cachedModelSummaries().count
-            : 0
-        if loadedModelRefreshNeeded {
+        // A change of ONLY the speculative load inputs (the Speculative Decoding row) is judged per resident
+        // model: one whose loaded graph already serves the new selection stays resident (MiniMax-M3.1's DSpark
+        // Off <-> On: no 95 GB reload). Any other load input still clears every resident model.
+        let unloadedModelCount: Int
+        if Self.onlySpeculativeLoadInputsChanged(previous: previousRuntimeSettings, next: settings) {
+            unloadedModelCount = await ModelRuntime.shared.applySpeculativeLoadChange(settings: settings)
+            await ModelRuntime.shared.refreshDiskCacheCaps()
+        } else if loadedModelRefreshNeeded {
+            unloadedModelCount = await ModelRuntime.shared.cachedModelSummaries().count
             await ModelRuntime.shared.clearAll()
         } else {
+            unloadedModelCount = 0
             await ModelRuntime.shared.refreshDiskCacheCaps()
         }
         if restartWasRequested {
@@ -589,13 +594,35 @@ final class ServerController: ObservableObject {
         previous: VMLXServerRuntimeSettings,
         next: VMLXServerRuntimeSettings
     ) -> Bool {
+        // Only the MTP fields that change what gets LOADED force a reload.
+        // Comparing the whole `mtp` struct meant changing the draft-token
+        // depth — a per-request value — evicted every resident model, so a
+        // quick depth switch cost a full 27B reload on the next turn. Even
+        // these MAY not change a given bundle's load: `saveRuntimeSettings`
+        // judges a speculative-only change per resident model
+        // (`ModelRuntime.applySpeculativeLoadChange`).
+        mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
+            || nonSpeculativeLoadInputsRequireRefresh(previous: previous, next: next)
+    }
+
+    /// The change touches load inputs, but only speculative-decoding ones: `saveRuntimeSettings` then asks each
+    /// resident model whether its own load changes (`ModelRuntime.applySpeculativeLoadChange`) instead of clearing
+    /// every resident model.
+    nonisolated static func onlySpeculativeLoadInputsChanged(
+        previous: VMLXServerRuntimeSettings,
+        next: VMLXServerRuntimeSettings
+    ) -> Bool {
+        mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
+            && !nonSpeculativeLoadInputsRequireRefresh(previous: previous, next: next)
+    }
+
+    /// Every load input except the speculative-decoding ones.
+    nonisolated static func nonSpeculativeLoadInputsRequireRefresh(
+        previous: VMLXServerRuntimeSettings,
+        next: VMLXServerRuntimeSettings
+    ) -> Bool {
         previous.cache.requiresModelReload(comparedTo: next.cache)
             || previous.multimodal != next.multimodal
-            // Only the MTP fields that change what gets LOADED force a reload.
-            // Comparing the whole `mtp` struct meant changing the draft-token
-            // depth — a per-request value — evicted every resident model, so a
-            // quick depth switch cost a full 27B reload on the next turn.
-            || mtpLoadInputsChanged(previous: previous.mtp, next: next.mtp)
             // These values are consumed while constructing the model graph.
             // Compare effective settings so nil versus an explicit default
             // does not unload a resident model unnecessarily.

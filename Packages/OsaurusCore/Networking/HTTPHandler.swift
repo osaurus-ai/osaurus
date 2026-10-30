@@ -2153,7 +2153,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 != next.effectivePerformance.compiledDecode
 
             ServerRuntimeSettingsStore.save(next)
-            if loadedModelRefreshNeeded {
+            // Same per-model decision as the Settings path: a speculative-only change unloads only the resident
+            // models whose loaded graph does not serve the new selection (`applySpeculativeLoadChange`).
+            if previous.effectivePerformance.compiledDecode == next.effectivePerformance.compiledDecode,
+                ServerController.onlySpeculativeLoadInputsChanged(previous: previous, next: next)
+            {
+                _ = await ModelRuntime.shared.applySpeculativeLoadChange(settings: next)
+                await ModelRuntime.shared.refreshDiskCacheCaps()
+            } else if loadedModelRefreshNeeded {
                 await ModelRuntime.shared.clearAll()
             } else {
                 await ModelRuntime.shared.refreshDiskCacheCaps()

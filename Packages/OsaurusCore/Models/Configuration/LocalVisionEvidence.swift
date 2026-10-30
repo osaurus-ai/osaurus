@@ -119,6 +119,13 @@ enum LocalVisionEvidence {
         return DeepseekV41VisionConfiguration.enabled()
     }
 
+    /// True when the linked vMLX builds the MiniMax-M3 / M3.1 vision stack: its `MiniMaxM3Model` reports its lanes
+    /// through `ModalityBearing` (the load-time tower check reads it). Otherwise an M3.1 bundle stays text-only.
+    static var miniMaxM3VisionRuntimeAvailable: Bool {
+        let type: Any.Type = MiniMaxM3Model.self
+        return type is ModalityBearing.Type
+    }
+
     private static func object(_ url: URL) -> [String: Any]? {
         guard let data = try? Data(contentsOf: url),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -178,6 +185,49 @@ enum LocalVisionEvidence {
                 return result(false, "The DeepSeek-V4.1 vision tower is missing encoder, aligner or delimiter weights.")
             }
             return result(true, "Image input is backed by the DeepSeek-V4.1 vision tower, aligner and delimiter weights in the bundle.")
+        }
+        if modelType == "minimax_m3_vl" {
+            guard miniMaxM3VisionRuntimeAvailable else {
+                return result(false, "The linked vMLX runtime has no MiniMax-M3 vision lane.")
+            }
+            // MiniMax-M3.1 loads through vMLX's LLM factory (`MiniMaxM3Model`), which builds the vision stack from
+            // `vision_config` and reports `.vision` through `ModalityBearing`; vMLX prepares images the way the
+            // bundle's own processor does (`preprocessor_config.json`). Require the declared encoder depth, the image
+            // token, the processor configuration, the patch embedding, every encoder layer, the projector and the
+            // patch-merge MLP.
+            guard let vision = config["vision_config"] as? [String: Any],
+                let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth),
+                ((config["image_token_index"] as? NSNumber)?.intValue ?? -1) >= 0
+            else {
+                return result(false, "The MiniMax-M3 bundle has no vision configuration or image token.")
+            }
+            guard let processor = object(directory.appendingPathComponent("preprocessor_config.json")),
+                !processor.isEmpty
+            else {
+                return result(false, "The MiniMax-M3 bundle has no readable preprocessor_config.json, so images cannot be prepared for it.")
+            }
+            do {
+                names = try tensorNames(directory)
+            } catch {
+                return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
+            }
+            guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
+                return result(false, "The installed weight format is rejected by the local runtime preflight.")
+            }
+            let tower = "vision_tower.vision_model."
+            let required = [tower + "embeddings.patch_embedding.weight", tower + "pre_layrnorm.weight",
+                "multi_modal_projector.linear_1.weight", "multi_modal_projector.linear_2.weight",
+                "patch_merge_mlp.linear_1.weight", "patch_merge_mlp.linear_2.weight"]
+            guard required.allSatisfy(names.contains),
+                (0..<depth).allSatisfy({ i in
+                    let layer = tower + "encoder.layers.\(i)."
+                    return ["self_attn.q_proj.weight", "self_attn.out_proj.weight", "mlp.fc1.weight", "mlp.fc2.weight"]
+                        .allSatisfy { names.contains(layer + $0) }
+                })
+            else {
+                return result(false, "The MiniMax-M3 vision stack is missing encoder, projector or patch-merge weights.")
+            }
+            return result(true, "Image input is backed by the MiniMax-M3 vision tower, projector and patch-merge weights in the bundle.")
         }
         guard VLMTypeRegistry.supportedModelTypes.contains(modelType) else {
             return result(false, "The configured architecture has no local vision runtime.")
