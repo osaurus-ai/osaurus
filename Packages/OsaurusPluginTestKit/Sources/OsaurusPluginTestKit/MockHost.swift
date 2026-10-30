@@ -108,7 +108,11 @@ public final class MockHost: @unchecked Sendable {
             ptr.deallocate()
             installedPointer = nil
         }
-        if let raw = Thread.current.threadDictionary[Self.threadKey] as? UnsafeMutableRawPointer {
+        // Only clear the slot if it holds this mock; another installed
+        // host on the thread must keep its retain and slot.
+        if let raw = Thread.current.threadDictionary[Self.threadKey] as? UnsafeMutableRawPointer,
+            raw == Unmanaged.passUnretained(self).toOpaque()
+        {
             Unmanaged<MockHost>.fromOpaque(raw).release()
             Thread.current.threadDictionary.removeObject(forKey: Self.threadKey)
         }
