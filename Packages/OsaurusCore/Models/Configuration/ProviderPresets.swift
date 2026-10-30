@@ -14,6 +14,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
     case anthropic
     case azureOpenAI
     case atlasCloud
+    case cheaperInference
     case openai
     case google
     case xai
@@ -34,6 +35,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .anthropic: return "Anthropic"
         case .azureOpenAI: return "Azure OpenAI Foundry"
         case .atlasCloud: return "AtlasCloud"
+        case .cheaperInference: return "Cheaper Inference"
         case .openai: return "OpenAI"
         case .google: return "Google"
         case .xai: return "xAI"
@@ -54,6 +56,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .anthropic: return L("Claude models")
         case .azureOpenAI: return L("Azure deployments")
         case .atlasCloud: return "DeepSeek, Qwen, GLM, Kimi, MiniMax"
+        case .cheaperInference: return "GPT, Claude, Gemini, DeepSeek, GLM"
         case .openai: return L("ChatGPT/Codex or Platform API")
         case .google: return L("Gemini models")
         case .xai: return L("Grok models")
@@ -74,6 +77,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .anthropic: return "brain.head.profile"
         case .azureOpenAI: return "cloud.fill"
         case .atlasCloud: return "square.stack.3d.up.fill"
+        case .cheaperInference: return "server.rack"
         case .openai: return "sparkles"
         case .google: return "globe"
         case .xai: return "bolt.fill"
@@ -94,6 +98,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .anthropic: return [Color(red: 0.85, green: 0.55, blue: 0.35), Color(red: 0.75, green: 0.4, blue: 0.25)]
         case .azureOpenAI: return [Color(red: 0.0, green: 0.47, blue: 0.84), Color(red: 0.0, green: 0.62, blue: 0.72)]
         case .atlasCloud: return [Color(red: 0.03, green: 0.23, blue: 0.21), Color(red: 0.07, green: 0.39, blue: 0.34)]
+        case .cheaperInference: return [Color(red: 0.12, green: 0.55, blue: 0.60), Color(red: 0.08, green: 0.42, blue: 0.50)]
         case .openai: return [Color(red: 0.0, green: 0.65, blue: 0.52), Color(red: 0.0, green: 0.5, blue: 0.4)]
         case .google: return [Color(red: 0.26, green: 0.52, blue: 0.96), Color(red: 0.18, green: 0.38, blue: 0.85)]
         case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
@@ -114,6 +119,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .anthropic: return "https://console.anthropic.com/settings/keys"
         case .azureOpenAI: return "https://ai.azure.com"
         case .atlasCloud: return "https://www.atlascloud.ai/console/api-keys"
+        case .cheaperInference: return "https://cheaperinference.com/signup"
         case .openai: return "https://platform.openai.com/api-keys"
         case .google: return "https://aistudio.google.com/apikey"
         case .xai: return "https://console.x.ai/"
@@ -143,6 +149,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .azureOpenAI: return "https://learn.microsoft.com/azure/ai-foundry/openai/"
         case .atlasCloud: return "https://www.atlascloud.ai/docs/en/models/get-start"
+        case .cheaperInference: return "https://cheaperinference.com/docs"
         case .deepseek: return "https://api-docs.deepseek.com/"
         case .fireworks: return "https://docs.fireworks.ai"
         case .mistral: return "https://docs.mistral.ai/api"
@@ -177,6 +184,13 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
                 L("Go to the AtlasCloud API keys page"),
                 L("Create or copy an API key"),
                 L("Use the OpenAI-compatible base URL https://api.atlascloud.ai/v1"),
+                L("Paste the key here"),
+            ]
+        case .cheaperInference:
+            return [
+                L("Go to the Cheaper Inference sign-up page"),
+                L("Create or copy an API key"),
+                L("Use the OpenAI-compatible base URL https://api.cheaperinference.com/v1"),
                 L("Paste the key here"),
             ]
         case .openai:
@@ -337,6 +351,24 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
                     "zai-org/glm-5",
                     "zai-org/glm-5-turbo",
                     "minimaxai/minimax-m2.7",
+                ]
+            )
+        case .cheaperInference:
+            return ProviderPresetConfiguration(
+                name: "Cheaper Inference",
+                host: "api.cheaperinference.com",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .apiKey,
+                providerType: .openaiLegacy,
+                defaultManualModelIds: [
+                    "gpt-5.4-mini",
+                    "gpt-5.4",
+                    "claude-sonnet-5",
+                    "gemini-3.1-pro",
+                    "deepseek-v4-flash",
+                    "glm-5.3",
                 ]
             )
         case .openai:
