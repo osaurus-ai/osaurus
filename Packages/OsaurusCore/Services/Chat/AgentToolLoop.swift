@@ -492,11 +492,6 @@ struct AgentLoopHooks {
     /// between tool calls. Return true to end the run with `.cancelled`.
     var isCancelled: () async -> Bool
 
-    /// Runs only between drained model steps and fully recorded tool batches,
-    /// before the next history snapshot. Chat uses this boundary for LLM
-    /// compaction; failures propagate without starting another model request.
-    var beforeBuildMessages: (() async throws -> Void)?
-
     /// Build the full message array for the next model step from the
     /// surface's history store. `notices` carries driver-staged
     /// `[System Notice]` lines (budget warning first, then state notice)
@@ -505,7 +500,10 @@ struct AgentLoopHooks {
     /// Set `overBudget` on the returned input when even fully-compacted
     /// history exceeds the estimate. This is advisory: the runtime must
     /// receive the request and report any real context-limit error.
-    var buildMessages: (_ notices: [String]) async -> AgentLoopIterationInput
+    /// This runs between drained model steps and fully recorded tool batches.
+    /// LLM compaction can be awaited here; failures propagate before the next
+    /// model request, without introducing a second history-rendering pass.
+    var buildMessages: (_ notices: [String]) async throws -> AgentLoopIterationInput
 
     /// Perform one model step (request build + stream/complete + delta
     /// routing) and classify the outcome. Thrown errors abort the run and
@@ -649,9 +647,8 @@ struct AgentLoopHooks {
 
     init(
         isCancelled: @escaping () async -> Bool = { false },
-        buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
+        buildMessages: @escaping (_ notices: [String]) async throws -> AgentLoopIterationInput,
         modelStep: @escaping (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep,
-        beforeBuildMessages: (() async throws -> Void)? = nil,
         prepareIncompleteReasoningContinuation: (() async -> Void)? = nil,
         prepareTrackedTaskContinuation: (() async -> Void)? = nil,
         willProcessCall: @escaping (_ invocation: ServiceToolInvocation, _ callId: String) async -> Void = { _, _ in },
@@ -677,7 +674,6 @@ struct AgentLoopHooks {
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
-        self.beforeBuildMessages = beforeBuildMessages
         self.modelStep = modelStep
         self.prepareIncompleteReasoningContinuation = prepareIncompleteReasoningContinuation
         self.prepareTrackedTaskContinuation = prepareTrackedTaskContinuation
@@ -2540,11 +2536,10 @@ enum AgentToolLoop {
                 notices.append(n)
                 pendingTodoNotice = nil
             }
-            try await hooks.beforeBuildMessages?()
+            let input = try await hooks.buildMessages(notices)
             if await hooks.isCancelled() {
                 return RunResult(exit: .cancelled, iterations: iteration - 1)
             }
-            let input = await hooks.buildMessages(notices)
             // Budget estimates advise compaction and diagnostics, never
             // admission. Even a metadata-sourced window is compared against
             // heuristic token counts, reservations, and a safety margin.

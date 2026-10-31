@@ -2296,9 +2296,11 @@ struct AgentToolLoopTests {
         ])
         var hooks = surface.makeHooks()
         var crossings: [(builds: Int, batches: Int, results: Int)] = []
-        hooks.beforeBuildMessages = {
+        let build = hooks.buildMessages
+        hooks.buildMessages = { notices in
             crossings.append((surface.builtNotices.count, surface.batchOutcomes.count,
                               surface.batchOutcomes.last?.count ?? 0))
+            return try await build(notices)
         }
         let result = try await AgentToolLoop.run(
             policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
@@ -2312,7 +2314,10 @@ struct AgentToolLoopTests {
     @Test func cancelledIterationPreparationNeverBuildsOrStartsAnotherRequest() async throws {
         let surface = ScriptedLoopSurface(steps: [.finalResponse])
         var hooks = surface.makeHooks()
-        hooks.beforeBuildMessages = { surface.cancelled = true }
+        hooks.buildMessages = { _ in
+            surface.cancelled = true
+            return AgentLoopIterationInput(messages: [])
+        }
         let result = try await AgentToolLoop.run(
             policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
         #expect(result.exit == .cancelled)
@@ -2324,8 +2329,10 @@ struct AgentToolLoopTests {
         enum Failure: Error { case summary }
         let surface = ScriptedLoopSurface(steps: [.toolCalls([inv("read")]), .finalResponse])
         var hooks = surface.makeHooks()
-        hooks.beforeBuildMessages = {
+        let build = hooks.buildMessages
+        hooks.buildMessages = { notices in
             if !surface.batchOutcomes.isEmpty { throw Failure.summary }
+            return try await build(notices)
         }
         await #expect(throws: Failure.self) {
             try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)

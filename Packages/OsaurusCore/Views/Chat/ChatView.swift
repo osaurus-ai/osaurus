@@ -3484,6 +3484,7 @@ final class ChatSession: ObservableObject {
             rebuildVisibleBlocks()
             invalidateWarmupAfterContextShapeChange()
             compactionState = .completed(savedTokens: summary.savedTokensEstimate)
+            finishCompaction(success: true)
         } catch {
             if isRunActive(runId), toolLoopCompactionRunId == runId {
                 compactionState = error is CancellationError
@@ -3548,7 +3549,7 @@ final class ChatSession: ObservableObject {
     }
 
     private func runCompaction() {
-        guard !compactionState.isRunning else { return }
+        guard !isStreaming, !compactionState.isRunning else { return }
         compactionTask?.cancel()
         let turnsSnapshot = turns
         let existing = conversationSummary
@@ -8165,6 +8166,20 @@ final class ChatSession: ObservableObject {
 
                             ttftTrace?.mark("build_messages_start")
                             var msgs = buildMessages()
+                            let previousSummaryId = self.conversationSummary?.id
+                            try await self.compactBeforeToolContinuation(
+                                runId: runId, assistantTurnId: assistantTurn.id,
+                                historyTokens: ContextBudgetManager.estimateTokens(
+                                    for: msgs.filter { $0.role != "system" }),
+                                historyBudget: loopBudgetManager.historyBudget,
+                                invocation: ModelJobInvocation(parentModelName: turnModelId, source: self.source),
+                                agentId: effectiveAgentId
+                            )
+                            // Ordinary tool rounds render history once. Only a
+                            // newly accepted summary changes the outbound shape.
+                            if previousSummaryId != self.conversationSummary?.id {
+                                msgs = buildMessages()
+                            }
                             ttftTrace?.mark("build_messages_done")
 
                             // Compact history that outgrew the window: middle
@@ -8746,18 +8761,6 @@ final class ChatSession: ObservableObject {
                             assistantTurn.content
                         }
                     )
-                    loopHooks.beforeBuildMessages = {
-                        let historyTokens = ContextBudgetManager.estimateTokens(
-                            for: buildMessages().filter { $0.role != "system" }
-                        )
-                        try await self.compactBeforeToolContinuation(
-                            runId: runId, assistantTurnId: assistantTurn.id,
-                            historyTokens: historyTokens,
-                            historyBudget: loopBudgetManager.historyBudget,
-                            invocation: ModelJobInvocation(parentModelName: turnModelId, source: self.source),
-                            agentId: effectiveAgentId
-                        )
-                    }
                     loopHooks.recordTerminalToolRejection = { [weak self] envelope in
                         guard let self, self.activeRunId == runId else { return }
                         self.delegatedToolFailure.record(envelope, runID: runId)

@@ -27,6 +27,19 @@ struct ChatSessionCompactionTests {
     private static let asyncTimeout: Duration = .seconds(15)
     private static let chatModel = "compaction-fallback-test-model"
 
+    @Test("popover Retry cannot start a competing summary during an active stream")
+    func retryDuringStreamingDoesNotStartSummary() async throws {
+        try await ChatHistoryTestStorage.run {
+            clearCompactionModel(contextCap: nil)
+            let session = makeSession(pairs: 4, charsPerTurn: 40)
+            session.isStreaming = true
+            session.retryCompaction()
+            #expect(session.compactionState == .idle)
+            #expect(session.conversationSummary == nil)
+            session.isStreaming = false
+        }
+    }
+
     @Test("manual Compact is available at low utilization with no configured model")
     func manualCompactAvailableAtLowUtilization() async throws {
         try await ChatHistoryTestStorage.run {
