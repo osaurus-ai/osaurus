@@ -8754,7 +8754,7 @@ final class ChatSession: ObservableObject {
                             runId: runId, assistantTurnId: assistantTurn.id,
                             historyTokens: historyTokens,
                             historyBudget: loopBudgetManager.historyBudget,
-                            invocation: ModelJobInvocation(parentModelName: turnModelId, source: source),
+                            invocation: ModelJobInvocation(parentModelName: turnModelId, source: self.source),
                             agentId: effectiveAgentId
                         )
                     }

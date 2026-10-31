@@ -2303,7 +2303,7 @@ struct AgentToolLoopTests {
         let result = try await AgentToolLoop.run(
             policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
         #expect(result.exit == .finalResponse)
-        #expect(crossings.count == 2)
+        try #require(crossings.count == 2)
         #expect(crossings[0].builds == 0 && crossings[0].batches == 0)
         #expect(crossings[1].builds == 1 && crossings[1].batches == 1)
         #expect(crossings[1].results == 2)
