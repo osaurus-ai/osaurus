@@ -264,10 +264,10 @@ final class ContextCompactionService {
             return cut
         }
 
-        // INVARIANT: a tool-loop cut must leave the latest complete batch
-        // verbatim and never separate a call from any of its results. A long
-        // single user exchange has no older user boundary, so retain its most
-        // recent batch and summarize the token-heavy prefix before it.
+        // INVARIANT: a tool-loop cut never separates calls from their results.
+        // Prefer leaving the latest complete batch verbatim when there is a
+        // token-heavy prefix before it. A fully drained heavy batch can itself
+        // be covered by the last-resort cut below.
         if afterToolBatch,
             let batchStart = toolBatchStart,
             batchStart > alreadyCovered,
