@@ -578,6 +578,7 @@ enum ConfigApplier {
             agent.temperature = entry.temperature.valueOrNil.map(Float.init)
         }
         if entry.maxTokens.isSpecified { agent.maxTokens = entry.maxTokens.valueOrNil }
+        if let show = entry.showResponseMetrics { agent.settings.showResponseMetrics = show }
         if entry.generationSettings.isSpecified {
             agent.generationSettings = entry.generationSettings.valueOrNil
         }

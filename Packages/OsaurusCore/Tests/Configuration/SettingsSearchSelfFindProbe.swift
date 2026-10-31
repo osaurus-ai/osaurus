@@ -309,6 +309,7 @@ struct SettingsSearchSelfFindProbe {
             ("apple_apps", "agents.appleApps"),
             // Per-agent generation controls use their exact on-screen labels.
             ("Temperature", "agents.generation.temperature"),
+            ("Show Response Metrics", "agents.showResponseMetrics"),
             ("Max Tokens", "agents.generation.maxTokens"),
             ("Top P", "agents.generation.topP"),
             ("Top K", "agents.generation.topK"),

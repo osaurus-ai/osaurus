@@ -11322,6 +11322,7 @@ struct ChatView: View {
                 agentCustomAvatarPath: identity.customAvatarPath,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
+                showResponseMetrics: windowState.activeAgent.settings.showResponseMetrics,
                 expandedBlocksStore: session.expandedBlocksStore,
                 scrollPositionStore: session.scrollPositionStore,
                 scrollToBottomTrigger: scrollToBottomTrigger,
@@ -11556,6 +11557,7 @@ private struct IsolatedThreadView: View {
     let agentCustomAvatarPath: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
+    let showResponseMetrics: Bool
     let expandedBlocksStore: ExpandedBlocksStore
     let scrollPositionStore: ThreadScrollPositionStore
     let scrollToBottomTrigger: Int
@@ -11605,6 +11607,7 @@ private struct IsolatedThreadView: View {
             agentCustomAvatarPath: agentCustomAvatarPath,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
+            showResponseMetrics: showResponseMetrics,
             expandedBlocksStore: expandedBlocksStore,
             scrollPositionStore: scrollPositionStore,
             scrollToBottomTrigger: scrollToBottomTrigger,

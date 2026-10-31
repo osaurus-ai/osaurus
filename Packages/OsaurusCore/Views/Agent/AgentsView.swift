@@ -335,7 +335,7 @@ struct AgentsView: View {
     /// cold-mounted Agents tab never sees the `onChange`.
     private func routeSettingsLanding(_ pending: String?) {
         guard let pending, pending.hasPrefix("agents.") else { return }
-        if (pending == "agents.description" || pending.hasPrefix("agents.generation.")),
+        if (pending == "agents.description" || AgentAdvancedSettingsLanding.matches(pending)),
             let target = detailAgent ?? customAgents.first
         {
             selectedRemoteAgentId = nil
@@ -1468,6 +1468,7 @@ struct AgentDetailView: View {
     /// overview binds individual cards to these; `saveAgent` folds
     /// them back into the persisted `AgentSettings` block.
     @State private var renderChartEnabled: Bool = false
+    @State private var showResponseMetrics: Bool = false
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
     /// Native `web_search` gate — default ON (free providers need no setup).
@@ -1602,6 +1603,7 @@ struct AgentDetailView: View {
     @State private var abilityPreviewToolNames: Set<String>?
     @State private var abilityPreviewAppleApps: Set<AppleApp>?
     @Environment(\.settingsLandingPending) private var settingsLandingPending
+    @State private var renderedSettingsAnchors: Set<String> = []
     @State private var abilityPreviewAutonomousConfig: AutonomousExecConfig?
     @State private var abilityPreviewRegistryRevision = 0
     /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
@@ -1852,11 +1854,32 @@ struct AgentDetailView: View {
                     .id(selectedTab)
                 }
                 .animation(nil, value: selectedTab)
+                .onPreferenceChange(SettingsLandingAnchorsKey.self) { anchors in
+                    renderedSettingsAnchors = anchors
+                    scrollToSettingsLanding(settingsLandingPending, proxy: proxy)
+                }
+                .onChange(of: settingsLandingPending) { _, pending in
+                    scrollToSettingsLanding(pending, proxy: proxy)
+                }
+                .onAppear {
+                    scrollToSettingsLanding(settingsLandingPending, proxy: proxy)
+                }
                 .onChange(of: scrollToToolsNonce) { _, _ in
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(Self.toolsToggleScrollId, anchor: .center)
                     }
                 }
+            }
+        }
+    }
+
+    /// Use the same rendered-anchor contract as SettingsPage. Expanding Advanced
+    /// adds its anchors after navigation; wait for layout before positioning.
+    private func scrollToSettingsLanding(_ id: String?, proxy: ScrollViewProxy) {
+        guard let id, id.hasPrefix("agents."), renderedSettingsAnchors.contains(id) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(id, anchor: .center)
             }
         }
     }
@@ -1918,7 +1941,7 @@ struct AgentDetailView: View {
             loadMemoryData()
             loadAgentSecrets()
             selectedModel = currentAgent.defaultModel
-            if settingsLandingPending?.hasPrefix("agents.generation.") == true {
+            if AgentAdvancedSettingsLanding.matches(settingsLandingPending) {
                 showAdvancedSettings = true
             }
             refreshDetailCaches()
@@ -1930,7 +1953,7 @@ struct AgentDetailView: View {
             await refreshAbilityContextPreview()
         }
         .onChange(of: settingsLandingPending) { _, pending in
-            if pending?.hasPrefix("agents.generation.") == true {
+            if AgentAdvancedSettingsLanding.matches(pending) {
                 selectedTab = .builtIn(.configure)
                 showAdvancedSettings = true
             }
@@ -2679,6 +2702,10 @@ struct AgentDetailView: View {
             if showAdvancedSettings {
                 VStack(alignment: .leading, spacing: 16) {
                     generationOverridesSection
+                    if agent.id != Agent.defaultId {
+                        AgentResponseMetricsToggle(isOn: $showResponseMetrics)
+                            .onChange(of: showResponseMetrics) { debouncedSave() }
+                    }
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -2687,13 +2714,14 @@ struct AgentDetailView: View {
 
     /// Tiny one-line summary shown next to "Advanced Settings" so users can see at
     /// a glance whether anything in there is overridden. The capability toggles
-    /// live on Abilities → Overview, so only generation overrides remain behind
-    /// this disclosure.
+    /// live on Abilities → Overview; this disclosure holds generation overrides
+    /// and optional response metrics.
     private var advancedSummary: String {
         var parts: [String] = []
         if !temperature.isEmpty || !maxTokens.isEmpty || generationSettings?.isEmpty == false {
             parts.append("generation")
         }
+        if showResponseMetrics { parts.append(L("response metrics")) }
         return parts.isEmpty ? L("Defaults") : parts.joined(separator: " · ")
     }
 
@@ -7376,6 +7404,7 @@ struct AgentDetailView: View {
         memoryEnabled = agent.memoryEnabled
         dbEnabled = agent.settings.dbEnabled
         renderChartEnabled = agent.settings.renderChartEnabled
+        showResponseMetrics = agent.settings.showResponseMetrics
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         webSearchEnabled = agent.settings.webSearchEnabled
@@ -7619,6 +7648,7 @@ struct AgentDetailView: View {
                 dbEnabled: dbEnabled,
                 schedule: current.settings.schedule,
                 limits: current.settings.limits,
+                showResponseMetrics: showResponseMetrics,
                 renderChartEnabled: renderChartEnabled,
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
@@ -8591,6 +8621,7 @@ private struct AgentEditorSheet: View {
     @State private var showModelPicker: Bool = false
     @State private var generationDraft = AgentGenerationDraft()
     @State private var showGenerationSettings = false
+    @State private var showResponseMetrics = false
     @State private var generationChoices: AgentGenerationReasoningChoices?
     @State private var showAddModelWarning: Bool = false
     @State private var hasAppeared: Bool = false
@@ -8662,6 +8693,7 @@ private struct AgentEditorSheet: View {
                     onReasoningChoicesChange: { generationChoices = $0 },
                     initialDraft: generationDraft
                 )
+                AgentResponseMetricsToggle(isOn: $showResponseMetrics)
             }
         }
     }
@@ -9266,6 +9298,7 @@ private struct AgentEditorSheet: View {
         agent.manualToolNames = Array(draftToolNames)
         agent.avatar = selectedAvatar
         agent.settings.enabledAppleApps = draftAppleApps
+        agent.settings.showResponseMetrics = showResponseMetrics
 
         onSave(agent)
     }

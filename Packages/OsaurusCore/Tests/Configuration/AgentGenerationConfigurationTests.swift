@@ -4,6 +4,21 @@ import Testing
 @testable import OsaurusCore
 
 struct AgentGenerationConfigurationTests {
+    @Test("response display preference survives strict schema, template inheritance and explicit Off")
+    func responseMetricsTemplateRoundTrip() throws {
+        let doc = try ConfigYAML.decode("agents:\n  - name: Display\n    show_response_metrics: true\n")
+        let entry = try #require(doc.agents?.first)
+        #expect(entry.showResponseMetrics == true)
+        let restored = try ConfigYAML.decode(ConfigJSON.encode(doc))
+        #expect(restored.agents?.first?.showResponseMetrics == true)
+        let template = AgentTemplate(name: "Display", agent: entry)
+        #expect(template.document(overrides: AgentEntry(name: "Display")).agents?.first?.showResponseMetrics == true)
+        var off = AgentEntry(name: "Display")
+        off.showResponseMetrics = false
+        #expect(template.document(overrides: off).agents?.first?.showResponseMetrics == false)
+        #expect(entry.generationSettings == .absent)
+    }
+
     @Test("strict configuration preserves nested template JSON and exact nullable overrides")
     func strictRoundTrip() throws {
         let document = try ConfigYAML.decode("""
@@ -105,11 +120,12 @@ struct AgentGenerationConfigurationPersistenceTests {
     @Test("export, template JSON, draft and real configuration apply preserve saved defaults")
     func exportAndApply() async throws {
         try await ChatHistoryTestStorage.run {
-            let agent = Agent(
+            var agent = Agent(
                 name: "Generation fixture", temperature: 0, maxTokens: 1234,
                 generationSettings: AgentGenerationSettingsTests.explicit,
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
+            agent.settings.showResponseMetrics = true
             AgentStore.save(agent)
             AgentManager.shared.refresh()
             let exported = ConfigExporter.exportAgent(agent)
@@ -117,6 +133,7 @@ struct AgentGenerationConfigurationPersistenceTests {
             let restored = try AgentTemplate.parse(template.jsonString())
             let draft = ConfigApplier.draftAgent(from: restored.agent).agent
             #expect(draft.generationSettings == agent.generationSettings)
+            #expect(draft.settings.showResponseMetrics)
             #expect(draft.temperature == 0)
             #expect(draft.maxTokens == 1234)
 
@@ -131,12 +148,14 @@ struct AgentGenerationConfigurationPersistenceTests {
             #expect(ConfigExporter.exportAgent(try #require(AgentStore.load(id: agent.id))).generationSettings == .null)
 
             var replace = AgentEntry(name: agent.name)
+            replace.showResponseMetrics = false
             replace.generationSettings = .value(AgentGenerationSettings(enableThinking: false))
             var document = OsaurusConfigDocument()
             document.agents = [replace]
             let plan = try ConfigPlanner.plan(document: document, prune: false)
             #expect(plan.actions.contains { $0.changes.contains { $0.contains("generation_settings") } })
             _ = await ConfigApplier.apply(document: document, prune: false)
+            #expect(AgentStore.load(id: agent.id)?.settings.showResponseMetrics == false)
             #expect(AgentStore.load(id: agent.id)?.generationSettings == replace.generationSettings.valueOrNil)
 
             replace.generationSettings = .value(AgentGenerationSettings(topK: -1))

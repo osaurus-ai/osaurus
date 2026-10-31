@@ -1892,6 +1892,15 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.showResponseMetrics",
+            tab: .agents,
+            section: "Advanced Settings",
+            title: "Show Response Metrics",
+            keywords: ["tokenizer", "token count", "tokens per second", "tok/s", "response statistics", "agent display"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings. Shows existing measured response statistics in that agent's chats.",
+            declarativeSection: "agents"
+        ),
+        .init(
             id: "agents.generation.temperature",
             tab: .agents,
             section: "Generation Overrides",
