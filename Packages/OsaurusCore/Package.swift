@@ -345,9 +345,14 @@ let package = Package(
         // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
         // vmlx-swift#687: MiniMax-M3.1-Flash (JANGT experts, block-sparse MSA, dspark/ drafter, aligned prefix cache,
         // thinking_mode, image input).
+        // Integration pin (main 9ec1d561 + #687, #689, #699 / #700, #697, #696): MiniMax-M3.1 JANGT prefill on
+        // expert-aligned tiles (bit-identical); prefix cache serves from SSD only by default (RAM tier opt-in via
+        // VMLX_RESIDENT_CACHE_GB), DeepSeek-V4 boundaries captured in prefill and named-tool turns reuse the prefix;
+        // DeepSeek-V4.1 prefill runs only the last KV-source layer's cache writes; the residency budget applies to
+        // bundles reached through a symlinked directory; main's Gemma 4 tool transport and Jinja namespace fixes.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "46cc6f6f88cd0189fb106875f813872ee00de1fa"
+            revision: "46f0f3aca9a44b92afd28ffd0db0b28d7c690fec"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
