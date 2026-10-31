@@ -67,6 +67,9 @@ public final class ToastManager {
             return toast.id
         }
 
+        // The overlay panel is created lazily (see ToastWindowController).
+        ToastWindowController.shared.showOverlayIfNeeded()
+
         // Add toast to the list
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             toasts.append(toast)
