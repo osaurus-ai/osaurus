@@ -1920,8 +1920,7 @@ struct AgentDetailView: View {
             loadAgentSecrets()
             selectedModel = currentAgent.defaultModel
             if settingsLandingPending?.hasPrefix("agents.generation.") == true
-                || settingsLandingPending == "agents.showResponseMetrics"
-            {
+                || settingsLandingPending == "agents.showResponseMetrics" {
                 showAdvancedSettings = true
             }
             refreshDetailCaches()

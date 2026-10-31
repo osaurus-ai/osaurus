@@ -454,6 +454,7 @@ public struct AgentEntry: Equatable, Sendable {
     public var maxTokens: ConfigField<Int> = .absent
     /// Replaces the advanced override group; null clears it, absent preserves it.
     public var generationSettings: ConfigField<AgentGenerationSettings> = .absent
+    /// Omission preserves the current display choice; explicit false disables it.
     public var showResponseMetrics: Bool?
     public var capabilities: AgentCapabilitiesEntry?
     public var tools: AgentToolsEntry?
