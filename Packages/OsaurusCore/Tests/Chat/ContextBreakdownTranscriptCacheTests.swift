@@ -153,6 +153,22 @@ struct ToolResultBudgetTests {
         #expect(estimate == ContextBudgetManager.estimateTokens(for: [turn, explicit]) + 1000)
     }
 
+    @Test func completeParallelResultsEachCountOnce() {
+        let turn = assistant(["a": payload, "b": payload])
+        let results = [result("a", payload), result("b", payload)]
+        let estimate = ContextBudgetManager.estimateTokens(for: [turn] + results)
+        turn.toolResults = [:]
+        #expect(estimate == ContextBudgetManager.estimateTokens(for: [turn] + results))
+    }
+
+    @Test func explicitResultIsAuthoritativeWhenTheDisplayMirrorDiffers() {
+        let turn = assistant(["a": payload])
+        let explicit = result("a", "short result")
+        let estimate = ContextBudgetManager.estimateTokens(for: [turn, explicit])
+        turn.toolResults = [:]
+        #expect(estimate == ContextBudgetManager.estimateTokens(for: [turn, explicit]))
+    }
+
     @Test func unrelatedResultCannotHideAnEqualDisplayPayload() {
         let turn = assistant(["a": payload])
         let explicit = result("b", payload)
