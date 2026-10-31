@@ -144,4 +144,22 @@ struct MockHostTests {
         host.uninstall()
         host.uninstall()  // second call must not crash
     }
+
+    @Test func uninstallingAnotherHostKeepsInstalledHost() {
+        let host = MockHost()
+        host.onConfigGet = { _ in "installed" }
+        host.withInstalled { ptr in
+            let api = ptr.pointee
+            // A second, never-installed mock going away (deinit runs
+            // `uninstall()`) must not clear the installed host's slot.
+            MockHost().uninstall()
+            let value = "k".withCString { keyPtr -> String? in
+                guard let cstr = api.configGet?(keyPtr) else { return nil }
+                let s = String(cString: cstr)
+                free(UnsafeMutableRawPointer(mutating: cstr))
+                return s
+            }
+            #expect(value == "installed")
+        }
+    }
 }
