@@ -291,6 +291,14 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
         return f
     }()
 
+    /// `lenientDate` runs once per decoded date; building formatters per
+    /// call was measurable on the cold first load of the template library.
+    nonisolated(unsafe) static let iso8601Fractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
     // MARK: Requirements
 
     /// Requirements follow the payload. Notes and author-carried values the
@@ -601,7 +609,7 @@ extension Template {
         case let list as [Any]:
             return list.map { normalize($0) ?? NSNull() }
         case let date as Date:
-            return ISO8601DateFormatter().string(from: date)
+            return iso8601.string(from: date)
         case let number as NSNumber where !(value is String):
             // JSONSerialization numbers are NSNumber; YAML dumping needs the
             // Swift scalar or booleans turn into 1/0.
@@ -618,10 +626,8 @@ extension Template {
 
     static func lenientDate(_ decoder: Decoder) throws -> Date {
         let raw = try decoder.singleValueContainer().decode(String.self)
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = withFraction.date(from: raw) { return d }
-        if let d = ISO8601DateFormatter().date(from: raw) { return d }
+        if let d = iso8601Fractional.date(from: raw) { return d }
+        if let d = iso8601.date(from: raw) { return d }
         return Date()
     }
 }

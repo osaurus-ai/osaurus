@@ -35,6 +35,18 @@ struct AgentTemplateBuiltInTests {
         }
     }
 
+    /// The bundled templates must load off the main actor so the first
+    /// settings view to touch the store does not parse them during layout
+    /// (APPLE-MACOS-3KB).
+    @Test
+    func bundledTemplates_loadOffMainActor() async {
+        let names = await Task.detached {
+            Set(TemplateStore.builtInTemplates.map(\.name))
+        }.value
+        #expect(names.isSuperset(of: ["Sub Agent", "Cloud Agent", "Local Agent"]))
+        #expect(Set(TemplateStore.shared.builtIn.map(\.name)) == names)
+    }
+
     @Test
     func subAgent_hasNoSubagents_andLocalAgent_hasMemory() throws {
         let store = TemplateStore.shared
