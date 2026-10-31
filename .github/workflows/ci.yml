@@ -32,6 +32,13 @@ env:
   XCODE_VERSION: "26.4.1"
 
 jobs:
+  release-helper-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Test release-note isolation with mocked GitHub calls
+        run: python3 -m unittest discover -s scripts/release -p 'test_release_*.py'
+
   build-core-tests:
     runs-on: macos-26
     # Cold builds measured35–38 minutes in run36031218815. Keep the45-minute
