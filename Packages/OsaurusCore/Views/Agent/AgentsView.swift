@@ -1603,6 +1603,7 @@ struct AgentDetailView: View {
     @State private var abilityPreviewToolNames: Set<String>?
     @State private var abilityPreviewAppleApps: Set<AppleApp>?
     @Environment(\.settingsLandingPending) private var settingsLandingPending
+    @State private var renderedSettingsAnchors: Set<String> = []
     @State private var abilityPreviewAutonomousConfig: AutonomousExecConfig?
     @State private var abilityPreviewRegistryRevision = 0
     /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
@@ -1853,11 +1854,32 @@ struct AgentDetailView: View {
                     .id(selectedTab)
                 }
                 .animation(nil, value: selectedTab)
+                .onPreferenceChange(SettingsLandingAnchorsKey.self) { anchors in
+                    renderedSettingsAnchors = anchors
+                    scrollToSettingsLanding(settingsLandingPending, proxy: proxy)
+                }
+                .onChange(of: settingsLandingPending) { _, pending in
+                    scrollToSettingsLanding(pending, proxy: proxy)
+                }
+                .onAppear {
+                    scrollToSettingsLanding(settingsLandingPending, proxy: proxy)
+                }
                 .onChange(of: scrollToToolsNonce) { _, _ in
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(Self.toolsToggleScrollId, anchor: .center)
                     }
                 }
+            }
+        }
+    }
+
+    /// Use the same rendered-anchor contract as SettingsPage. Expanding Advanced
+    /// adds its anchors after navigation; wait for layout before positioning.
+    private func scrollToSettingsLanding(_ id: String?, proxy: ScrollViewProxy) {
+        guard let id, id.hasPrefix("agents."), renderedSettingsAnchors.contains(id) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(id, anchor: .center)
             }
         }
     }
