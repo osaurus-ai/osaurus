@@ -2209,13 +2209,16 @@ final class ChatSession: ObservableObject {
     /// turns); the user can collapse it afterward.
     private func seedAutoExpandedReasoningBlocks(streamingTurnId: UUID?) {
         for turn in turns where turn.role == .assistant {
+            // Cheap checks first: this runs for every assistant turn on every
+            // streaming sync, and already-seeded turns must not re-scan text.
             guard turn.id != streamingTurnId,
-                turn.hasRenderableThinking,
-                turn.contentIsBlank,
                 (turn.toolCalls ?? []).isEmpty
             else { continue }
             let blockId = ContentBlock.thinkingBlockId(turnId: turn.id)
-            guard !autoExpandedReasoningBlockIds.contains(blockId) else { continue }
+            guard !autoExpandedReasoningBlockIds.contains(blockId),
+                turn.hasRenderableThinking,
+                turn.contentIsBlank
+            else { continue }
             autoExpandedReasoningBlockIds.insert(blockId)
             expandedBlocksStore.expand(blockId)
         }
