@@ -203,6 +203,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // those agents vanish from Settings. Idempotent + conflict-safe.
         OsaurusPaths.migrateLegacyPersonasIfNeeded()
 
+        // Parse bundled agent templates off the main thread so opening the
+        // Agents / Orchestrator settings tab does not hang (APPLE-MACOS-3KB).
+        TemplateStore.prewarm()
+
         // Make MLX C++ errors recoverable instead of process-fatal. Must run
         // before any model load can call into MLX so the first forward pass
         // is already protected. See `MLXErrorRecovery` for the rationale and
