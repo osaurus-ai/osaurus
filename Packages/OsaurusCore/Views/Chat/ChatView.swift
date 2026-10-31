@@ -693,12 +693,10 @@ final class ChatSession: ObservableObject {
     /// auto-compaction gate.
     private var skipAutoCompactionForNextSend = false
 
-    /// In-flight compaction run, if any. Kept so `reset()` can cancel it
-    /// (compaction never overlaps a streaming run — manual is gated on
-    /// `!isStreaming` and the auto-trigger fires pre-send — so `stop()`
-    /// has nothing to cancel; a run that outlives its transcript is
-    /// dropped by the `summaryIsValid` check before it can apply).
+    /// Pre-send/manual compaction task. Tool-loop compaction is awaited by
+    /// `currentTask` at a drained iteration boundary and cancels with Stop.
     private var compactionTask: Task<Void, Never>?
+    private var toolLoopCompactionRunId: UUID?
 
     /// Per-session always-loaded + capabilities_load tool kit lives in the
     /// process-wide `SessionToolStateStore` so chat sessions and the
@@ -2747,6 +2745,10 @@ final class ChatSession: ObservableObject {
     /// dying is a side effect the user never chose; those keep the historical
     /// clean trim so no ghost "cancelled" row appears in the transcript.
     func stop(preservesCancelledMarker: Bool = true) {
+        if toolLoopCompactionRunId != nil {
+            toolLoopCompactionRunId = nil
+            compactionState = .idle
+        }
         stopPreservesCancelledMarker = preservesCancelledMarker
         // Capture BEFORE any cancellation: whether a send was in flight when
         // the user hit Stop. The marker decision below must not depend on
@@ -3226,6 +3228,7 @@ final class ChatSession: ObservableObject {
         // A fresh chat starts uncompacted.
         compactionTask?.cancel()
         compactionTask = nil
+        toolLoopCompactionRunId = nil
         conversationSummary = nil
         compactionState = .idle
         showCompactionDialog = false
@@ -3424,7 +3427,70 @@ final class ChatSession: ObservableObject {
         if effectiveCompactionModelIdentifier == nil, compactionDeclinedForSession {
             return false
         }
-        return fraction >= 0.85
+        return fraction >= ContextCompactionService.autoCompactionUsageThreshold
+    }
+
+    /// INVARIANT: LLM compaction during an agent run happens only after the
+    /// model stream and every tool-result slot have drained, before rebuilding
+    /// the next request. It never competes with generation or edits the stored
+    /// transcript. Failure stops this continuation with the original history.
+    func compactBeforeToolContinuation(
+        runId: UUID,
+        assistantTurnId: UUID,
+        historyTokens: Int,
+        historyBudget: Int,
+        invocation: ModelJobInvocation,
+        agentId: UUID
+    ) async throws {
+        guard isRunActive(runId), !isHarnessAgentActive,
+            !compactionState.isRunning,
+            historyBudget > 0,
+            Double(historyTokens) / Double(historyBudget)
+                >= ContextCompactionService.autoCompactionUsageThreshold,
+            let placeholder = turns.last, placeholder.id == assistantTurnId,
+            placeholder.role == .assistant, placeholder.content.isEmpty,
+            placeholder.thinkingLength == 0, placeholder.toolCalls?.isEmpty != false
+        else { return }
+        let snapshot = Array(turns.dropLast())
+        guard ContextCompactionService.compactionCutIndex(
+            turns: snapshot, existingSummary: conversationSummary, afterToolBatch: true
+        ) != nil else { return }
+
+        let existing = conversationSummary
+        toolLoopCompactionRunId = runId
+        defer {
+            if toolLoopCompactionRunId == runId {
+                toolLoopCompactionRunId = nil
+                if compactionState.isRunning { compactionState = .idle }
+            }
+        }
+        compactionState = .running(.preparing)
+        do {
+            let summary = try await ContextCompactionService.shared.summarize(
+                turns: snapshot, existingSummary: existing, sessionId: sessionId,
+                invocation: invocation, agentId: agentId, afterToolBatch: true,
+                onPhase: { [weak self] phase in
+                    guard let self, self.isRunActive(runId),
+                        self.toolLoopCompactionRunId == runId else { return }
+                    self.compactionState = .running(phase)
+                }
+            )
+            try Task.checkCancellation()
+            guard isRunActive(runId), toolLoopCompactionRunId == runId,
+                ContextCompactionService.summaryIsValid(summary, for: turns)
+            else { return }
+            conversationSummary = summary
+            save()
+            rebuildVisibleBlocks()
+            invalidateWarmupAfterContextShapeChange()
+            compactionState = .completed(savedTokens: summary.savedTokensEstimate)
+        } catch {
+            if isRunActive(runId), toolLoopCompactionRunId == runId {
+                compactionState = error is CancellationError
+                    ? .idle : .failed(message: error.localizedDescription)
+            }
+            throw error
+        }
     }
 
     /// Manual entry point (Context Budget popover). Runs inline — progress
@@ -8680,6 +8746,18 @@ final class ChatSession: ObservableObject {
                             assistantTurn.content
                         }
                     )
+                    loopHooks.beforeBuildMessages = {
+                        let historyTokens = ContextBudgetManager.estimateTokens(
+                            for: buildMessages().filter { $0.role != "system" }
+                        )
+                        try await self.compactBeforeToolContinuation(
+                            runId: runId, assistantTurnId: assistantTurn.id,
+                            historyTokens: historyTokens,
+                            historyBudget: loopBudgetManager.historyBudget,
+                            invocation: ModelJobInvocation(parentModelName: turnModelId, source: source),
+                            agentId: effectiveAgentId
+                        )
+                    }
                     loopHooks.recordTerminalToolRejection = { [weak self] envelope in
                         guard let self, self.activeRunId == runId else { return }
                         self.delegatedToolFailure.record(envelope, runID: runId)

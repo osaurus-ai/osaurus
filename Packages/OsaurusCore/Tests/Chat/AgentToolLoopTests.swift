@@ -2290,6 +2290,51 @@ struct AgentToolLoopTests {
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("report.key").path))
     }
 
+    @Test func iterationPreparationFollowsRecordedBatchAndPrecedesNextSnapshot() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("first"), inv("second")]), .finalResponse,
+        ])
+        var hooks = surface.makeHooks()
+        var crossings: [(builds: Int, batches: Int, results: Int)] = []
+        hooks.beforeBuildMessages = {
+            crossings.append((surface.builtNotices.count, surface.batchOutcomes.count,
+                              surface.batchOutcomes.last?.count ?? 0))
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .finalResponse)
+        #expect(crossings.count == 2)
+        #expect(crossings[0].builds == 0 && crossings[0].batches == 0)
+        #expect(crossings[1].builds == 1 && crossings[1].batches == 1)
+        #expect(crossings[1].results == 2)
+    }
+
+    @Test func cancelledIterationPreparationNeverBuildsOrStartsAnotherRequest() async throws {
+        let surface = ScriptedLoopSurface(steps: [.finalResponse])
+        var hooks = surface.makeHooks()
+        hooks.beforeBuildMessages = { surface.cancelled = true }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        #expect(result.exit == .cancelled)
+        #expect(surface.builtNotices.isEmpty)
+        #expect(surface.steps.count == 1)
+    }
+
+    @Test func failedIterationPreparationPreservesResultsAndDoesNotStartNextRequest() async throws {
+        enum Failure: Error { case summary }
+        let surface = ScriptedLoopSurface(steps: [.toolCalls([inv("read")]), .finalResponse])
+        var hooks = surface.makeHooks()
+        hooks.beforeBuildMessages = {
+            if !surface.batchOutcomes.isEmpty { throw Failure.summary }
+        }
+        await #expect(throws: Failure.self) {
+            try await AgentToolLoop.run(policy: chatPolicy(), state: AgentTaskState(), hooks: hooks)
+        }
+        #expect(surface.builtNotices.count == 1)
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.steps.count == 1)
+    }
+
     @Test func cancellationStopsBetweenToolCalls() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("first_tool"), inv("second_tool")])

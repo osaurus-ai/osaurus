@@ -492,6 +492,11 @@ struct AgentLoopHooks {
     /// between tool calls. Return true to end the run with `.cancelled`.
     var isCancelled: () async -> Bool
 
+    /// Runs only between drained model steps and fully recorded tool batches,
+    /// before the next history snapshot. Chat uses this boundary for LLM
+    /// compaction; failures propagate without starting another model request.
+    var beforeBuildMessages: (() async throws -> Void)?
+
     /// Build the full message array for the next model step from the
     /// surface's history store. `notices` carries driver-staged
     /// `[System Notice]` lines (budget warning first, then state notice)
@@ -646,6 +651,7 @@ struct AgentLoopHooks {
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
         modelStep: @escaping (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep,
+        beforeBuildMessages: (() async throws -> Void)? = nil,
         prepareIncompleteReasoningContinuation: (() async -> Void)? = nil,
         prepareTrackedTaskContinuation: (() async -> Void)? = nil,
         willProcessCall: @escaping (_ invocation: ServiceToolInvocation, _ callId: String) async -> Void = { _, _ in },
@@ -671,6 +677,7 @@ struct AgentLoopHooks {
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
+        self.beforeBuildMessages = beforeBuildMessages
         self.modelStep = modelStep
         self.prepareIncompleteReasoningContinuation = prepareIncompleteReasoningContinuation
         self.prepareTrackedTaskContinuation = prepareTrackedTaskContinuation
@@ -2532,6 +2539,10 @@ enum AgentToolLoop {
             if let n = pendingTodoNotice {
                 notices.append(n)
                 pendingTodoNotice = nil
+            }
+            try await hooks.beforeBuildMessages?()
+            if await hooks.isCancelled() {
+                return RunResult(exit: .cancelled, iterations: iteration - 1)
             }
             let input = await hooks.buildMessages(notices)
             // Budget estimates advise compaction and diagnostics, never
