@@ -145,6 +145,8 @@ final class ContextCompactionService {
     /// span at all.
     static let minimumCoveredTokens = 4_000
 
+    static let autoCompactionUsageThreshold = 0.85
+
     private nonisolated static let summaryMaxTokens = 1024
     private nonisolated static let summaryTemperature: Double = 0.2
     private static let timeoutSeconds: TimeInterval = 180
@@ -226,8 +228,11 @@ final class ContextCompactionService {
     /// from re-summarizing every ordinary exchange at high utilization.
     static func compactionCutIndex(
         turns: [ChatTurn],
-        existingSummary: ConversationSummary?
+        existingSummary: ConversationSummary?,
+        afterToolBatch: Bool = false
     ) -> Int? {
+        let toolBatchStart = afterToolBatch ? completedToolBatchStart(in: turns) : nil
+        if afterToolBatch, toolBatchStart == nil { return nil }
         let userIndices = turns.enumerated()
             .filter { $0.element.role == .user }
             .map(\.offset)
@@ -259,6 +264,31 @@ final class ContextCompactionService {
             return cut
         }
 
+        // INVARIANT: a tool-loop cut never separates calls from their results.
+        // Prefer leaving the latest complete batch verbatim when there is a
+        // token-heavy prefix before it. A fully drained heavy batch can itself
+        // be covered by the last-resort cut below.
+        if afterToolBatch,
+            let batchStart = toolBatchStart,
+            batchStart > alreadyCovered,
+            ContextBudgetManager.estimateTokens(for: Array(turns[alreadyCovered..<batchStart]))
+                >= minimumCoveredTokens
+        {
+            return batchStart
+        }
+
+        // A first bulk tool result can fill the window by itself. Once every
+        // result is recorded, the entire completed batch is a safe last-resort
+        // cut too (like a completed assistant exchange below). Requiring the
+        // newest batch to survive verbatim would make this case uncompactionable.
+        if afterToolBatch,
+            turns.count > alreadyCovered,
+            ContextBudgetManager.estimateTokens(for: Array(turns[alreadyCovered...]))
+                >= minimumCoveredTokens
+        {
+            return turns.count
+        }
+
         // Whole-transcript last resort (see doc comment above).
         guard turns.last?.role == .assistant,
             turns.count > alreadyCovered,
@@ -266,6 +296,25 @@ final class ContextCompactionService {
                 >= minimumCoveredTokens
         else { return nil }
         return turns.count
+    }
+
+    /// Returns the assistant call turn only when every slot in the trailing
+    /// batch has exactly one matching result. Partial/parallel batches and
+    /// output placeholders are not safe compaction boundaries.
+    static func completedToolBatchStart(in turns: [ChatTurn]) -> Int? {
+        guard turns.last?.role == .tool,
+            let start = turns.lastIndex(where: { $0.role != .tool }),
+            turns[start].role == .assistant,
+            let calls = turns[start].toolCalls, !calls.isEmpty
+        else { return nil }
+        let callIDs = calls.map(\.id)
+        let resultIDs = turns[(start + 1)...].compactMap(\.toolCallId)
+        guard Set(callIDs).count == calls.count,
+            resultIDs.count == turns.count - start - 1,
+            resultIDs.count == calls.count,
+            Set(resultIDs) == Set(callIDs)
+        else { return nil }
+        return start
     }
 
     /// Whether the summary's covered turns still line up with the live
@@ -328,6 +377,7 @@ final class ContextCompactionService {
         sessionId: UUID?,
         invocation: ModelJobInvocation,
         agentId: UUID,
+        afterToolBatch: Bool = false,
         onPhase: @MainActor (ContextCompactionPhase) -> Void
     ) async throws -> ConversationSummary {
         onPhase(.preparing)
@@ -337,7 +387,8 @@ final class ContextCompactionService {
         else {
             throw ContextCompactionError.needsModelSelection
         }
-        guard let cut = Self.compactionCutIndex(turns: turns, existingSummary: existingSummary)
+        guard let cut = Self.compactionCutIndex(
+            turns: turns, existingSummary: existingSummary, afterToolBatch: afterToolBatch)
         else {
             throw ContextCompactionError.nothingToCompact
         }

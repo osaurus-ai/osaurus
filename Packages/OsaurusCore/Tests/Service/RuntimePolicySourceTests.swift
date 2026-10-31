@@ -1251,19 +1251,26 @@ struct RuntimePolicySourceTests {
         #expect(!adapter.contains(#""cacheStableSystemPrefix""#))
     }
 
-    @Test("near-limit wrap-up notice stages only on a mid-run tool tail")
-    func nearLimitNoticeStagesOnlyMidRun() throws {
-        // The "Context is nearly full — wrap up" notice is a mid-run nudge.
-        // Staging it on a fresh user question appends it as the trailing
-        // user-role message and displaces the real query (observed live:
-        // the model reasoned about the notice instead of the question), and
-        // staging it on a non-tool tail also breaks the byte-identical
-        // rebuild contract of reasoning-continuation retries.
+    @Test("context pressure never injects the legacy task-abandonment notice")
+    func contextPressureDoesNotInjectWrapUp() throws {
+        // The old notice made a real bulk-file task stop after its first
+        // read. Context pressure belongs to compaction, not an instruction
+        // to abandon work, even when history ends in a completed tool batch.
         let chatView = try Self.source("Views/Chat/ChatView.swift")
-        #expect(chatView.contains(#"let midRunToolTail = msgs.last?.role == "tool""#))
-        #expect(
-            chatView.contains("!tokenBudgetNoticeFired,\n                                midRunToolTail,")
-        )
+        let loop = try Self.source("Services/Chat/AgentToolLoop.swift")
+        #expect(!chatView.contains("contextNearLimitNotice"))
+        #expect(!chatView.contains("tokenBudgetNoticeFired"))
+        #expect(!loop.contains("Wrap up the current work and provide a summary."))
+    }
+
+    @Test("tool-loop LLM compaction precedes deterministic history trimming")
+    func toolLoopCompactionPrecedesTrimming() throws {
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        let start = try #require(chatView.range(of: "buildMessages: { notices in"))
+        let hook = String(chatView[start.lowerBound...])
+        let compaction = try #require(hook.range(of: "try await self.compactBeforeToolContinuation("))
+        let trimming = try #require(hook.range(of: "trimPreservingSystemPrefixReportingOverflow("))
+        #expect(compaction.lowerBound < trimming.lowerBound)
     }
 
     @Test("Cache topology changes reload models while size changes refresh resident caps")

@@ -693,12 +693,10 @@ final class ChatSession: ObservableObject {
     /// auto-compaction gate.
     private var skipAutoCompactionForNextSend = false
 
-    /// In-flight compaction run, if any. Kept so `reset()` can cancel it
-    /// (compaction never overlaps a streaming run — manual is gated on
-    /// `!isStreaming` and the auto-trigger fires pre-send — so `stop()`
-    /// has nothing to cancel; a run that outlives its transcript is
-    /// dropped by the `summaryIsValid` check before it can apply).
+    /// Pre-send/manual compaction task. Tool-loop compaction is awaited by
+    /// `currentTask` at a drained iteration boundary and cancels with Stop.
     private var compactionTask: Task<Void, Never>?
+    private var toolLoopCompactionRunId: UUID?
 
     /// Per-session always-loaded + capabilities_load tool kit lives in the
     /// process-wide `SessionToolStateStore` so chat sessions and the
@@ -2747,6 +2745,10 @@ final class ChatSession: ObservableObject {
     /// dying is a side effect the user never chose; those keep the historical
     /// clean trim so no ghost "cancelled" row appears in the transcript.
     func stop(preservesCancelledMarker: Bool = true) {
+        if toolLoopCompactionRunId != nil {
+            toolLoopCompactionRunId = nil
+            compactionState = .idle
+        }
         stopPreservesCancelledMarker = preservesCancelledMarker
         // Capture BEFORE any cancellation: whether a send was in flight when
         // the user hit Stop. The marker decision below must not depend on
@@ -3226,6 +3228,7 @@ final class ChatSession: ObservableObject {
         // A fresh chat starts uncompacted.
         compactionTask?.cancel()
         compactionTask = nil
+        toolLoopCompactionRunId = nil
         conversationSummary = nil
         compactionState = .idle
         showCompactionDialog = false
@@ -3424,7 +3427,71 @@ final class ChatSession: ObservableObject {
         if effectiveCompactionModelIdentifier == nil, compactionDeclinedForSession {
             return false
         }
-        return fraction >= 0.85
+        return fraction >= ContextCompactionService.autoCompactionUsageThreshold
+    }
+
+    /// INVARIANT: LLM compaction during an agent run happens only after the
+    /// model stream and every tool-result slot have drained, before rebuilding
+    /// the next request. It never competes with generation or edits the stored
+    /// transcript. Failure stops this continuation with the original history.
+    func compactBeforeToolContinuation(
+        runId: UUID,
+        assistantTurnId: UUID,
+        historyTokens: Int,
+        historyBudget: Int,
+        invocation: ModelJobInvocation,
+        agentId: UUID
+    ) async throws {
+        guard isRunActive(runId), !isHarnessAgentActive,
+            !compactionState.isRunning,
+            historyBudget > 0,
+            Double(historyTokens) / Double(historyBudget)
+                >= ContextCompactionService.autoCompactionUsageThreshold,
+            let placeholder = turns.last, placeholder.id == assistantTurnId,
+            placeholder.role == .assistant, placeholder.content.isEmpty,
+            placeholder.thinkingLength == 0, placeholder.toolCalls?.isEmpty != false
+        else { return }
+        let snapshot = Array(turns.dropLast())
+        guard ContextCompactionService.compactionCutIndex(
+            turns: snapshot, existingSummary: conversationSummary, afterToolBatch: true
+        ) != nil else { return }
+
+        let existing = conversationSummary
+        toolLoopCompactionRunId = runId
+        defer {
+            if toolLoopCompactionRunId == runId {
+                toolLoopCompactionRunId = nil
+                if compactionState.isRunning { compactionState = .idle }
+            }
+        }
+        compactionState = .running(.preparing)
+        do {
+            let summary = try await ContextCompactionService.shared.summarize(
+                turns: snapshot, existingSummary: existing, sessionId: sessionId,
+                invocation: invocation, agentId: agentId, afterToolBatch: true,
+                onPhase: { [weak self] phase in
+                    guard let self, self.isRunActive(runId),
+                        self.toolLoopCompactionRunId == runId else { return }
+                    self.compactionState = .running(phase)
+                }
+            )
+            try Task.checkCancellation()
+            guard isRunActive(runId), toolLoopCompactionRunId == runId,
+                ContextCompactionService.summaryIsValid(summary, for: turns)
+            else { return }
+            conversationSummary = summary
+            save()
+            rebuildVisibleBlocks()
+            invalidateWarmupAfterContextShapeChange()
+            compactionState = .completed(savedTokens: summary.savedTokensEstimate)
+            finishCompaction(success: true)
+        } catch {
+            if isRunActive(runId), toolLoopCompactionRunId == runId {
+                compactionState = error is CancellationError
+                    ? .idle : .failed(message: error.localizedDescription)
+            }
+            throw error
+        }
     }
 
     /// Manual entry point (Context Budget popover). Runs inline — progress
@@ -3482,7 +3549,7 @@ final class ChatSession: ObservableObject {
     }
 
     private func runCompaction() {
-        guard !compactionState.isRunning else { return }
+        guard !isStreaming, !compactionState.isRunning else { return }
         compactionTask?.cancel()
         let turnsSnapshot = turns
         let existing = conversationSummary
@@ -8071,12 +8138,6 @@ final class ChatSession: ObservableObject {
                         return executions.map { $0 ?? AgentLoopToolExecution(result: "") }
                     }
 
-                    // One-shot mid-run token notice, mirroring the iteration-
-                    // budget warning: fired the first time the conversation
-                    // estimate crosses 90% of the history budget so the model
-                    // wraps up instead of relying on compaction forever.
-                    var tokenBudgetNoticeFired = false
-
                     // The canonical loop skeleton — iteration budget + warning
                     // notice, consecutive-identical dedupe replay, task-state
                     // recording, next-step bias staging, rejection policy —
@@ -8099,6 +8160,20 @@ final class ChatSession: ObservableObject {
 
                             ttftTrace?.mark("build_messages_start")
                             var msgs = buildMessages()
+                            let previousSummaryId = self.conversationSummary?.id
+                            try await self.compactBeforeToolContinuation(
+                                runId: runId, assistantTurnId: assistantTurn.id,
+                                historyTokens: ContextBudgetManager.estimateTokens(
+                                    for: msgs.filter { $0.role != "system" }),
+                                historyBudget: loopBudgetManager.historyBudget,
+                                invocation: ModelJobInvocation(parentModelName: turnModelId, source: self.source),
+                                agentId: effectiveAgentId
+                            )
+                            // Ordinary tool rounds render history once. Only a
+                            // newly accepted summary changes the outbound shape.
+                            if previousSummaryId != self.conversationSummary?.id {
+                                msgs = buildMessages()
+                            }
                             ttftTrace?.mark("build_messages_done")
 
                             // Compact history that outgrew the window: middle
@@ -8135,53 +8210,9 @@ final class ChatSession: ObservableObject {
                             // `AgentLoopBudget.appendingTransientNotices`).
                             msgs = AgentLoopBudget.appendingTransientNotices(notices, to: msgs)
 
-                            // Mid-run near-limit notice: once the (post-trim)
-                            // conversation estimate crosses 90% of the history
-                            // budget, tell the model to wrap up — compaction
-                            // remains the actual overflow handler, this is the
-                            // early signal. Fired at most once per run, like
-                            // the iteration-budget warning, and only when the
-                            // history actually ends in an in-progress tool
-                            // exchange: "wrap up the current work" is incoherent
-                            // on a fresh user question (observed live — the
-                            // notice landed as the trailing user-role message
-                            // right after the real question and the model
-                            // reasoned about the notice instead), and skipping
-                            // it on non-tool tails also keeps reasoning-retry
-                            // rebuilds byte-identical to the pre-attempt
-                            // history. The tool tail is additionally the only
-                            // placement where `appendingTransientNotices` is
-                            // KV-stable. The system prefix is excluded — its
-                            // tokens are reserved separately and the history
-                            // budget already accounts for them.
-                            let midRunToolTail = msgs.last?.role == "tool"
-                            let historyBudget = loopBudgetManager.historyBudget
-                            let historyTokens = ContextBudgetManager.estimateTokens(
-                                for: msgs.filter { $0.role != "system" }
-                            )
-                            if !tokenBudgetNoticeFired,
-                                midRunToolTail,
-                                historyBudget > 0,
-                                historyTokens >= Int(Double(historyBudget) * 0.9)
-                            {
-                                tokenBudgetNoticeFired = true
-                                // Delegation nudge rides along when a spawn tool
-                                // is actually in this run's frozen schema: a
-                                // tight window is exactly when offloading bulk
-                                // reading to a worker pays for itself.
-                                let spawnVisible = toolSpecs.contains {
-                                    $0.function.name
-                                        == SubagentCapabilityRegistry.spawnAgentToolName
-                                }
-                                msgs = AgentLoopBudget.appendingTransientNotices(
-                                    [
-                                        AgentToolLoop.contextNearLimitNotice(
-                                            spawnAvailable: spawnVisible
-                                        )
-                                    ],
-                                    to: msgs
-                                )
-                            }
+                            // Context pressure is handled by the awaited summary
+                            // boundary and the deterministic trimmer above. Do not
+                            // inject a synthetic instruction to abandon the task.
 
                             // Memory + screen context ride the latest user
                             // message as a FROZEN turn prefix (see
