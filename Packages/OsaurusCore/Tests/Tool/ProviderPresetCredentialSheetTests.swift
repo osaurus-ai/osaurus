@@ -62,6 +62,28 @@ struct ProviderPresetCredentialSheetTests {
     }
 
     @Test
+    func cheaperInferencePreset_usesApiKeyAndVendorHost() {
+        let request = ProviderCredentialRequest(
+            preset: .cheaperInference,
+            providerName: "Cheaper Inference",
+            mode: .addNew
+        )
+        #expect(request.preset == .cheaperInference)
+        #expect(request.providerType == .openaiLegacy)
+        #expect(request.instructions.authMethod == .apiKey)
+        #expect(request.instructions.presetId == "cheaperInference")
+        #expect(ProviderPreset.cheaperInference.configuration.host == "api.cheaperinference.com")
+    }
+
+    @Test
+    func cheaperInferenceCatalogEntry_usesApiKeyStorageAuth() {
+        let entry = ProviderCredentialInstructionsCatalog.entry(for: .cheaperInference)
+        #expect(entry.storageAuthType == .apiKey)
+        #expect(entry.authMethod == .apiKey)
+        #expect(entry.getKeyURL?.absoluteString == "https://cheaperinference.com/signup")
+    }
+
+    @Test
     func atlasCloudPreset_usesApiKeyAndVendorHost() {
         let request = ProviderCredentialRequest(
             preset: .atlasCloud,
