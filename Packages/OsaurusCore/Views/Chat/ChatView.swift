@@ -8138,12 +8138,6 @@ final class ChatSession: ObservableObject {
                         return executions.map { $0 ?? AgentLoopToolExecution(result: "") }
                     }
 
-                    // One-shot mid-run token notice, mirroring the iteration-
-                    // budget warning: fired the first time the conversation
-                    // estimate crosses 90% of the history budget so the model
-                    // wraps up instead of relying on compaction forever.
-                    var tokenBudgetNoticeFired = false
-
                     // The canonical loop skeleton — iteration budget + warning
                     // notice, consecutive-identical dedupe replay, task-state
                     // recording, next-step bias staging, rejection policy —
@@ -8216,53 +8210,9 @@ final class ChatSession: ObservableObject {
                             // `AgentLoopBudget.appendingTransientNotices`).
                             msgs = AgentLoopBudget.appendingTransientNotices(notices, to: msgs)
 
-                            // Mid-run near-limit notice: once the (post-trim)
-                            // conversation estimate crosses 90% of the history
-                            // budget, tell the model to wrap up — compaction
-                            // remains the actual overflow handler, this is the
-                            // early signal. Fired at most once per run, like
-                            // the iteration-budget warning, and only when the
-                            // history actually ends in an in-progress tool
-                            // exchange: "wrap up the current work" is incoherent
-                            // on a fresh user question (observed live — the
-                            // notice landed as the trailing user-role message
-                            // right after the real question and the model
-                            // reasoned about the notice instead), and skipping
-                            // it on non-tool tails also keeps reasoning-retry
-                            // rebuilds byte-identical to the pre-attempt
-                            // history. The tool tail is additionally the only
-                            // placement where `appendingTransientNotices` is
-                            // KV-stable. The system prefix is excluded — its
-                            // tokens are reserved separately and the history
-                            // budget already accounts for them.
-                            let midRunToolTail = msgs.last?.role == "tool"
-                            let historyBudget = loopBudgetManager.historyBudget
-                            let historyTokens = ContextBudgetManager.estimateTokens(
-                                for: msgs.filter { $0.role != "system" }
-                            )
-                            if !tokenBudgetNoticeFired,
-                                midRunToolTail,
-                                historyBudget > 0,
-                                historyTokens >= Int(Double(historyBudget) * 0.9)
-                            {
-                                tokenBudgetNoticeFired = true
-                                // Delegation nudge rides along when a spawn tool
-                                // is actually in this run's frozen schema: a
-                                // tight window is exactly when offloading bulk
-                                // reading to a worker pays for itself.
-                                let spawnVisible = toolSpecs.contains {
-                                    $0.function.name
-                                        == SubagentCapabilityRegistry.spawnAgentToolName
-                                }
-                                msgs = AgentLoopBudget.appendingTransientNotices(
-                                    [
-                                        AgentToolLoop.contextNearLimitNotice(
-                                            spawnAvailable: spawnVisible
-                                        )
-                                    ],
-                                    to: msgs
-                                )
-                            }
+                            // Context pressure is handled by the awaited summary
+                            // boundary and the deterministic trimmer above. Do not
+                            // inject a synthetic instruction to abandon the task.
 
                             // Memory + screen context ride the latest user
                             // message as a FROZEN turn prefix (see

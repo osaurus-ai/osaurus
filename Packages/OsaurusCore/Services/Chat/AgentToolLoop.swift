@@ -1509,25 +1509,6 @@ enum AgentToolLoop {
         + "tool-result payload, do not claim an unexecuted step succeeded, and explicitly "
         + "identify any requested step that remains unfinished."
 
-    /// The mid-run near-limit notice (history estimate crossed ~90% of the
-    /// history budget). When a spawn tool is visible in the schema, the
-    /// notice also nudges delegation: offloading the remaining bulk
-    /// reading/research to a worker costs the parent a digest instead of
-    /// the whole transcript — exactly what a tight window needs. The nudge
-    /// is advisory (same posture as the task-state bias notices).
-    static func contextNearLimitNotice(spawnAvailable: Bool) -> String {
-        var notice =
-            "[System Notice] Context is nearly full — older messages are being compacted. "
-            + "Wrap up the current work and provide a summary."
-        if spawnAvailable {
-            notice +=
-                " If substantial reading, research, or summarization remains, delegate it via "
-                + "your spawn tool with a self-contained input — the returned digest costs a "
-                + "fraction of doing that work inline here."
-        }
-        return notice
-    }
-
     /// Staged once per run, the first time a data-movement step is refunded,
     /// so the model learns it can lean on bulk loads without burning budget.
     static func dataMovementReliefNotice(cap: Int) -> String {

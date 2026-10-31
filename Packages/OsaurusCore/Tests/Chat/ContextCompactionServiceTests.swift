@@ -158,6 +158,32 @@ struct CompactionCutIndexTests {
         }
     }
 
+    @Test("a first heavy completed batch can be covered whole before the next request")
+    func firstHeavyToolBatchCanBeCompacted() {
+        let turns = [ChatTurn(role: .user, content: "follow the next file link")]
+            + toolBatch(ids: ["a", "b"], content: String(repeating: "data ", count: 5_000))
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: turns, existingSummary: nil, afterToolBatch: true) == turns.count)
+        // Ordinary pre-send/manual selection never assumes a running batch
+        // has drained. The caller must opt in at the checked loop boundary.
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: turns, existingSummary: nil) == nil)
+    }
+
+    @Test("whole-batch compaction can grow an earlier summary only after new bulk results")
+    func wholeToolBatchSummaryCanGrow() {
+        let first = [ChatTurn(role: .user, content: "task")]
+            + toolBatch(ids: ["old"], content: String(repeating: "data ", count: 5_000))
+        let existing = ConversationSummary(
+            summaryText: "goal and saved progress", coveredTurnIds: first.map(\.id),
+            modelIdentifier: "m", savedTokensEstimate: 100)
+        let grown = first + toolBatch(ids: ["new"], content: String(repeating: "data ", count: 5_000))
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: grown, existingSummary: existing, afterToolBatch: true) == grown.count)
+        #expect(ContextCompactionService.compactionCutIndex(
+            turns: first, existingSummary: existing, afterToolBatch: true) == nil)
+    }
+
     @Test("a tool-loop summary must grow by a token-heavy span")
     func toolLoopSummaryDoesNotRepeatOrCoverOutputPlaceholder() {
         let turns = [ChatTurn(role: .user, content: "task")]

@@ -277,6 +277,18 @@ final class ContextCompactionService {
             return batchStart
         }
 
+        // A first bulk tool result can fill the window by itself. Once every
+        // result is recorded, the entire completed batch is a safe last-resort
+        // cut too (like a completed assistant exchange below). Requiring the
+        // newest batch to survive verbatim would make this case uncompactionable.
+        if afterToolBatch,
+            turns.count > alreadyCovered,
+            ContextBudgetManager.estimateTokens(for: Array(turns[alreadyCovered...]))
+                >= minimumCoveredTokens
+        {
+            return turns.count
+        }
+
         // Whole-transcript last resort (see doc comment above).
         guard turns.last?.role == .assistant,
             turns.count > alreadyCovered,
