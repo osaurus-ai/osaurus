@@ -43,6 +43,19 @@ struct DiscordConnectionTests {
         }
     }
 
+    /// Regression for Sentry APPLE-MACOS-38B: the config URL is built on the
+    /// MainActor prompt-preview path, so it must be declared a regular file
+    /// up front instead of letting Foundation stat the disk to infer it.
+    @Test func configurationFileURLIsDeclaredRegularFileWithoutDiskLookup() async throws {
+        try await withIsolatedDiscordStores { _ in
+            let url = DiscordConnectionConfigurationStore.configurationFileURL()
+            #expect(url.lastPathComponent == "discord.json")
+            #expect(!url.hasDirectoryPath)
+            #expect(!FileManager.default.fileExists(atPath: url.path))
+            #expect(DiscordConnectionConfigurationStore.configurationFileURL() == url)
+        }
+    }
+
     @Test func diagnosticsRedactsTokenEchoedByTransportError() async throws {
         try await withIsolatedDiscordStores { credentials in
             let token = "discord-bot-token-super-secret"

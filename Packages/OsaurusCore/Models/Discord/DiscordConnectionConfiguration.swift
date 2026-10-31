@@ -150,9 +150,9 @@ enum DiscordConnectionConfigurationStore {
 
     static func configurationFileURL() -> URL {
         if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent(fileName)
+            return overrideDirectory.appendingPathComponent(fileName, isDirectory: false)
         }
-        return OsaurusPaths.config().appendingPathComponent(fileName)
+        return OsaurusPaths.config().appendingPathComponent(fileName, isDirectory: false)
     }
 }
 
