@@ -536,13 +536,6 @@ struct ConnectionActivitySummary: Equatable {
 // MARK: - Nonisolated Logging Interface
 
 extension InsightsService {
-    /// Maximum stored body size (256 KB) to cap ring buffer memory usage.
-    /// Sized to fit realistic chat completion requests (long system prompts,
-    /// tool definitions, multi-turn history) without truncation in the
-    /// common case while still bounding the 500-entry ring buffer to a few
-    /// hundred MB worst-case.
-    private nonisolated static let maxBodySize = 262_144
-
     /// Defense-in-depth credential redactors run on every logged body so a
     /// future caller that forgets to scrub a `/pair` response (or any other
     /// shape that carries an `osk-v1` token) still does not leak the key into
@@ -642,15 +635,7 @@ extension InsightsService {
     private nonisolated static func truncateBody(_ body: String?) -> String? {
         guard let body else { return nil }
         let scrubbed = redactCredentials(body)
-        guard scrubbed.count > maxBodySize else { return scrubbed }
-        // Surface the original size so a user looking at a clipped body in
-        // the detail pane knows whether they're missing 1 KB or 1 MB.
-        let originalBytes = scrubbed.utf8.count
-        let formatted = ByteCountFormatter.string(
-            fromByteCount: Int64(originalBytes),
-            countStyle: .binary
-        )
-        return String(scrubbed.prefix(maxBodySize)) + "\n…[truncated, original \(formatted)]"
+        return InsightsBodyCapture.truncate(scrubbed)
     }
 
     /// Thread-safe logging from non-main-actor contexts
