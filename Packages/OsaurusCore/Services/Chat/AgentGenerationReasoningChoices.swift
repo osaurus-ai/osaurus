@@ -48,15 +48,33 @@ struct AgentGenerationReasoningChoices: Equatable, Sendable {
             throw ChatTurnOverrides.ValidationError.invalid(
                 "The selected model has no eligible adaptive speculation path. Choose Inherit or Off (AR).")
         }
+        switch reasoningIssue(settings: settings) {
+        case .effort(let effort):
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "The selected model does not advertise reasoning effort '\(effort)'. Choose a supported value or Inherit.")
+        case .thinking:
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "The selected model does not advertise a Thinking switch. Choose Inherit.")
+        case nil:
+            break
+        }
+    }
+
+    enum ReasoningIssue: Equatable, Sendable {
+        case effort(String)
+        case thinking
+    }
+
+    /// Check raw saved controls before a model profile can normalize them away.
+    func reasoningIssue(settings: AgentGenerationSettings) -> ReasoningIssue? {
         if let effort = settings.reasoningEffort,
             efforts?.levels.contains(where: { $0.id == effort }) != true
         {
-            throw ChatTurnOverrides.ValidationError.invalid(
-                "The selected model does not advertise reasoning effort '\(effort)'. Choose a supported value or Inherit.")
+            return .effort(effort)
         }
         if settings.enableThinking != nil, !supportsThinking {
-            throw ChatTurnOverrides.ValidationError.invalid(
-                "The selected model does not advertise a Thinking switch. Choose Inherit.")
+            return .thinking
         }
+        return nil
     }
 }

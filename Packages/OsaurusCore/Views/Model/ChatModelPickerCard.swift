@@ -23,7 +23,7 @@ private enum ChatPickerLayout {
 /// into the picker's third column. Only presentation values survive while the
 /// outgoing column is clipped away; actions always resolve against the
 /// currently selected model's live control.
-private struct ChatPickerOptionsSnapshot: Equatable {
+struct ChatPickerOptionsSnapshot: Equatable {
     enum Action: Equatable {
         /// Semantic Thinking: `nil` clears the override (model default).
         case thinking(Bool?)
@@ -76,21 +76,18 @@ private struct ChatPickerOptionsSnapshot: Equatable {
 
         if let thinking = control.thinking {
             var rows: [Row] = []
-            let explicitID: String? = thinking.isExplicit ? (thinking.isEnabled ? "on" : "off") : nil
+            let selectedID = thinking.selectedMode
             if thinking.supportsUnspecifiedDefault {
                 rows.append(
                     Row(
                         id: "thinking:default",
                         label: L("Default"),
                         help: L("Use the model's own thinking default"),
-                        selected: explicitID == nil,
+                        selected: selectedID == "default",
                         action: .thinking(nil)
                     )
                 )
             }
-            // Without a Default row the effective on/off state is what shows.
-            let shownID = explicitID ?? (thinking.isEnabled ? "on" : "off")
-            let selectedID = thinking.supportsUnspecifiedDefault ? explicitID : shownID
             rows.append(
                 Row(
                     id: "thinking:on",
@@ -117,7 +114,7 @@ private struct ChatPickerOptionsSnapshot: Equatable {
                     id: thinkingSectionID,
                     title: hasEffortOption ? L("Thinking") : L("Reasoning Effort"),
                     rows: rows,
-                    footnote: nil,
+                    footnote: control.reasoningValidationMessage,
                     reset: thinking.isExplicit && !thinking.supportsUnspecifiedDefault
                         ? Row(
                             id: "reset:thinking",
@@ -133,6 +130,7 @@ private struct ChatPickerOptionsSnapshot: Equatable {
 
         for option in control.options {
             let isExplicit = control.values[option.id] != nil
+                || (option.id == "reasoningEffort" && control.reasoningValidationMessage != nil)
             let resetRow =
                 isExplicit
                 ? Row(
@@ -158,7 +156,10 @@ private struct ChatPickerOptionsSnapshot: Equatable {
                     )
                 }
                 sections.append(
-                    Section(id: option.id, title: option.label, rows: rows, footnote: option.help, reset: resetRow)
+                    Section(id: option.id, title: option.label, rows: rows,
+                            footnote: option.id == "reasoningEffort" && control.thinking == nil
+                                ? control.reasoningValidationMessage ?? option.help : option.help,
+                            reset: resetRow)
                 )
             case .toggle:
                 let isOn = control.effectiveToggleValue(for: option)
@@ -180,6 +181,16 @@ private struct ChatPickerOptionsSnapshot: Equatable {
                     )
                 )
             }
+        }
+
+        if let message = control.reasoningValidationMessage,
+            control.thinking == nil,
+            !control.options.contains(where: { $0.id == "reasoningEffort" })
+        {
+            sections.insert(Section(id: "reasoning-unsupported", title: L("Reasoning Effort"),
+                rows: [], footnote: message,
+                reset: Row(id: "reset:reasoningEffort", label: L("Reset to default"),
+                    help: L("Reset to default"), selected: false, action: .reset(optionID: "reasoningEffort"))), at: 0)
         }
 
         guard !sections.isEmpty else { return nil }
@@ -666,7 +677,7 @@ struct ChatModelPickerCard: View {
             else { return }
             control.onChange(optionID, .bool(!control.effectiveToggleValue(for: option)))
         case .reset(let optionID):
-            guard control.options.contains(where: { $0.id == optionID }) else { return }
+            guard control.canResetOption(optionID) else { return }
             control.onChange(optionID, nil)
         }
     }
