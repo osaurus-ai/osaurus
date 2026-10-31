@@ -1,6 +1,93 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Show Response Metrics" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Antwortmetriken anzeigen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示回复指标"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "응답 지표 표시"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать показатели ответа"
+          }
+        }
+      }
+    },
+    "Show measured token count, tokens per second and timings below responses. Metrics remain available in Inspect response." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemessene Tokenanzahl, Token pro Sekunde und Zeiten unter Antworten anzeigen. Die Werte bleiben unter „Antwort untersuchen“ verfügbar."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在回复下方显示测量的词元数、每秒词元数和耗时。仍可在“检查回复”中查看这些指标。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "응답 아래에 측정된 토큰 수, 초당 토큰 수 및 소요 시간을 표시합니다. 지표는 응답 검사에서도 계속 확인할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать измеренное число токенов, токены в секунду и время под ответами. Эти данные также доступны в разделе «Проверить ответ»."
+          }
+        }
+      }
+    },
+    "response metrics" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Antwortmetriken"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回复指标"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "응답 지표"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "показатели ответа"
+          }
+        }
+      }
+    },
     "Off uses ordinary decoding. On requests adaptive drafting without changing sampling." : {
       "localizations" : {
         "de" : {

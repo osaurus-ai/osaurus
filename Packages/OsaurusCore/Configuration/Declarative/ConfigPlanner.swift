@@ -1353,6 +1353,7 @@ enum ConfigPlanner {
     /// what the new agent will be able to reach.
     private static func summarizePortableSettings(_ entry: AgentEntry, into changes: inout [String]) {
         if entry.generationSettings.valueOrNil != nil { changes.append("generation_settings: configured") }
+        if let show = entry.showResponseMetrics { changes.append("show_response_metrics: \(show)") }
         if let tools = entry.tools {
             if let mode = tools.mode { changes.append("tools.mode: \(mode)") }
             if let enabled = tools.enabled, !enabled.isEmpty {
@@ -1409,6 +1410,9 @@ enum ConfigPlanner {
                 diff(
                     "generation_settings", desired: entry.generationSettings,
                     current: agent.generationSettings.map { ConfigField.value($0) } ?? .null, into: &changes)
+                if let show = entry.showResponseMetrics, show != agent.settings.showResponseMetrics {
+                    changes.append("show_response_metrics: \(agent.settings.showResponseMetrics) -> \(show)")
+                }
                 if let caps = entry.capabilities {
                     diffCapabilities(caps, agent: agent, into: &changes, risks: &risks)
                 }

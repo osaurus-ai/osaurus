@@ -1117,6 +1117,8 @@ public struct AgentFollowUpConfig: Codable, Sendable, Equatable {
 /// features should add fields here so a single migration surface stays
 /// consolidated.
 public struct AgentSettings: Codable, Sendable, Equatable {
+    /// Opt-in display of existing measured response statistics in this agent's chats.
+    public var showResponseMetrics: Bool
     /// Per-agent SQLite database opt-in (spec §5.5.1). When false, db.* tools
     /// are stripped from the model's tool list, the onboarding prompt + schema
     /// snapshot are not injected, and the DB tabs in the detail view are hidden.
@@ -1285,6 +1287,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         dbEnabled: Bool,
         schedule: AgentScheduleSettings,
         limits: AgentLimitsSettings = .defaults,
+        showResponseMetrics: Bool = false,
         renderChartEnabled: Bool = false,
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
@@ -1320,6 +1323,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
         self.limits = limits
+        self.showResponseMetrics = showResponseMetrics
         self.renderChartEnabled = renderChartEnabled
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
@@ -1359,6 +1363,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         dbEnabled = try c.decodeIfPresent(Bool.self, forKey: .dbEnabled) ?? false
+        showResponseMetrics = try c.decodeIfPresent(Bool.self, forKey: .showResponseMetrics) ?? false
         schedule =
             try c.decodeIfPresent(AgentScheduleSettings.self, forKey: .schedule)
             ?? AgentScheduleSettings.defaults(for: .ambient)
@@ -1488,6 +1493,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case dbEnabled
+        case showResponseMetrics
         case schedule
         case limits
         case renderChartEnabled
@@ -1528,6 +1534,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(dbEnabled, forKey: .dbEnabled)
+        try c.encode(showResponseMetrics, forKey: .showResponseMetrics)
         try c.encode(schedule, forKey: .schedule)
         try c.encode(limits, forKey: .limits)
         try c.encode(renderChartEnabled, forKey: .renderChartEnabled)

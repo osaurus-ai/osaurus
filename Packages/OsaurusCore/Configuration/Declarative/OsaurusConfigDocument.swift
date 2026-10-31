@@ -454,6 +454,7 @@ public struct AgentEntry: Equatable, Sendable {
     public var maxTokens: ConfigField<Int> = .absent
     /// Replaces the advanced override group; null clears it, absent preserves it.
     public var generationSettings: ConfigField<AgentGenerationSettings> = .absent
+    public var showResponseMetrics: Bool?
     public var capabilities: AgentCapabilitiesEntry?
     public var tools: AgentToolsEntry?
     public var mcpServers: AgentToolGroupsEntry?
@@ -492,6 +493,7 @@ extension AgentEntry: Codable {
         case model, temperature
         case maxTokens = "max_tokens"
         case generationSettings = "generation_settings"
+        case showResponseMetrics = "show_response_metrics"
         case capabilities
         case tools
         case mcpServers = "mcp_servers"
@@ -517,6 +519,7 @@ extension AgentEntry: Codable {
         temperature = try c.configField(Double.self, forKey: .temperature)
         maxTokens = try c.configField(Int.self, forKey: .maxTokens)
         generationSettings = try c.configField(AgentGenerationSettings.self, forKey: .generationSettings)
+        showResponseMetrics = try c.decodeIfPresent(Bool.self, forKey: .showResponseMetrics)
         capabilities = try c.decodeIfPresent(AgentCapabilitiesEntry.self, forKey: .capabilities)
         tools = try c.decodeIfPresent(AgentToolsEntry.self, forKey: .tools)
         mcpServers = try c.decodeIfPresent(AgentToolGroupsEntry.self, forKey: .mcpServers)
@@ -542,6 +545,7 @@ extension AgentEntry: Codable {
         try c.encode(configField: temperature, forKey: .temperature)
         try c.encode(configField: maxTokens, forKey: .maxTokens)
         try c.encode(configField: generationSettings, forKey: .generationSettings)
+        try c.encodeIfPresent(showResponseMetrics, forKey: .showResponseMetrics)
         try c.encodeIfPresent(capabilities, forKey: .capabilities)
         try c.encodeIfPresent(tools, forKey: .tools)
         try c.encodeIfPresent(mcpServers, forKey: .mcpServers)

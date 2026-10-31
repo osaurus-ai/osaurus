@@ -212,6 +212,7 @@ public enum ConfigManifest {
                         comment: "0..2"),
                     ConfigKeySpec(
                         "max_tokens", .scalar(.integer, example: "null", nullable: true)),
+                    ConfigKeySpec("show_response_metrics", .scalar(.boolean, example: "false")),
                     ConfigKeySpec(
                         "generation_settings", .nullableMapping(agentGenerationKeys),
                         comment: "replaces advanced overrides; absent preserves, null clears"),

@@ -104,6 +104,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let agentCustomAvatarPath: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
+    var showResponseMetrics: Bool = false
     let autoScrollEnabled: Bool
     let theme: ThemeProtocol
     let expandedBlocksStore: ExpandedBlocksStore
@@ -290,6 +291,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             agentCustomAvatarPath: agentCustomAvatarPath,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
+            showResponseMetrics: showResponseMetrics,
             theme: theme,
             expandedIds: coordinator.expandedIds,
             onToggleExpand: { [weak coordinator] id in
@@ -356,6 +358,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             agentCustomAvatarPath: agentCustomAvatarPath,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
+            showResponseMetrics: showResponseMetrics,
             theme: theme,
             expandedIds: expandedBlocksStore.expandedIds,
             onToggleExpand: { _ in },
@@ -1003,15 +1006,18 @@ extension MessageTableRepresentable {
                     )
                 }
             }
-            // Only an incomplete-response warning needs a visible footer row.
+            // Metrics are opt-in per agent; incomplete-response warnings remain visible.
             // The original blocks and persisted generation measurements remain
             // unchanged; this filters the table's presentation only.
             let blocks = blocks.filter { block in
-                if case let .generationStats(_, _, _, unclosed, _, _, _) = block.kind { return unclosed }
+                if case let .generationStats(_, _, _, unclosed, _, _, _) = block.kind {
+                    return context.showResponseMetrics || unclosed
+                }
                 return true
             }
             let widthChanged = abs(ctx.width - context.width) > 1.0
             let expandedIdsChanged = context.expandedIds != ctx.expandedIds
+            let metricsDisplayChanged = context.showResponseMetrics != ctx.showResponseMetrics
             let previousEditingTurnId = ctx.editingTurnId
             let previousSearchHighlightQuery = ctx.searchHighlightQuery
             let previousSearchCurrentTurnId = ctx.searchCurrentTurnId
@@ -1038,7 +1044,7 @@ extension MessageTableRepresentable {
             let themeChanged =
                 previousThemeConfig != context.theme.customThemeConfig
                 || previousFontScale != (context.theme as? CustomizableTheme)?.fontScale
-            if themeChanged { heightCache.removeAll() }
+            if themeChanged || metricsDisplayChanged { heightCache.removeAll() }
 
             // Editing state lives in the context, not in the blocks themselves.
             // Reconfigure affected cells immediately so the UI responds without
@@ -1134,9 +1140,10 @@ extension MessageTableRepresentable {
                     || previousLastAssistantTurnId != context.lastAssistantTurnId
                     || expandedIdsChanged
                     || themeChanged
+                    || metricsDisplayChanged
                 if contextAffectsCells {
                     reconfigureAllCellsFromLookup(newLookup)
-                    if themeChanged {
+                    if themeChanged || metricsDisplayChanged {
                         // theme changes can alter cell intrinsic size (avatar
                         // diameter, name font size) so re-measure rows too
                         let allRows = IndexSet(integersIn: 0 ..< blockIds.count)
@@ -1163,7 +1170,7 @@ extension MessageTableRepresentable {
             // --- Path 2: In-place update (IDs unchanged, content changed) ---
             if !widthChanged, newIds == blockIds {
                 ChatPerfTrace.shared.count("applyBlocks.path2.inPlace")
-                if themeChanged {
+                if themeChanged || metricsDisplayChanged {
                     // theme edits affect every cell, not just content-changed
                     // ones. reconfigure all and re-measure heights
                     reconfigureAllCellsFromLookup(newLookup)
@@ -1191,7 +1198,7 @@ extension MessageTableRepresentable {
             )
             // Snapshot only reconfigures cells whose ContentBlock changed.
             // cells reused for unchanged blocks would keep stale theme
-            if themeChanged {
+            if themeChanged || metricsDisplayChanged {
                 reconfigureAllCellsFromLookup(newLookup)
                 let allRows = IndexSet(integersIn: 0 ..< blockIds.count)
                 if !allRows.isEmpty { noteRowHeightsChanged(allRows) }
