@@ -81,6 +81,10 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// read several times per block build on the main thread. Invalidated
     /// wherever `contentChunks` changes.
     private var _cachedVisibleContent: String?
+    /// Memoized `contentIsBlank`. Trimming copies the whole message, and
+    /// visible-block rebuilds read this for every assistant turn on every
+    /// streaming sync (APPLE-MACOS-3KF). Invalidated with the content.
+    private var _cachedContentIsBlank: Bool?
 
     /// The message content. Uses lazy joining for efficient streaming.
     var content: String {
@@ -100,6 +104,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             contentRevision &+= 1
             _cachedEnvelope = nil
             _cachedVisibleContent = nil
+            _cachedContentIsBlank = nil
             Self.bumpTokenEstimateRevision()
             objectWillChange.send()
         }
@@ -144,7 +149,11 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// treats streamed newline-only completions as blank for rendering and
     /// follow-up prompt construction.
     var contentIsBlank: Bool {
-        content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if _contentLength == 0 { return true }
+        if let cached = _cachedContentIsBlank { return cached }
+        let blank = content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        _cachedContentIsBlank = blank
+        return blank
     }
 
     /// Efficiently append content without triggering immediate UI update.
@@ -159,6 +168,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         _cachedContent = nil  // Invalidate cache
         _cachedEnvelope = nil
         _cachedVisibleContent = nil
+        _cachedContentIsBlank = nil
         Self.bumpTokenEstimateRevision()
     }
 
@@ -185,6 +195,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             _cachedContent = cleanedContent
             _cachedEnvelope = nil
             _cachedVisibleContent = nil
+            _cachedContentIsBlank = nil
             Self.bumpTokenEstimateRevision()
         }
     }
@@ -197,6 +208,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     private var _cachedThinking: String?
     /// Cached thinking length - updated on append/set without joining
     private var _thinkingLength: Int = 0
+    /// Memoized `thinkingIsBlank` (see `_cachedContentIsBlank`).
+    private var _cachedThinkingIsBlank: Bool?
 
     /// Thinking/reasoning content from models that support extended thinking (e.g., DeepSeek, QwQ)
     var thinking: String {
@@ -212,6 +225,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             thinkingChunks = newValue.isEmpty ? [] : [newValue]
             _cachedThinking = newValue
             _thinkingLength = newValue.count
+            _cachedThinkingIsBlank = nil
             Self.bumpTokenEstimateRevision()
             objectWillChange.send()
         }
@@ -242,9 +256,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// `hasRenderableThinking` — so no entry point (cell, activity group,
     /// subagent feed) can reach the bug independently.
     var thinkingIsBlank: Bool {
+        if _thinkingLength == 0 { return true }
+        if let cached = _cachedThinkingIsBlank { return cached }
         let trimmed = thinking.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return true }
-        return Self.isBareChannelIdentifier(trimmed)
+        let blank = trimmed.isEmpty || Self.isBareChannelIdentifier(trimmed)
+        _cachedThinkingIsBlank = blank
+        return blank
     }
 
     /// A payload that is nothing but a channel label — one short bare
@@ -266,6 +283,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         thinkingChunks.append(s)
         _thinkingLength += s.count
         _cachedThinking = nil  // Invalidate cache
+        _cachedThinkingIsBlank = nil
         Self.bumpTokenEstimateRevision()
     }
 
