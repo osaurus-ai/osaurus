@@ -335,7 +335,7 @@ struct AgentsView: View {
     /// cold-mounted Agents tab never sees the `onChange`.
     private func routeSettingsLanding(_ pending: String?) {
         guard let pending, pending.hasPrefix("agents.") else { return }
-        if (pending == "agents.description" || pending.hasPrefix("agents.generation.")),
+        if (pending == "agents.description" || AgentAdvancedSettingsLanding.matches(pending)),
             let target = detailAgent ?? customAgents.first
         {
             selectedRemoteAgentId = nil
@@ -1919,8 +1919,7 @@ struct AgentDetailView: View {
             loadMemoryData()
             loadAgentSecrets()
             selectedModel = currentAgent.defaultModel
-            if settingsLandingPending?.hasPrefix("agents.generation.") == true
-                || settingsLandingPending == "agents.showResponseMetrics" {
+            if AgentAdvancedSettingsLanding.matches(settingsLandingPending) {
                 showAdvancedSettings = true
             }
             refreshDetailCaches()
@@ -1932,7 +1931,7 @@ struct AgentDetailView: View {
             await refreshAbilityContextPreview()
         }
         .onChange(of: settingsLandingPending) { _, pending in
-            if pending?.hasPrefix("agents.generation.") == true || pending == "agents.showResponseMetrics" {
+            if AgentAdvancedSettingsLanding.matches(pending) {
                 selectedTab = .builtIn(.configure)
                 showAdvancedSettings = true
             }
