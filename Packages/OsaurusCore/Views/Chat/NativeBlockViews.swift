@@ -458,6 +458,7 @@ final class NativeCodeBlockView: NSView {
     private var lastLang: String? = nil
     private var lastWidth: CGFloat = 0
     private var lastThemeId = ""
+    private var lastTextAppearance: MessageThemeRenderSignature.TextAppearance?
     private var lastIsStreaming = false
     private var copyResetTask: Task<Void, Never>?
 
@@ -528,17 +529,20 @@ final class NativeCodeBlockView: NSView {
     ) {
         let resolvedHL = theme.codeHighlightTheme ?? (theme.isDark ? "auto-dark" : "auto-light")
         let themeId = "\(theme.monoFontName)|\(theme.codeSize)|\(resolvedHL)"
+        let textAppearance = MessageThemeRenderSignature(theme: theme).textAppearance
+        let textAppearanceChanged = textAppearance != lastTextAppearance
         let codeChanged = code != lastCode || language != lastLang
         let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeId != lastThemeId
         let streamingChanged = isStreaming != lastIsStreaming
 
-        guard codeChanged || widthChanged || themeChanged || streamingChanged else { return }
+        guard codeChanged || widthChanged || themeChanged || textAppearanceChanged || streamingChanged else { return }
 
         lastCode = code
         lastLang = language
         lastWidth = width
         lastThemeId = themeId
+        lastTextAppearance = textAppearance
         lastIsStreaming = isStreaming
 
         ensureHighlightrTheme(for: theme)
@@ -1046,7 +1050,7 @@ final class NativeMarkdownTableView: NSView {
     private var headers: [String] = []
     private var rows: [[String]] = []
     private var lastWidth: CGFloat = 0
-    private var lastThemeFingerprint: String = ""
+    private var lastThemeFingerprint: MessageThemeRenderSignature?
     /// Width used by the most recent `relayoutImpl` pass; `layout()` skips
     /// re-measuring when it would run with the same width again.
     private var lastRelayoutWidth: CGFloat = -1
@@ -1095,16 +1099,42 @@ final class NativeMarkdownTableView: NSView {
     // MARK: Configure
 
     func configure(headers: [String], rows: [[String]], width: CGFloat, theme: any ThemeProtocol) {
-        let fingerprint = "\(theme.primaryFontName)|\(theme.bodySize)|\(theme.isDark)"
+        let fingerprint = MessageThemeRenderSignature(theme: theme)
+        let previousFingerprint = lastThemeFingerprint
         let contentChanged = headers != self.headers || rows != self.rows
         let widthChanged = abs(width - lastWidth) > 0.5
-        let themeChanged = fingerprint != lastThemeFingerprint
+        let textAppearanceChanged = previousFingerprint?.textAppearance != fingerprint.textAppearance
+        let layoutThemeChanged = previousFingerprint?.layout != fingerprint.layout
+        let themeChanged = textAppearanceChanged || layoutThemeChanged
         guard contentChanged || widthChanged || themeChanged else { return }
 
         // Width only affects rendered text when it crosses a typography scale
         // step; otherwise a width change is purely a relayout.
         let scaleChanged =
             Typography.scale(for: max(width, 1)) != Typography.scale(for: max(lastWidth, 1))
+
+        if textAppearanceChanged, !layoutThemeChanged, !contentChanged, !widthChanged, !scaleChanged {
+            var canRethemeInPlace = true
+            for row in cellFields {
+                for cell in row {
+                    cell.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
+                    cell.insertionPointColor = NSColor(theme.cursorColor)
+                    guard let storage = cell.textStorage,
+                        SelectableTextView.rethemeColors(in: storage, theme: theme)
+                    else {
+                        canRethemeInPlace = false
+                        break
+                    }
+                    cell.needsDisplay = true
+                }
+                if !canRethemeInPlace { break }
+            }
+            if canRethemeInPlace {
+                lastThemeFingerprint = fingerprint
+                needsDisplay = true
+                return
+            }
+        }
 
         self.headers = headers
         self.rows = rows

@@ -51,6 +51,32 @@ extension NSAttributedString.Key {
     static let blockquoteMarker = NSAttributedString.Key("osaurus.blockquote")
     /// Marks a range as a heading that should have an underline (H1/H2)
     static let headingUnderline = NSAttributedString.Key("osaurus.headingUnderline")
+    /// Retains the semantic theme color for fast color-only refreshes without
+    /// reparsing Markdown or replacing the text storage.
+    static let markdownThemeColorRole = NSAttributedString.Key("osaurus.markdownThemeColorRole")
+}
+
+private enum MarkdownThemeColorRole: Int {
+    case primary
+    case secondary
+    case accent
+    case horizontalRule
+    case tableRule
+
+    func color(in theme: any ThemeProtocol) -> NSColor {
+        switch self {
+        case .primary:
+            return NSColor(theme.primaryText)
+        case .secondary:
+            return NSColor(theme.secondaryText)
+        case .accent:
+            return NSColor(theme.accentColor)
+        case .horizontalRule:
+            return NSColor(theme.primaryBorder.opacity(0.4))
+        case .tableRule:
+            return NSColor(theme.primaryBorder.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Selectable Text View
@@ -65,7 +91,7 @@ struct SelectableTextView: NSViewRepresentable {
     final class Coordinator {
         var lastBlocks: [SelectableTextBlock] = []
         var lastWidth: CGFloat = 0
-        var lastThemeFingerprint: String = ""
+        var lastThemeFingerprint: MessageThemeRenderSignature?
         var lastMeasuredHeight: CGFloat = 0
         var cacheKey: String? = nil
         var blockLengths: [Int] = []  // per-block rendered lengths for incremental updates
@@ -132,8 +158,11 @@ struct SelectableTextView: NSViewRepresentable {
     func updateNSView(_ textView: SelectableNSTextView, context: Context) {
         // compute change flags first so every guard below can reference them cheaply
         let themeFingerprint = makeThemeFingerprint()
+        let previousThemeFingerprint = context.coordinator.lastThemeFingerprint
         let widthChanged = abs(context.coordinator.lastWidth - baseWidth) > 0.1
-        let themeChanged = context.coordinator.lastThemeFingerprint != themeFingerprint
+        let textAppearanceChanged = previousThemeFingerprint?.textAppearance != themeFingerprint.textAppearance
+        let layoutThemeChanged = previousThemeFingerprint?.layout != themeFingerprint.layout
+        let themeChanged = textAppearanceChanged || layoutThemeChanged
         let blocksChanged = context.coordinator.lastBlocks != blocks
 
         // setting containerSize calls textContainerChangedGeometry, which invalidates the
@@ -145,13 +174,25 @@ struct SelectableTextView: NSViewRepresentable {
 
         // selectedTextAttributes triggers needsDisplay; accent colors are only used during
         // custom drawing — only push these when the theme actually changes.
-        if themeChanged {
+        if textAppearanceChanged {
             textView.selectedTextAttributes = [
                 .backgroundColor: NSColor(theme.selectionColor)
             ]
+            textView.insertionPointColor = NSColor(theme.cursorColor)
             textView.accentColor = NSColor(theme.accentColor)
             textView.blockquoteBarColor = NSColor(theme.accentColor).withAlphaComponent(0.6)
             textView.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
+        }
+
+        // Color-only changes are applied to the existing attributed runs. This
+        // preserves TextKit layout, selection, and the parsed Markdown runs.
+        if textAppearanceChanged, !layoutThemeChanged, !blocksChanged, !widthChanged,
+            let storage = textView.textStorage,
+            Self.rethemeColors(in: storage, theme: theme)
+        {
+            context.coordinator.lastThemeFingerprint = themeFingerprint
+            textView.needsDisplay = true
+            return
         }
 
         if blocksChanged || widthChanged || themeChanged {
@@ -182,6 +223,51 @@ struct SelectableTextView: NSViewRepresentable {
                 textView.needsDisplay = true
             }
         }
+    }
+
+    /// Recolor an existing rendered string from its semantic theme-color
+    /// attributes. Returns false when the storage contains attachments or an
+    /// unclassified run that requires the normal renderer path.
+    @discardableResult
+    static func rethemeColors(in storage: NSTextStorage, theme: any ThemeProtocol) -> Bool {
+        let fullRange = NSRange(location: 0, length: storage.length)
+        var needsRebuild = false
+        storage.enumerateAttributes(in: fullRange, options: []) { attributes, _, stop in
+            if attributes[.attachment] != nil {
+                needsRebuild = true
+                stop.pointee = true
+                return
+            }
+            if attributes[.markdownThemeColorRole] == nil && attributes[.redactionPlaceholder] == nil {
+                needsRebuild = true
+                stop.pointee = true
+            }
+        }
+        guard !needsRebuild else { return false }
+        guard storage.length > 0 else { return true }
+
+        storage.beginEditing()
+        storage.enumerateAttribute(.markdownThemeColorRole, in: fullRange, options: []) { value, range, _ in
+            guard let rawRole = value as? NSNumber,
+                let role = MarkdownThemeColorRole(rawValue: rawRole.intValue)
+            else { return }
+            storage.addAttribute(.foregroundColor, value: role.color(in: theme), range: range)
+        }
+        // Redaction highlighting owns the foreground and dotted underline;
+        // update their accent tint while keeping the marker and hover ranges.
+        storage.enumerateAttribute(.redactionPlaceholder, in: fullRange, options: []) { value, range, _ in
+            guard value != nil else { return }
+            let accent = NSColor(theme.accentColor)
+            storage.addAttributes(
+                [
+                    .foregroundColor: accent,
+                    .underlineColor: accent.withAlphaComponent(0.7),
+                ],
+                range: range
+            )
+        }
+        storage.endEditing()
+        return true
     }
 
     // MARK: - Sizing
@@ -266,7 +352,7 @@ struct SelectableTextView: NSViewRepresentable {
 
         // If appending to a previously-last block, add the missing newline separator
         if diffIndex > 0 && diffIndex == oldBlocks.count && diffIndex < newBlocks.count {
-            storage.append(NSAttributedString(string: "\n"))
+            storage.append(Self.themedSeparator(theme: theme))
             if diffIndex - 1 < newLengths.count {
                 newLengths[diffIndex - 1] += 1
             }
@@ -289,7 +375,7 @@ struct SelectableTextView: NSViewRepresentable {
             var blockLen = attrString.length
 
             if i < newBlocks.count - 1 {
-                storage.append(NSAttributedString(string: "\n"))
+                storage.append(Self.themedSeparator(theme: theme))
                 blockLen += 1
             }
 
@@ -316,6 +402,16 @@ struct SelectableTextView: NSViewRepresentable {
         return view.buildAttributedString(coordinator: coord)
     }
 
+    private static func themedSeparator(theme: any ThemeProtocol) -> NSAttributedString {
+        NSAttributedString(
+            string: "\n",
+            attributes: [
+                .foregroundColor: NSColor(theme.primaryText),
+                .markdownThemeColorRole: NSNumber(value: MarkdownThemeColorRole.primary.rawValue),
+            ]
+        )
+    }
+
     // MARK: - Attributed String Building
 
     func buildAttributedString(coordinator: Coordinator) -> NSMutableAttributedString {
@@ -338,7 +434,7 @@ struct SelectableTextView: NSViewRepresentable {
 
             var blockLen = attr.length
             if i < blocks.count - 1 {
-                result.append(NSAttributedString(string: "\n"))
+                result.append(Self.themedSeparator(theme: theme))
                 blockLen += 1
             }
             lengths.append(blockLen)
@@ -380,7 +476,13 @@ struct SelectableTextView: NSViewRepresentable {
         case .blockquote(let text):
             let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular, isItalic: true)
             let fullRange = NSRange(location: 0, length: attrString.length)
-            attrString.addAttribute(.foregroundColor, value: NSColor(theme.secondaryText), range: fullRange)
+            attrString.addAttributes(
+                [
+                    .foregroundColor: NSColor(theme.secondaryText),
+                    .markdownThemeColorRole: NSNumber(value: MarkdownThemeColorRole.secondary.rawValue),
+                ],
+                range: fullRange
+            )
             attrString.addAttribute(.blockquoteMarker, value: true, range: fullRange)
             applyParagraphStyle(
                 to: attrString,
@@ -401,10 +503,19 @@ struct SelectableTextView: NSViewRepresentable {
                     attributes: [
                         .font: nsFont(size: bodyFontSize, weight: .medium),
                         .foregroundColor: NSColor(theme.accentColor),
+                        .markdownThemeColorRole: NSNumber(value: MarkdownThemeColorRole.accent.rawValue),
                     ]
                 )
             )
-            fullLine.append(NSAttributedString(string: "\t"))
+            fullLine.append(
+                NSAttributedString(
+                    string: "\t",
+                    attributes: [
+                        .foregroundColor: NSColor(theme.primaryText),
+                        .markdownThemeColorRole: NSNumber(value: MarkdownThemeColorRole.primary.rawValue),
+                    ]
+                )
+            )
             fullLine.append(renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular))
 
             applyListParagraphStyle(
@@ -423,6 +534,7 @@ struct SelectableTextView: NSViewRepresentable {
                 attributes: [
                     .font: cachedFont(size: bodyFontSize * 0.5, weight: .ultraLight, italic: false),
                     .foregroundColor: NSColor(theme.primaryBorder.opacity(0.4)),
+                    .markdownThemeColorRole: NSNumber(value: MarkdownThemeColorRole.horizontalRule.rawValue),
                 ]
             )
             let style = NSMutableParagraphStyle()
@@ -533,11 +645,19 @@ struct SelectableTextView: NSViewRepresentable {
             for (i, cell) in cells.enumerated() {
                 result.append(cell)
                 if i < cells.count - 1 {
-                    result.append(NSAttributedString(string: "\t"))
+                    result.append(
+                        NSAttributedString(
+                            string: "\t",
+                            attributes: [
+                                .foregroundColor: NSColor(theme.primaryText),
+                                .markdownThemeColorRole: NSNumber(value: MarkdownThemeColorRole.primary.rawValue),
+                            ]
+                        )
+                    )
                 }
             }
             if !isLast {
-                result.append(NSAttributedString(string: "\n"))
+                result.append(Self.themedSeparator(theme: theme))
             }
         }
 
@@ -552,10 +672,11 @@ struct SelectableTextView: NSViewRepresentable {
             attributes: [
                 .font: separatorFont,
                 .foregroundColor: NSColor(theme.primaryBorder.opacity(0.5)),
+                .markdownThemeColorRole: NSNumber(value: MarkdownThemeColorRole.tableRule.rawValue),
             ]
         )
         result.append(separator)
-        result.append(NSAttributedString(string: "\n"))
+        result.append(Self.themedSeparator(theme: theme))
 
         // Body rows
         for (idx, row) in cappedRows.enumerated() {
@@ -675,6 +796,7 @@ struct SelectableTextView: NSViewRepresentable {
         let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: baseFont,
             .foregroundColor: NSColor(theme.primaryText),
+            .markdownThemeColorRole: NSNumber(value: MarkdownThemeColorRole.primary.rawValue),
         ]
 
         // Check for inline math — if present, split and render segments
@@ -725,6 +847,11 @@ struct SelectableTextView: NSViewRepresentable {
             else { continue }
             attrString.addAttribute(.link, value: match.url, range: match.range)
             attrString.addAttribute(.foregroundColor, value: accentColor, range: match.range)
+            attrString.addAttribute(
+                .markdownThemeColorRole,
+                value: NSNumber(value: MarkdownThemeColorRole.accent.rawValue),
+                range: match.range
+            )
             attrString.addAttribute(
                 .underlineStyle, value: NSUnderlineStyle.single.rawValue, range: match.range
             )
@@ -832,6 +959,11 @@ struct SelectableTextView: NSViewRepresentable {
 
         // Apply base text color
         attrString.addAttribute(.foregroundColor, value: primaryTextColor, range: fullRange)
+        attrString.addAttribute(
+            .markdownThemeColorRole,
+            value: NSNumber(value: MarkdownThemeColorRole.primary.rawValue),
+            range: fullRange
+        )
 
         // Pre-cache common fonts
         let baseFont = cachedFont(size: baseFontSize, weight: baseWeight, italic: isItalic)
@@ -860,6 +992,11 @@ struct SelectableTextView: NSViewRepresentable {
                 let font = isBoldCode ? cachedMonoFont(size: baseFontSize * 0.9, weight: .bold) : codeFont
                 attrString.addAttribute(.font, value: font, range: range)
                 attrString.addAttribute(.foregroundColor, value: accentColor, range: range)
+                attrString.addAttribute(
+                    .markdownThemeColorRole,
+                    value: NSNumber(value: MarkdownThemeColorRole.accent.rawValue),
+                    range: range
+                )
                 // A code span naming a real knowledge document becomes a
                 // clickable link to it (existence-gated, so ordinary
                 // path-shaped spans are untouched).
@@ -898,6 +1035,11 @@ struct SelectableTextView: NSViewRepresentable {
             // Style links
             if attributes[.link] != nil {
                 attrString.addAttribute(.foregroundColor, value: accentColor, range: range)
+                attrString.addAttribute(
+                    .markdownThemeColorRole,
+                    value: NSNumber(value: MarkdownThemeColorRole.accent.rawValue),
+                    range: range
+                )
                 attrString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
             }
         }
@@ -1005,8 +1147,8 @@ struct SelectableTextView: NSViewRepresentable {
 
     // MARK: - Theme Fingerprint
 
-    private func makeThemeFingerprint() -> String {
-        "\(theme.primaryFontName)|\(theme.monoFontName)|\(theme.titleSize)|\(theme.headingSize)|\(theme.bodySize)|\(theme.captionSize)|\(theme.codeSize)"
+    private func makeThemeFingerprint() -> MessageThemeRenderSignature {
+        MessageThemeRenderSignature(theme: theme)
     }
 }
 
