@@ -783,6 +783,11 @@ final class ChatSession: ObservableObject {
     /// generation for the same turn. A failed attempt clears it (see
     /// `maybeGenerateFollowUps`) so the next clean completion may retry.
     private var followUpGenerationStarted = false
+    /// Bumped by every `clearFollowUpSuggestions()`. An in-flight follow-up
+    /// generation captures the value it started under and drops its result
+    /// when the value moved. See the INVARIANT notes in
+    /// `maybeGenerateFollowUps`.
+    private var followUpGeneration = 0
 
     /// Weak back-reference to the owning window state (set by ChatWindowState).
     /// Single-slot by design, last-writer-wins: when two windows attach the
@@ -4654,7 +4659,21 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
         save()
         maybeGenerateAutoTitle()
-        maybeGenerateFollowUps()
+        // INVARIANT: follow-up suggestions appear only once the agent is truly
+        // done with the user's request. A clean run end is NOT always that:
+        // when `prompt_working_folder` attached a folder, this same cleanup
+        // immediately starts a host continuation run below
+        // (`continueAfterWorkingFolderAttachIfEligible`). Generating here would
+        // render the "Follow up" rows mid-turn, between the folder attach and
+        // the rest of the agent's work (regression introduced by #2918). Do
+        // not remove this guard or reorder it after the continuation without
+        // an equivalent check, and exclude any future "keep going after the
+        // run ended" path here too. The apply-time guard inside
+        // `maybeGenerateFollowUps` is the second line of defense, not a
+        // replacement for this one.
+        if !pendingWorkingFolderContinuation {
+            maybeGenerateFollowUps()
+        }
         maybeBackfillAgentDescriptions()
         if !suppressQueuedSendFlushForCurrentRun {
             flushQueuedSendIfEligible()
@@ -4805,6 +4824,11 @@ final class ChatSession: ObservableObject {
     /// current turn is cancelled/errors before we'd want to suggest anything.
     private func clearFollowUpSuggestions() {
         followUpGenerationStarted = false
+        // Invalidate any generation still in flight. Resetting the latch alone
+        // is not enough: the background Task started by the previous
+        // completion keeps running and would otherwise inject its result into
+        // the turn that is starting now. Do not remove.
+        followUpGeneration &+= 1
         followUpTurnId = nil
         let hadSuggestions = !followUpSuggestions.isEmpty
         if hadSuggestions { followUpSuggestions = [] }
@@ -4848,6 +4872,7 @@ final class ChatSession: ObservableObject {
         else { return }
 
         followUpGenerationStarted = true
+        let generation = followUpGeneration
         let userText = userTurn.content
         let assistantText = assistantTurn.content
         let fallbackModel = isHarnessAgentActive ? nil : selectedModel
@@ -4863,6 +4888,19 @@ final class ChatSession: ObservableObject {
                 modelOverride: followUpModelOverride
             )
             guard let self, self.sessionId == sid else { return }
+            // INVARIANT: never inject suggestions while a run is in progress.
+            // Generation takes seconds, and in that window a new run can start
+            // (user send, queued send, working-folder continuation, channel
+            // steer). Those paths clear suggestions and bump
+            // `followUpGeneration`, but they cannot cancel this Task. The
+            // "still the last assistant message" check further down does NOT
+            // cover this case: a new run that is only thinking or calling
+            // tools has no visible content yet, so the old turn still looks
+            // current and the rows land in the middle of the live turn. That
+            // exact bug shipped once already. Keep all three conditions.
+            guard generation == self.followUpGeneration,
+                !self.isStreaming, self.activeRunId == nil
+            else { return }
             guard !suggestions.isEmpty else {
                 // Transient miss (no resident model, timeout, open breaker):
                 // re-arm for the next clean completion of this session.
