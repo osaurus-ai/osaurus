@@ -58,13 +58,13 @@ public actor EmbeddingService {
     /// Verifies the embedding model is locally available and logs a loud,
     /// actionable warning if it isn't — so a capability_search / eval run
     /// doesn't silently build an EMPTY semantic index and report
-    /// unreliable retrieval. Does NOT download (that's the job of
-    /// `scripts/evals/prepare-evals-env.sh` or the memory feature's
-    /// downloader); this is a fast existence probe only.
+    /// unreliable retrieval. The model ships in OsaurusCore's resource
+    /// bundle, so a miss means a broken build or install; this is a fast
+    /// existence probe only.
     public static func ensureModelPresent() {
         if VMLXModel2VecEmbedder.locateModelDirectory(modelName: modelName) == nil {
             logger.warning(
-                "Embedding model '\(modelName, privacy: .public)' not found locally — semantic search will be EMPTY and unreliable. Install minishlab/\(modelName, privacy: .public) in Osaurus's Models Directory or the Hugging Face cache, run `make evals-prep`, or set OSAURUS_EMBEDDING_MODEL_DIR."
+                "Embedding model '\(modelName, privacy: .public)' is missing from the OsaurusCore bundle — semantic search will be EMPTY and unreliable. Rebuild/reinstall Osaurus or set OSAURUS_EMBEDDING_MODEL_DIR."
             )
         }
     }
