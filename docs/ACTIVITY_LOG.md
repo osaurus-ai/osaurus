@@ -106,6 +106,7 @@ Optional fields are **omitted** when nil.
 | `wireRequestBody`, `wireResponseBody` | string?                  | Bytes actually sent / received for remote inference, captured post-Privacy-Filter by `WireTransportProbe`. |
 | `bodyTruncation`                    | `{bodyField: bool}?`       | Capture clipping per body: `true` clipped, `false` not clipped, missing key unknown (§5); retained when content is withheld. |
 | `model`, `inputTokens`, `outputTokens`, `tokensPerSecond`, `temperature`, `maxTokens`, `finishReason`, `errorMessage` | | Inference facts. |
+| `inputTokenSource`, `outputTokenSource` | `reported` / `estimated`? | Independent count provenance; absent means unknown, including legacy rows. Nil counts have no source. |
 | `toolCalls[]`                       | `{id, name, arguments, result, durationMs, isError}` | Tool calls made during the turn. Arguments / results are redacted for secret-carrying tools and channel tools. |
 | `connection`                        | `RequestConnectionInfo?`   | `providerId`, `remoteEndpoint`, `transport` (`local`/`direct`/`secureChannel`), `mode` (`local`/`remoteInference`/`remoteAgentRun`), `accessKeyId`, `audience`. |
 | `egress`                            | `EgressInfo?`              | `destinationLabel`, `destinationHost`, `bytesSent`, `bytesReceived`, `dataClasses[]`, `privacyFilterApplied`, `redactedSpanCount`, `details{}`. |
@@ -157,6 +158,28 @@ so its rows carry the helper's `sessionId`/`turnId` and record the
 orchestrator's turn in `egress.details.parent_turn_id` ("Delegated from
 turn" in the detail pane); either way a reviewer can walk parent turn →
 every helper step.
+
+---
+
+Token-count provenance is recorded at the producer for each direction:
+`reported` means the runtime/provider supplied the count; `estimated` means
+Osaurus used a text-based estimate. A missing source is **unknown**, even if
+a legacy row contains a nonzero count. Reported zero is retained. When a
+one-shot fails without a response or usage measurement, output count stays
+unavailable rather than becoming zero. Reported counts describe the
+producer's measurement; they are not a guarantee of provider billing precision.
+
+Insights shows each count with its source. **Request rate** divides output
+count by the entire request duration, including prompt processing and network
+waits; it is not the runtime's decode-only speed. Its label retains the output
+count's provenance. Live budget reservations continue using the existing
+estimator policy independently of these persisted facts.
+
+These optional fields survive storage, bounded-detail copies, and content
+withholding. JSONL includes observed sources in the original hashed row;
+legacy rows omit them. CSV appends `input_tokens_source` and
+`output_tokens_source`, each `reported`, `estimated`, or `unknown`.
+Exports never infer or backfill the source of a historical count.
 
 ---
 
@@ -353,7 +376,7 @@ Notes for reviewers:
 ### 7.3 CSV and Markdown
 
 CSV columns:
-`seq, timestamp, category, locality, destination, destination_host, title, source, method, path, status, error, duration_ms, model, agent, input_tokens, output_tokens, bytes_sent, bytes_received, privacy_filter, redacted_spans, data_classes, tool_calls, finish_reason, request_id, turn_id, hash, request_body_truncated, response_body_truncated, wire_request_body_truncated, wire_response_body_truncated`.
+`seq, timestamp, category, locality, destination, destination_host, title, source, method, path, status, error, duration_ms, model, agent, input_tokens, output_tokens, bytes_sent, bytes_received, privacy_filter, redacted_spans, data_classes, tool_calls, finish_reason, request_id, turn_id, hash, request_body_truncated, response_body_truncated, wire_request_body_truncated, wire_response_body_truncated, input_tokens_source, output_tokens_source`.
 The four body capture columns contain `true`, `false`, or `unknown`, with
 the same meaning as JSONL `bodyTruncation`. CSV includes no bodies.
 Markdown repeats the manifest facts as a header and lists rows

@@ -14462,6 +14462,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     tokensInput: resolvedPromptTokens,
                     tokensOutput: resolvedCompletionTokens,
+                    inputTokenSource: actualPromptTokens == nil ? .estimated : .reported,
+                    outputTokenSource: actualCompletionTokens == nil ? .estimated : .reported,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens
                 )
@@ -14534,6 +14536,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     tokensInput: resolvedPromptTokens,
                     tokensOutput: completionTokens,
+                    inputTokenSource: actualPromptTokens == nil ? .estimated : .reported,
+                    outputTokenSource: actualCompletionTokens == nil ? .estimated : .reported,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens,
                     finishReason: RequestLog.FinishReason(rawValue: finishReason) ?? .stop
@@ -15020,6 +15024,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     logSelf.logRequest(method: "POST", path: "/chat/completions", userAgent: logUserAgent,
                         requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
                         tokensInput: response.inputTokenCount, tokensOutput: completion.tokenCount,
+                        inputTokenSource: .reported, outputTokenSource: .reported,
                         toolCalls: calls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
                         temperature: logTemperature, maxTokens: logMaxTokens,
                         finishReason: Self.openResponsesFinishReason(completion))
@@ -15138,6 +15143,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         model: logModel,
                         tokensInput: tokensIn,
                         tokensOutput: tokensOut,
+                        inputTokenSource: .reported, outputTokenSource: .reported,
                         temperature: logTemperature,
                         maxTokens: logMaxTokens,
                         finishReason: finishReason
@@ -15410,6 +15416,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 logSelf.logRequest(method: "POST", path: "/chat", userAgent: logUserAgent,
                     requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
                     tokensInput: input, tokensOutput: output,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: calls.map { ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments) },
                     temperature: logTemperature, maxTokens: logMaxTokens, finishReason: finish)
             } catch {
@@ -15486,6 +15493,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     tokensInput: response.inputTokenCount,
                     tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     temperature: request.temperature,
                     maxTokens: request.max_tokens,
                     finishReason: message.tool_calls?.isEmpty == false ? .toolCalls : .stop
@@ -15695,7 +15703,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 logSelf.logRequest(method: "POST", path: "/generate", userAgent: logUserAgent,
                     requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
-                    tokensInput: input, tokensOutput: output, temperature: logTemperature,
+                    tokensInput: input, tokensOutput: output,
+                    inputTokenSource: .reported, outputTokenSource: .reported, temperature: logTemperature,
                     maxTokens: logMaxTokens, finishReason: finish)
             } catch {
                 hop {
@@ -15768,6 +15777,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     tokensInput: response.inputTokenCount,
                     tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     temperature: request.temperature,
                     maxTokens: request.max_tokens,
                     finishReason: .stop
@@ -17407,6 +17417,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 logSelf.logRequest(method: "POST", path: "/messages", userAgent: logUserAgent,
                     requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
                     tokensInput: response.inputTokenCount, tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: calls.map { ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments) }, finishReason: finish)
             } catch {
                 // SSE response head was already 200 — surface as in-band
@@ -17527,6 +17538,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: logModel,
                     tokensInput: response.inputTokenCount,
                     tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: response.completion.dispatchableFunctionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
                     finishReason: finish
                 )
@@ -18121,6 +18133,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 self.logRequest(method: "POST", path: "/responses", userAgent: userAgent,
                     requestBody: requestBodyString, responseStatus: 200, startTime: startTime, model: model,
                     tokensInput: response.inputTokenCount, tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: response.completion.functionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
                     finishReason: Self.openResponsesFinishReason(response.completion))
             } catch {
@@ -18279,6 +18292,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: logModel,
                     tokensInput: response.inputTokenCount,
                     tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: response.completion.functionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
                     finishReason: Self.openResponsesFinishReason(response.completion)
                 )
@@ -18457,6 +18471,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String? = nil,
         tokensInput: Int? = nil,
         tokensOutput: Int? = nil,
+        inputTokenSource: RequestLog.TokenCountSource? = nil,
+        outputTokenSource: RequestLog.TokenCountSource? = nil,
         toolCalls: [ToolCallLog]? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
@@ -18486,6 +18502,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             model: model,
             tokensInput: tokensInput,
             tokensOutput: tokensOutput,
+            inputTokenSource: inputTokenSource,
+            outputTokenSource: outputTokenSource,
             temperature: temperature,
             maxTokens: maxTokens,
             toolCalls: toolCalls,

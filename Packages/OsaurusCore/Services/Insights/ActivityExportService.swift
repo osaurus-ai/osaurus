@@ -160,7 +160,7 @@ enum ActivityExportService {
         "input_tokens", "output_tokens", "bytes_sent", "bytes_received", "privacy_filter",
         "redacted_spans", "data_classes", "tool_calls", "finish_reason", "request_id", "turn_id", "hash",
         "request_body_truncated", "response_body_truncated", "wire_request_body_truncated",
-        "wire_response_body_truncated",
+        "wire_response_body_truncated", "input_tokens_source", "output_tokens_source",
     ]
 
     static func renderCSV(_ rows: [RequestLog]) -> String {
@@ -200,6 +200,8 @@ enum ActivityExportService {
                 truncationStatus(r, field: "responseBody"),
                 truncationStatus(r, field: "wireRequestBody"),
                 truncationStatus(r, field: "wireResponseBody"),
+                r.inputTokenSource?.rawValue ?? "unknown",
+                r.outputTokenSource?.rawValue ?? "unknown",
             ]
             lines.append(fields.map(csvEscape).joined(separator: ","))
         }
@@ -285,7 +287,9 @@ enum ActivityExportService {
             facts.append("source: \(r.source.rawValue)")
             if let model = r.model { facts.append("model: \(model)") }
             if let agent = r.agentName { facts.append("agent: \(agent)") }
-            if let i = r.inputTokens, let o = r.outputTokens { facts.append("tokens: \(i) in / \(o) out") }
+            if r.inputTokens != nil || r.outputTokens != nil {
+                facts.append("tokens: \(r.inputTokenDescription) in / \(r.outputTokenDescription) out")
+            }
             if let e = r.egress {
                 if let b = e.bytesSent { facts.append("sent: \(ActivitySummary.formattedBytes(b))") }
                 if !e.dataClasses.isEmpty { facts.append("data: \(e.dataClasses.joined(separator: ", "))") }

@@ -186,7 +186,12 @@ struct ActivityExportTests {
         )
         let text = String(decoding: data, as: UTF8.self)
         let columns = parseCSVRow(try #require(text.split(separator: "\n").last.map(String.init)))
-        #expect(Array(columns.suffix(4)) == ["true", "false", "unknown", "unknown"])
+        let header = ActivityExportService.csvColumns
+        let statuses = ["request_body_truncated", "response_body_truncated",
+            "wire_request_body_truncated", "wire_response_body_truncated"].map {
+                columns[header.firstIndex(of: $0)!]
+            }
+        #expect(statuses == ["true", "false", "unknown", "unknown"])
         #expect(!text.contains("private"))
     }
 
