@@ -11,8 +11,10 @@ import Foundation
 public enum WatcherStore {
     // MARK: - Directory Management
 
+    /// Resolved so a symlinked `~/.osaurus/watchers` (dotfiles setups, #1996)
+    /// can be listed; `contentsOfDirectory(at:)` fails on the link itself.
     private static var watchersDirectory: URL {
-        let dir = OsaurusPaths.watchers()
+        let dir = OsaurusPaths.resolvingSymlinks(OsaurusPaths.watchers())
         OsaurusPaths.ensureExistsSilent(dir)
         return dir
     }
