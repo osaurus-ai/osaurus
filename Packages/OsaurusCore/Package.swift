@@ -343,6 +343,8 @@ let package = Package(
         // vmlx-swift#667: SSD restore retries, capacity estimates and nested vision configuration.
         // vmlx-swift#668: DeepSeek-V4.1 split-by-keys decode attention; dSpark governor cost as a ratio of EMAs.
         // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
+        // vmlx-swift#687: MiniMax-M3.1-Flash (JANGT experts, block-sparse MSA, dspark/ drafter, aligned prefix cache,
+        // thinking_mode, image input).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
             revision: "a0990f0bd8ec68449054dbdee9b770e1d30a0d90"
