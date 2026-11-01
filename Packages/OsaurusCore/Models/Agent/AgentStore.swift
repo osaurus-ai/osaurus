@@ -161,7 +161,7 @@ public enum AgentStore {
     /// user still needs a recovery surface for the saved legacy copy.
     public static func recoverableBackups() -> [RecoverableAgentBackup] {
         OsaurusPaths.migrateLegacyPersonasIfNeeded()
-        let directory = OsaurusPaths.agents()
+        let directory = OsaurusPaths.resolvingSymlinks(OsaurusPaths.agents())
         guard
             let files = try? FileManager.default.contentsOfDirectory(
                 at: directory,
@@ -414,8 +414,12 @@ public enum AgentStore {
 
     // MARK: - Private
 
+    /// Resolved so a symlinked `~/.osaurus/agents` (dotfiles setups, #1996)
+    /// can be listed; `contentsOfDirectory(at:)` fails on the link itself.
     private nonisolated static func agentsDirectory() -> URL {
-        OsaurusPaths.resolvePath(new: OsaurusPaths.agents(), legacy: "Personas")
+        OsaurusPaths.resolvingSymlinks(
+            OsaurusPaths.resolvePath(new: OsaurusPaths.agents(), legacy: "Personas")
+        )
     }
 
     private nonisolated static func agentFileURL(for id: UUID) -> URL {

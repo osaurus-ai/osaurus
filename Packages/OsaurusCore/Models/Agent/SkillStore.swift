@@ -229,8 +229,10 @@ public enum SkillStore {
 
     // MARK: - Private
 
+    /// Resolved so a symlinked `~/.osaurus/skills` (dotfiles setups, #1996)
+    /// can be listed; `contentsOfDirectory(at:)` fails on the link itself.
     private static func skillsDirectory() -> URL {
-        OsaurusPaths.skills()
+        OsaurusPaths.resolvingSymlinks(OsaurusPaths.skills())
     }
 
     private static func writeSkillFile(_ content: Data, named name: String, in baseDirectory: URL) throws {
