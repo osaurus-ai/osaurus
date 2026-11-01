@@ -513,6 +513,10 @@ struct RequestLog: Identifiable, Sendable, Codable {
     let model: String?
     let inputTokens: Int?
     let outputTokens: Int?
+    /// Producer-observed count provenance. Nil means unknown, including legacy
+    /// rows; a nonnil integer alone never proves a reported count.
+    let inputTokenSource: TokenCountSource?
+    let outputTokenSource: TokenCountSource?
     let tokensPerSecond: Double?
     let temperature: Float?
     let maxTokens: Int?
@@ -563,6 +567,8 @@ struct RequestLog: Identifiable, Sendable, Codable {
         model: String? = nil,
         inputTokens: Int? = nil,
         outputTokens: Int? = nil,
+        inputTokenSource: TokenCountSource? = nil,
+        outputTokenSource: TokenCountSource? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
@@ -611,6 +617,8 @@ struct RequestLog: Identifiable, Sendable, Codable {
         self.model = model
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.inputTokenSource = inputTokens == nil ? nil : inputTokenSource
+        self.outputTokenSource = outputTokens == nil ? nil : outputTokenSource
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.toolCalls = toolCalls
@@ -627,6 +635,41 @@ struct RequestLog: Identifiable, Sendable, Codable {
         } else {
             self.tokensPerSecond = nil
         }
+    }
+
+    enum TokenCountSource: String, Sendable, Codable {
+        /// A count supplied by the runtime/provider, not a claim about billing
+        /// precision or whether that provider counts every kind of output.
+        case reported
+        case estimated
+
+        var displayName: String {
+            switch self {
+            case .reported: return L("Reported")
+            case .estimated: return L("Estimated")
+            }
+        }
+    }
+
+    static func tokenCountDescription(_ count: Int?, source: TokenCountSource?) -> String {
+        guard let count else { return L("Unknown") }
+        return "\(count) · \(source?.displayName ?? L("Source unknown"))"
+    }
+
+    var inputTokenDescription: String {
+        Self.tokenCountDescription(inputTokens, source: inputTokenSource)
+    }
+
+    var outputTokenDescription: String {
+        Self.tokenCountDescription(outputTokens, source: outputTokenSource)
+    }
+
+    /// Effective output rate across the full request, including prefill/waits.
+    /// It is not the runtime's decode-only throughput measurement.
+    var requestRateDescription: String? {
+        guard let tokensPerSecond else { return nil }
+        return String(format: "%.1f tok/s", tokensPerSecond)
+            + " · " + (outputTokenSource?.displayName ?? L("Source unknown"))
     }
 
     enum FinishReason: String, Sendable, Codable {
@@ -720,6 +763,8 @@ struct RequestLog: Identifiable, Sendable, Codable {
             model: model,
             inputTokens: inputTokens,
             outputTokens: outputTokens,
+            inputTokenSource: inputTokenSource,
+            outputTokenSource: outputTokenSource,
             temperature: temperature,
             maxTokens: maxTokens,
             toolCalls: toolCalls?.map { $0.withoutContent() },
