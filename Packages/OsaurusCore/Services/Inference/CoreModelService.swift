@@ -790,6 +790,7 @@ public actor CoreModelService {
             responseBody: response,
             wireRequestBody: wire?.request,
             wireResponseBody: (wire?.response.isEmpty ?? true) ? nil : wire?.response,
+            wireResponseTruncated: wire?.truncated,
             connection: connection,
             path: "/internal/\(activity.purpose)",
             privacy: probe?.privacyOutcome,

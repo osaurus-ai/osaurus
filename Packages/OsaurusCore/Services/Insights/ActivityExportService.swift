@@ -159,6 +159,8 @@ enum ActivityExportService {
         "source", "method", "path", "status", "error", "duration_ms", "model", "agent",
         "input_tokens", "output_tokens", "bytes_sent", "bytes_received", "privacy_filter",
         "redacted_spans", "data_classes", "tool_calls", "finish_reason", "request_id", "turn_id", "hash",
+        "request_body_truncated", "response_body_truncated", "wire_request_body_truncated",
+        "wire_response_body_truncated",
     ]
 
     static func renderCSV(_ rows: [RequestLog]) -> String {
@@ -194,10 +196,18 @@ enum ActivityExportService {
                 r.requestId ?? "",
                 r.turnId?.uuidString ?? "",
                 r.hash ?? "",
+                truncationStatus(r, field: "requestBody"),
+                truncationStatus(r, field: "responseBody"),
+                truncationStatus(r, field: "wireRequestBody"),
+                truncationStatus(r, field: "wireResponseBody"),
             ]
             lines.append(fields.map(csvEscape).joined(separator: ","))
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func truncationStatus(_ row: RequestLog, field: String) -> String {
+        row.bodyTruncation?[field].map { $0 ? "true" : "false" } ?? "unknown"
     }
 
     static func csvEscape(_ field: String) -> String {

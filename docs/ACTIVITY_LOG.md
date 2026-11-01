@@ -104,6 +104,7 @@ Optional fields are **omitted** when nil.
 | `durationMs`                        | number                     | Wall time.                                                                                               |
 | `requestBody`, `responseBody`       | string?                    | Prompt / result bodies (clipped and credential-redacted, §5). Absent when the emitter has none; replaced by the withheld marker when content storage is off. |
 | `wireRequestBody`, `wireResponseBody` | string?                  | Bytes actually sent / received for remote inference, captured post-Privacy-Filter by `WireTransportProbe`. |
+| `bodyTruncation`                    | `{bodyField: bool}?`       | Capture clipping per body: `true` clipped, `false` not clipped, missing key unknown (§5); retained when content is withheld. |
 | `model`, `inputTokens`, `outputTokens`, `tokensPerSecond`, `temperature`, `maxTokens`, `finishReason`, `errorMessage` | | Inference facts. |
 | `toolCalls[]`                       | `{id, name, arguments, result, durationMs, isError}` | Tool calls made during the turn. Arguments / results are redacted for secret-carrying tools and channel tools. |
 | `connection`                        | `RequestConnectionInfo?`   | `providerId`, `remoteEndpoint`, `transport` (`local`/`direct`/`secureChannel`), `mode` (`local`/`remoteInference`/`remoteAgentRun`), `accessKeyId`, `audience`. |
@@ -226,7 +227,7 @@ discrepancy stays in the chain.
 
 | Rule                                 | Value / behaviour                                                                                                                     |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Body clip                            | `requestBody`, `responseBody`, wire bodies: **262 144 characters** (256 K); longer bodies end with `…[truncated, original N]`.        |
+| Body clip                            | `requestBody`, `responseBody`, wire bodies: **262 144 UTF-8 bytes** (256 KiB), including the truncation marker; clips preserve complete grapheme clusters. Wire response probing has a separate 1 MiB cap before this logging limit.        |
 | Detail clip                          | `egress.details`: max **32 keys**, key ≤ 64 chars, value ≤ **2 048** chars.                                                            |
 | Credential redaction                 | Applied to every body before it enters the hot cache or the store (`InsightsService.redactCredentials`): Bearer tokens → `Bearer <redacted>`; `sk-…` keys; JWT-shaped values; `attestation` / `wallet_signature` / `caller_attestation` fields; `x-api-key`, `x-goog-api-key`, `api-key`, `authorization` header-style values. |
 | Secret tools                         | Arguments of secret-setting tools and all Agent Channel tool arguments / results are replaced with a redaction marker in `toolCalls`. |
@@ -236,6 +237,17 @@ discrepancy stays in the chain.
 | Embeddings                           | Never store the embedded texts — counts and sizes only.                                                                               |
 
 Redaction happens **before** hashing, so what is hashed is what is stored.
+
+Newly captured bodies include optional `bodyTruncation` metadata keyed by
+`requestBody`, `responseBody`, `wireRequestBody`, and `wireResponseBody`.
+`true` means the logging limit or upstream wire probe clipped the body;
+`false` means neither observed capture boundary clipped it. A missing key
+means **unknown**, including legacy rows and wire responses without probe
+status. This describes capture clipping, not whether a model or network
+response completed successfully. Status is recorded after credential
+redaction; it is never inferred from historical text markers or body sizes.
+It survives content withholding and is hashed with the original persisted
+row. Exports never add inferred status to older chained records.
 
 ---
 
@@ -341,8 +353,10 @@ Notes for reviewers:
 ### 7.3 CSV and Markdown
 
 CSV columns:
-`seq, timestamp, category, locality, destination, destination_host, title, source, method, path, status, error, duration_ms, model, agent, input_tokens, output_tokens, bytes_sent, bytes_received, privacy_filter, redacted_spans, data_classes, tool_calls, finish_reason, request_id, turn_id, hash`.
-No bodies. Markdown repeats the manifest facts as a header and lists rows
+`seq, timestamp, category, locality, destination, destination_host, title, source, method, path, status, error, duration_ms, model, agent, input_tokens, output_tokens, bytes_sent, bytes_received, privacy_filter, redacted_spans, data_classes, tool_calls, finish_reason, request_id, turn_id, hash, request_body_truncated, response_body_truncated, wire_request_body_truncated, wire_response_body_truncated`.
+The four body capture columns contain `true`, `false`, or `unknown`, with
+the same meaning as JSONL `bodyTruncation`. CSV includes no bodies.
+Markdown repeats the manifest facts as a header and lists rows
 grouped by day. Neither is hash-verifiable on its own; use JSONL for proof.
 
 ---

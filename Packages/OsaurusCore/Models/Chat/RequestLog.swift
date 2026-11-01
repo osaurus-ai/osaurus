@@ -532,9 +532,14 @@ struct RequestLog: Identifiable, Sendable, Codable {
     /// Raw bytes received from the network, captured BEFORE the
     /// unscrubber rewrote placeholders back to originals. Nil for
     /// non-chatUI sources and local routes. Lossy-truncated at
-    /// `WireTransportProbe.maxResponseBytes` (1 MiB); the truncated
-    /// marker is implicit in the size.
+    /// `WireTransportProbe.maxResponseBytes` (1 MiB); the
+    /// capture status is recorded in `bodyTruncation` when known.
     let wireResponseBody: String?
+
+    /// Capture-time truncation by body field name. Missing keys (including all
+    /// legacy rows) mean unknown, never "complete". Metadata survives content
+    /// withholding and participates in the persisted hash chain.
+    let bodyTruncation: [String: Bool]?
 
     /// Connection + attribution metadata (relay/host, transport, mode, and —
     /// for inbound host traffic — the paired access key). nil for plain local
@@ -565,6 +570,7 @@ struct RequestLog: Identifiable, Sendable, Codable {
         errorMessage: String? = nil,
         wireRequestBody: String? = nil,
         wireResponseBody: String? = nil,
+        bodyTruncation: [String: Bool]? = nil,
         connection: RequestConnectionInfo? = nil,
         category: ActivityCategory? = nil,
         locality: DataLocality? = nil,
@@ -612,6 +618,7 @@ struct RequestLog: Identifiable, Sendable, Codable {
         self.errorMessage = errorMessage
         self.wireRequestBody = wireRequestBody
         self.wireResponseBody = wireResponseBody
+        self.bodyTruncation = bodyTruncation
         self.connection = resolvedConnection
 
         // Calculate tokens per second if we have inference data
@@ -720,6 +727,7 @@ struct RequestLog: Identifiable, Sendable, Codable {
             errorMessage: errorMessage,
             wireRequestBody: wireRequestBody == nil ? nil : Self.contentWithheldMarker,
             wireResponseBody: wireResponseBody == nil ? nil : Self.contentWithheldMarker,
+            bodyTruncation: bodyTruncation,
             connection: connection,
             category: category,
             locality: locality,

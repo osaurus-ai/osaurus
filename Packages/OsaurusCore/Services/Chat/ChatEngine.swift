@@ -1735,6 +1735,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                         parsedToolNames: parsedToolNames,
                         secretToolWasExposed: secretToolWasExposed
                     ),
+                    wireResponseTruncated: wireSnapshot?.truncated,
                     connection: destination.connection,
                     path: destination.path,
                     privacy: wireProbe?.privacyOutcome,
