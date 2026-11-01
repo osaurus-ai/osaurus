@@ -298,6 +298,66 @@ struct ModelPickerItemCacheTests {
         #expect(byId["vllm/no-window-model"]?.contextLength == nil)
     }
 
+    /// The effort ladder a provider's `/models` catalog advertised for a
+    /// model (OpenRouter's `reasoning.supported_efforts`) reaches the picker
+    /// and the capability map for any model it covers, so a GLM model via
+    /// OpenRouter gets its real low/high/max control (#3270). It wins over a
+    /// documented static contract for the same id, and models the catalog
+    /// said nothing about keep the static fallback or nothing at all.
+    @Test func remoteModelItems_prefersAdvertisedReasoningEffortsOverStaticContracts() throws {
+        let provider = Self.providerEntry(
+            name: "OpenRouter",
+            type: .openaiLegacy,
+            host: "openrouter.ai",
+            models: [
+                "openrouter/z-ai/glm-5.3-flash",
+                "openrouter/google/gemini-3.8-flash",
+                "openrouter/google/gemini-3-flash",
+                "openrouter/z-ai/glm-5.1",
+            ]
+        )
+        let glm = ModelReasoningCapabilities(
+            levels: ["max", "high", "low"].map { ModelReasoningCapabilities.Level(id: $0) },
+            defaultLevelId: "max"
+        )
+        let geminiFromCatalog = ModelReasoningCapabilities(
+            levels: ["high", "medium", "low"].map { ModelReasoningCapabilities.Level(id: $0) },
+            defaultLevelId: "medium"
+        )
+
+        let result = ModelPickerItemCache.remoteModelItems(
+            providers: [provider],
+            codexMetadata: [:],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { _ in nil },
+            remoteReasoningCapabilities: { providerId, unprefixedId in
+                #expect(providerId == provider.providerId)
+                switch unprefixedId {
+                case "z-ai/glm-5.3-flash": return glm
+                case "google/gemini-3.8-flash": return geminiFromCatalog
+                default: return nil
+                }
+            }
+        )
+        let byId = Dictionary(uniqueKeysWithValues: result.items.map { ($0.id, $0) })
+
+        // Advertised ladder, in catalog order, on both the item and the map.
+        #expect(byId["openrouter/z-ai/glm-5.3-flash"]?.reasoningCapabilities == glm)
+        #expect(result.reasoningCapabilities["openrouter/z-ai/glm-5.3-flash"] == glm)
+
+        // Catalog beats the documented Gemini contract for the same id.
+        #expect(result.reasoningCapabilities["openrouter/google/gemini-3.8-flash"] == geminiFromCatalog)
+
+        // No catalog entry: the documented Gemini contract still applies.
+        #expect(
+            result.reasoningCapabilities["openrouter/google/gemini-3-flash"]?.levels.map(\.id)
+                == ["minimal", "low", "medium", "high"]
+        )
+
+        // No catalog entry and no documented contract: no control.
+        #expect(result.reasoningCapabilities["openrouter/z-ai/glm-5.1"] == nil)
+    }
+
     /// Codex items take the live catalog's display name + capability set;
     /// official `api.openai.com` API-key GPT-5.6 models take the documented
     /// public profile; custom OpenAI-compatible providers get neither, even
