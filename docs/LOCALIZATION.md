@@ -76,6 +76,16 @@ bash scripts/i18n/check.sh
 
 CI runs this on every pull request. It validates catalog coverage, checks that Swift localization literals exist in the catalog, and runs a Swift literal lint. Keys with **no** `de`/`zh-Hans` yet (including Xcode `en`-only auto-extractions and empty stubs the catalog editor injects for raw `Text("…")` literals) are ignored — the catalog is allowed to grow without breaking CI. Run the pruner manually when you want to clean it up (see `scripts/i18n/prune-catalog.py` below).
 
+Because those keys are ignored, a string that is referenced from Swift but only has an `en` stub silently ships in English. CI therefore also runs a **non-blocking** report that lists such strings per UI surface in the job summary:
+
+```bash
+python3 scripts/i18n/report-untranslated-referenced.py \
+  --catalog Packages/OsaurusCore/Resources/Localizable.xcstrings \
+  --swift-root Packages/OsaurusCore
+```
+
+It always exits 0, so it never blocks a PR; it only makes the translation backlog visible. Add `--annotations 10` to also surface the first ten as inline warnings, or `--json out.json` for tooling.
+
 ## Export for external translators
 
 In Xcode: **Product → Export Localizations…** / **Import Localizations…** (XLIFF).
@@ -91,6 +101,7 @@ In Xcode: **Product → Export Localizations…** / **Import Localizations…** 
 | ------ | ------- |
 | `scripts/i18n/check.sh` | Validate core + InfoPlist catalogs, lint risky Swift literals, and dry-run pruning |
 | `scripts/i18n/check-swift-catalog-keys.py` | Ensure Swift localization references exist in the core catalog |
+| `scripts/i18n/report-untranslated-referenced.py` | Non-blocking report of referenced keys that still fall back to English per required locale, grouped by UI surface (CI job summary) |
 | `scripts/i18n/lint-swift-literals.py` | Flag Swift literals that bypass package-bundle localization |
 | `scripts/i18n/merge-locale.py` | Copy one locale from another catalog (existing keys only) |
 | `scripts/i18n/fill-zh-hans.py` | Optional machine-translation backfill (`pip install deep-translator`) |
