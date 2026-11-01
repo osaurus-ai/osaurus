@@ -665,6 +665,7 @@ extension MessageTableRepresentable {
                     rows.insert(row)
                 }
             }
+            let flushedIds = pendingHeightNoteIds
             pendingHeightNoteIds.removeAll()
             guard !rows.isEmpty else { return }
             ChatPerfTrace.shared.count("heightNotes.flush")
@@ -677,7 +678,24 @@ extension MessageTableRepresentable {
             // estimate, growing the content below a reader who was just
             // put at the bottom. Follow it, but only while settling, so a
             // reader starting to scroll up is never pulled back down.
-            if wasPinned, Date() < pinSettleDeadline {
+            //
+            // INVARIANT (streaming auto-scroll): when the batch contains the
+            // streaming block and the reader was pinned to the bottom, ALWAYS
+            // follow, settling or not. Do not fold this back into the
+            // `pinSettleDeadline` check.
+            //
+            // Why: inside `applyBlocks` the streaming cell's height report is
+            // batched and lands here. `noteRowHeightsChanged` below records
+            // `lastNotedHeight[streamingBlockId]` as already noted, so the
+            // throttled `scheduleStreamingHeightUpdate` work item, which used
+            // to be the only thing scrolling to follow new tokens, now sees
+            // "height unchanged" and returns before its scroll. If this flush
+            // does not scroll, nothing does, and users must scroll by hand to
+            // see the reply (regression introduced by #3080). A reader who
+            // scrolled up is unaffected: `wasPinned` is false for them.
+            let streamingRowGrew =
+                streamingBlockId.map { flushedIds.contains($0) } ?? false
+            if wasPinned, streamingRowGrew || Date() < pinSettleDeadline {
                 scrollAnchor.scrollToBottomCoalesced()
             }
         }
