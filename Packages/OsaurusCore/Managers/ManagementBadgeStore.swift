@@ -34,6 +34,18 @@ public final class ManagementBadgeStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var periodicTask: Task<Void, Never>?
 
+    /// In-memory mirror of the observed counts persisted in `UserDefaults`.
+    /// `recompute()` runs on the main actor every 60s and after every source
+    /// change; reading `UserDefaults` there can synchronously flush pending
+    /// preference KVO notifications and hang the main thread, so the hot
+    /// path reads this cache instead. Seeded once at init and kept in sync
+    /// by `setObservedCount(_:for:)`.
+    private var observedCounts: [ManagementTab: Int] = [:]
+
+    /// Tabs whose badge count is pushed in by a settings page rather than
+    /// computed by the store.
+    private static let observedTabs: [ManagementTab] = [.agentChannels]
+
     /// Throttle window for recomputes triggered by manager `objectWillChange`
     /// bursts (model download progress is the worst-case offender at
     /// ~tens of Hz). 150ms keeps the badge feeling live without re-doing
@@ -46,6 +58,7 @@ public final class ManagementBadgeStore: ObservableObject {
     private static let periodicRefreshInterval: Duration = .seconds(60)
 
     private init() {
+        loadObservedCounts()
         wireSources()
         scheduleRefresh()
         startPeriodicRefresh()
@@ -297,22 +310,38 @@ public final class ManagementBadgeStore: ObservableObject {
         "managementBadge.observedCount.\(tab.rawValue)"
     }
 
-    private func observedCount(for tab: ManagementTab) -> Int? {
-        let key = Self.observedCountDefaultsKey(for: tab)
-        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
-        return UserDefaults.standard.integer(forKey: key)
+    /// Seed the in-memory cache from `UserDefaults` once, so the badge is
+    /// right from the first frame without re-reading defaults on every
+    /// recompute.
+    private func loadObservedCounts() {
+        let defaults = UserDefaults.standard
+        observedCounts = [:]
+        for tab in Self.observedTabs {
+            let key = Self.observedCountDefaultsKey(for: tab)
+            if defaults.object(forKey: key) != nil {
+                observedCounts[tab] = defaults.integer(forKey: key)
+            }
+        }
     }
 
-    /// Record a count a settings page computed for its own tab, and
-    /// recompute so the badge updates immediately.
+    /// Re-seed the cache from `UserDefaults` and recompute. Not used on the
+    /// hot path; lets tests restore the shared store after mutating the
+    /// persisted counts directly so no state leaks into later tests.
+    func reloadObservedCountsFromDefaults() {
+        loadObservedCounts()
+        refreshNow()
+    }
+
+    private func observedCount(for tab: ManagementTab) -> Int? {
+        observedCounts[tab]
+    }
+
+    /// Record a count a settings page computed for its own tab, persist it
+    /// for the next launch, and recompute so the badge updates immediately.
     public func setObservedCount(_ count: Int, for tab: ManagementTab) {
-        let key = Self.observedCountDefaultsKey(for: tab)
-        if UserDefaults.standard.object(forKey: key) != nil,
-            UserDefaults.standard.integer(forKey: key) == count
-        {
-            return
-        }
-        UserDefaults.standard.set(count, forKey: key)
+        guard observedCounts[tab] != count else { return }
+        observedCounts[tab] = count
+        UserDefaults.standard.set(count, forKey: Self.observedCountDefaultsKey(for: tab))
         refreshNow()
     }
 
