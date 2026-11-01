@@ -95,18 +95,26 @@ struct PastedContentSheet: View {
         .padding(.vertical, 12)
     }
 
+    /// Same face and size as the chat composer (`FloatingInputCard.inputFontSize`
+    /// is `theme.bodySize`), so pasted text reads the way it would if it had
+    /// been typed. The fixed 12pt monospace it replaced was the "much smaller
+    /// font" reported in #3271.
+    private var contentFont: Font {
+        theme.font(size: CGFloat(theme.bodySize), weight: .regular)
+    }
+
     @ViewBuilder
     private var contentBody: some View {
         if isEditable {
             TextEditor(text: $draft)
-                .font(.system(size: 12, design: .monospaced))
+                .font(contentFont)
                 .foregroundColor(theme.primaryText)
                 .scrollContentBackground(.hidden)
                 .padding(12)
         } else {
             ScrollView {
                 Text(originalContent)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(contentFont)
                     .foregroundColor(theme.primaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
