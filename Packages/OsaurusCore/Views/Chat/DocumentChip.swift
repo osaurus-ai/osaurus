@@ -61,17 +61,20 @@ struct DocumentChip: View {
             // icon-only version and asked for a way to undo the collapse
             // (#3271).
             Button(action: onInline) {
+                // Same fill, stroke, height and text color as the circular
+                // edit / remove buttons beside it, so the row reads as one set.
                 HStack(spacing: 3) {
                     Image(systemName: "text.insert")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                     Text("Insert as Text", bundle: .module)
-                        .font(theme.font(size: 10, weight: .medium))
+                        .font(theme.font(size: 10, weight: .semibold))
                         .lineLimit(1)
                 }
-                .foregroundColor(theme.accentColor)
+                .foregroundColor(theme.secondaryText)
                 .padding(.horizontal, 7)
                 .frame(height: 20)
-                .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                .background(Capsule().fill(theme.primaryBackground.opacity(0.6)))
+                .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.25), lineWidth: 0.5))
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
