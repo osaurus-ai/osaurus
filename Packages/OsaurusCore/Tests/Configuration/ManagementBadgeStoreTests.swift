@@ -112,4 +112,31 @@ struct ManagementBadgeStoreTests {
         ManagementBadgeStore.shared.setObservedCount(0, for: .agentChannels)
         #expect(ManagementBadgeStore.shared.snapshot.counts[.agentChannels] == 0)
     }
+
+    @Test("recompute serves observed counts from memory, not UserDefaults")
+    @MainActor
+    func observedCountServedFromCache() async throws {
+        let key = ManagementBadgeStore.observedCountDefaultsKey(for: .agentChannels)
+        let previous = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let previous {
+                UserDefaults.standard.set(previous, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            ManagementBadgeStore.shared.refreshNow()
+        }
+
+        ManagementBadgeStore.shared.setObservedCount(3, for: .agentChannels)
+        // An out-of-band defaults write must not be re-read on the main-actor
+        // recompute path (that read is what hung the main thread).
+        UserDefaults.standard.set(9, forKey: key)
+        ManagementBadgeStore.shared.refreshNow()
+        #expect(ManagementBadgeStore.shared.snapshot.counts[.agentChannels] == 3)
+
+        // Pushing a new count still persists it for the next launch.
+        ManagementBadgeStore.shared.setObservedCount(5, for: .agentChannels)
+        #expect(UserDefaults.standard.integer(forKey: key) == 5)
+        #expect(ManagementBadgeStore.shared.snapshot.counts[.agentChannels] == 5)
+    }
 }
