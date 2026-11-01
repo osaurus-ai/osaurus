@@ -303,6 +303,88 @@ struct RemoteProviderModelDiscoveryTests {
 
         #expect(discovery.models == ["DeepSeek4-Flash", "no-window-model"])
         #expect(discovery.contextLengths == ["DeepSeek4-Flash": 524288])
+        #expect(discovery.reasoningCapabilities.isEmpty)
+    }
+
+    /// OpenRouter's `/models` publishes a per-model `reasoning` object with
+    /// `supported_efforts` and `default_effort`. The advertised ladder is
+    /// what the picker and the effort validator must use (#3270): GLM 5.3
+    /// Flash is low/high/max with a mandatory default of max, and an entry
+    /// whose `reasoning` object lists no efforts (or is off-spec) advertises
+    /// nothing rather than failing the decode.
+    @Test func openRouterModelsResponse_capturesAdvertisedReasoningEfforts() throws {
+        let provider = makeProvider()
+        let body = Data(
+            """
+            {
+              "object": "list",
+              "data": [
+                {
+                  "id": "z-ai/glm-5.3-flash",
+                  "context_length": 200000,
+                  "supported_parameters": ["reasoning", "reasoning_effort", "tools"],
+                  "reasoning": {
+                    "mandatory": true,
+                    "default_enabled": true,
+                    "supported_efforts": ["max", "high", "low"],
+                    "default_effort": "max"
+                  }
+                },
+                {
+                  "id": "deepseek/deepseek-v4.1-flash",
+                  "reasoning": {
+                    "mandatory": false,
+                    "default_enabled": true,
+                    "supported_efforts": ["max", "High", " high ", "low", "none", ""],
+                    "default_effort": "HIGH"
+                  }
+                },
+                {
+                  "id": "z-ai/glm-5.1",
+                  "reasoning": { "mandatory": false, "default_enabled": true }
+                },
+                {
+                  "id": "vendor/default-not-listed",
+                  "reasoning": { "supported_efforts": ["low", "high"], "default_effort": "medium" }
+                },
+                {
+                  "id": "vendor/off-spec-reasoning",
+                  "reasoning": "yes"
+                },
+                {
+                  "id": "vendor/no-reasoning-key"
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let discovery = try RemoteProviderService.decodeOpenAICompatibleModelsDiscovery(
+            data: body,
+            statusCode: 200,
+            provider: provider
+        )
+
+        #expect(discovery.models.count == 6)
+        #expect(discovery.contextLengths == ["z-ai/glm-5.3-flash": 200000])
+
+        let glm = try #require(discovery.reasoningCapabilities["z-ai/glm-5.3-flash"])
+        #expect(glm.levels.map(\.id) == ["max", "high", "low"])
+        #expect(glm.defaultLevelId == "max")
+
+        // Values are lowercased, trimmed and de-duplicated in catalog order.
+        let deepseek = try #require(discovery.reasoningCapabilities["deepseek/deepseek-v4.1-flash"])
+        #expect(deepseek.levels.map(\.id) == ["max", "high", "low", "none"])
+        #expect(deepseek.defaultLevelId == "high")
+
+        // A default outside the listed ladder is dropped, the ladder is kept.
+        let unlisted = try #require(discovery.reasoningCapabilities["vendor/default-not-listed"])
+        #expect(unlisted.levels.map(\.id) == ["low", "high"])
+        #expect(unlisted.defaultLevelId == nil)
+
+        #expect(discovery.reasoningCapabilities["z-ai/glm-5.1"] == nil)
+        #expect(discovery.reasoningCapabilities["vendor/off-spec-reasoning"] == nil)
+        #expect(discovery.reasoningCapabilities["vendor/no-reasoning-key"] == nil)
     }
 
     @Test func openAICompatibleDiscovery_prefersVendorContextKeysInOrder() throws {
