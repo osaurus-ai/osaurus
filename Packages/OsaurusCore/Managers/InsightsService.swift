@@ -632,9 +632,19 @@ extension InsightsService {
         return redacted
     }
 
-    private nonisolated static func truncateBody(_ body: String?) -> String? {
+    private nonisolated static func truncateBody(
+        _ body: String?,
+        field: String,
+        upstreamTruncated: Bool? = false,
+        status: inout [String: Bool]
+    ) -> String? {
         guard let body else { return nil }
         let scrubbed = redactCredentials(body)
+        if scrubbed.utf8.count > InsightsBodyCapture.maximumBytes || upstreamTruncated == true {
+            status[field] = true
+        } else if upstreamTruncated == false {
+            status[field] = false
+        }
         return InsightsBodyCapture.truncate(scrubbed)
     }
 
@@ -661,6 +671,7 @@ extension InsightsService {
         errorMessage: String? = nil,
         wireRequestBody: Data? = nil,
         wireResponseBody: Data? = nil,
+        wireResponseTruncated: Bool? = nil,
         connection: RequestConnectionInfo? = nil,
         category: ActivityCategory? = nil,
         locality: DataLocality? = nil,
@@ -670,8 +681,9 @@ extension InsightsService {
         sessionId: UUID? = nil,
         clientIP: String? = nil
     ) {
-        let trimmedRequest = truncateBody(requestBody)
-        let trimmedResponse = truncateBody(responseBody)
+        var bodyTruncation: [String: Bool] = [:]
+        let trimmedRequest = truncateBody(requestBody, field: "requestBody", status: &bodyTruncation)
+        let trimmedResponse = truncateBody(responseBody, field: "responseBody", status: &bodyTruncation)
         // Byte counts default to the wire body sizes when the caller didn't
         // measure them; the egress card sums these per destination.
         var resolvedEgress = egress
@@ -690,12 +702,18 @@ extension InsightsService {
         // hop, so insights logging stays off the critical streaming
         // thread.
         let trimmedWireRequest = truncateBody(
-            wireRequestBody.flatMap { String(data: $0, encoding: .utf8) }
+            wireRequestBody.map { String(decoding: $0, as: UTF8.self) },
+            field: "wireRequestBody",
+            status: &bodyTruncation
         )
         let trimmedWireResponse = truncateBody(
-            wireResponseBody.flatMap { String(data: $0, encoding: .utf8) }
+            wireResponseBody.map { String(decoding: $0, as: UTF8.self) },
+            field: "wireResponseBody",
+            upstreamTruncated: wireResponseTruncated,
+            status: &bodyTruncation
         )
 
+        let captureStatus = bodyTruncation.isEmpty ? nil : bodyTruncation
         Task { @MainActor in
             let log = RequestLog(
                 source: source,
@@ -719,6 +737,7 @@ extension InsightsService {
                 errorMessage: errorMessage,
                 wireRequestBody: trimmedWireRequest,
                 wireResponseBody: trimmedWireResponse,
+                bodyTruncation: captureStatus,
                 connection: connection,
                 category: category,
                 locality: locality,
@@ -820,6 +839,7 @@ extension InsightsService {
         responseBody: String? = nil,
         wireRequestBody: Data? = nil,
         wireResponseBody: Data? = nil,
+        wireResponseTruncated: Bool? = nil,
         connection: RequestConnectionInfo? = nil,
         path: String = "/chat/completions",
         egress: EgressInfo? = nil,
@@ -864,6 +884,7 @@ extension InsightsService {
             errorMessage: errorMessage,
             wireRequestBody: wireRequestBody,
             wireResponseBody: wireResponseBody,
+            wireResponseTruncated: wireResponseTruncated,
             connection: connection,
             category: path.contains("compaction") ? .compaction : .inference,
             egress: resolvedEgress,

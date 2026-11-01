@@ -704,6 +704,7 @@ final class ContextCompactionService {
             responseBody: response,
             wireRequestBody: wire?.request,
             wireResponseBody: (wire?.response.isEmpty ?? true) ? nil : wire?.response,
+            wireResponseTruncated: wire?.truncated,
             connection: context.connection,
             path: "/internal/compaction",
             privacy: context.probe?.privacyOutcome,

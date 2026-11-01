@@ -417,7 +417,8 @@ public final class ActivityLogStore: @unchecked Sendable {
             inputTokens: log.inputTokens, outputTokens: log.outputTokens, temperature: log.temperature,
             maxTokens: log.maxTokens, toolCalls: log.toolCalls, finishReason: log.finishReason,
             errorMessage: log.errorMessage, wireRequestBody: log.wireRequestBody,
-            wireResponseBody: log.wireResponseBody, connection: log.connection,
+            wireResponseBody: log.wireResponseBody, bodyTruncation: log.bodyTruncation,
+            connection: log.connection,
             category: log.category, locality: log.locality, egress: egress, agentId: log.agentId,
             agentName: log.agentName, sessionId: log.sessionId, clientIP: log.clientIP
         )
