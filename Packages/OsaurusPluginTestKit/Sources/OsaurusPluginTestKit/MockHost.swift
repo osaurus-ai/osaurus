@@ -102,16 +102,24 @@ public final class MockHost: @unchecked Sendable {
     /// Frees the heap-allocated `OsrHostAPI` and clears the thread-
     /// local install slot. Idempotent. Call from your test's tearDown
     /// or use `withInstalled` which auto-cleans.
+    ///
+    /// Only the mock that owns the slot may clear it. `deinit` routes
+    /// through here, so a second `MockHost` that is created and dropped
+    /// on the same thread (never installed) must leave the installed
+    /// host's slot and its retain untouched; otherwise every trampoline
+    /// would find no current host for the rest of the test.
     public func uninstall() {
         if let ptr = installedPointer {
             ptr.deinitialize(count: 1)
             ptr.deallocate()
             installedPointer = nil
         }
-        if let raw = Thread.current.threadDictionary[Self.threadKey] as? UnsafeMutableRawPointer {
-            Unmanaged<MockHost>.fromOpaque(raw).release()
-            Thread.current.threadDictionary.removeObject(forKey: Self.threadKey)
-        }
+        guard
+            let raw = Thread.current.threadDictionary[Self.threadKey] as? UnsafeMutableRawPointer,
+            raw == Unmanaged.passUnretained(self).toOpaque()
+        else { return }
+        Unmanaged<MockHost>.fromOpaque(raw).release()
+        Thread.current.threadDictionary.removeObject(forKey: Self.threadKey)
     }
 
     deinit { uninstall() }
