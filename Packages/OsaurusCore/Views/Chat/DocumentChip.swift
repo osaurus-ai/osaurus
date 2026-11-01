@@ -62,7 +62,8 @@ struct DocumentChip: View {
             // (#3271).
             Button(action: onInline) {
                 // Same fill, stroke, height and text color as the circular
-                // edit / remove buttons beside it, so the row reads as one set.
+                // edit / remove buttons beside it, and the chip's own 8pt corner
+                // radius, so the row reads as one set.
                 HStack(spacing: 3) {
                     Image(systemName: "text.insert")
                         .font(.system(size: 10, weight: .semibold))
@@ -73,9 +74,12 @@ struct DocumentChip: View {
                 .foregroundColor(theme.secondaryText)
                 .padding(.horizontal, 7)
                 .frame(height: 20)
-                .background(Capsule().fill(theme.primaryBackground.opacity(0.6)))
-                .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.25), lineWidth: 0.5))
-                .contentShape(Capsule())
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.primaryBackground.opacity(0.6)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(theme.primaryBorder.opacity(0.25), lineWidth: 0.5)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
             .pointingHandCursor()
