@@ -299100,6 +299100,48 @@
     },
     "this chat's scratch folder" : {
 
+    },
+    "thinking.mode.label" : {
+      "comment" : "Label for the thinking on/off control (model picker row, picker card section, agent generation override, model pill details). Noun context: the name of the mode, not the in-progress status. The streaming status in the chat transcript keeps the separate \"Thinking\" key.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thinking"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Denken"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "思考"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "思考"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "생각"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Мышление"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"

@@ -3219,7 +3219,7 @@ extension FloatingInputCard {
         var details: [String] = []
         if let thinkingOn = inlineThinkingEnabled {
             if inlineThinkingUsesNativeDefault {
-                details.append([L("Thinking"), L("Default")].joined(separator: ": "))
+                details.append([L("thinking.mode.label"), L("Default")].joined(separator: ": "))
             } else {
                 details.append(thinkingOn ? L("Thinking on") : L("Thinking off"))
             }
