@@ -7754,7 +7754,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         let query = Self.queryItems(from: head.uri)
         let agentFilter = query["agent_id"].flatMap { UUID(uuidString: $0) }
-        let includeArchived = query["archived"] == "true"
+        // Archived only, a lens as on the Mac (§14.1); without it, none.
+        let archivedOnly = query["archived"] == "true"
         let pinnedOnly = query["pinned"] == "true"
         // `mac`, `ios`, or a SessionSource raw value (http, channel, …).
         let originFilter = query["origin"].flatMap { $0.isEmpty ? nil : $0 }
@@ -7786,7 +7787,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // One predicate rather than a chain of `.filter`s: the chain grew
             // long enough that the type checker gave up on it.
             func matches(_ session: ChatSessionData) -> Bool {
-                if !includeArchived && session.archived { return false }
+                if session.archived != archivedOnly { return false }
                 if pinnedOnly && !session.pinned { return false }
                 if let agentFilter, session.agentId != agentFilter { return false }
                 if let originFilter {
