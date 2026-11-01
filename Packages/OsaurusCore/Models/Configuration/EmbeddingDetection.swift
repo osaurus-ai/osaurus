@@ -5,9 +5,9 @@
 //  Single source of truth for embedding/encoder-only model detection.
 //  Classifies a bundle from its config.json (`architectures` /
 //  `model_type`) so embedding repos that arrive via the HF-cache or
-//  LM Studio import (e.g. minishlab/potion-base-4M downloaded by the
-//  memory feature, sentence-transformers/all-MiniLM-L6-v2 from Python
-//  tooling) are not offered as chat models.
+//  LM Studio import (e.g. minishlab/potion-base-4M left in the HF cache
+//  by older Osaurus builds, sentence-transformers/all-MiniLM-L6-v2 from
+//  Python tooling) are not offered as chat models.
 //
 //  The classifier is deliberately conservative: a bundle is only called
 //  an embedding model when its config positively identifies a known
