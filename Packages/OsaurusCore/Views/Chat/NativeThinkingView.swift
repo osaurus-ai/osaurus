@@ -24,6 +24,8 @@ final class NativeThinkingView: NSView {
     /// timeline nodes (this block is a separate borderless unit — no rail).
     private let iconNode = NSView()
     private let iconView = NSImageView()
+    // Streaming status (in-progress), deliberately a separate catalog key
+    // from the mode label `thinking.mode.label` (#2621).
     private let titleLabel = NSTextField(labelWithString: L("Thinking"))
     /// Shown in place of `titleLabel` while streaming — the title shimmers to
     /// signal in-progress reasoning (replaces the old streaming spinner).
