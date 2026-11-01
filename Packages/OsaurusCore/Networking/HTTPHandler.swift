@@ -11049,12 +11049,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // failed mid-step keeps it as the reply, as the Mac's own Stop
             // does: the phone already shows it, and a chat it continues must
             // hold the same turns for its retry and edit to find the prompt.
+            // Its reasoning too, which the phone shows as the reply's thinking.
             var unsavedStepText: String?
+            var unsavedStepReasoning = ""
             func keepUnsavedStepText() {
                 guard let text = unsavedStepText else { return }
                 unsavedStepText = nil
-                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                messages.append(ChatMessage(role: "assistant", content: text))
+                let reasoning = unsavedStepReasoning
+                unsavedStepReasoning = ""
+                let blank = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                guard !blank(text) || !blank(reasoning) else { return }
+                messages.append(
+                    ChatMessage(
+                        role: "assistant",
+                        content: text,
+                        tool_calls: nil,
+                        tool_call_id: nil,
+                        reasoning_content: blank(reasoning) ? nil : reasoning
+                    )
+                )
             }
             var loggedToolCalls: [ToolCallLog] = []
             var runUsage = AgentRunUsage()
@@ -11149,6 +11162,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
                     responseContent = ""
                     unsavedStepText = ""
+                    unsavedStepReasoning = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval)
                     if let inboundRun {
@@ -11192,6 +11206,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 hop { writerBound.value.writeRouterSummary(billing, context: ctx.value) }
                             }
                         case .reasoningDelta(let reasoning):
+                            unsavedStepReasoning += reasoning
                             if let inboundRun {
                                 await MainActor.run { InboundSharedRunBridge.shared.streamDelta(inboundRun.handle, reasoning: reasoning) }
                             }
