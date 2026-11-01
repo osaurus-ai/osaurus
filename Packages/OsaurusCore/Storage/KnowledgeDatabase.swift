@@ -51,7 +51,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     public static let shared = KnowledgeDatabase()
 
     /// Highest schema version this build knows how to produce.
-    private static let latestSchemaVersion = 3
+    private static let latestSchemaVersion = 4
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -240,6 +240,9 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         if currentVersion < 3 {
             try runMigrationStep(3, migrateToV3)
         }
+        if currentVersion < 4 {
+            try runMigrationStep(4, migrateToV4)
+        }
     }
 
     private func runMigrationStep(_ version: Int, _ body: () throws -> Void) throws {
@@ -409,6 +412,20 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         KnowledgeLogger.database.info("v3 migration completed")
     }
 
+    /// Text hashes describe parsing, not vector availability. Keep completion per
+    /// physical chunk row so partial failures and restarts never mark missing
+    /// embeddings complete. Replacing/deleting chunks invalidates their receipts.
+    private func migrateToV4() throws {
+        try executeRaw("CREATE TABLE IF NOT EXISTS chunk_vectors (chunk_id INTEGER PRIMARY KEY)")
+        try executeRaw(
+            """
+            CREATE TRIGGER IF NOT EXISTS chunks_vector_delete AFTER DELETE ON chunks BEGIN
+                DELETE FROM chunk_vectors WHERE chunk_id = old.id;
+            END
+            """
+        )
+    }
+
     /// SQL expression resolving a document's effective category:
     /// explicit frontmatter `type` when present, else the inferred one.
     private static let effectiveTypeSQL =
@@ -416,9 +433,75 @@ public final class KnowledgeDatabase: @unchecked Sendable {
 
     // MARK: - Documents
 
-    /// Insert or update a document row, returning its row id. Chunks are
-    /// replaced separately via `replaceChunks` so the two writes can share
-    /// one indexing pass.
+    public func pendingVectorChunks(collectionId: String, limit: Int = 16) throws -> [KnowledgeChunkHit] {
+        guard limit > 0 else { return [] }
+        var hits: [KnowledgeChunkHit] = []
+        try prepareAndExecute(
+            """
+            SELECT \(Self.chunkHitColumns) FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            LEFT JOIN chunk_vectors v ON v.chunk_id = c.id
+            WHERE d.collection_id = ?1 AND v.chunk_id IS NULL
+            ORDER BY d.rel_path, c.chunk_index LIMIT ?2
+            """,
+            readOnly: true,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: collectionId)
+                sqlite3_bind_int(stmt, 2, Int32(clamping: limit))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW { hits.append(Self.readChunkHit(stmt)) }
+            }
+        )
+        return hits
+    }
+
+    /// INVARIANT: only a successfully persisted embedding for these exact chunk
+    /// contents can finish vector work. A completion racing an edit cannot
+    /// acknowledge replacement text. Text/FTS indexing remains independent.
+    public func markVectorIndexed(_ hit: KnowledgeChunkHit) throws {
+        try prepareAndExecute(
+            """
+            INSERT OR IGNORE INTO chunk_vectors (chunk_id)
+            SELECT c.id FROM chunks c JOIN documents d ON d.id = c.document_id
+            WHERE c.document_id = ?1 AND c.chunk_index = ?2 AND c.heading_path = ?3
+                AND c.content = ?4 AND d.collection_id = ?5 AND d.rel_path = ?6
+            """,
+            bind: { stmt in
+                sqlite3_bind_int64(stmt, 1, Int64(hit.documentId))
+                sqlite3_bind_int(stmt, 2, Int32(hit.chunkIndex))
+                Self.bindText(stmt, index: 3, value: hit.headingPath)
+                Self.bindText(stmt, index: 4, value: hit.content)
+                Self.bindText(stmt, index: 5, value: hit.collectionId)
+                Self.bindText(stmt, index: 6, value: hit.relPath)
+            },
+            process: { stmt in
+                guard sqlite3_step(stmt) == SQLITE_DONE else {
+                    throw KnowledgeDatabaseError.failedToExecute("Recording completed vector failed")
+                }
+            }
+        )
+    }
+
+    public func invalidateChunkVectors(collectionId: String) throws {
+        try prepareAndExecute(
+            """
+            DELETE FROM chunk_vectors WHERE chunk_id IN (
+                SELECT c.id FROM chunks c JOIN documents d ON d.id = c.document_id
+                WHERE d.collection_id = ?1
+            )
+            """,
+            bind: { stmt in Self.bindText(stmt, index: 1, value: collectionId) },
+            process: { stmt in
+                guard sqlite3_step(stmt) == SQLITE_DONE else {
+                    throw KnowledgeDatabaseError.failedToExecute("Invalidating vector receipts failed")
+                }
+            }
+        )
+    }
+
+    /// Insert or update a document row; chunk/vector completion is tracked separately.
+    @discardableResult
     public func upsertDocument(
         collectionId: String,
         relPath: String,
