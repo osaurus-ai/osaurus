@@ -11,13 +11,31 @@ import Testing
         }
     }
 
-    @Test func autoHasAnExplicitBoundedExplorationRange() {
-        var settings = VMLXServerMTPSettings(mode: .auto)
-        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 5))
-        settings.draftTokenLimit = 2
-        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 2))
-        settings.draftTokenLimit = 99
-        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 5))
+    /// No hard draft depth: Adaptive's top rung is the runtime's (the loaded model's verifier capability), never
+    /// an app constant. The former `min(draftTokenLimit ?? 5, 5)` fails every runtime rung above 5 below (and
+    /// pinned a stale `draftTokenLimit` as the ceiling).
+    @Test func adaptiveSetsNoHostCeilingTheRuntimeRungGoverns() {
+        let selections: [VMLXServerMTPSettings] = [
+            .init(),  // untouched default (family default)
+            .init(mode: .auto),  // On (Adaptive)
+            .init(mode: .forceOn),  // legacy force-on without a depth button
+            .init(mode: .auto, draftTokenLimit: 2),  // stale legacy limit
+            .init(mode: .auto, draftTokenLimit: 99),
+            .init(mode: .auto, explicitDepth: 1),  // stale manual depth under Auto
+        ]
+        for settings in selections {
+            let policy = MLXBatchAdapter.nativeMTPDepthPolicy(settings)
+            guard case .adaptive(let hostCeiling) = policy else {
+                Issue.record("\(settings): \(policy) is not Adaptive")
+                continue
+            }
+            // Whatever top rung vmlx reports for the loaded model (recursive head 5, LiLiCorr block 8 -> 7,
+            // the exact verify window 7, a future 15) must survive the host's ceiling unchanged.
+            for runtimeRung in [1, 3, 5, 6, 7, 8, 15, 64, 4096] {
+                #expect(min(hostCeiling, runtimeRung) == runtimeRung, "\(settings): rung \(runtimeRung)")
+            }
+            #expect(policy == .adaptive(maximumDepth: MLXBatchAdapter.nativeMTPAdaptiveNoHostCeiling))
+        }
     }
 
     @Test func offDoesNotOptIntoExploration() {
@@ -26,13 +44,22 @@ import Testing
 
     @Test func autoIgnoresStaleManualDepthLikeTheLaunchResolver() {
         let settings = VMLXServerMTPSettings(mode: .auto, explicitDepth: 1)
-        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 5))
+        #expect(
+            MLXBatchAdapter.nativeMTPDepthPolicy(settings)
+                == .adaptive(maximumDepth: MLXBatchAdapter.nativeMTPAdaptiveNoHostCeiling))
     }
 
+    /// The depth policy no longer reads `draftTokenLimit`; an invalid limit is still not silently repaired: the
+    /// launch resolver reports it (and blocks the launch) where it is validated.
     @Test func invalidLimitIsNotSilentlyRepaired() {
-        var settings = VMLXServerMTPSettings(mode: .auto)
-        settings.draftTokenLimit = 0
-        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 0))
+        var settings = VMLXServerRuntimeSettings()
+        settings.mtp = VMLXServerMTPSettings(mode: .auto)
+        settings.mtp.draftTokenLimit = 0
+        #expect(
+            settings.validationIssues(mtpStatus: nil).contains {
+                $0.severity == .error && $0.field == "mtp.draftTokenLimit"
+            })
+        #expect(settings.resolvedMTPLaunch(configData: nil, jangConfig: nil, status: nil).launchMode == .blocked)
     }
 
     @Test func resolvedDepthAndPolicyUseTheSameSnapshot() throws {
@@ -73,7 +100,8 @@ import Testing
         }
     }
 
-    @Test func autoStillHonorsItsDraftTokenLimit() {
+    /// A legacy limit may only choose where Adaptive STARTS, never its top rung.
+    @Test func autoDraftTokenLimitIsAStartNotACeiling() {
         let loaded = DraftStrategy.nativeMTP(depth: 3, verifierMode: nil)
         let settings = VMLXServerMTPSettings(mode: .auto, draftTokenLimit: 1)
         guard case .some(.nativeMTP(let depth, _)) = ModelRuntime.requestDraftStrategy(loaded, mtp: settings) else {
@@ -81,7 +109,9 @@ import Testing
             return
         }
         #expect(depth == 1)
-        #expect(MLXBatchAdapter.nativeMTPDepthPolicy(settings) == .adaptive(maximumDepth: 1))
+        #expect(
+            MLXBatchAdapter.nativeMTPDepthPolicy(settings)
+                == .adaptive(maximumDepth: MLXBatchAdapter.nativeMTPAdaptiveNoHostCeiling))
     }
 
     @Test func depthOnlyChangesInvalidateTheSnapshotWithoutReloadingWeights() {
