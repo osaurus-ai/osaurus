@@ -11044,6 +11044,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // The loop invokes its hooks serially, so these plain vars are
             // race-free — same capture pattern as `responseContent` above.
             var loggedResponseText = ""
+            // The text of the step generating now, until the step records it
+            // (as the final answer, or with its tool calls). A run stopped or
+            // failed mid-step keeps it as the reply, as the Mac's own Stop
+            // does: the phone already shows it, and a chat it continues must
+            // hold the same turns for its retry and edit to find the prompt.
+            var unsavedStepText: String?
+            func keepUnsavedStepText() {
+                guard let text = unsavedStepText else { return }
+                unsavedStepText = nil
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                messages.append(ChatMessage(role: "assistant", content: text))
+            }
             var loggedToolCalls: [ToolCallLog] = []
             var runUsage = AgentRunUsage()
             var batchHistory = ResponsesToolBatchHistory()
@@ -11136,6 +11148,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     iterationReq.context.idempotencyKey = "\(idempotencyBase)-s\(msgs.count)-"
                         + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
                     responseContent = ""
+                    unsavedStepText = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval)
                     if let inboundRun {
@@ -11188,6 +11201,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             hop { writerBound.value.writeReasoning(reasoning, model: model, responseId: responseId, created: created, context: ctx.value) }
                         case .outputTextDelta(let text):
                             responseContent += text
+                            unsavedStepText?.append(text)
                             loggedResponseText += text
                             if let inboundRun {
                                 await MainActor.run { InboundSharedRunBridge.shared.streamDelta(inboundRun.handle, content: text) }
@@ -11226,6 +11240,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let assistant = SecretArgumentScrubber.recordedAssistantMessage(try response.completedAssistantInput())
                     if !calls.isEmpty {
                         try batchHistory.begin(assistant)
+                        unsavedStepText = nil
                         return .toolCalls(calls.map { ServiceToolInvocation(toolName: $0.name,
                             jsonArguments: $0.arguments, toolCallId: $0.callID, geminiThoughtSignature: $0.geminiThoughtSignature) })
                     }
@@ -11235,6 +11250,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stopReason: response.completion.stopReason, unclosedReasoning: response.completion.unclosedReasoning,
                         requiresVisibleFinalResponse: true, toolsWereOffered: !tools.isEmpty, content: response.text)
                     if case .finalResponse = step {
+                        unsavedStepText = nil
                         messages.append(assistant)
                         await mirrorNewMessages(messages)
                     }
@@ -11523,6 +11539,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     messages.append(contentsOf: commit.messages)
                     await mirrorNewMessages(messages)
                 }
+                keepUnsavedStepText()
                 inboundOutcome.record(error: error, cancelled: disconnected.value)
                 await releaseHostFolder()
                 // Stopped, or a send the user declined in a privacy review,
@@ -11559,6 +11576,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 messages.append(contentsOf: commit.messages)
                 await mirrorNewMessages(messages)
             }
+            // Stop can end the stream quietly, the loop then exiting cancelled.
+            if exitState == .cancelled { keepUnsavedStepText() }
             // Tools have finished executing (the loop is done); release the
             // host folder before streaming the tail so the gate isn't held
             // across the final prose write. Runs exactly once per request —
