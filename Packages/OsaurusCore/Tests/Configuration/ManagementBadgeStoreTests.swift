@@ -102,7 +102,7 @@ struct ManagementBadgeStoreTests {
             } else {
                 UserDefaults.standard.removeObject(forKey: key)
             }
-            ManagementBadgeStore.shared.refreshNow()
+            ManagementBadgeStore.shared.reloadObservedCountsFromDefaults()
         }
 
         ManagementBadgeStore.shared.setObservedCount(4, for: .agentChannels)
@@ -124,7 +124,7 @@ struct ManagementBadgeStoreTests {
             } else {
                 UserDefaults.standard.removeObject(forKey: key)
             }
-            ManagementBadgeStore.shared.refreshNow()
+            ManagementBadgeStore.shared.reloadObservedCountsFromDefaults()
         }
 
         ManagementBadgeStore.shared.setObservedCount(3, for: .agentChannels)

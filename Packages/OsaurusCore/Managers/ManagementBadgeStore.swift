@@ -315,12 +315,21 @@ public final class ManagementBadgeStore: ObservableObject {
     /// recompute.
     private func loadObservedCounts() {
         let defaults = UserDefaults.standard
+        observedCounts = [:]
         for tab in Self.observedTabs {
             let key = Self.observedCountDefaultsKey(for: tab)
             if defaults.object(forKey: key) != nil {
                 observedCounts[tab] = defaults.integer(forKey: key)
             }
         }
+    }
+
+    /// Re-seed the cache from `UserDefaults` and recompute. Not used on the
+    /// hot path; lets tests restore the shared store after mutating the
+    /// persisted counts directly so no state leaks into later tests.
+    func reloadObservedCountsFromDefaults() {
+        loadObservedCounts()
+        refreshNow()
     }
 
     private func observedCount(for tab: ManagementTab) -> Int? {
