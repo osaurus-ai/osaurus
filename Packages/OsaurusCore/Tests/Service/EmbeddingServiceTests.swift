@@ -80,6 +80,93 @@ struct EmbeddingServiceTests {
         #expect(resolved?.standardizedFileURL == configured.standardizedFileURL)
     }
 
+    @Test func bundledCopyPrecedesConfiguredAndCacheCopies() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let bundled = fixture.root.appending(components: "Bundle", "potion-base-4M")
+        let configured = fixture.modelsRoot.appending(components: "minishlab", "potion-base-4M")
+        let cache = fixture.home.appending(
+            components: ".cache",
+            "huggingface",
+            "hub",
+            "models--minishlab--potion-base-4M",
+            "snapshots",
+            "rev"
+        )
+        try populateModel(at: bundled)
+        try populateModel(at: configured)
+        try populateModel(at: cache)
+
+        let resolved = VMLXModel2VecEmbedder.locateModelDirectory(
+            modelName: "potion-base-4M",
+            modelsDirectory: fixture.modelsRoot,
+            environment: [:],
+            homeDirectory: fixture.home,
+            bundledDirectory: bundled
+        )
+
+        #expect(resolved?.standardizedFileURL == bundled.standardizedFileURL)
+    }
+
+    @Test func environmentOverridePrecedesBundledCopy() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let bundled = fixture.root.appending(components: "Bundle", "potion-base-4M")
+        let override = fixture.root.appending(components: "Override", "potion-base-4M")
+        try populateModel(at: bundled)
+        try populateModel(at: override)
+
+        let resolved = VMLXModel2VecEmbedder.locateModelDirectory(
+            modelName: "potion-base-4M",
+            modelsDirectory: fixture.modelsRoot,
+            environment: ["OSAURUS_EMBEDDING_MODEL_DIR": override.path],
+            homeDirectory: fixture.home,
+            bundledDirectory: bundled
+        )
+
+        #expect(resolved?.standardizedFileURL == override.standardizedFileURL)
+    }
+
+    @Test func incompleteBundledCopyFallsThroughToConfiguredDirectory() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let bundled = fixture.root.appending(components: "Bundle", "potion-base-4M")
+        try FileManager.default.createDirectory(at: bundled, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: bundled.appending(component: "config.json"))
+        let configured = fixture.modelsRoot.appending(components: "minishlab", "potion-base-4M")
+        try populateModel(at: configured)
+
+        let resolved = VMLXModel2VecEmbedder.locateModelDirectory(
+            modelName: "potion-base-4M",
+            modelsDirectory: fixture.modelsRoot,
+            environment: [:],
+            homeDirectory: fixture.home,
+            bundledDirectory: bundled
+        )
+
+        #expect(resolved?.standardizedFileURL == configured.standardizedFileURL)
+    }
+
+    /// The model shipped in OsaurusCore's resource bundle is complete and is
+    /// what the production resolver returns without an env override.
+    @Test func shippedBundleContainsTheModel() throws {
+        let bundled = try #require(
+            VMLXModel2VecEmbedder.bundledModelDirectory(modelName: EmbeddingService.modelName)
+        )
+        for file in ["config.json", "model.safetensors", "tokenizer.json", "tokenizer_config.json"] {
+            #expect(FileManager.default.fileExists(atPath: bundled.appending(component: file).path))
+        }
+        let configData = try Data(contentsOf: bundled.appending(component: "config.json"))
+        let config = try JSONSerialization.jsonObject(with: configData) as? [String: Any]
+        #expect(config?["model_type"] as? String == "model2vec")
+        #expect(config?["hidden_dim"] as? Int == EmbeddingService.embeddingDimension)
+
+        if ProcessInfo.processInfo.environment["OSAURUS_EMBEDDING_MODEL_DIR"]?.isEmpty ?? true {
+            let resolved = VMLXModel2VecEmbedder.locateModelDirectory(modelName: EmbeddingService.modelName)
+            #expect(resolved?.standardizedFileURL == bundled.standardizedFileURL)
+        }
+    }
+
     private func makeFixture() throws -> (root: URL, modelsRoot: URL, home: URL) {
         let root = FileManager.default.temporaryDirectory.appending(
             component: "osaurus-embedding-locator-\(UUID().uuidString)",

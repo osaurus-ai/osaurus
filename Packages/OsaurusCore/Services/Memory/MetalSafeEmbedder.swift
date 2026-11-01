@@ -125,31 +125,50 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
 
     /// Non-throwing resolution shared by the loader and by availability
     /// probes (e.g. `EmbeddingService.ensureModelPresent()`). Returns the
-    /// usable model directory from the env override, Osaurus's configured
-    /// models directory, `~/models`, or the Hugging Face cache, or `nil` when
-    /// no usable copy exists locally.
+    /// usable model directory from the env override, the copy bundled with
+    /// OsaurusCore, Osaurus's configured models directory, `~/models`, or the
+    /// Hugging Face cache, or `nil` when no usable copy exists locally.
     public static func locateModelDirectory(modelName: String) -> URL? {
         locateModelDirectory(
             modelName: modelName,
             modelsDirectory: DirectoryPickerService.effectiveModelsDirectory(),
             environment: ProcessInfo.processInfo.environment,
-            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+            bundledDirectory: bundledModelDirectory(modelName: modelName)
         )
+    }
+
+    /// The copy shipped in OsaurusCore's resource bundle
+    /// (`EmbeddingModels/<repo>`), when it is present and complete.
+    public static func bundledModelDirectory(modelName: String) -> URL? {
+        let repoName = modelName.split(separator: "/").last.map(String.init) ?? modelName
+        guard let url = Bundle.module.url(forResource: repoName, withExtension: nil),
+            isUsableModelDirectory(url)
+        else { return nil }
+        return url
     }
 
     /// Pure resolution core used by tests to prove every supported storage
     /// layout without mutating process-wide environment or bookmark state.
+    ///
+    /// The bundled copy outranks every on-disk copy: persisted vector indexes
+    /// are only valid for the exact weights they were built with.
     static func locateModelDirectory(
         modelName: String,
         modelsDirectory: URL,
         environment: [String: String],
-        homeDirectory: URL
+        homeDirectory: URL,
+        bundledDirectory: URL? = nil
     ) -> URL? {
         if let override = environment["OSAURUS_EMBEDDING_MODEL_DIR"], !override.isEmpty {
             let url = URL(fileURLWithPath: override, isDirectory: true)
             if isUsableModelDirectory(url) {
                 return url
             }
+        }
+
+        if let bundledDirectory, isUsableModelDirectory(bundledDirectory) {
+            return bundledDirectory
         }
 
         let repoName = modelName.split(separator: "/").last.map(String.init) ?? modelName
@@ -228,7 +247,7 @@ public enum VMLXModel2VecEmbedderError: LocalizedError {
         switch self {
         case .modelNotFound(let modelName):
             return
-                "Could not find local Model2Vec embedding model '\(modelName)'. Install minishlab/\(modelName) in Osaurus's Models Directory or the Hugging Face cache, or set OSAURUS_EMBEDDING_MODEL_DIR."
+                "The embedding model '\(modelName)' that ships with Osaurus is missing from the app bundle. Reinstall Osaurus, or set OSAURUS_EMBEDDING_MODEL_DIR to a minishlab/\(modelName) folder."
         }
     }
 }

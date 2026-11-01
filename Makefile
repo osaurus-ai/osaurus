@@ -260,8 +260,9 @@ endif
 EVALS_ALL_SUITES := $(sort $(dir $(wildcard $(EVALS_ROOT)/*/)))
 
 # Provision local assets the SwiftPM eval CLI can't self-provision: the
-# MLX metallib (colocated beside the osaurus-evals binary) and the
-# potion-base-4M embedder (Hugging Face cache). Idempotent; every evals*
+# MLX metallib (colocated beside the osaurus-evals binary). The
+# potion-base-4M embedder ships in OsaurusCore's resource bundle; this only
+# checks it is present. Idempotent; every evals*
 # target depends on it so `make evals` works on a clean checkout. Skip
 # with `make evals OSAURUS_EVALS_SKIP_PREP=1` if you've prepped manually.
 evals-prep:

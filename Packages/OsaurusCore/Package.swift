@@ -516,7 +516,9 @@ let package = Package(
             ],
             path: ".",
             exclude: ["Tests", "SQLCipher", "ObjCSupport", "PluginHost"],
-            resources: [.process("Resources")],
+            // `.copy` keeps the embedding model's folder intact; `.process`
+            // would flatten its config.json/tokenizer.json into the bundle root.
+            resources: [.process("Resources"), .copy("EmbeddingModels/potion-base-4M")],
             swiftSettings: [
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
                 // SDK. Enable this flag when building against that SDK (or newer) to
