@@ -431,7 +431,7 @@ public actor ModelRuntime {
         /// entry cannot outlive them. See `weightsFingerprint(for:)`.
         let weightsFingerprint: String
         let isVLM: Bool
-        /// The loaded speculative strategy. `var` only for `applySpeculativeLoadChange`: a Speculative Decoding
+        /// The loaded speculative strategy. `var` only for compatible speculative-selection changes: a Speculative Decoding
         /// change the resident graph already serves (a lazily attached DSpark drafter) updates it in place
         /// instead of reloading the weights. Mutated on the runtime actor only.
         var draftStrategy: MLXLMCommon.DraftStrategy?
@@ -440,7 +440,7 @@ public actor ModelRuntime {
         var nativeMTPReason: String?
         var nativeMTPAdmission: NativeMTPAdmission
         /// The MTP settings this holder's graph serves (`AgentSpeculationPolicy.requiresPreparation` compares a
-        /// request's selection against it). `var` only for `applySpeculativeLoadChange`, which records a kept,
+        /// request's selection against it). Compatible global and per-request changes record a kept,
         /// non-Off selection here so the next request does not reload the graph it just kept.
         var preparedMTP: VMLXServerMTPSettings
         /// What the load contained (`SpeculativeLoadFacts`) and where from: lets a later Speculative Decoding
@@ -2932,38 +2932,48 @@ public actor ModelRuntime {
         var unloaded = 0
         for name in Array(modelCache.keys) {
             guard let holder = modelCache[name] else { continue }
-            var keep = false
-            var nextFacts: SpeculativeLoadFacts?
-            if let loadedFacts = holder.speculativeLoadFacts, let directory = holder.modelDirectory,
-                let plan = try? Self.resolveNativeMTPLaunchPlan(
-                    modelName: name, modelDirectory: directory, settings: settings)
-            {
-                let facts = SpeculativeLoadFacts(
-                    loadConfiguration: plan.loadConfiguration, draftStrategy: plan.draftStrategy)
-                nextFacts = facts
-                keep = SpeculativeLoadFacts.keepsResidentWeights(loaded: loadedFacts, next: facts)
-                if keep {
-                    let resident = SpeculativeLoadFacts.residentAfterKeptChange(
-                        resident: .init(
-                            strategy: holder.draftStrategy, admission: holder.nativeMTPAdmission, facts: loadedFacts),
-                        next: .init(strategy: plan.draftStrategy, admission: plan.admission, facts: facts))
-                    holder.draftStrategy = resident.strategy
-                    holder.nativeMTPAdmission = resident.admission
-                    holder.speculativeLoadFacts = resident.facts
-                    holder.nativeMTPStatus = plan.statusLine
-                    holder.nativeMTPReason = plan.reason
-                    holder.preparedMTP = AgentSpeculationPolicy.preparedAfterKeptChange(
-                        previous: holder.preparedMTP, next: settings.mtp)
-                }
-            }
-            genLog.info(
-                "speculativeChange: model=\(name, privacy: .public) decision=\(keep ? "keep" : "reload", privacy: .public) loaded=\(Self.describeSpeculativeLoadFacts(holder.speculativeLoadFacts), privacy: .public) next=\(Self.describeSpeculativeLoadFacts(nextFacts), privacy: .public)"
-            )
+            let keep = keepResidentForSpeculativeChange(holder, settings: settings)
             if !keep, await unload(name: name, reason: .settingsClear) {
                 unloaded += 1
             }
         }
         return unloaded
+    }
+
+    /// Reconcile one holder against the same bundle plan for both global settings changes
+    /// and per-agent request preparation. DSpark can attach to an AR-loaded target lazily;
+    /// native graph upgrades and changes of drafter still require eviction.
+    private func keepResidentForSpeculativeChange(
+        _ holder: SessionHolder, settings: VMLXServerRuntimeSettings
+    ) -> Bool {
+        var keep = false
+        var nextFacts: SpeculativeLoadFacts?
+        if let loadedFacts = holder.speculativeLoadFacts, let directory = holder.modelDirectory,
+            let plan = try? Self.resolveNativeMTPLaunchPlan(
+                modelName: holder.name, modelDirectory: directory, settings: settings)
+        {
+            let facts = SpeculativeLoadFacts(
+                loadConfiguration: plan.loadConfiguration, draftStrategy: plan.draftStrategy)
+            nextFacts = facts
+            keep = SpeculativeLoadFacts.keepsResidentWeights(loaded: loadedFacts, next: facts)
+            if keep {
+                let resident = SpeculativeLoadFacts.residentAfterKeptChange(
+                    resident: .init(
+                        strategy: holder.draftStrategy, admission: holder.nativeMTPAdmission, facts: loadedFacts),
+                    next: .init(strategy: plan.draftStrategy, admission: plan.admission, facts: facts))
+                holder.draftStrategy = resident.strategy
+                holder.nativeMTPAdmission = resident.admission
+                holder.speculativeLoadFacts = resident.facts
+                holder.nativeMTPStatus = plan.statusLine
+                holder.nativeMTPReason = plan.reason
+                holder.preparedMTP = AgentSpeculationPolicy.preparedAfterKeptChange(
+                    previous: holder.preparedMTP, next: settings.mtp)
+            }
+        }
+        genLog.info(
+            "speculativeChange: model=\(holder.name, privacy: .public) decision=\(keep ? "keep" : "reload", privacy: .public) loaded=\(Self.describeSpeculativeLoadFacts(holder.speculativeLoadFacts), privacy: .public) next=\(Self.describeSpeculativeLoadFacts(nextFacts), privacy: .public)"
+        )
+        return keep
     }
 
     nonisolated static func describeSpeculativeLoadFacts(_ facts: SpeculativeLoadFacts?) -> String {
@@ -4783,7 +4793,17 @@ public actor ModelRuntime {
             {
                 try await ModelLease.shared.waitForZeroCancellable(name)
                 try Task.checkCancellation()
-                try await strictEvict(name)
+                var requestSettings = ServerRuntimeSettingsStore.snapshot()
+                requestSettings.mtp = mtp
+                // A per-agent Off -> On selection reaches this path without a global
+                // settings notification. Resolve its real load facts before evicting
+                // the target, just as applySpeculativeLoadChange does for Server edits.
+                let kept = modelCache[name].map {
+                    keepResidentForSpeculativeChange($0, settings: requestSettings)
+                } ?? false
+                if !kept {
+                    try await strictEvict(name)
+                }
             }
             while true {
                 let holder = try await loadContainer(
