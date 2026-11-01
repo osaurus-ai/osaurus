@@ -61771,6 +61771,40 @@
         }
       }
     },
+    "Collapse Long Pastes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lange Einfügungen einklappen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "긴 붙여넣기 접기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сворачивать длинные вставки"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "折叠长粘贴内容"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "摺疊長貼上內容"
+          }
+        }
+      }
+    },
     "Collapse Sidebar" : {
       "localizations" : {
         "de" : {
@@ -123751,6 +123785,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "輸入詞元"
+          }
+        }
+      }
+    },
+    "Insert as Text" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Als Text einfügen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "텍스트로 삽입"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставить как текст"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作为文本插入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以文字插入"
           }
         }
       }
@@ -274992,6 +275060,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "關閉中繼？"
+          }
+        }
+      }
+    },
+    "Turn long pasted text into a compact attachment instead of filling the message box. Turn off if a dictation or automation tool needs the pasted text to stay in the field." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lange eingefügte Texte werden zu einem kompakten Anhang, statt das Nachrichtenfeld zu füllen. Deaktivieren, wenn ein Diktier- oder Automatisierungstool den eingefügten Text im Feld benötigt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "긴 붙여넣은 텍스트를 메시지 상자에 채우는 대신 간단한 첨부 파일로 바꿉니다. 받아쓰기 또는 자동화 도구가 붙여넣은 텍스트를 입력란에 그대로 두어야 한다면 끄세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Превращать длинный вставленный текст в компактное вложение вместо заполнения поля сообщения. Отключите, если инструменту диктовки или автоматизации нужно, чтобы вставленный текст оставался в поле."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将长粘贴文本转换为紧凑的附件，而不是填满消息框。如果听写或自动化工具需要粘贴的文本保留在输入框中，请关闭此选项。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將長貼上文字轉換為精簡的附件，而不是填滿訊息框。如果聽寫或自動化工具需要貼上的文字保留在輸入框中，請關閉此選項。"
           }
         }
       }

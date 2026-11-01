@@ -67,6 +67,9 @@ struct ChatSettingsView: View {
     /// Run the macOS spell checker in the chat composer.
     @AppStorage(ComposerSpellCheckSetting.defaultsKey)
     private var composerSpellCheckEnabled: Bool = ComposerSpellCheckSetting.defaultValue
+    /// Turn large pastes into an attachment chip instead of composer text.
+    @AppStorage(ComposerPasteCollapseSetting.defaultsKey)
+    private var collapseLongPastes: Bool = ComposerPasteCollapseSetting.defaultValue
     /// Prevent idle system sleep while agent sessions are actively running
     /// or queued. Display sleep and explicit system sleep remain available.
     @AppStorage(AgentRunPowerManager.keepAwakeDefaultsKey)
@@ -195,6 +198,14 @@ struct ChatSettingsView: View {
                     "Offer text you've just copied in any app as context, and grab the current selection when you summon Osaurus.",
                 anchorId: "settings.chat.clipboard",
                 isOn: $tempEnableClipboardMonitoring
+            )
+
+            SettingsToggle(
+                title: L("Collapse Long Pastes"),
+                description:
+                    "Turn long pasted text into a compact attachment instead of filling the message box. Turn off if a dictation or automation tool needs the pasted text to stay in the field.",
+                anchorId: "settings.chat.collapseLongPastes",
+                isOn: $collapseLongPastes
             )
 
             SettingsToggle(

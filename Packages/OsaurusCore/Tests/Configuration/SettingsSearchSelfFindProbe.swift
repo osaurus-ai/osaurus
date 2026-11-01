@@ -172,6 +172,7 @@ struct SettingsSearchSelfFindProbe {
             ("Automatically Name Chats", "settings.chat.autoGenerateTitles"),
             ("Suggest Follow-Up Questions", "settings.chat.generateFollowUps"),
             ("Check Spelling While Typing", "settings.chat.spellCheck"),
+            ("Collapse Long Pastes", "settings.chat.collapseLongPastes"),
             ("Expand Thinking While Streaming", "settings.chat.thinkingDisplay"),
             ("Compaction Model", "settings.chat.compactionModel"),
             ("Top P Override", "settings.chat.topP"),

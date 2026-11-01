@@ -57,8 +57,26 @@ struct DocumentChip: View {
         }
 
         if let onInline {
-            circularButton(systemName: "text.insert", action: onInline)
-                .localizedHelp("Insert into message")
+            // A labeled button, not a bare icon: users did not discover the
+            // icon-only version and asked for a way to undo the collapse
+            // (#3271).
+            Button(action: onInline) {
+                HStack(spacing: 3) {
+                    Image(systemName: "text.insert")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("Insert as Text", bundle: .module)
+                        .font(theme.font(size: 10, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 7)
+                .frame(height: 20)
+                .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .localizedHelp("Insert into message")
         }
 
         if let onEdit {

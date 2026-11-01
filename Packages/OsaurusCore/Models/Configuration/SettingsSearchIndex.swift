@@ -288,6 +288,19 @@ public enum SettingsSearchIndex {
             keywords: ["clipboard", "copied text", "grab selection", "paste context"]
         ),
         .init(
+            id: "settings.chat.collapseLongPastes",
+            tab: .chat,
+            section: "Behavior",
+            title: "Collapse Long Pastes",
+            keywords: [
+                "paste", "pasted", "pasted content", "long paste", "large paste",
+                "paste chip", "paste attachment", "collapse", "dictation",
+                "typewhisper", "insert as text", "composer", "input",
+            ],
+            disambiguation:
+                "Controls what happens when you paste into the message box. Clipboard Monitoring is separate and only offers text you copied elsewhere."
+        ),
+        .init(
             id: "settings.chat.keepAwakeForAgentRuns",
             tab: .chat,
             section: "Agent Sessions",
