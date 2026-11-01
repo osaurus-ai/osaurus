@@ -820,7 +820,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "fd22f5abab3146f45f9997cdbe773c42977590cb"
+        let expectedRuntimeHardenedRevision = "7b7ba1281ae6425d23653c9bcd21b84c9ecdf4bc"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -830,7 +830,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the required vmlx-swift revision fd22f5ab (integration pin: MiniMax-M3.1-Flash with expert-aligned prefill, the SSD-only prefix cache default with named-tool reuse, the DeepSeek-V4.1 prefill KV-source trim and expert-aligned prefill tiles, symlinked-bundle residency, on main 9ec1d561) for MiniMax-M3.1-Flash (JANGT experts, block-sparse MSA, DSpark drafter, thinking_mode, image input), serialized tokenizer contracts, checked text-prefill error propagation and declared bundle thinking/effort defaults, on top of the LFM3 text, vision, video and speech-input runtime, native audio text-stop handling and existing runtime hardening. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the required vmlx-swift revision 7b7ba128 (integration pin: MiniMax-M3.1-Flash with expert-aligned prefill, the SSD-only prefix cache default with named-tool reuse, DeepSeek-V4.1 cold prefill cut only at stable boundaries near the prompt end, the DeepSeek-V4.1 prefill KV-source trim and expert-aligned prefill tiles, symlinked-bundle residency, on main 9ec1d561) for MiniMax-M3.1-Flash (JANGT experts, block-sparse MSA, DSpark drafter, thinking_mode, image input), serialized tokenizer contracts, checked text-prefill error propagation and declared bundle thinking/effort defaults, on top of the LFM3 text, vision, video and speech-input runtime, native audio text-stop handling and existing runtime hardening. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
