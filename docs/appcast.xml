@@ -3,6 +3,57 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.31</title>
+            <pubDate>Mon, 02 Nov 2026 18:58:24 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.31</sparkle:version>
+            <sparkle:shortVersionString>0.25.31</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.31/Osaurus-0.25.31.dmg" length="98468811" type="application/octet-stream" sparkle:edSignature="KH7C2LnCPKFiVYiAYi5g577Vc9DdqudIo/NLPSNRTxbtGim60mpOUc2GvyJOE1mAA5OQiGEN6zlzjv8CeIHBDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Validate compaction output and use supported thinking-off summaries by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3249
+* Update MLX kernels and fix native tool-result templates by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3254
+* Add per-agent opt-in response metrics in Advanced Settings by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3255
+* Consume authoritative Gemma template rendering by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3256
+* Consume Gemma 4 reasoning and tool transport isolation by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3257
+* Compact growing chat tool chains between completed batches by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3258
+* Count tool-result display mirrors once in context estimates by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3259
+* Consume Metal command-buffer byte-budget fix by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3260
+* Keep saved agent reasoning mismatches visible in the model picker by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3261
+* Preserve complete tool schemas through local template rendering by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3262
+* Isolate release notes and preserve qualified artifacts before Sentry by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3264
+* Coalesce failed tool indexing and recover queued registrations by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3263
+* Bound captured Insights bodies by UTF-8 bytes by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3265
+* Recover missing knowledge vectors after embedding failures by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3273
+* Consume SSM companion evaluation error propagation by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3274
+* fix follow-ups showing mid-turn and restore auto-scroll while streaming by @RaajeevChandran in https://github.com/osaurus-ai/osaurus/pull/3275
+* add collapse long pastes toggle and labeled insert as text button by @RaajeevChandran in https://github.com/osaurus-ai/osaurus/pull/3276
+* Consume request-sized terminal SSM replay by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3279
+* Preserve body capture truncation in activity exports by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3284
+* Distinguish reported and estimated activity token counts by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3286
+* Clarify German server-runtime wording by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3288
+* Bundle the potion-base-4M embedder and hide embedding models from model lists by @tpae in https://github.com/osaurus-ai/osaurus/pull/3285
+* Declare connector configuration URLs as non-directories to avoid main-thread stat hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3238
+* Cache observed management badge counts in memory to avoid main thread hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3283
+* Defer toast overlay panel creation until first presentation by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3268
+* Memoize blank content checks and skip seeded reasoning blocks during stream sync by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3267
+* Check bridged presentation intent numbers before struct casts in chat styling by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3266
+* Cache composer placeholder lookups and drop blocking attachment disk reads by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3253
+* ci(i18n): report referenced-but-untranslated UI strings in the job summary (non-blocking) by @mimeding in https://github.com/osaurus-ai/osaurus/pull/3281
+* i18n: give the Thinking mode label its own key, separate from the streaming status by @mimeding in https://github.com/osaurus-ai/osaurus/pull/3280
+* fix(PluginTestKit): only the owning MockHost may clear the install slot by @mimeding in https://github.com/osaurus-ai/osaurus/pull/3277
+* Integrate MiniMax M3.1, combined runtime fixes and M2 core pin by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3248
+* Expose native reasoning effort tiers beside thinking modes by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3290
+* fixed main thread hangs by @RaajeevChandran in https://github.com/osaurus-ai/osaurus/pull/3289
+* Synchronize agent menus and generation editing with saved changes by @jjang-ai in https://github.com/osaurus-ai/osaurus/pull/3291
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.29...0.25.31
+]]></description>
+        </item>
+        <item>
             <title>0.25.29</title>
             <pubDate>Fri, 30 Oct 2026 04:20:52 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
