@@ -81,7 +81,7 @@ struct ImageGenerationBridgeContractTests {
             encoding: .utf8
         )
 
-        let expectedRevision = "fc9d7f4ec037a39d067a589f2ea4d0572482a2ec"
+        let expectedRevision = "75ff99a24296eec31496a396a403c87b3e7d0453"
         #expect(packageSwift.contains(#"revision: "\#(expectedRevision)""#))
         // Whitespace-insensitive: the literal spacing is SwiftPM's to choose,
         // not part of the contract. `Package.resolved` used to be written

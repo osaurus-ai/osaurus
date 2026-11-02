@@ -354,11 +354,9 @@ let package = Package(
         // budget applies to bundles reached through a symlinked directory; main's Gemma 4 tool transport and Jinja
         // namespace fixes. A read of a prefix entry whose SSD file is still being written reports diskPending
         // (memory now means only the opt-in RAM tier).
-        // vmlx-swift main 75ff99a2 (#715: shared-KV event history released, DSV layer submission kept) + #716: the
-        // dSpark governor times each AR forward once, so speculation is not charged for the last AR forward of a run.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "fc9d7f4ec037a39d067a589f2ea4d0572482a2ec"
+            revision: "75ff99a24296eec31496a396a403c87b3e7d0453"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
