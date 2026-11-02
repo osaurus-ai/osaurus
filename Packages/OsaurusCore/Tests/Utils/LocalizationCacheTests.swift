@@ -40,6 +40,21 @@ struct LocalizationCacheTests {
         }
     }
 
+    /// Composer placeholder strings rendered from
+    /// `FloatingInputCard.placeholderText` (production hang APPLE-MACOS-1E7).
+    private static let composerPlaceholders = [
+        "Describe the image...",
+        "Describe the video...",
+        "Attach one image, then describe the video...",
+        "Describe how the image should move...",
+        "Message or attach files...",
+    ]
+
+    @Test("LCached matches L for composer placeholders", arguments: composerPlaceholders)
+    func matchesUncachedLookupForPlaceholders(key: String) {
+        #expect(LCached(key) == L(String.LocalizationValue(key)))
+    }
+
     @Test("LCached returns empty key unchanged")
     func emptyKey() {
         #expect(LCached("") == "")
