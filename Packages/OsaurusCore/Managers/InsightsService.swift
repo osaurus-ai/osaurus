@@ -102,13 +102,24 @@ final class InsightsService: ObservableObject {
     init(store: ActivityLogStore, openStore: Bool) {
         self.store = store
         if openStore {
-            do {
-                try store.open()
-                storeAvailable = true
-            } catch {
-                storeAvailable = false
-                storeError = error.localizedDescription
-                NSLog("[Osaurus][Insights] activity log unavailable: %@", "\(error)")
+            // Never park the main thread on a key rotation. `store.open()`
+            // waits in `StorageMutationGate.blockingAwaitNotMutating()`, and
+            // the rotation can only finish by hopping onto the main actor
+            // for `endMutating()`, which this thread is holding. Defer the
+            // open until the rotation-complete notification; the hot cache
+            // serves rows in the meantime.
+            if Thread.isMainThread, StorageMutationGate.isRotationInFlight {
+                NotificationCenter.default.publisher(for: StorageMutationGate.didFinishMutatingNotification)
+                    .receive(on: DispatchQueue.main)
+                    .first()
+                    .sink { [weak self] _ in
+                        guard let self, self.openStoreNow() else { return }
+                        self.startRetention()
+                        self.reload()
+                    }
+                    .store(in: &cancellables)
+            } else {
+                openStoreNow()
             }
         } else {
             storeAvailable = store.isOpen
@@ -139,13 +150,32 @@ final class InsightsService: ObservableObject {
             }
             .store(in: &cancellables)
 
-        if openStore {
-            pruneForRetention()
-            retentionTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.pruneForRetention() }
-            }
+        if openStore, storeAvailable {
+            startRetention()
         }
         reload()
+    }
+
+    @discardableResult
+    private func openStoreNow() -> Bool {
+        do {
+            try store.open()
+            storeAvailable = true
+            storeError = nil
+        } catch {
+            storeAvailable = false
+            storeError = error.localizedDescription
+            NSLog("[Osaurus][Insights] activity log unavailable: %@", "\(error)")
+        }
+        return storeAvailable
+    }
+
+    private func startRetention() {
+        pruneForRetention()
+        retentionTimer?.invalidate()
+        retentionTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pruneForRetention() }
+        }
     }
 
     // MARK: - Logging
