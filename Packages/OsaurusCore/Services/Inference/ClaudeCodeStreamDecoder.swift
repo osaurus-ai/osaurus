@@ -36,6 +36,9 @@ public enum ClaudeCodeStreamEvent: Sendable, Equatable {
     /// Sanitized tool trace — name, phase, and error state only. Never args
     /// or results; those stay inside the CLI.
     case toolTrace(StreamingAgentToolHint.Trace)
+    /// A tool call the CLI's permission rules refused. Replaces the failed
+    /// completion trace so the chat can say why, without carrying the result.
+    case toolDenied(callId: String?, name: String)
     /// Terminal usage frame.
     case stats(outputTokens: Int, tokensPerSecond: Double, stopReason: String?)
     /// Subscription rate-limit notice. Surfaced verbatim rather than retried.
@@ -160,19 +163,42 @@ public struct ClaudeCodeStreamDecoder: Sendable {
         for block in blocks where (block["type"] as? String) == "tool_result" {
             let callId = block["tool_use_id"] as? String
             let name = callId.flatMap { toolNamesByCallId[$0] } ?? ""
+            let isError = (block["is_error"] as? Bool) ?? false
+            if isError, Self.isPermissionDenial(block["content"]) {
+                events.append(.toolDenied(callId: callId, name: name))
+                continue
+            }
             events.append(
                 .toolTrace(
                     StreamingAgentToolHint.Trace(
                         phase: "completed",
                         name: name,
                         callId: callId,
-                        isError: (block["is_error"] as? Bool) ?? false,
+                        isError: isError,
                         endRun: false
                     )
                 )
             )
         }
         return events
+    }
+
+    /// Matches the CLI's own refusal wording, current ("Permission to use
+    /// Write has been denied because Claude Code is running in don't ask
+    /// mode") and older ("requested permissions to use Bash, but you haven't
+    /// granted it yet"). The text is only inspected, never forwarded.
+    static func isPermissionDenial(_ content: Any?) -> Bool {
+        let text: String
+        if let string = content as? String {
+            text = string
+        } else if let parts = content as? [[String: Any]] {
+            text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        } else {
+            return false
+        }
+        let lowered = text.lowercased()
+        return (lowered.hasPrefix("permission to use ") && lowered.contains("has been denied"))
+            || (lowered.contains("requested permissions to use ") && lowered.contains("haven't granted"))
     }
 
     // MARK: - result

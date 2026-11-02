@@ -3317,7 +3317,7 @@ struct AgentDetailView: View {
                 ) {
                     claudeCodePermissionLabel(
                         title: "Allow shell commands",
-                        detail: "Auto-approve Bash under your macOS account. Osaurus can't confine shell commands to the chat folder, and this is not the Osaurus sandbox."
+                        detail: "Auto-approve Bash and Monitor under your macOS account. Osaurus can't confine shell commands to the chat folder, and this is not the Osaurus sandbox. When off, Claude isn't offered any tool that runs commands."
                     )
                 }
                 .disabled(claudeCodeConfig.mode != .agent)

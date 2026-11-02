@@ -589,9 +589,10 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// saw its "started" (some peers may only emit terminal traces) and stamps a
     /// sanitized success/failure result so the chip flips to done/failed. The
     /// failure case uses a `ToolEnvelope` error so the row renders red without
-    /// ever exposing the remote's raw tool output.
+    /// ever exposing the remote's raw tool output. A `failureMessage` marks a
+    /// policy refusal the caller has already put into Osaurus's own words.
     @MainActor
-    func noteRemoteToolFinished(callId: String, name: String, isError: Bool) {
+    func noteRemoteToolFinished(callId: String, name: String, isError: Bool, failureMessage: String? = nil) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !remoteToolActivity.contains(where: { $0.id == callId }) {
             remoteToolActivity.append(
@@ -606,8 +607,8 @@ final class ChatTurn: ObservableObject, Identifiable {
         remoteToolResults[callId] =
             isError
             ? ToolEnvelope.failure(
-                kind: .executionError,
-                message: "The remote agent reported this tool call failed.",
+                kind: failureMessage == nil ? .executionError : .rejected,
+                message: failureMessage ?? "The remote agent reported this tool call failed.",
                 tool: trimmed.isEmpty ? nil : trimmed
             )
             : Self.remoteToolSuccessResult

@@ -76,6 +76,31 @@ public enum ClaudeCodeEffort: String, CaseIterable, Sendable {
     }
 }
 
+extension ClaudeCodeEffort {
+    /// The chat picker's Reasoning Effort row for a Claude Code agent: a
+    /// Default segment (no `--effort`, the CLI's per-model default) plus every
+    /// level. Reads and writes the agent's `ClaudeCodeAgentConfig.effort`.
+    static let pickerOptionID = "reasoningEffort"
+
+    static var pickerOption: ModelOptionDefinition {
+        ModelOptionDefinition(
+            id: pickerOptionID,
+            label: L("Reasoning Effort"),
+            kind: .segmented(
+                [ModelOptionSegment(id: ModelOptionSegment.defaultID, label: L("Default"))]
+                    + allCases.map { ModelOptionSegment(id: $0.rawValue, label: $0.displayName) }
+            ),
+            help: L("Default leaves Claude Code on its own per-model default. Applies from the next message.")
+        )
+    }
+
+    /// The stored `effort` for a picker segment; nil for Default.
+    static func storedValue(forSegment id: String?) -> String? {
+        guard let id, let effort = ClaudeCodeEffort(rawValue: id) else { return nil }
+        return effort.rawValue
+    }
+}
+
 /// Decoded `claude auth status --json`.
 ///
 /// Only the fields Osaurus actually shows are modeled; the CLI adds keys over
@@ -176,8 +201,51 @@ public enum ClaudeCodeConfiguration {
         return "Edit(/\(trimmed)/**)"
     }
 
-    /// Tools added when the agent opts into shell access.
-    public static let shellTools = ["Bash"]
+    /// Tools added when the agent opts into shell access. `Monitor` runs a
+    /// shell command in the background under the same rules as Bash.
+    public static let shellTools = ["Bash", "Monitor"]
+
+    /// The other built-ins that run commands or code — what the CLI's own
+    /// `--restricted` mode strips, besides the shell tools and WebFetch.
+    /// Hidden without shell access; never auto-approved.
+    public static let codeRunningTools = ["CronCreate", "LSP", "RemoteTrigger", "Workflow"]
+
+    /// Built-ins whose writes `Edit(...)` rules govern.
+    public static let writeTools = ["Edit", "Write", "NotebookEdit"]
+
+    /// Built-ins no toggle grants.
+    public static let neverAllowedTools = ["WebFetch", "WebSearch"]
+
+    /// Built-ins to remove from the model's tool list for this run.
+    ///
+    /// `dontAsk` refuses an un-allowlisted tool only after the model calls it,
+    /// so a visible-but-refused tool shows up as a failed call the model keeps
+    /// retrying. Claude Code also auto-approves read-only shell commands, so a
+    /// visible Bash or Monitor would run `ls` with shell access off. A bare
+    /// name in `--disallowedTools` drops the tool from the list entirely, and
+    /// a deny beats an allow, so a granted tool must never appear here.
+    public static func hiddenBuiltinTools(allowWrites: Bool, allowShell: Bool) -> [String] {
+        var hidden: [String] = []
+        if !allowShell { hidden += shellTools + codeRunningTools }
+        if !allowWrites { hidden += writeTools }
+        return hidden + neverAllowedTools
+    }
+
+    /// What the chat shows for a tool call Claude Code's permission rules
+    /// refused, naming the toggle that grants it.
+    public static func permissionDeniedMessage(tool: String) -> String {
+        if shellTools.contains(tool) {
+            return L(
+                "Claude Code isn't allowed to run shell commands for this agent. Turn on Allow shell commands in the agent's Claude Code Options."
+            )
+        }
+        if writeTools.contains(tool) {
+            return L(
+                "Claude Code isn't allowed to change this file. File changes need Allow file changes in the agent's Claude Code Options and stay limited to the chat folder."
+            )
+        }
+        return L("Claude Code isn't allowed to use this tool for this agent.")
+    }
 
     // MARK: - Osaurus tools over MCP
 

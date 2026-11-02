@@ -32,6 +32,10 @@ enum ModelOptionValue: Sendable, Equatable, Hashable, Codable {
 // MARK: - Option Definition
 
 struct ModelOptionSegment: Identifiable, Sendable {
+    /// A segment that clears the explicit choice. Its row already offers
+    /// what "Reset to default" would, so the picker shows no reset link.
+    static let defaultID = "default"
+
     let id: String
     let label: String
 }
