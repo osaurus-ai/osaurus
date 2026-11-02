@@ -225,13 +225,13 @@ public final class TemplateStore: ObservableObject {
 
     public func isBuiltIn(_ template: Template) -> Bool {
         ensureLoaded()
-        !templates.contains { $0.id == template.id } && builtIn.contains { $0.id == template.id }
+        return !templates.contains { $0.id == template.id } && builtIn.contains { $0.id == template.id }
     }
 
     /// Latest version of a template, library first.
     public func latest(id: UUID) -> Template? {
         ensureLoaded()
-        templates.first { $0.id == id } ?? builtIn.first { $0.id == id }.map(applyingIndex)
+        return templates.first { $0.id == id } ?? builtIn.first { $0.id == id }.map(applyingIndex)
     }
 
     /// A specific version, from the library or the matching built-in.
@@ -270,7 +270,7 @@ public final class TemplateStore: ObservableObject {
 
     public func orchestratorVisible(kind: TemplateKind? = nil) -> [Template] {
         ensureLoaded()
-        allTemplates.filter { $0.availableToOrchestrator && (kind == nil || $0.kind == kind) }
+        return allTemplates.filter { $0.availableToOrchestrator && (kind == nil || $0.kind == kind) }
     }
 
     public var orchestratorVisible: [Template] { orchestratorVisible(kind: nil) }
