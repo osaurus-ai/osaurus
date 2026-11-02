@@ -39,6 +39,9 @@ public final class TemplateStore: ObservableObject {
     public nonisolated static func prewarm() {
         Task.detached(priority: .utility) {
             _ = TemplateStore.builtInTemplates
+            // Creating `shared` starts the background library load, so it
+            // has normally landed before any view or tool reads the store.
+            await MainActor.run { _ = TemplateStore.shared }
         }
     }
 
@@ -89,8 +92,11 @@ public final class TemplateStore: ObservableObject {
     /// False until the library has been read once, by either path.
     private var hasLoaded = false
 
-    /// Mutations read-modify-write `index`; make sure it is the on-disk one
-    /// even if the background load has not landed yet.
+    /// Every accessor that consults the library or `index` calls this first,
+    /// so a caller that wins the race with the background load (the
+    /// `osaurus_config` tool, setup checks) never sees built-ins only, and
+    /// mutations never read-modify-write an empty `index`. A no-op once
+    /// loaded; the launch prewarm makes that the normal case for views.
     private func ensureLoaded() {
         if !hasLoaded { reload() }
     }
@@ -100,7 +106,8 @@ public final class TemplateStore: ObservableObject {
     /// construction on the main actor, so doing it here synchronously froze
     /// the UI (APPLE-MACOS-3KB). Load in the background and publish; callers
     /// that need fresh data right away still call `reload()`.
-    private init() {
+    /// Internal (not private) so tests can build a fresh store and race it.
+    init() {
         let generation = reloadGeneration
         Task.detached(priority: .userInitiated) { [weak self] in
             _ = TemplateStore.builtInTemplates
@@ -206,6 +213,7 @@ public final class TemplateStore: ObservableObject {
 
     /// Built-ins not shadowed by the library, then the library.
     public var allTemplates: [Template] {
+        ensureLoaded()
         let userIDs = Set(templates.map(\.id))
         return (builtIn.filter { !userIDs.contains($0.id) }.map(applyingIndex) + templates)
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -216,16 +224,19 @@ public final class TemplateStore: ObservableObject {
     }
 
     public func isBuiltIn(_ template: Template) -> Bool {
+        ensureLoaded()
         !templates.contains { $0.id == template.id } && builtIn.contains { $0.id == template.id }
     }
 
     /// Latest version of a template, library first.
     public func latest(id: UUID) -> Template? {
+        ensureLoaded()
         templates.first { $0.id == id } ?? builtIn.first { $0.id == id }.map(applyingIndex)
     }
 
     /// A specific version, from the library or the matching built-in.
     public func template(id: UUID, version: Int) -> Template? {
+        ensureLoaded()
         if let t = try? Self.load(id, version: version) { return applyingIndex(t) }
         if let b = builtIn.first(where: { $0.id == id && $0.version == version }) { return applyingIndex(b) }
         return nil
@@ -244,6 +255,7 @@ public final class TemplateStore: ObservableObject {
 
     /// Case-insensitive lookup by display name or slug, for the orchestrator.
     public func template(named raw: String, kind: TemplateKind? = nil) -> Template? {
+        ensureLoaded()
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return nil }
         if let id = UUID(uuidString: key), let t = latest(id: id), kind == nil || t.kind == kind {
@@ -257,6 +269,7 @@ public final class TemplateStore: ObservableObject {
     }
 
     public func orchestratorVisible(kind: TemplateKind? = nil) -> [Template] {
+        ensureLoaded()
         allTemplates.filter { $0.availableToOrchestrator && (kind == nil || $0.kind == kind) }
     }
 
