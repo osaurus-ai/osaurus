@@ -1,8 +1,8 @@
 # Native diffusion settings applicability
 
-Status: implementation and regression fixtures prepared; syntax/diff checks pass.
-Focused execution, build and live UI validation remain pending. No model load,
-inference, Studio deployment, publishing or release action is included.
+Status: implementation, syntax/diff checks and focused validation pass. Actual app
+UI and real-model/runtime qualification remain pending. No model load, inference,
+Studio deployment or release action is included.
 
 The shared agent generation editor previously displayed autoregressive sampling
 and penalty controls as effective for native DiffusionGemma. Its runtime instead
@@ -37,9 +37,41 @@ AR/native/AR model selection. The existing field titles and landing anchors stay
 unchanged and already appear in SettingsSearchSelfFindProbe. The search catalog
 and guide explain the new applicability state.
 
-Remaining acceptance: focused AgentGenerationApplicabilityTests and persistence
-suite plus neighboring editor/redesign/settings/search tests; app build; real
-agent creation/editing, model switching, saving, navigation and relaunch. Inspect
+## Focused validation
+
+The exact tested host/UI source is `418a10e02e2fbf4c5c561199b03674a52dfdbb5b`,
+including host branch `4365e03f1965326380c423035a7e84dc20c12063`, with runtime
+`65f5156c89ff8ef70bd8a82aa3ab03e577f6fda6`. Xcode Swift 6.4 compiled from the
+isolated UI worktree using the closed suppression cache, two jobs, an isolated test
+profile, empty model directory and disabled test Keychain. The source-path
+rebuild completed in 710.74 seconds. All runs exited 0:
+
+| Run | Tests | Suites | Test time |
+| --- | ---: | ---: | ---: |
+| UI applicability plus editor/draft/settings persistence/search/landing | 53 | 9 | 1.381s |
+| Exact final host affected matrix | 258 | 16 | 1.748s |
+| Deduplicated host and UI union | 293 | 22 | 1.966s |
+
+All five new applicability/classification/persistence cases passed. The 53 UI and
+258 host counts overlap 18 existing tests; they must not be added as 311 distinct
+tests. The host matrix includes suppression/defaults, advanced-field dispatch,
+thinking mode, generation plumbing, repetition/seed carriers, agent settings and
+speculation, Responses, MTP sampler preservation, adapter resolution, runtime
+source policy and image bridge contracts.
+
+For CPU processor fixtures, only the exact cache-produced
+`mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib` was copied to the
+test binary's `mlx.metallib` lookup. SHA256:
+`1ab6edb333f42c50879a628f35f3664b221d3e6096a60cb2ee2c4d7cb1147b8d`.
+That injected lookup was archived after the passes and removed before any next
+build; the produced source and all previous receipts remain preserved. The
+private `parameter-parity/PAR04-REBASED-VALIDATION-FINAL-418a10e02.json` receipt
+records source, binary, resource and raw-log hashes. There were no failures in
+these three runs. They are metadata/host/controlled-CPU fixtures, not app UI or
+real-model speed, cache, quality or family qualification.
+
+Remaining acceptance: frozen Release app build; real agent creation/editing,
+model switching, saving, navigation and relaunch. Inspect
 both wide and narrow editor layouts and verify effective Max Tokens/Seed/Stop and
 the native schedule through the actual request/runtime path. Source or isolated
 tests alone do not establish live UI or model behavior.
