@@ -65,6 +65,8 @@ enum LocalGenerationDefaults {
         /// `presence_penalty: 1.5` for non-thinking operation.
         var presencePenalty: Float?
         var frequencyPenalty: Float?
+        /// Model-declared token exclusions. Nil inherits; an explicit empty list clears an overlay.
+        var suppressTokens: [Int]?
         var doSample: Bool?
 
         /// Optional bundle-owned overlay for thinking turns. Keep the complete
@@ -641,6 +643,7 @@ enum LocalGenerationDefaults {
         if out.repetitionPenalty == nil { out.repetitionPenalty = fallback.repetitionPenalty }
         if out.presencePenalty == nil { out.presencePenalty = fallback.presencePenalty }
         if out.frequencyPenalty == nil { out.frequencyPenalty = fallback.frequencyPenalty }
+        if out.suppressTokens == nil { out.suppressTokens = fallback.suppressTokens }
         if out.doSample == nil { out.doSample = fallback.doSample }
         if out.thinkingSamplingData == nil { out.thinkingSamplingData = fallback.thinkingSamplingData }
         if out.defaultThinkingEnabled == nil { out.defaultThinkingEnabled = fallback.defaultThinkingEnabled }
@@ -660,6 +663,14 @@ enum LocalGenerationDefaults {
         if let rp = readFloat(obj["repetition_penalty"]) { out.repetitionPenalty = rp }
         if let pp = readFloat(obj["presence_penalty"]) { out.presencePenalty = pp }
         if let fp = readFloat(obj["frequency_penalty"]) { out.frequencyPenalty = fp }
+        // Use the engine's integer-array decoding contract: do not coerce booleans,
+        // fractional values, or strings into token IDs, and preserve explicit [].
+        if let tokens = obj["suppress_tokens"] as? [Any],
+            let data = try? JSONSerialization.data(withJSONObject: tokens),
+            let tokenIDs = try? JSONDecoder().decode([Int].self, from: data)
+        {
+            out.suppressTokens = tokenIDs
+        }
         if let doSample = readBool(obj["do_sample"]) { out.doSample = doSample }
         return out
     }

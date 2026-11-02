@@ -7009,6 +7009,7 @@ public actor ModelRuntime {
         topP: Float,
         topK: Int = 0,
         minP: Float = 0,
+        suppressTokens: [Int] = [],
         repetitionPenalty: Float?,
         presencePenalty: Float? = nil,
         frequencyPenalty: Float? = nil,
@@ -7041,7 +7042,8 @@ public actor ModelRuntime {
             minP: minP,
             repetitionPenalty: resolvedRepetitionPenalty,
             repetitionContextSize: resolvedRepetitionContextSize,
-            extraStopStrings: stopSequences
+            extraStopStrings: stopSequences,
+            suppressTokens: suppressTokens
         )
         // OpenAI additive penalties: vmlx implements both natively
         // (PresencePenaltyContext / FrequencyPenaltyContext). 0 is the
