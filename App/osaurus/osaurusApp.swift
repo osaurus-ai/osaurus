@@ -107,15 +107,7 @@ private extension osaurusApp {
             )
 
             Menu {
-                ForEach(AgentManager.shared.agents, id: \.id) { agent in
-                    Button {
-                        Task { @MainActor in
-                            ChatWindowManager.shared.createWindow(agentId: agent.id)
-                        }
-                    } label: {
-                        Text(verbatim: agent.displayName)
-                    }
-                }
+                AgentWindowMenuItems()
             } label: {
                 Text(verbatim: LCached("New Window with Agent"))
             }
@@ -341,15 +333,7 @@ private extension osaurusApp {
 
     var agentsMenu: some View {
         Menu {
-            ForEach(AgentManager.shared.agents, id: \.id) { agent in
-                Button {
-                    Task { @MainActor in
-                        ChatWindowManager.shared.createWindow(agentId: agent.id)
-                    }
-                } label: {
-                    Text(verbatim: agent.displayName)
-                }
-            }
+            AgentWindowMenuItems()
 
             Divider()
 
@@ -360,6 +344,24 @@ private extension osaurusApp {
             }
         } label: {
             Text(verbatim: LCached("Agents"))
+        }
+    }
+}
+
+/// Keep both agent lists current after creation, rename and deletion without
+/// observing the manager from the App and rebuilding every command group.
+private struct AgentWindowMenuItems: View {
+    @ObservedObject private var agentManager = AgentManager.shared
+
+    var body: some View {
+        ForEach(agentManager.agents, id: \.id) { agent in
+            Button {
+                Task { @MainActor in
+                    ChatWindowManager.shared.createWindow(agentId: agent.id)
+                }
+            } label: {
+                Text(verbatim: agent.displayName)
+            }
         }
     }
 }
