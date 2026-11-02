@@ -13,7 +13,7 @@ struct AgentGenerationSettingsTests {
                 "enabled": .bool(false), "count": .number(0),
                 "values": .array([.null, .string("value")]),
             ])
-        ]
+        ], speculativeDecoding: false
     )
 
     @Test("agent JSON keeps explicit zero and false without duplicating temperature or token limits")

@@ -79,24 +79,26 @@ model when independent rubric grading is required.
 
 ### Asset prerequisites (handled automatically)
 
-Local MLX model evals and `capability_search` need two assets that the SwiftPM
-CLI can't bundle for itself:
+Local MLX model evals need one asset that the SwiftPM CLI can't bundle for
+itself:
 
 - **MLX metallib** — local MLX model loads fail with "Failed to load the default
   metallib" unless `default.metallib` sits next to the `osaurus-evals` binary
   (SwiftPM CLI builds don't embed the Cmlx Metal library the way `make app`
   does).
-- **`minishlab/potion-base-4M` embedder** — without it the capability_search
-  semantic index is empty and retrieval results are unreliable.
+
+The `capability_search` embedder (`minishlab/potion-base-4M`) ships in
+OsaurusCore's resource bundle (`Packages/OsaurusCore/EmbeddingModels/`), so
+no download is needed. `OSAURUS_EMBEDDING_MODEL_DIR` still overrides it.
 
 Every `make evals*` target now runs `make evals-prep` first, which executes
 `scripts/evals/prepare-evals-env.sh` to colocate the metallib (from an existing
-`make app` / Xcode build, or `OSAURUS_MLX_METALLIB`) and download the embedder
-into the Hugging Face cache (via `hf` or `uvx`). It's idempotent and a no-op
-once both assets are in place. Skip it with `OSAURUS_EVALS_SKIP_PREP=1` (or run
-`make evals-prep` standalone). When you invoke `swift run osaurus-evals`
-directly, the CLI falls back to colocating the metallib at startup and logs a
-loud warning if the embedder is missing.
+`make app` / Xcode build, or `OSAURUS_MLX_METALLIB`) and confirm the bundled
+embedder is present. It's idempotent and a no-op once the metallib is in
+place. Skip it with `OSAURUS_EVALS_SKIP_PREP=1` (or run `make evals-prep`
+standalone). When you invoke `swift run osaurus-evals` directly, the CLI falls
+back to colocating the metallib at startup and logs a loud warning if the
+embedder is missing.
 
 The `CapabilityClaims` browser cases run against the built-in `browser_use`
 tool (the browser is now a native Osaurus capability; the `osaurus.browser`

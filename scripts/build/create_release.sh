@@ -39,6 +39,7 @@ if gh release view "${VERSION}" --repo "${PUBLIC_REPO}" >/dev/null 2>&1; then
   echo "Release ${VERSION} already exists; refreshing notes and re-uploading assets."
   gh release edit "${VERSION}" \
     --repo "${PUBLIC_REPO}" \
+    --draft=false \
     --notes-file RELEASE_NOTES.md \
     "${RELEASE_FLAGS[@]}"
   gh release upload "${VERSION}" \

@@ -30,6 +30,32 @@ struct ChatTurnGenerationControls: Sendable, Equatable, Codable {
         overrides.reasoningEffort ?? agentSettings?.reasoningEffort ?? modelOptions?["reasoningEffort"]?.stringValue
     }
 
+    /// Derive the readout from the same frozen generation composition as dispatch.
+    func reasoningOptions(for modelID: String) -> [String: ModelOptionValue] {
+        var request = ResponsesInferenceRequest(model: modelID, input: [])
+        apply(to: &request)
+        return AgentReasoningPolicy.applyingExplicitReasoning(
+            request.generation, to: modelOptions ?? [:], modelID: modelID)
+    }
+
+    /// A steer shares the active logical run's requests. Never consume a
+    /// submission whose captured defaults need a different generation request.
+    /// Ignore only the transient cold-capability-resolution bookkeeping.
+    func matchesForSteering(_ active: ChatTurnGenerationControls) -> Bool {
+        var pending = self
+        var active = active
+        pending.hasResolvedReasoning = false
+        active.hasResolvedReasoning = false
+        // Compare serialized prompt values byte-for-byte: Swift String equality
+        // considers NFC/NFD equivalent, but a tokenizer need not do so. Sorted
+        // keys make dictionary insertion order irrelevant without normalizing text.
+        let encoder = JSONEncoder.osaurusCanonical(prettyPrinted: false)
+        guard let pendingBytes = try? encoder.encode(pending),
+            let activeBytes = try? encoder.encode(active)
+        else { return false }
+        return pendingBytes == activeBytes
+    }
+
     static func capture(
         activeModelOptions: [String: ModelOptionValue]
     ) -> ChatTurnGenerationControls {
@@ -99,6 +125,7 @@ struct ChatTurnGenerationControls: Sendable, Equatable, Codable {
         if let enabled = overrides.enableThinking { request.enable_thinking = enabled }
         request.chat_template_kwargs = overrides.templateKwargs ?? agentSettings?.templateKwargs
         request.inferenceContext.agentReasoningDefaults = AgentReasoningDefaults(settings: agentSettings, overrides: overrides)
+        request.inferenceContext.speculativeDecoding = agentSettings?.speculativeDecoding
     }
 
     func apply(to request: inout ResponsesInferenceRequest) {
@@ -113,6 +140,7 @@ struct ChatTurnGenerationControls: Sendable, Equatable, Codable {
         agentSettings?.apply(to: &request.generation)
         overrides.apply(to: &request)
         request.context.agentReasoningDefaults = AgentReasoningDefaults(settings: agentSettings, overrides: overrides)
+        request.context.speculativeDecoding = agentSettings?.speculativeDecoding
     }
 }
 

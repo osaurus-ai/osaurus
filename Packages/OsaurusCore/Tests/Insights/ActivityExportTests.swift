@@ -168,6 +168,33 @@ struct ActivityExportTests {
         }
     }
 
+    @Test func csvExportsCaptureStatusWithoutBodyContent() throws {
+        let row = RequestLog(
+            source: .chatUI,
+            method: "POST",
+            path: "/chat/completions",
+            statusCode: 200,
+            durationMs: 1,
+            requestBody: "private",
+            bodyTruncation: ["requestBody": true, "responseBody": false]
+        )
+        let data = try ActivityExportService.render(
+            logs: [row],
+            options: .init(format: .csv, includeContent: false),
+            filterDescription: "test",
+            verification: nil
+        )
+        let text = String(decoding: data, as: UTF8.self)
+        let columns = parseCSVRow(try #require(text.split(separator: "\n").last.map(String.init)))
+        let header = ActivityExportService.csvColumns
+        let statuses = ["request_body_truncated", "response_body_truncated",
+            "wire_request_body_truncated", "wire_response_body_truncated"].map {
+                columns[header.firstIndex(of: $0)!]
+            }
+        #expect(statuses == ["true", "false", "unknown", "unknown"])
+        #expect(!text.contains("private"))
+    }
+
     @Test func csvEscapeQuotesCommasQuotesAndNewlines() {
         #expect(ActivityExportService.csvEscape("plain") == "plain")
         #expect(ActivityExportService.csvEscape("a,b") == "\"a,b\"")

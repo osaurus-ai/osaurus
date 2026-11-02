@@ -288,6 +288,19 @@ public enum SettingsSearchIndex {
             keywords: ["clipboard", "copied text", "grab selection", "paste context"]
         ),
         .init(
+            id: "settings.chat.collapseLongPastes",
+            tab: .chat,
+            section: "Behavior",
+            title: "Collapse Long Pastes",
+            keywords: [
+                "paste", "pasted", "pasted content", "long paste", "large paste",
+                "paste chip", "paste attachment", "collapse", "dictation",
+                "typewhisper", "insert as text", "composer", "input",
+            ],
+            disambiguation:
+                "Controls what happens when you paste into the message box. Clipboard Monitoring is separate and only offers text you copied elsewhere."
+        ),
+        .init(
             id: "settings.chat.keepAwakeForAgentRuns",
             tab: .chat,
             section: "Agent Sessions",
@@ -343,9 +356,10 @@ public enum SettingsSearchIndex {
             keywords: [
                 "compaction", "compact", "summarize", "context", "summary model",
                 "auto compact", "compact conversation", "fallback", "context full",
+                "summary thinking off", "empty summary", "truncated summary",
             ],
             disambiguation:
-                "Which model writes the summary. Unset means the chat's current model. Compaction runs automatically near the limit and from the Compact button in the context budget popover."
+                "Which model writes the summary. Unset means the chat's current model. Summary requests use Thinking Off when supported; chat and agent settings are unchanged. Compaction runs automatically near the limit and from the Compact button in the context budget popover."
         ),
         .init(
             id: "settings.orchestrator.temperature",
@@ -1891,6 +1905,15 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.showResponseMetrics",
+            tab: .agents,
+            section: "Advanced Settings",
+            title: "Show Response Metrics",
+            keywords: ["tokenizer", "token count", "tokens per second", "tok/s", "response statistics", "agent display"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings. Shows existing measured response statistics in that agent's chats.",
+            declarativeSection: "agents"
+        ),
+        .init(
             id: "agents.generation.temperature",
             tab: .agents,
             section: "Generation Overrides",
@@ -1975,8 +1998,8 @@ public enum SettingsSearchIndex {
             id: "agents.generation.stop",
             tab: .agents,
             section: "Generation Overrides",
-            title: "Stop sequences (JSON array)",
-            keywords: ["agent stop sequences (json array)", "per-agent generation", "agent defaults"],
+            title: "Stop sequences",
+            keywords: ["agent stop sequences (json array)", "per-agent generation", "agent defaults", "custom stop strings", "stop chips", "empty array"],
             disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
             declarativeSection: "agents"
         ),
@@ -1999,11 +2022,20 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.generation.speculativeDecoding",
+            tab: .agents,
+            section: "Generation Overrides",
+            title: "Speculative Decoding",
+            keywords: ["agent native mtp", "adaptive on off ar", "dspark", "dflash", "drafter", "per-agent speculation"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Eligible local bundles only. Inherit uses Server settings; Off uses AR; On requests adaptive drafting for this agent without changing shared defaults.",
+            declarativeSection: "agents"
+        ),
+        .init(
             id: "agents.generation.templateKwargs",
             tab: .agents,
             section: "Generation Overrides",
             title: "Template parameters (JSON)",
-            keywords: ["agent template parameters (json)", "per-agent generation", "agent defaults"],
+            keywords: ["agent template parameters (json)", "per-agent generation", "agent defaults", "custom template variables", "advanced chat template parameters", "empty object"],
             disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
             declarativeSection: "agents"
         ),

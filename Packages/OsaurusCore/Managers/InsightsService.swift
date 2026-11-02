@@ -536,13 +536,6 @@ struct ConnectionActivitySummary: Equatable {
 // MARK: - Nonisolated Logging Interface
 
 extension InsightsService {
-    /// Maximum stored body size (256 KB) to cap ring buffer memory usage.
-    /// Sized to fit realistic chat completion requests (long system prompts,
-    /// tool definitions, multi-turn history) without truncation in the
-    /// common case while still bounding the 500-entry ring buffer to a few
-    /// hundred MB worst-case.
-    private nonisolated static let maxBodySize = 262_144
-
     /// Defense-in-depth credential redactors run on every logged body so a
     /// future caller that forgets to scrub a `/pair` response (or any other
     /// shape that carries an `osk-v1` token) still does not leak the key into
@@ -639,18 +632,20 @@ extension InsightsService {
         return redacted
     }
 
-    private nonisolated static func truncateBody(_ body: String?) -> String? {
+    private nonisolated static func truncateBody(
+        _ body: String?,
+        field: String,
+        upstreamTruncated: Bool? = false,
+        status: inout [String: Bool]
+    ) -> String? {
         guard let body else { return nil }
         let scrubbed = redactCredentials(body)
-        guard scrubbed.count > maxBodySize else { return scrubbed }
-        // Surface the original size so a user looking at a clipped body in
-        // the detail pane knows whether they're missing 1 KB or 1 MB.
-        let originalBytes = scrubbed.utf8.count
-        let formatted = ByteCountFormatter.string(
-            fromByteCount: Int64(originalBytes),
-            countStyle: .binary
-        )
-        return String(scrubbed.prefix(maxBodySize)) + "\n…[truncated, original \(formatted)]"
+        if scrubbed.utf8.count > InsightsBodyCapture.maximumBytes || upstreamTruncated == true {
+            status[field] = true
+        } else if upstreamTruncated == false {
+            status[field] = false
+        }
+        return InsightsBodyCapture.truncate(scrubbed)
     }
 
     /// Thread-safe logging from non-main-actor contexts
@@ -669,6 +664,8 @@ extension InsightsService {
         model: String? = nil,
         inputTokens: Int? = nil,
         outputTokens: Int? = nil,
+        inputTokenSource: RequestLog.TokenCountSource? = nil,
+        outputTokenSource: RequestLog.TokenCountSource? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
@@ -676,6 +673,7 @@ extension InsightsService {
         errorMessage: String? = nil,
         wireRequestBody: Data? = nil,
         wireResponseBody: Data? = nil,
+        wireResponseTruncated: Bool? = nil,
         connection: RequestConnectionInfo? = nil,
         category: ActivityCategory? = nil,
         locality: DataLocality? = nil,
@@ -685,8 +683,9 @@ extension InsightsService {
         sessionId: UUID? = nil,
         clientIP: String? = nil
     ) {
-        let trimmedRequest = truncateBody(requestBody)
-        let trimmedResponse = truncateBody(responseBody)
+        var bodyTruncation: [String: Bool] = [:]
+        let trimmedRequest = truncateBody(requestBody, field: "requestBody", status: &bodyTruncation)
+        let trimmedResponse = truncateBody(responseBody, field: "responseBody", status: &bodyTruncation)
         // Byte counts default to the wire body sizes when the caller didn't
         // measure them; the egress card sums these per destination.
         var resolvedEgress = egress
@@ -705,12 +704,18 @@ extension InsightsService {
         // hop, so insights logging stays off the critical streaming
         // thread.
         let trimmedWireRequest = truncateBody(
-            wireRequestBody.flatMap { String(data: $0, encoding: .utf8) }
+            wireRequestBody.map { String(decoding: $0, as: UTF8.self) },
+            field: "wireRequestBody",
+            status: &bodyTruncation
         )
         let trimmedWireResponse = truncateBody(
-            wireResponseBody.flatMap { String(data: $0, encoding: .utf8) }
+            wireResponseBody.map { String(decoding: $0, as: UTF8.self) },
+            field: "wireResponseBody",
+            upstreamTruncated: wireResponseTruncated,
+            status: &bodyTruncation
         )
 
+        let captureStatus = bodyTruncation.isEmpty ? nil : bodyTruncation
         Task { @MainActor in
             let log = RequestLog(
                 source: source,
@@ -727,6 +732,8 @@ extension InsightsService {
                 model: model,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens,
+                inputTokenSource: inputTokenSource,
+                outputTokenSource: outputTokenSource,
                 temperature: temperature,
                 maxTokens: maxTokens,
                 toolCalls: toolCalls,
@@ -734,6 +741,7 @@ extension InsightsService {
                 errorMessage: errorMessage,
                 wireRequestBody: trimmedWireRequest,
                 wireResponseBody: trimmedWireResponse,
+                bodyTruncation: captureStatus,
                 connection: connection,
                 category: category,
                 locality: locality,
@@ -825,6 +833,8 @@ extension InsightsService {
         model: String,
         inputTokens: Int?,
         outputTokens: Int?,
+        inputTokenSource: RequestLog.TokenCountSource? = nil,
+        outputTokenSource: RequestLog.TokenCountSource? = nil,
         durationMs: Double,
         temperature: Float?,
         maxTokens: Int,
@@ -835,6 +845,7 @@ extension InsightsService {
         responseBody: String? = nil,
         wireRequestBody: Data? = nil,
         wireResponseBody: Data? = nil,
+        wireResponseTruncated: Bool? = nil,
         connection: RequestConnectionInfo? = nil,
         path: String = "/chat/completions",
         egress: EgressInfo? = nil,
@@ -872,6 +883,8 @@ extension InsightsService {
             model: model,
             inputTokens: inputTokens,
             outputTokens: outputTokens,
+            inputTokenSource: inputTokenSource,
+            outputTokenSource: outputTokenSource,
             temperature: temperature,
             maxTokens: maxTokens,
             toolCalls: toolCalls,
@@ -879,6 +892,7 @@ extension InsightsService {
             errorMessage: errorMessage,
             wireRequestBody: wireRequestBody,
             wireResponseBody: wireResponseBody,
+            wireResponseTruncated: wireResponseTruncated,
             connection: connection,
             category: path.contains("compaction") ? .compaction : .inference,
             egress: resolvedEgress,
@@ -985,6 +999,8 @@ extension InsightsService {
         model: String? = nil,
         tokensInput: Int? = nil,
         tokensOutput: Int? = nil,
+        inputTokenSource: RequestLog.TokenCountSource? = nil,
+        outputTokenSource: RequestLog.TokenCountSource? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
@@ -1027,6 +1043,8 @@ extension InsightsService {
             model: model,
             inputTokens: tokensInput,
             outputTokens: tokensOutput,
+            inputTokenSource: inputTokenSource,
+            outputTokenSource: outputTokenSource,
             temperature: temperature,
             maxTokens: maxTokens,
             toolCalls: toolCalls,

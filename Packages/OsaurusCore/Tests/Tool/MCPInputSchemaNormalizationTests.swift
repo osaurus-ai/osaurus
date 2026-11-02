@@ -129,8 +129,8 @@ struct MCPInputSchemaNormalizationTests {
         let function = try #require(spec["function"] as? [String: any Sendable])
         let parameters = try #require(function["parameters"] as? [String: any Sendable])
         #expect((parameters["properties"] as? [String: any Sendable])?.isEmpty == true)
-        // The local template adapter intentionally omits boolean
-        // additionalProperties for Gemma; validation keeps the original schema.
+        // Rendering and validation both retain the original constraint.
+        #expect(parameters["additionalProperties"] as? Bool == false)
         guard case .object(let validationSchema)? = wrapper.parameters else {
             Issue.record("missing validation schema")
             return

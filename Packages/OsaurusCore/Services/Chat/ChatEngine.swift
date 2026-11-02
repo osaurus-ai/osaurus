@@ -188,11 +188,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         service: ModelService,
         effectiveModel: String
     ) async throws {
-        guard let defaults = request.context.agentReasoningDefaults else { return }
+        let defaults = request.context.agentReasoningDefaults
+        guard defaults != nil || request.context.speculativeDecoding != nil else { return }
         guard !request.context.runAsRemoteAgent else {
             throw ChatTurnOverrides.ValidationError.invalid(
                 "Configure saved reasoning defaults on the remote agent's host; its effective model is owned there.")
         }
+        if request.context.speculativeDecoding != nil, !(service is MLXService) {
+            throw ChatTurnOverrides.ValidationError.invalid(
+                "Saved speculative decoding controls require a local model on this host. Choose Inherit for a remote model.")
+        }
+        // Speculation eligibility is re-evaluated by the real load/admission plan. Do not rescan
+        // safetensor headers on every tool iteration just to validate saved reasoning values.
+        guard let defaults else { return }
         let choices = await agentReasoningChoicesProvider(effectiveModel, service is MLXService)
         try choices.validate(settings: defaults.settings)
     }
@@ -299,25 +307,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             modelOptions["disableThinking"] = .bool(!agentEnableThinking)
         }
 
-        if isHy3 {
-            if let requestReasoningEffort {
-                modelOptions["reasoningEffort"] = .string(
-                    Hy3ReasoningProfile.normalizedEffort(requestReasoningEffort)
-                )
-            } else if modelOptions["reasoningEffort"] == nil,
-                let enableThinking = explicitEnableThinking
-            {
-                modelOptions["reasoningEffort"] = .string(enableThinking ? "high" : "no_think")
-            }
-            modelOptions.removeValue(forKey: "disableThinking")
-        } else {
-            if let enableThinking = explicitEnableThinking {
-                modelOptions["disableThinking"] = .bool(!enableThinking)
-            }
-            if let requestReasoningEffort {
-                modelOptions["reasoningEffort"] = .string(requestReasoningEffort)
-            }
-        }
+        modelOptions = AgentReasoningPolicy.applyingExplicitReasoning(
+            request.generation, to: modelOptions, modelID: request.model)
         try DeclaredReasoningEffort.validateModeRequest(modelId: request.model, options: modelOptions)
         ComputerUseTraceLog.recordEffectiveDispatch(
             request: request,
@@ -345,6 +336,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             jsonSchema: jsonSchema,
             modelOptions: modelOptions,
             templateKwargs: request.generation.templateKwargs,
+            speculativeDecoding: request.context.speculativeDecoding,
             sessionId: request.sessionID,
             activitySource: activitySource,
             ttftTrace: trace,
@@ -799,6 +791,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         created: Int,
         effectiveModel: String,
         inputTokens: Int,
+        inputTokenSource: RequestLog.TokenCountSource? = nil,
         startTime: Date,
         inferenceSource: InferenceSource,
         temperature: Float?,
@@ -889,6 +882,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 model: effectiveModel,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens,
+                inputTokenSource: inputTokenSource,
+                outputTokenSource: completionTokens == nil ? .estimated : .reported,
                 durationMs: durationMs,
                 temperature: temperature,
                 maxTokens: maxTokens,
@@ -1726,6 +1721,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     model: model,
                     inputTokens: authoritativeInputTokens,
                     outputTokens: authoritativeOutputTokens,
+                    inputTokenSource: .reported,
+                    outputTokenSource: .reported,
                     durationMs: durationMs,
                     temperature: temperature,
                     maxTokens: maxTokens,
@@ -1743,6 +1740,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                         parsedToolNames: parsedToolNames,
                         secretToolWasExposed: secretToolWasExposed
                     ),
+                    wireResponseTruncated: wireSnapshot?.truncated,
                     connection: destination.connection,
                     path: destination.path,
                     privacy: wireProbe?.privacyOutcome,
@@ -1855,6 +1853,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             // chunk) instead of an empty 200.
             let mlxErrorEpoch = MLXErrorRecovery.errorSequence()
             var resolvedInputTokens = inputTokens
+            var resolvedInputTokenSource: RequestLog.TokenCountSource = .estimated
             // If tools were provided and the service supports them, use the message-based API
             if Self.allowsLocalToolDispatch(request.tool_choice),
                 let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService
@@ -1889,10 +1888,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                         try Task.checkCancellation()
                         if let count = StreamingInputTokenHint.decode(delta) {
                             resolvedInputTokens = count
+                            resolvedInputTokenSource = .reported
                             continue
                         }
                         if let stats = StreamingStatsHint.decode(delta) {
-                            resolvedInputTokens = stats.inputTokenCount ?? resolvedInputTokens
+                            if let count = stats.inputTokenCount {
+                                resolvedInputTokens = count
+                                resolvedInputTokenSource = .reported
+                            }
                             toolStepTokensPerSecond = stats.tokensPerSecond
                             toolStepTokenCount = stats.tokenCount
                             toolStepCachedInputTokens =
@@ -1969,6 +1972,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                             model: loggedModel,
                             inputTokens: resolvedInputTokens,
                             outputTokens: outputTokens,
+                            inputTokenSource: resolvedInputTokenSource,
+                            outputTokenSource: toolStepTokenCount == nil ? .estimated : .reported,
                             durationMs: durationMs,
                             temperature: temperature,
                             maxTokens: maxTokens,
@@ -1991,6 +1996,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                         created: created,
                         effectiveModel: effectiveModel,
                         inputTokens: resolvedInputTokens,
+                        inputTokenSource: resolvedInputTokenSource,
                         startTime: startTime,
                         inferenceSource: loggedSource,
                         temperature: temperature,
@@ -2017,6 +2023,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                         created: created,
                         effectiveModel: effectiveModel,
                         inputTokens: resolvedInputTokens,
+                        inputTokenSource: resolvedInputTokenSource,
                         startTime: startTime,
                         inferenceSource: loggedSource,
                         temperature: temperature,
@@ -2060,10 +2067,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 try Task.checkCancellation()
                 if let count = StreamingInputTokenHint.decode(delta) {
                     resolvedInputTokens = count
+                    resolvedInputTokenSource = .reported
                     continue
                 }
                 if let stats = StreamingStatsHint.decode(delta) {
-                    resolvedInputTokens = stats.inputTokenCount ?? resolvedInputTokens
+                    if let count = stats.inputTokenCount {
+                        resolvedInputTokens = count
+                        resolvedInputTokenSource = .reported
+                    }
                     authoritativeOutputTokens = stats.tokenCount
                     authoritativeTokensPerSecond = stats.tokensPerSecond
                     authoritativeCachedInputTokens =
@@ -2085,7 +2096,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             {
                 throw MLXForwardPassError(message: mlxErr)
             }
-            let outputTokens = authoritativeOutputTokens ?? TokenEstimator.estimate(text)
+            let outputTokens = authoritativeOutputTokens ?? TokenEstimator.estimate(text + reasoning)
             let choice = ChatChoice(
                 index: 0,
                 message: ChatMessage(
@@ -2126,6 +2137,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     model: loggedModel,
                     inputTokens: resolvedInputTokens,
                     outputTokens: outputTokens,
+                    inputTokenSource: resolvedInputTokenSource,
+                    outputTokenSource: authoritativeOutputTokens == nil ? .estimated : .reported,
                     durationMs: durationMs,
                     temperature: temperature,
                     maxTokens: maxTokens,

@@ -345,7 +345,7 @@ let package = Package(
         // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "cac3a4357b6e55d1b473a6d048d0c0764b79c0fb"
+            revision: "a0990f0bd8ec68449054dbdee9b770e1d30a0d90"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -516,7 +516,9 @@ let package = Package(
             ],
             path: ".",
             exclude: ["Tests", "SQLCipher", "ObjCSupport", "PluginHost"],
-            resources: [.process("Resources")],
+            // `.copy` keeps the embedding model's folder intact; `.process`
+            // would flatten its config.json/tokenizer.json into the bundle root.
+            resources: [.process("Resources"), .copy("EmbeddingModels/potion-base-4M")],
             swiftSettings: [
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
                 // SDK. Enable this flag when building against that SDK (or newer) to

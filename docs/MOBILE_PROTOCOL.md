@@ -449,7 +449,8 @@ the tunnel that authenticated that address. No client auth at the relay.
 Remote requests to `/agents/{…}/run` and `/agents/{…}/dispatch`, and every
 owner-only request that changes something (any method but `GET`: creating,
 editing or deleting an agent, its tools, answering an approval or a privacy
-review, editing or deleting a chat, stopping a run), that arrive in plaintext
+review, editing or deleting a chat, stopping a run, loading a call's model
+with `POST /agents/{id}/warm`), that arrive in plaintext
 are refused with `426`. So is every owner route, reads included, when a
 remote caller presents an owner (master-scoped) key outside the channel
 (`HTTPHandler.ownerChannelRoutes`; see SECURE_CHANNEL.md). Loopback callers
@@ -582,17 +583,44 @@ behaves as before.
 
 ### 6.5 Voice-call turns
 
-The phone speaks a reply aloud during a voice call, so a turn of a call
-**SHOULD** carry `"osaurus_voice_call": true` in the §6.3 body. The Mac then
-adds a note asking for a short, plain spoken answer (a few sentences, no
-markdown or lists) to the end of the latest user message, after the
-conversation, so the system prompt and history stay the same as the chat
-around the call and a local model's prompt cache keeps them. The note is
-never saved: a continued chat (§14.5) stores the turn without it.
+The phone speaks a reply aloud during a voice call. It asks for a short,
+plain spoken answer itself, with a fixed system message after the agent's
+own (the same every turn, so a local model's prompt cache keeps it and the
+history after it). A Mac that lists `"voice_call_context"` in `features`
+(§14.5) also takes `"osaurus_voice_call": true` in the §6.3 body, and a
+phone **SHOULD** send it on every turn of a call to such a Mac. It adds
+nothing to the messages; the Mac then:
+
+- **keeps the run's local model loaded** for at least 3.5 minutes after the
+  turn, instead of the usual 30 seconds (unless the user chose to unload at
+  once or never): the phone speaks each reply before the next turn comes,
+  and a reload cost every turn about 2 seconds;
+- **keeps searches small**: `web_search` returns at most 5 results and no
+  `next_action` pointing at `search_and_extract`; `search_and_extract`
+  returns 3 results, extracts 1 page by default (2 at most) and keeps 4,000
+  characters of each. A local model reads every token a tool returns before
+  it can answer, about 1,000 a second for a 9B model.
 
 Owner callers only (loopback or a master-scoped key); for anyone else the
-field is ignored. A Mac too old for it ignores the field, and the reply is
-as long as in the chat.
+field is ignored. Macs before `voice_call_context` added a note to the
+latest user message for this field instead, which cost a local model the
+last exchange again on the next turn: a phone sends the field only to a Mac
+that lists the feature.
+
+`POST /agents/{id}/warm` with `{"model": "…"}` (optional; the agent's own
+model without it) loads that local model as a call connects, so its first
+turn doesn't wait on the load, and keeps it loaded as a call's turn does. It
+answers once loaded: `{"loaded":true,"already":false}`, or `"already":true`
+when it was in memory. A cloud model, or an agent with no model set, has
+nothing to load: `{"loaded":false}`. `404 agent_not_found`, `500 load_failed`. Owner-only,
+and over the Secure Channel only (§6.2), as it changes what the Mac holds in
+memory.
+
+A run step that has to load its local model first says so on the stream, in
+a chunk with empty `choices`: `{"osaurus_model_load":{"state":"loading",
+"model":"…"}}`, then `"state":"ready"` once it is loaded, before the step's
+first token. A client can say why the reply hasn't started (the phone's
+call says "Loading Local Chat Model").
 
 A review read out mid-call is slow to answer, so when the call's model has
 `privacy` set (§12.1), the phone asks as the call starts whether to keep
@@ -1453,14 +1481,52 @@ Owner-only.
 
 ### 14.12 `GET /artifacts/{context id}/{filename}`
 
-The bytes of an image an agent shared, named as its `share_artifact` tool
+The bytes of a file an agent shared, named as its `share_artifact` tool
 result names it (`context_id`, `filename` in the marker's metadata), so a
-client can show it while the run is still going, before the chat is saved.
-`Content-Type` follows the file's extension. Only images in
-`~/.osaurus/artifacts/` are served: `404 artifact_not_found` for any other
-file, a missing one, a directory, or a name `share_artifact` would not have
-written. Owner-only, and over the Secure Channel only (426 otherwise),
+client can show an image while the run is still going, before the chat is
+saved, or open a page or document shared by path. `Content-Type` follows
+the file's extension. Only files in `~/.osaurus/artifacts/` are served:
+`404 artifact_not_found` for a file outside it, a missing one, a directory,
+or a name `share_artifact` would not have written. `413 artifact_too_large` for a file over 100 MB:
+the body goes out whole. Owner-only, and over the Secure Channel only (426 otherwise),
 though it is a read.
+
+### 14.13 `GET /sessions/{id}/context?agent_id=…&model=…`
+
+The Mac composer's context ring for a chat: how much of the model's window
+the next send would take, from the chat's saved history (a compaction
+summary standing in for the turns it covers), the agent's system prompt,
+tools and memory. What the user is still typing isn't counted. A chat the
+Mac has no history for yet is priced from the prompt, tools and memory
+alone. `model` is the chat's picker model; without it, the agent's.
+
+```json
+{"tokens":12400,"usable_tokens":98304,"max_tokens":131072,
+ "ratio":0.126,"near_limit":false,"hard_overflow":false,
+ "window_source":"providerMetadata",
+ "context":[{"id":"persona","label":"Persona","tokens":820,"tint":"purple"},
+            {"id":"tools","label":"Tools","tokens":6100,"tint":"orange"}],
+ "messages":[{"id":"conversation","label":"Conversation","tokens":5480,"tint":"green"}]}
+```
+
+`usable_tokens` is the budget the Mac trims history against (the window
+less a safety margin) and the ring's denominator; `ratio` is `tokens` over
+it. Both, with `max_tokens`, are absent when the model's window is
+unknown. `near_limit` is set at 85% of the budget: older messages will be
+compacted. `hard_overflow` when the prompt, tools and memory alone don't
+fit.
+
+`context` and `messages` are the rows of the Mac chip's breakdown, labels
+as the Mac shows them; the client groups every `context` row but
+`memory`, `screenContext` and `tools` under "System Prompt", as the Mac
+does. `window_source` says where the window came from (`foundationFixed`,
+`bundleMetadata`, `providerMetadata`, `metadataFallback`, `userCap`).
+`auto_disabled` (`tools`, `memory`, `model`, `context_length`) is set
+when the model's window was too small for tools or memory.
+
+`400 bad_request` without a session id or `agent_id`. A Mac that serves
+it lists `"context_usage"` in `features` (§14.5). Owner-only, and over the
+Secure Channel only (426 otherwise), though it is a read.
 
 ---
 

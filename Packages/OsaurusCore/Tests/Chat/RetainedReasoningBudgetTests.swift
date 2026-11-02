@@ -37,7 +37,7 @@ struct RetainedReasoningBudgetTests {
             ChatMessage(role: "assistant", content: "done", tool_calls: nil, tool_call_id: nil,
                 reasoning_content: reasoning)])
         request.generation.enableThinking = false
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX(request.input)
+        let mapped = try ModelRuntime.makeMLXChatMessages(request.input)
         try #require(mapped.count == 1)
         #expect(mapped[0].reasoningContent == reasoning)
         #expect(ContextBudgetManager.estimateTokens(for: request.input) == 2_005)

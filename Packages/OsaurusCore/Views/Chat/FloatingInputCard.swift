@@ -98,6 +98,10 @@ struct FloatingInputCard: View {
     /// composer's NSTextView.
     @AppStorage(ComposerSpellCheckSetting.defaultsKey)
     private var spellCheckEnabled: Bool = ComposerSpellCheckSetting.defaultValue
+    /// Settings ▸ Conversation ▸ Collapse Long Pastes. When off, pastes of
+    /// any size go straight into the composer as text.
+    @AppStorage(ComposerPasteCollapseSetting.defaultsKey)
+    private var collapseLongPastes: Bool = ComposerPasteCollapseSetting.defaultValue
     /// Set after a manual model change in a non-empty conversation. The
     /// warning is advisory: the user may keep the selected model or start a
     /// clean chat whose first prefix is built for it.
@@ -299,6 +303,7 @@ struct FloatingInputCard: View {
     /// file, not published state, so a change there would not redraw the
     /// chip. Bumped on `.agentUpdated`; the harness lookups read it.
     @State private var harnessConfigRevision = 0
+    @State private var reasoningCapabilityRevision = 0
     @ObservedObject private var recentFolders = RecentFoldersStore.shared
     // Deliberately NOT `@ObservedObject`: sandbox provisioning publishes
     // per-progress-tick during runtime downloads and the clipboard service
@@ -2519,7 +2524,7 @@ extension FloatingInputCard {
                     "Speculative decoding is disabled for this bundle because its MTP head is not safe for production use."
                 )
                 : L(
-                    "Off uses ordinary autoregressive decoding. On uses a compatible bundled or selected DFlash 2 drafter, or adaptive native MTP when supported. Ineligible requests continue with ordinary decoding; see Speculative Decoding settings for the resolved reason. Sampling stays unchanged."
+                    "Off uses ordinary autoregressive decoding. On uses a compatible bundled drafter (DSpark, Uno or DFlash 2), a selected DFlash 2 drafter, or adaptive native MTP when supported. Ineligible requests continue with ordinary decoding; see Speculative Decoding settings for the resolved reason. Sampling stays unchanged."
                 )
         )
     }
@@ -2537,6 +2542,14 @@ extension FloatingInputCard {
     /// Depth-only changes apply to the next request; changes that require a
     /// different loaded model graph follow the guarded reload lifecycle.
     private func applyNativeMTPSegment(_ segment: String?) {
+        let targetAgentID = effectiveAgentId
+        if agentManager.effectiveGenerationSettings(for: targetAgentID)?.speculativeDecoding != nil,
+            let mode = NativeMTPSelectionDefault.mode(for: segment)
+        {
+            agentManager.updateSpeculativeDecoding(
+                mode == .familyDefault ? nil : mode != .off, for: targetAgentID)
+            return
+        }
         Task { @MainActor in
             // Read the latest settings when the task executes; only an
             // explicit control action writes MTP. Selection is read-only.
@@ -2646,6 +2659,50 @@ extension FloatingInputCard {
         return declared
     }
 
+    /// Presentation uses the actual agent/request precedence without changing model defaults.
+    private var effectiveReasoningOptions: [String: ModelOptionValue] {
+        guard let model = selectedModel else { return activeModelOptions }
+        var controls = ChatTurnGenerationControls.capture(activeModelOptions: activeModelOptions)
+        controls.agentSettings = agentManager.effectiveGenerationSettings(for: effectiveAgentId)
+        return controls.reasoningOptions(for: model)
+    }
+
+    private var hasAgentReasoningOverride: Bool {
+        agentManager.effectiveGenerationSettings(for: effectiveAgentId)?.hasReasoningOverride == true
+    }
+
+    private var reasoningSelectionNeedsChoice: Bool {
+        _ = reasoningCapabilityRevision
+        guard let model = selectedModel, !isRemoteAgentRun,
+            let settings = agentManager.effectiveGenerationSettings(for: effectiveAgentId),
+            settings.hasReasoningOverride
+        else { return false }
+        let capability: LocalReasoningCapability.Capability
+        if isSelectedModelLocal {
+            guard let resolved = LocalReasoningCapability.capabilityForPresentation(forModelId: model)
+            else { return false }
+            capability = resolved
+        } else {
+            capability = .none
+        }
+        let choices = AgentGenerationReasoningChoices.resolved(modelID: model,
+            localCapability: capability, efforts: inlineEffortCapabilities, options: activeProfileOptions)
+        return choices.reasoningIssue(settings: settings) != nil
+    }
+
+    private func refreshReasoningSelectionCapability() async {
+        guard let model = selectedModel, isSelectedModelLocal, !isRemoteAgentRun,
+            hasAgentReasoningOverride else { return }
+        _ = await LocalReasoningCapability.resolveForDispatch(modelId: model)
+        guard !Task.isCancelled, selectedModel == model else { return }
+        // Known non-reasoning models also need a repaint after a cold cache miss.
+        reasoningCapabilityRevision &+= 1
+    }
+
+    private var reasoningSelectionMessage: String? {
+        reasoningSelectionNeedsChoice ? L("Choose a supported reasoning setting.") : nil
+    }
+
     /// The reasoning suffix the model chip should display ("· Extra High",
     /// "· Instruct"): the explicit persisted choice, otherwise the
     /// catalog/profile default (display-only; an unset option sends no
@@ -2653,9 +2710,10 @@ extension FloatingInputCard {
     /// and static profiles with a segmented reasoning option.
     private var inlineReasoningSuffix: String? {
         guard let model = selectedModel else { return nil }
+        if reasoningSelectionNeedsChoice { return L("Choose reasoning") }
         return ModelProfileRegistry.inlineReasoningSuffixLabel(
             for: model,
-            values: activeModelOptions
+            values: effectiveReasoningOptions
         )
     }
 
@@ -2667,6 +2725,7 @@ extension FloatingInputCard {
     private var inlineThinkingEnabled: Bool? {
         guard let model = selectedModel,
             !isRemoteAgentRun,
+            !reasoningSelectionNeedsChoice,
             inlineReasoningSuffix == nil,
             let option = ModelProfileRegistry.profile(for: model)?.thinkingOption,
             activeProfileOptions.contains(where: { $0.id == option.id }),
@@ -2678,23 +2737,22 @@ extension FloatingInputCard {
     private var inlineThinkingUsesNativeDefault: Bool {
         guard let model = selectedModel, !isRemoteAgentRun else { return false }
         return LocalReasoningCapability.capability(forModelId: model).preservesOmittedThinking
-            && ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions) == nil
+            && ModelProfileRegistry.thinkingEnabled(for: model, values: effectiveReasoningOptions) == nil
     }
 
     /// Keep the chip and picker on the same policy as dispatch. In a local
-    /// tool-capable chat, an untouched toggleable model defaults to direct
-    /// answers; in ordinary no-tool chat, the bundle template still owns the
-    /// default. An explicit persisted UI choice wins in either context.
+    /// tool-capable chat, omitted controls preserve the bundle template default.
+    /// Explicit agent choices compose with the inherited model options.
     private func effectiveThinkingEnabled(for model: String) -> Bool {
         AgentReasoningPolicy.effectiveEnableThinkingForPresentation(
             isAgentOrToolRequest: appliesAgentReasoningDefault,
-            modelOptions: activeModelOptions,
+            modelOptions: effectiveReasoningOptions,
             capability: LocalReasoningCapability.capability(forModelId: model)
         )
     }
 
     private func thinkingPresentationIsReady(for model: String) -> Bool {
-        ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions) != nil
+        ModelProfileRegistry.thinkingEnabled(for: model, values: effectiveReasoningOptions) != nil
             || LocalReasoningCapability.capabilityForPresentation(forModelId: model) != nil
     }
 
@@ -3165,7 +3223,7 @@ extension FloatingInputCard {
         var details: [String] = []
         if let thinkingOn = inlineThinkingEnabled {
             if inlineThinkingUsesNativeDefault {
-                details.append([L("Thinking"), L("Default")].joined(separator: ": "))
+                details.append([L("thinking.mode.label"), L("Default")].joined(separator: ": "))
             } else {
                 details.append(thinkingOn ? L("Thinking on") : L("Thinking off"))
             }
@@ -3189,6 +3247,9 @@ extension FloatingInputCard {
             } else {
                 builtInModelChipLabel
             }
+        }
+        .task(id: "\(selectedModel ?? "")|\(hasAgentReasoningOverride)") {
+            await refreshReasoningSelectionCapability()
         }
         .accessibilityValue(Text(verbatim: modelSelectorDetails))
         // Chip-wide hover target: the 6px dot alone is too small to hover.
@@ -3358,7 +3419,7 @@ extension FloatingInputCard {
             options.append(mtpOption)
         }
         let thinking = modelPickerThinkingControl(for: model)
-        guard !options.isEmpty || thinking != nil else { return nil }
+        guard !options.isEmpty || thinking != nil || reasoningSelectionNeedsChoice else { return nil }
 
         // Display-only defaults: the catalog default for capability-enriched
         // effort, otherwise the static profile's defaults.
@@ -3373,21 +3434,24 @@ extension FloatingInputCard {
             defaults = ModelProfileRegistry.defaults(for: model)
         }
 
-        // MTP lives in GLOBAL server settings, not the per-model option store,
-        // because the depth is consumed when the model loads. Render it from
-        // there so the row cannot disagree with what the engine will do.
-        var values = ModelProfileRegistry.normalizedOptions(for: model, persisted: activeModelOptions)
+        // Agent overrides win over the inherited Server mode, just as on dispatch.
+        // Neither source belongs in the per-model option store.
+        var values = ModelProfileRegistry.normalizedOptions(for: model, persisted: effectiveReasoningOptions)
         var displayDefaults = defaults
         if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
             let identity = Self.mtpIdentity(model)
             let mode = ServerController.runtimeSettingsForConfigureTool().settings.mtp.mode
             let familyDefault = nativeMTPFamilyDefaultOnModels.contains(identity) ? "auto" : "off"
-            let shown = mode == .familyDefault ? familyDefault : nativeMTPSelection
+            let inherited = mode == .familyDefault ? familyDefault : nativeMTPSelection
+            let shown = agentManager.effectiveGenerationSettings(for: effectiveAgentId)?
+                .speculativeDecoding.map { $0 ? "auto" : "off" } ?? inherited
             values[Self.nativeMTPOptionID] = .string(
                 nativeMTPManuallyBlockedModels.contains(identity) ? "off" : shown
             )
-            // The default this bundle gets without a user choice (Flash-Next: On).
-            displayDefaults[Self.nativeMTPOptionID] = .string(familyDefault)
+            // Reset removes an agent override; otherwise it restores the bundle policy.
+            let hasAgentOverride = agentManager.effectiveGenerationSettings(for: effectiveAgentId)?
+                .speculativeDecoding != nil
+            displayDefaults[Self.nativeMTPOptionID] = .string(hasAgentOverride ? inherited : familyDefault)
         }
 
         return ModelPickerOptionsControl(
@@ -3397,8 +3461,8 @@ extension FloatingInputCard {
             values: values,
             defaults: displayDefaults,
             onChange: { optionId, newValue in
-                // Routed to server settings, NOT ModelOptionsStore: writing it
-                // per-model would persist a value the load path never reads.
+                // Existing agent overrides stay agent-scoped; inheritance retains the Server path.
+                // Neither is persisted to ModelOptionsStore.
                 if optionId == Self.nativeMTPOptionID {
                     DispatchQueue.main.async {
                         applyNativeMTPSegment(newValue?.stringValue)
@@ -3412,6 +3476,11 @@ extension FloatingInputCard {
                 // crashes NSPopover.
                 DispatchQueue.main.async {
                     guard selectedModel == model else { return }
+                    if optionId == "reasoningEffort", hasAgentReasoningOverride {
+                        agentManager.updateReasoning(
+                            enableThinking: nil, effort: newValue?.stringValue, for: effectiveAgentId)
+                        return
+                    }
                     var updated = activeModelOptions
                     if optionId == "reasoningEffort" {
                         updated.removeValue(forKey: "disableThinking")
@@ -3426,7 +3495,8 @@ extension FloatingInputCard {
                         ModelOptionsStore.shared.saveOptions(updated, for: model)
                     }
                 }
-            }
+            },
+            reasoningValidationMessage: reasoningSelectionMessage
         )
     }
 
@@ -3448,11 +3518,11 @@ extension FloatingInputCard {
         else { return nil }
         let explicitEnabled = ModelProfileRegistry.thinkingEnabled(
             for: model,
-            values: activeModelOptions
+            values: effectiveReasoningOptions
         )
         return ModelPickerThinkingControl(
             isEnabled: effectiveThinkingEnabled(for: model),
-            isExplicit: explicitEnabled != nil,
+            isExplicit: explicitEnabled != nil || reasoningSelectionNeedsChoice,
             onSetEnabled: { enabled in
                 // Deferred write for the same reason as the generic option
                 // rows: the popover's anchor (the model chip) renders the
@@ -3462,7 +3532,8 @@ extension FloatingInputCard {
                     persistThinkingOverride(enabled, for: model)
                 }
             },
-            supportsUnspecifiedDefault: LocalReasoningCapability.capability(forModelId: model).preservesOmittedThinking
+            supportsUnspecifiedDefault: LocalReasoningCapability.capability(forModelId: model).preservesOmittedThinking,
+            selectionIsValid: !reasoningSelectionNeedsChoice
         )
     }
 
@@ -3471,6 +3542,10 @@ extension FloatingInputCard {
     /// toggle their raw persisted boolean directly.
     private func persistThinkingOverride(_ enabled: Bool?, for model: String) {
         guard selectedModel == model else { return }
+        if hasAgentReasoningOverride {
+            agentManager.updateReasoning(enableThinking: enabled, effort: nil, for: effectiveAgentId)
+            return
+        }
         guard let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption else {
             return
         }
@@ -4138,7 +4213,7 @@ extension FloatingInputCard {
                     switch content {
                     case .text(let text):
                         Button {
-                            if text.utf8.count >= Self.pastedContentThreshold {
+                            if collapseLongPastes, text.utf8.count >= Self.pastedContentThreshold {
                                 withAnimation(theme.springAnimation()) {
                                     pendingAttachments.append(.pastedContent(text))
                                 }
@@ -4173,7 +4248,7 @@ extension FloatingInputCard {
 
         switch content {
         case .text(let text):
-            if text.utf8.count >= Self.pastedContentThreshold {
+            if collapseLongPastes, text.utf8.count >= Self.pastedContentThreshold {
                 // Large paste → convert to a "pasted content" attachment.
                 // Lets the user view / remove the snippet without polluting
                 // the input field with hundreds of lines of text.
@@ -5332,23 +5407,29 @@ extension FloatingInputCard {
     }
 
     /// Placeholder text for the input field.
+    ///
+    /// Evaluated from the composer body on every keystroke, so it must stay
+    /// cheap: the keys are a fixed set and go through the memoized `LCached`
+    /// (an uncached `L` lookup here was the leaf of main-thread hang
+    /// APPLE-MACOS-1E7), and the image check inspects attachment kinds
+    /// instead of hydrating spilled image blobs from disk.
     private var placeholderText: String {
         if let media = selectedMediaPickerItem?.mediaModel {
             switch media.kind {
             case .image:
-                return L("Describe the image...")
+                return LCached("Describe the image...")
             case .textToVideo:
-                return L("Describe the video...")
+                return LCached("Describe the video...")
             case .imageToVideo:
-                return pendingAttachments.loadImages().isEmpty
-                    ? L("Attach one image, then describe the video...")
-                    : L("Describe how the image should move...")
+                return pendingAttachments.contains(where: \.isImage)
+                    ? LCached("Describe how the image should move...")
+                    : LCached("Attach one image, then describe the video...")
             }
         }
         if selectedImagePickerItem != nil {
-            return L("Describe the image...")
+            return LCached("Describe the image...")
         }
-        return L("Message or attach files...")
+        return LCached("Message or attach files...")
     }
 
     // MARK: - Image Composer Controls
@@ -6031,7 +6112,11 @@ extension FloatingInputCard {
             onArrowDown: { handleInputArrowDown() },
             onEscape: (showSlashPopup || showAtPopup) ? { handlePopupEscape() } : nil,
             onPasteText: { pasted in
-                guard pasted.utf8.count >= Self.pastedContentThreshold else { return false }
+                // Off in Settings ▸ Conversation ▸ Collapse Long Pastes: return false so
+                // the text view inserts the paste as plain text. Dictation tools that
+                // paste and then read the field back over Accessibility need this
+                // (#3271).
+                guard collapseLongPastes, pasted.utf8.count >= Self.pastedContentThreshold else { return false }
                 withAnimation(theme.springAnimation()) {
                     pendingAttachments.append(.pastedContent(pasted))
                 }

@@ -153,7 +153,21 @@ public actor ToolSearchService {
     private var pendingIndexEntries: [String: PendingIndexEntry] = [:]
     private var isProcessingPendingIndexEntries = false
 
-    private init() {}
+    private var pendingIndexRetryTask: Task<Void, Never>?
+    private var pendingIndexRetryID: UUID?
+    private var pendingIndexRetryDelay: Duration = .seconds(1)
+    private let retrySleep: @Sendable (Duration) async throws -> Void
+
+    init(
+        vectorDB: VecturaKit? = nil,
+        retrySleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) {
+        self.vectorDB = vectorDB
+        self.isInitialized = vectorDB != nil
+        self.retrySleep = retrySleep
+    }
+
+    deinit { pendingIndexRetryTask?.cancel() }
 
     // MARK: - Initialization
 
@@ -242,6 +256,10 @@ public actor ToolSearchService {
 
     private func processPendingIndexEntries() async {
         guard let db = vectorDB else { return }
+        // INVARIANT: registrations share one failed drain and one retry. A
+        // missing embedder must not cause every newly registered tool to retry
+        // the same failed document, or require another registration to recover.
+        guard pendingIndexRetryTask == nil else { return }
         guard !isProcessingPendingIndexEntries else { return }
         isProcessingPendingIndexEntries = true
         defer { isProcessingPendingIndexEntries = false }
@@ -267,20 +285,54 @@ public actor ToolSearchService {
                     try await db.deleteDocuments(ids: [id])
                     reverseIdMap.removeValue(forKey: id.uuidString)
                 }
+                pendingIndexRetryDelay = .seconds(1)
                 // A newer generation remains queued and is processed next.
             } catch {
                 ToolIndexLogger.search.error(
                     "Failed to index tool \(pending.entry.id): \(error)"
                 )
-                // Keep the failed entry queued for the next registration or
-                // initialization attempt, without spinning in a tight loop.
+                // Preserve the newest queued registrations and retry without
+                // spinning or repeatedly retrying during a registration burst.
+                schedulePendingIndexRetry()
                 break
             }
         }
     }
 
+    private func schedulePendingIndexRetry() {
+        guard !pendingIndexEntries.isEmpty, pendingIndexRetryTask == nil else { return }
+        let retryID = UUID()
+        let delay = pendingIndexRetryDelay
+        pendingIndexRetryDelay = min(delay * 2, .seconds(30))
+        pendingIndexRetryID = retryID
+        let sleep = retrySleep
+        pendingIndexRetryTask = Task { [weak self] in
+            do { try await sleep(delay) } catch { return }
+            guard !Task.isCancelled else { return }
+            await self?.retryPendingIndexEntries(id: retryID)
+        }
+    }
+
+    private func retryPendingIndexEntries(id: UUID) async {
+        guard pendingIndexRetryID == id else { return }
+        pendingIndexRetryTask = nil
+        pendingIndexRetryID = nil
+        await processPendingIndexEntries()
+    }
+
+    private func cancelPendingIndexRetryIfEmpty() {
+        guard pendingIndexEntries.isEmpty else { return }
+        pendingIndexRetryTask?.cancel()
+        pendingIndexRetryTask = nil
+        pendingIndexRetryID = nil
+        pendingIndexRetryDelay = .seconds(1)
+    }
+
+    var pendingIndexEntryCount: Int { pendingIndexEntries.count }
+
     public func removeEntry(id: String) async {
         pendingIndexEntries.removeValue(forKey: id)
+        cancelPendingIndexRetryIfEmpty()
         guard let db = vectorDB else { return }
         do {
             let uuid = deterministicUUID(for: id)

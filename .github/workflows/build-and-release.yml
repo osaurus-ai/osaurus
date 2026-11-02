@@ -164,6 +164,24 @@ jobs:
       - name: Package dSYMs
         run: bash scripts/build/package_dsyms.sh
 
+      # Retain exact qualified files even if an external service later fails.
+      # This checkpoint records identity; it does not authorize publication.
+      - name: Record Qualified Artifact Identity
+        run: python3 scripts/release/release_artifacts.py --version "$VERSION" --source "$GITHUB_SHA"
+
+      - name: Preserve Qualified Artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: osaurus-qualified-${{ env.VERSION }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build_output/Osaurus-app.zip
+            build_output/Osaurus-${{ env.VERSION }}.dmg
+            build_output/Osaurus.dmg
+            build_output/Osaurus-${{ env.VERSION }}-dSYMs.zip
+            build_output/release-artifacts.json
+          retention-days: 14
+          if-no-files-found: error
+
       # Upload symbols to Sentry so production crashes symbolicate. Best-effort:
       # the script no-ops if the Sentry secrets aren't configured. Tag-only so we
       # don't push debug files for throwaway workflow_dispatch builds.
@@ -186,7 +204,7 @@ jobs:
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
         run: bash scripts/build/sentry_release.sh
 
-      - name: Get Release Notes from Draft
+      - name: Get Target Release Notes
         id: changelog
         env:
           GH_TOKEN: ${{ github.token }}
@@ -194,10 +212,9 @@ jobs:
 
       - name: Write Release Notes
         if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          cat > RELEASE_NOTES.md <<'CHANGELOG_EOF'
-          ${{ steps.changelog.outputs.changelog }}
-          CHANGELOG_EOF
+        env:
+          RELEASE_NOTES_BODY: ${{ steps.changelog.outputs.changelog }}
+        run: printf '%s\n' "$RELEASE_NOTES_BODY" > RELEASE_NOTES.md
 
       - name: Create Release in Repository
         if: startsWith(github.ref, 'refs/tags/')

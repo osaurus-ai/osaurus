@@ -414,6 +414,12 @@ public enum ChatExecutionContext {
     /// filter off.
     @TaskLocal static var voiceCallPrivacy: VoiceCallPrivacy? = nil
 
+    /// A turn of the owner's phone call (`osaurus_voice_call`, §6.5): the
+    /// reply is spoken, and a local model reads every token a tool returns
+    /// before it can answer, so the search tools return less. Bound by
+    /// `handleAgentRunEndpoint` for owner callers only; false everywhere else.
+    @TaskLocal static var isVoiceCall: Bool = false
+
     /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
     /// curator role against. A spawned worker keeps `currentAgentId` inherited
     /// from its launcher for the surrounding model run, admission, handoff, and

@@ -40,7 +40,7 @@ struct ToolSerializationStabilityTests {
     }
 
     @Test
-    func toTokenizerToolSpec_normalizesNullableTypeUnionsForChatTemplates() throws {
+    func toTokenizerToolSpec_preservesNullableTypeUnionsForChatTemplates() throws {
         let tool = Tool(
             type: "function",
             function: ToolFunction(
@@ -70,14 +70,14 @@ struct ToolSerializationStabilityTests {
         let label = try #require(properties["label"] as? [String: any Sendable])
         let mode = try #require(properties["mode"] as? [String: any Sendable])
 
-        #expect(label["type"] as? String == "string")
-        #expect(label["nullable"] as? Bool == true)
+        #expect(label["type"] as? [String] == ["string", "null"])
+        #expect(label["nullable"] == nil)
         #expect(mode["type"] as? String == "string")
         #expect((mode["enum"] as? [String]) == ["fast", "full"])
     }
 
     @Test
-    func toTokenizerToolSpec_normalizesGemmaSensitiveTypeFieldsOnlyInSchemaPositions() throws {
+    func toTokenizerToolSpec_preservesSchemaTypesAndPropertyNames() throws {
         let tool = Tool(
             type: "function",
             function: ToolFunction(
@@ -113,17 +113,16 @@ struct ToolSerializationStabilityTests {
         let payloadProperties = try #require(payload["properties"] as? [String: any Sendable])
         let propertyNamedType = try #require(payloadProperties["type"] as? [String: any Sendable])
 
-        #expect(parameters["type"] as? String == "object")
-        #expect(parameters["nullable"] as? Bool == true)
-        #expect(query["type"] as? String == "string")
-        #expect(value["type"] as? String == "string")
-        #expect(payload["type"] as? String == "object")
+        #expect(parameters["type"] as? [String] == ["object", "null"])
+        #expect(parameters["nullable"] == nil)
+        #expect(query["type"] is NSNull)
+        #expect(value["type"] as? [String] == ["string", "integer"])
+        #expect(payload["type"] == nil)
         #expect(propertyNamedType["type"] as? String == "string")
-        try Self.assertSchemaTypesAreTemplateRenderable(parameters)
     }
 
     @Test
-    func toTokenizerToolSpec_dropsBooleanAdditionalPropertiesForChatTemplates() throws {
+    func toTokenizerToolSpec_preservesBooleanAdditionalPropertiesForChatTemplates() throws {
         let tool = Tool(
             type: "function",
             function: ToolFunction(
@@ -159,18 +158,17 @@ struct ToolSerializationStabilityTests {
         let whereClause = try #require(properties["where"] as? [String: any Sendable])
         let shaped = try #require(properties["shaped"] as? [String: any Sendable])
 
-        #expect(parameters["additionalProperties"] == nil)
-        #expect(set["additionalProperties"] == nil)
-        #expect(whereClause["additionalProperties"] == nil)
+        #expect(parameters["additionalProperties"] as? Bool == false)
+        #expect(set["additionalProperties"] as? Bool == true)
+        #expect(whereClause["additionalProperties"] as? Bool == true)
         let shapedAdditional = try #require(shaped["additionalProperties"] as? [String: any Sendable])
         #expect(shapedAdditional["type"] as? String == "string")
         #expect(set["type"] as? String == "object")
         #expect(whereClause["type"] as? String == "object")
-        try Self.assertNoBooleanAdditionalProperties(parameters)
     }
 
     @Test
-    func toTokenizerToolSpec_collapsesMultiTypeSchemasForGemmaTemplates() throws {
+    func toTokenizerToolSpec_preservesMultiTypeSchemasForAllTemplates() throws {
         let tool = Tool(
             type: "function",
             function: ToolFunction(
@@ -205,8 +203,8 @@ struct ToolSerializationStabilityTests {
         let itemProperties = try #require(items["properties"] as? [String: any Sendable])
         let nestedProperties = try #require(itemProperties["properties"] as? [String: any Sendable])
 
-        #expect(nestedProperties["type"] as? String == "description")
-        #expect((nestedProperties["x-osaurus-original-type"] as? [String]) == ["description", "type"])
+        #expect(nestedProperties["type"] as? [String] == ["description", "type"])
+        #expect(nestedProperties["x-osaurus-original-type"] == nil)
     }
 
     /// The complete ordered baseline payload — every always-loaded tool's
@@ -243,78 +241,28 @@ struct ToolSerializationStabilityTests {
 
     @Test
     @MainActor
-    func alwaysLoadedTokenizerToolSpecsExposeOnlyStringTypeFields() throws {
-        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
-            .map { $0.toTokenizerToolSpec() }
-        var failures: [String] = []
-
-        func walk(_ value: Any, path: String) {
-            if let dict = value as? [String: Any] {
-                if !path.hasSuffix(".properties"), let type = dict["type"], !(type is String) {
-                    failures.append("\(path).type=\(type)")
-                }
-                for (key, child) in dict {
-                    walk(child, path: path + "." + key)
-                }
-            } else if let array = value as? [Any] {
-                for (index, child) in array.enumerated() {
-                    walk(child, path: "\(path)[\(index)]")
-                }
-            }
-        }
-
-        for spec in specs {
-            let name =
-                ((spec["function"] as? [String: Any])?["name"] as? String)
-                ?? "<unknown>"
-            walk(spec, path: name)
-        }
-
-        #expect(failures.isEmpty, Comment(rawValue: failures.joined(separator: "\n")))
-    }
-
-    private static func assertNoBooleanAdditionalProperties(
-        _ value: any Sendable
-    ) throws {
-        if let dict = value as? [String: any Sendable] {
-            #expect(
-                !(dict["additionalProperties"] is Bool),
-                "boolean additionalProperties must be dropped from the template-facing schema"
-            )
-            for child in dict.values {
-                try assertNoBooleanAdditionalProperties(child)
-            }
-        } else if let array = value as? [any Sendable] {
-            for child in array {
-                try assertNoBooleanAdditionalProperties(child)
+    func alwaysLoadedTokenizerToolsPreserveTheirOriginalSchemas() throws {
+        for tool in ToolRegistry.shared.alwaysLoadedSpecs(mode: .none) {
+            let spec = tool.toTokenizerToolSpec()
+            let function = try #require(spec["function"] as? [String: any Sendable])
+            if let original = tool.function.parameters {
+                let parameters = try #require(function["parameters"])
+                let expected = try JSONSerialization.data(withJSONObject: original.anyValue, options: [.fragmentsAllowed, .sortedKeys])
+                let actual = try JSONSerialization.data(withJSONObject: parameters, options: [.fragmentsAllowed, .sortedKeys])
+                #expect(actual == expected, "Schema changed for \(tool.function.name)")
             }
         }
     }
 
-    private static func assertSchemaTypesAreTemplateRenderable(
-        _ schema: [String: any Sendable]
-    ) throws {
-        if let typeValue = schema["type"] {
-            #expect(typeValue is String, "schema type must be String, got \(type(of: typeValue))")
-        }
-
-        if let properties = schema["properties"] as? [String: any Sendable] {
-            for value in properties.values {
-                let child = try #require(value as? [String: any Sendable])
-                try assertSchemaTypesAreTemplateRenderable(child)
-            }
-        }
-
-        if let items = schema["items"] as? [String: any Sendable] {
-            try assertSchemaTypesAreTemplateRenderable(items)
-        }
-
-        for key in ["oneOf", "anyOf", "allOf"] {
-            guard let branches = schema[key] as? [Any] else { continue }
-            for branch in branches {
-                guard let child = branch as? [String: any Sendable] else { continue }
-                try assertSchemaTypesAreTemplateRenderable(child)
-            }
-        }
+    @Test
+    func decodedToolRetainsNestedNullsAndBooleanSchemas() throws {
+        let source = #"{"type":"function","function":{"name":"read_record","parameters":{"type":"object","additionalProperties":false,"properties":{"query":{"type":["string","null"],"default":null,"enum":["a",null]},"free":true,"closed":false}}}}"#
+        let tool = try JSONDecoder().decode(Tool.self, from: Data(source.utf8))
+        let expected = try JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: Data(source.utf8)), options: [.sortedKeys])
+        let actual = try JSONSerialization.data(withJSONObject: tool.toTokenizerToolSpec(), options: [.sortedKeys])
+        #expect(actual == expected)
+        let bridged = try #require(SwiftTransformersTokenizerLoader.normalizedToolsForChatTemplate([tool.toTokenizerToolSpec()])?.first)
+        let bridgedData = try JSONSerialization.data(withJSONObject: bridged, options: [.sortedKeys])
+        #expect(bridgedData == expected)
     }
 }

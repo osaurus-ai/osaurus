@@ -551,7 +551,7 @@ extension ChatMessage {
     /// modality. Audio bytes encode as `input_audio` with explicit
     /// format hint; video bytes encode as `video_url` with
     /// `data:video/<container>` URL. All three flow into the
-    /// OpenAI-compatible JSON shape that `mapOpenAIChatToMLX` lowers through
+    /// OpenAI-compatible JSON shape that `makeMLXChatMessages` lowers through
     /// `extractAudioSources` / `extractVideoSources`.
     init(
         role: String,
@@ -1318,10 +1318,21 @@ struct ChatCompletionChunk: Codable, Sendable {
     /// Osaurus extension chunk for determinate local prefill progress. Emitted
     /// with empty choices before the first token when the runtime reports it.
     var osaurus_prefill: PrefillProgressState? = nil
+    /// Osaurus extension chunk on `/agents/{id}/run`: a step that has to load
+    /// its local model first says so (`loading`), then `ready` once it is
+    /// in memory, so a client can say why the reply hasn't started.
+    var osaurus_model_load: ModelLoadState? = nil
     /// Osaurus extension chunk on a hosted `/agents/{id}/run`: the small
     /// files the agent shared with `share_artifact`, emitted once with empty
     /// choices right before the finish chunk (see `RemoteRunArtifacts`).
     var osaurus_artifacts: [RemoteRunArtifact]? = nil
+}
+
+/// `osaurus_model_load` on an agent run's stream (MOBILE_PROTOCOL §6.5).
+struct ModelLoadState: Codable, Sendable, Equatable {
+    /// `loading` or `ready`.
+    let state: String
+    let model: String
 }
 
 // MARK: - Error Response
@@ -1576,145 +1587,33 @@ extension JSONValue {
         }
     }
 
-    /// Convert JSON Schema into the shape expected by local chat templates.
-    ///
-    /// Some local templates, notably Gemma-4's native tool template, treat
-    /// schema `type` fields as scalars and run string filters over them.
-    /// OpenAI/MCP schemas commonly spell nullable fields as
-    /// `type: ["string", "null"]`. That is valid JSON Schema, but it is not
-    /// renderable by those templates. The transformation below rewrites only
-    /// schema-position dictionaries into template-renderable shapes while
-    /// preserving property maps whose keys may legitimately include "type".
-    var chatTemplateSchemaValue: JSONValue {
-        normalizedChatTemplateSchemaValue(inSchemaPosition: true)
-    }
-
-    private func normalizedChatTemplateSchemaValue(inSchemaPosition: Bool) -> JSONValue {
-        switch self {
-        case .object(let obj):
-            var normalized: [String: JSONValue] = [:]
-            for (key, value) in obj {
-                switch key {
-                case "properties":
-                    if case .object(let properties) = value {
-                        normalized[key] = .object(
-                            properties.mapValues {
-                                $0.normalizedChatTemplateSchemaValue(inSchemaPosition: true)
-                            }
-                        )
-                    } else {
-                        normalized[key] = value.normalizedChatTemplateSchemaValue(
-                            inSchemaPosition: false
-                        )
-                    }
-                case "items", "additionalProperties", "response":
-                    // Gemma-4's native template pipes a schema's boolean
-                    // `additionalProperties` through `| upper`, throwing "upper
-                    // filter requires string". Drop only that boolean form; the
-                    // schema-object form renders fine, and the original schema
-                    // still drives argument validation, so this is lossless.
-                    if key == "additionalProperties", case .bool = value { continue }
-                    normalized[key] = value.normalizedChatTemplateSchemaValue(
-                        inSchemaPosition: true
-                    )
-                case "oneOf", "anyOf", "allOf":
-                    if case .array(let branches) = value {
-                        normalized[key] = .array(
-                            branches.map {
-                                $0.normalizedChatTemplateSchemaValue(inSchemaPosition: true)
-                            }
-                        )
-                    } else {
-                        normalized[key] = value.normalizedChatTemplateSchemaValue(
-                            inSchemaPosition: false
-                        )
-                    }
-                default:
-                    normalized[key] = value.normalizedChatTemplateSchemaValue(
-                        inSchemaPosition: false
-                    )
-                }
-            }
-            if inSchemaPosition {
-                Self.normalizeTemplateRenderableSchemaType(&normalized)
-            }
-            return .object(normalized)
-        case .array(let arr):
-            return .array(
-                arr.map { $0.normalizedChatTemplateSchemaValue(inSchemaPosition: inSchemaPosition) }
-            )
-        case .null, .bool, .number, .string:
-            return self
-        }
-    }
-
-    private static func normalizeTemplateRenderableSchemaType(_ object: inout [String: JSONValue]) {
-        switch object["type"] {
-        case .some(.string):
-            return
-        case .some(.array(let entries)):
-            normalizeTypeUnion(entries, in: &object)
-        case .some(.null), .some(.bool), .some(.number), .some(.object):
-            object["type"] = inferredFallbackType(for: object)
-        case nil:
-            object["type"] = inferredFallbackType(for: object)
-        }
-    }
-
-    private static func normalizeTypeUnion(_ entries: [JSONValue], in object: inout [String: JSONValue]) {
-        var hasNull = false
-        var scalars: [String] = []
-        for entry in entries {
-            guard case .string(let typeName) = entry else {
-                object["type"] = inferredFallbackType(for: object)
-                return
-            }
-            if typeName == "null" {
-                hasNull = true
-            } else {
-                scalars.append(typeName)
-            }
-        }
-
-        guard let scalar = scalars.first else { return }
-        object["type"] = .string(scalar)
-        if hasNull {
-            object["nullable"] = .bool(true)
-        }
-        if scalars.count > 1 {
-            object["x-osaurus-original-type"] = .array(scalars.map { .string($0) })
-        }
-    }
-
-    private static func inferredFallbackType(for object: [String: JSONValue]) -> JSONValue {
-        if object["properties"] != nil { return .string("object") }
-        if object["items"] != nil { return .string("array") }
-        return .string("string")
-    }
-
-    /// Convert JSONValue to Sendable-compatible value for Jinja chat templates.
-    /// Null values are dropped from dictionaries because Jinja's `Value(any:)` cannot
-    /// handle `NSNull` and throws a runtime error. JSON Schema treats a missing key
-    /// the same as `null`, so this is semantically lossless for tool specs.
+    /// Existing generic bridge, which omits null object members.
     var sendableValue: any Sendable {
+        sendableValue(omittingNullMembers: true)
+    }
+
+    /// INVARIANT: model templates receive the complete schema. Null defaults,
+    /// enums, unions and boolean constraints must survive every host bridge;
+    /// Jinja owns value coercion, rather than callers rewriting model inputs.
+    var chatTemplateValue: any Sendable {
+        sendableValue(omittingNullMembers: false)
+    }
+
+    private func sendableValue(omittingNullMembers: Bool) -> any Sendable {
         switch self {
-        case .null:
-            return NSNull()
-        case .bool(let b):
-            return b
-        case .number(let n):
-            return n
-        case .string(let s):
-            return s
-        case .array(let arr):
-            return arr.map { $0.sendableValue }
-        case .object(let obj):
-            var dict: [String: any Sendable] = [:]
-            for (k, v) in obj {
-                if case .null = v { continue }
-                dict[k] = v.sendableValue
+        case .null: return NSNull()
+        case .bool(let value): return value
+        case .number(let value): return value
+        case .string(let value): return value
+        case .array(let values):
+            return values.map { $0.sendableValue(omittingNullMembers: omittingNullMembers) }
+        case .object(let values):
+            var result: [String: any Sendable] = [:]
+            for (key, value) in values {
+                if omittingNullMembers, case .null = value { continue }
+                result[key] = value.sendableValue(omittingNullMembers: omittingNullMembers)
             }
-            return dict
+            return result
         }
     }
 
@@ -1751,7 +1650,7 @@ extension ToolFunction {
             fn["description"] = description
         }
         if let parameters {
-            fn["parameters"] = parameters.chatTemplateSchemaValue.sendableValue
+            fn["parameters"] = parameters.chatTemplateValue
         }
         return fn
     }

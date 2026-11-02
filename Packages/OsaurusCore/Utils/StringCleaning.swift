@@ -266,6 +266,16 @@ public enum StringCleaning {
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Strips the `[end call]` an agent ends its goodbye with on a phone voice
+    /// call. The phone reads it to offer to hang up; the chat never shows it.
+    public static func stripCallEndMarker(_ content: String) -> String {
+        let pattern = "\\s*\\[\\s*end[ _-]?call\\s*\\]"
+        guard content.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil else {
+            return content
+        }
+        return content.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+    }
+
     /// Strips Gemini thought-signature markers from assistant text meant for display.
     ///
     /// We keep the raw content intact for Gemini round-tripping, but any UI-facing

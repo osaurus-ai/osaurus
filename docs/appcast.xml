@@ -3,6 +3,35 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.29</title>
+            <pubDate>Fri, 30 Oct 2026 04:20:52 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.29</sparkle:version>
+            <sparkle:shortVersionString>0.25.29</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.29/Osaurus-0.25.29.dmg" length="83681827" type="application/octet-stream" sparkle:edSignature="82o/ejkx5uc/+FuzrGtAZzLT0uI8LA44DjksgZx3NfAto+tKy/CGaxTdw+2pQrIoudN7lLHqXgwXAsH+n5RlCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Save model-aware adaptive speculation defaults per agent (#3247) by @jjang-ai
+- Redesign agent generation overrides with inherited defaults and stop chips (#3246) by @jjang-ai
+- Reuse compiled dependencies in PR CI and save caches only from main (#3234) by @tpae
+- serve phone chats' context usage and make local-model phone calls faster (#3209) by @RaajeevChandran
+- Archive Release builds without whole-module optimization (#3235) by @tpae
+
+## 🐛 Bug Fixes
+
+- Initialize custom agent JSON fields and clarify inheritance (#3245) by @jjang-ai
+- Preserve captured generation settings in queued chat (#3244) by @jjang-ai
+- Consume checked prefill and serialized tokenizer fixes (#3243) by @jjang-ai
+- Honor bundle sampling defaults for thinking turns (#3241) by @jjang-ai
+- Detect bundled DSpark and honor declared reasoning defaults (#3236) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.28...0.25.29
+]]></description>
+        </item>
+        <item>
             <title>0.25.28</title>
             <pubDate>Wed, 28 Oct 2026 06:20:02 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

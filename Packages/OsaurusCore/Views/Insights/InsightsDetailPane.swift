@@ -1145,11 +1145,15 @@ private struct OverviewTab: View {
         if let model = log.model, log.category != .speechSynthesis {
             facts.append(Fact(label: L("Model"), value: log.shortModelName, help: model))
         }
-        if let i = log.inputTokens, let o = log.outputTokens, i + o > 0 {
-            facts.append(Fact(label: L("Tokens"), value: L("\(i) in → \(o) out")))
+        if log.inputTokens != nil || log.outputTokens != nil {
+            facts.append(Fact(label: L("Input tokens"), value: log.inputTokenDescription))
+            facts.append(Fact(label: L("Output tokens"), value: log.outputTokenDescription))
         }
-        if let speed = log.tokensPerSecond, speed > 0 {
-            facts.append(Fact(label: L("Speed"), value: String(format: "%.1f tok/s", speed)))
+        if let rate = log.requestRateDescription, let speed = log.tokensPerSecond, speed > 0 {
+            facts.append(Fact(
+                label: L("Request rate"), value: rate,
+                help: L("Output tokens divided by the full request duration, including prompt processing and network waits.")
+            ))
         }
         if let reason = log.finishReason {
             facts.append(Fact(label: L("Finish"), value: reason.rawValue))

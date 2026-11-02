@@ -139,6 +139,26 @@ final class SSEResponseWriter: ResponseWriter {
         var osaurus: Summary
     }
 
+    /// Says a run's step is loading its local model, or that it is loaded
+    /// (`osaurus_model_load`, empty choices), on `/agents/{id}/run`.
+    func writeModelLoad(
+        _ state: String,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        var chunk = ChatCompletionChunk(
+            id: responseId,
+            created: created,
+            model: model,
+            choices: [],
+            system_fingerprint: nil
+        )
+        chunk.osaurus_model_load = ModelLoadState(state: state, model: model)
+        writeSSEChunk(chunk, context: context)
+    }
+
     /// Relay a workspace-billed router summary to the caller of
     /// `/agents/{id}/run` so its spend chip ticks in real time.
     func writeRouterSummary(_ summary: RouterBillingSummary, context: ChannelHandlerContext) {

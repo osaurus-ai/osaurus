@@ -81,6 +81,45 @@ struct MobilePairingServiceTests {
         MobilePairRequest(v: 1, code: code, deviceId: deviceId, deviceName: "Test iPhone", encPub: encPub)
     }
 
+    /// A Mac that ran the reverted multi-phone pairing keeps its iPhone: the
+    /// latest real one, over a simulator paired since, and the list is gone.
+    @Test func multiPhoneListIsCarriedBackToOnePairedPhone() throws {
+        let defaults = UserDefaults(suiteName: "MobilePairingTests.\(UUID().uuidString)")!
+        func device(_ id: String, pairedAt: TimeInterval, simulator: Bool) -> PairedMobileDevice {
+            PairedMobileDevice(
+                deviceId: id,
+                name: id,
+                keyId: UUID(),
+                pairedAt: Date(timeIntervalSince1970: pairedAt),
+                keyExpiresAt: nil,
+                isSimulator: simulator ? true : nil
+            )
+        }
+        let devices = [
+            device("old-iphone", pairedAt: 1_000, simulator: false),
+            device("iphone", pairedAt: 2_000, simulator: false),
+            device("simulator", pairedAt: 3_000, simulator: true),
+        ]
+        defaults.set(try JSONEncoder().encode(devices), forKey: "mobileConnectPairedDevices")
+        defaults.set(["iphone": "iPhone"], forKey: "mobileConnectPhoneNames")
+
+        let service = makeService(defaults: defaults)
+
+        #expect(service.pairedDevice?.deviceId == "iphone")
+        #expect(defaults.data(forKey: "mobileConnectPairedDevice") != nil)
+        #expect(defaults.data(forKey: "mobileConnectPairedDevices") == nil)
+        #expect(defaults.dictionary(forKey: "mobileConnectPhoneNames") == nil)
+    }
+
+    /// Chats started while several phones could pair are tagged with the
+    /// phone's id, and are still the phone's chats.
+    @Test func deviceTaggedPhoneChatKeysAreRecognised() {
+        #expect(RemoteSessionContinuation.isPhoneChatKey("osaurus-connect-phone"))
+        #expect(RemoteSessionContinuation.isPhoneChatKey("osaurus-connect-phone:device-1"))
+        #expect(!RemoteSessionContinuation.isPhoneChatKey("osaurus-connect-phoney"))
+        #expect(!RemoteSessionContinuation.isPhoneChatKey(nil))
+    }
+
     @Test func redeemWithoutActiveCodeIsInvalid() {
         let service = makeService()
         let (_, pub) = PairingKeyEnvelope.generateRecipientKey()

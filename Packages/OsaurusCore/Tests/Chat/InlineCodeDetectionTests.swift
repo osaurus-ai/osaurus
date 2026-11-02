@@ -43,4 +43,30 @@ struct InlineCodeDetectionTests {
         #expect(try codeRunCovers("📄 **`UW Metrics & Definitions/Reports/Summary.md`**",
             span: "UW Metrics & Definitions/Reports/Summary.md"))
     }
+
+    // MARK: - inlineIntent value shapes
+
+    @Test func inlineIntentReadsBridgedNSNumber() {
+        let raw = InlinePresentationIntent([.code, .stronglyEmphasized]).rawValue
+        let attributes: [NSAttributedString.Key: Any] = [
+            .inlinePresentationIntent: NSNumber(value: raw)
+        ]
+        #expect(SelectableTextView.inlineIntent(attributes) == [.code, .stronglyEmphasized])
+    }
+
+    @Test func inlineIntentReadsNativeValue() {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .inlinePresentationIntent: InlinePresentationIntent.emphasized
+        ]
+        #expect(SelectableTextView.inlineIntent(attributes) == .emphasized)
+    }
+
+    @Test func inlineIntentMissingKeyIsEmpty() {
+        #expect(SelectableTextView.inlineIntent([:]).isEmpty)
+    }
+
+    @Test func inlineIntentUnrecognisedValueIsEmpty() {
+        let attributes: [NSAttributedString.Key: Any] = [.inlinePresentationIntent: "code"]
+        #expect(SelectableTextView.inlineIntent(attributes).isEmpty)
+    }
 }

@@ -14,13 +14,15 @@ public struct AgentGenerationSettings: Codable, Equatable, Sendable {
     public var enableThinking: Bool?
     public var reasoningEffort: String?
     public var templateKwargs: [String: JSONValue]?
+    /// Host-only preference: nil inherits Server; false uses AR; true requests adaptive drafting.
+    public var speculativeDecoding: Bool?
 
     public init(
         topP: Float? = nil, topK: Int? = nil, minP: Float? = nil,
         repetitionPenalty: Float? = nil, frequencyPenalty: Float? = nil,
         presencePenalty: Float? = nil, seed: Int? = nil, stop: [String]? = nil,
         enableThinking: Bool? = nil, reasoningEffort: String? = nil,
-        templateKwargs: [String: JSONValue]? = nil
+        templateKwargs: [String: JSONValue]? = nil, speculativeDecoding: Bool? = nil
     ) {
         self.topP = topP
         self.topK = topK
@@ -33,6 +35,7 @@ public struct AgentGenerationSettings: Codable, Equatable, Sendable {
         self.enableThinking = enableThinking
         self.reasoningEffort = reasoningEffort
         self.templateKwargs = templateKwargs
+        self.speculativeDecoding = speculativeDecoding
     }
 
     enum CodingKeys: String, CodingKey {
@@ -46,13 +49,21 @@ public struct AgentGenerationSettings: Codable, Equatable, Sendable {
         case enableThinking = "enable_thinking"
         case reasoningEffort = "reasoning_effort"
         case templateKwargs = "template_kwargs"
+        case speculativeDecoding = "speculative_decoding"
+    }
+
+    var hasReasoningOverride: Bool {
+        enableThinking != nil || reasoningEffort != nil
+            || templateKwargs?["enable_thinking"]?.boolValue != nil
+            || templateKwargs?["thinking"]?.boolValue != nil
+            || templateKwargs?["reasoning_effort"]?.stringValue != nil
     }
 
     var isEmpty: Bool {
         topP == nil && topK == nil && minP == nil && repetitionPenalty == nil
             && frequencyPenalty == nil && presencePenalty == nil && seed == nil
             && stop == nil && enableThinking == nil && reasoningEffort == nil
-            && templateKwargs == nil
+            && templateKwargs == nil && speculativeDecoding == nil
     }
 
     func validate() throws {

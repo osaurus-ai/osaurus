@@ -17,6 +17,19 @@ import Testing
 @Suite("AgentSettings per-agent subagent fields codable")
 struct AgentSettingsCodableTests {
 
+    @Test("legacy agent settings keep response metrics hidden; explicit choices round-trip")
+    func responseMetricsMigration() throws {
+        let old = try JSONDecoder().decode(AgentSettings.self, from: Data("{}".utf8))
+        #expect(!old.showResponseMetrics)
+        for enabled in [true, false] {
+            var settings = old
+            settings.showResponseMetrics = enabled
+            let restored = try JSONDecoder().decode(AgentSettings.self, from: JSONEncoder().encode(settings))
+            #expect(restored.showResponseMetrics == enabled)
+            #expect(restored.subagentBudgets == old.subagentBudgets)
+        }
+    }
+
     @Test("the per-agent image / permission / budget fields round-trip")
     func roundTripsNewFields() throws {
         let coderID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!

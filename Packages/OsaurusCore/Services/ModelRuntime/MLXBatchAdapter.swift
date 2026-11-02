@@ -172,8 +172,12 @@ struct MLXBatchAdapter {
         nativeMTPFallbackReason: String? = nil,
         nativeMTPRequestFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
+        thinkingEnabled: Bool? = nil,
         stage: String = "resolved"
     ) -> EffectiveGenerationSettings {
+        // INVARIANT: mode defaults come from the bundle and follow the same
+        // resolved thinking flag as the template. Explicit sampling still wins.
+        let modelDefaults = modelDefaults.resolvingThinking(thinkingEnabled)
         let defaultTemperature: Float? = {
             if modelDefaults.doSample == false {
                 return 0
@@ -261,6 +265,11 @@ struct MLXBatchAdapter {
             runtimeDefaults: runtimeDefaults,
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
+            thinkingEnabled: thinkingEnabledForSampling(
+                generation: generation,
+                modelName: modelName,
+                modelDefaults: modelDefaults
+            ),
             stage: "pending_preload"
         )
         await Registry.shared.recordEffectiveGenerationSettings(
@@ -1145,7 +1154,7 @@ struct MLXBatchAdapter {
     ///
     /// Preserves media plus `reasoningContent`, `toolCalls`, `toolCallId`, and
     /// `contentParts` through the rebuild. Dropping any of these fields silently
-    /// unwinds the structured handoff set up by `ModelRuntime.mapOpenAIChatToMLX`:
+    /// unwinds the structured handoff set up by `ModelRuntime.makeMLXChatMessages`:
     /// ZAYA, Nemotron-H/Omni, MiniMax, and DSV4 templates read
     /// `message.reasoning_content`; MiniMax and other templates read
     /// `message.tool_calls[i]`; omni/VL processors read media arrays; the
@@ -1284,6 +1293,20 @@ struct MLXBatchAdapter {
     }
 
     // MARK: - Thinking template context
+
+    static func thinkingEnabledForSampling(
+        generation: GenerationParameters,
+        modelName: String,
+        modelDefaults: LocalGenerationDefaults.Defaults,
+        usesChatTemplate: Bool = true
+    ) -> Bool? {
+        guard usesChatTemplate else { return nil }
+        let context = additionalContext(for: generation, modelName: modelName)
+        if context.keys.contains("enable_thinking") {
+            return context["enable_thinking"] as? Bool
+        }
+        return modelDefaults.defaultThinkingEnabled
+    }
 
     static func additionalContext(
         for generation: GenerationParameters,
@@ -1770,6 +1793,12 @@ struct MLXBatchAdapter {
             nativeMTPFallbackReason: nativeMTPFallbackReason,
             nativeMTPRequestFallback: nativeMTPRequestFallback,
             cacheTopology: cacheTopology,
+            thinkingEnabled: Self.thinkingEnabledForSampling(
+                generation: generation,
+                modelName: modelName,
+                modelDefaults: modelDefaults,
+                usesChatTemplate: buildRawPrompt == nil
+            ),
             stage: "submitted_to_batch_engine"
         )
         do {
@@ -1797,17 +1826,10 @@ struct MLXBatchAdapter {
             topK: effective.topK,
             minP: effective.minP,
             repetitionPenalty: effective.repetitionPenalty,
-            // Per-request wins, then the bundle's shipped default — the same
-            // order the other sampling fields use. Before this, a bundle
-            // declaring `presence_penalty` had it adopted by vmlx's
-            // `GenerateParameters(generationConfig:fallback:)` and dropped here,
-            // because `LocalGenerationDefaults` (which osaurus uses instead of
-            // that initializer) did not read the key at all.
-            //
-            // A declared `0.0` stays inert: `makeGenerateParameters` treats 0 as
-            // "unset" per the OpenAI default.
-            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
-            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
+            // Use the same resolved mode and request precedence as the other
+            // sampler fields; never re-read the unselected bundle snapshot.
+            presencePenalty: effective.presencePenalty,
+            frequencyPenalty: effective.frequencyPenalty,
             randomSeed: generation.seed,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,

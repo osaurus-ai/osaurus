@@ -21,6 +21,7 @@ struct CellRenderingContext {
     let agentCustomAvatarPath: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
+    var showResponseMetrics: Bool = false
     let theme: any ThemeProtocol
     /// mutable so `configureCell` can override with coordinator `expandedIds` before `applyBlocks` runs again
     var expandedIds: Set<String>
@@ -1649,8 +1650,8 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
 
 // MARK: - NativeStatsView
 
-/// Incomplete-response warning. Generation metrics are available in the
-/// response's overflow menu instead of occupying a row in the conversation.
+/// Incomplete-response warning, with measured statistics when the agent opts in.
+/// The same metrics remain available in the response overflow menu.
 final class NativeStatsView: NSView {
     private let label = NSTextField(labelWithString: "")
 
@@ -1679,10 +1680,16 @@ final class NativeStatsView: NSView {
         modelLoad: TimeInterval? = nil,
         cachedInputTokens: Int? = nil,
         totalDuration: TimeInterval? = nil,
+        showResponseMetrics: Bool = false,
         theme: any ThemeProtocol
     ) {
-        label.stringValue = unclosedReasoning
-            ? L("⚠ thinking didn't close — answer may be in reasoning above") : ""
+        label.stringValue = showResponseMetrics
+            ? Self.statsText(
+                ttft: ttft, tokensPerSecond: tokensPerSecond, tokenCount: tokenCount,
+                unclosedReasoning: unclosedReasoning, modelLoad: modelLoad,
+                cachedInputTokens: cachedInputTokens, totalDuration: totalDuration
+            )
+            : (unclosedReasoning ? L("⚠ thinking didn't close — answer may be in reasoning above") : "")
         label.font = NSFont.monospacedDigitSystemFont(
             ofSize: CGFloat(theme.captionSize) - 1,
             weight: .regular
@@ -3061,6 +3068,7 @@ final class NativeMessageCellView: NSTableCellView {
             modelLoad: modelLoad,
             cachedInputTokens: cachedInputTokens,
             totalDuration: totalDuration,
+            showResponseMetrics: context.showResponseMetrics,
             theme: context.theme
         )
     }

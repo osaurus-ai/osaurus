@@ -84,7 +84,36 @@ struct KnowledgeSchemaForwardCompatTests {
             let db = KnowledgeDatabase()
             try db.open()
             defer { db.close() }
-            #expect(diskUserVersion() == 3)
+            #expect(diskUserVersion() == 4)
+        }
+    }
+
+    @Test func vectorCompletionSurvivesDatabaseReopenWithoutAcknowledgingMissingChunks() async throws {
+        try await withTempRoot {
+            let db = KnowledgeDatabase()
+            try db.open()
+            let id = try db.upsertDocument(
+                collectionId: "c1",
+                relPath: "kept.md",
+                title: "Kept",
+                docType: "guide",
+                summary: "",
+                tagsCSV: "",
+                contentHash: "same",
+                sizeBytes: 1,
+                modifiedAt: ""
+            )
+            try db.replaceChunks(documentId: id, chunks: [("", "complete"), ("", "pending")])
+            let first = try #require(db.pendingVectorChunks(collectionId: "c1").first)
+            try db.markVectorIndexed(first)
+            db.close()
+
+            let reopened = KnowledgeDatabase()
+            try reopened.open()
+            defer { reopened.close() }
+            let pending = try reopened.pendingVectorChunks(collectionId: "c1")
+            #expect(pending.map(\.content) == ["pending"])
+            #expect(try reopened.documentHashes(collectionId: "c1")["kept.md"] == "same")
         }
     }
 
@@ -122,7 +151,7 @@ struct KnowledgeSchemaForwardCompatTests {
             let db = KnowledgeDatabase()
             try db.open()
             defer { db.close() }
-            #expect(diskUserVersion() == 3)
+            #expect(diskUserVersion() == 4)
         }
     }
 
@@ -181,7 +210,11 @@ struct KnowledgeSchemaForwardCompatTests {
         var stmt: OpaquePointer?
         guard
             sqlite3_prepare_v2(
-                conn, "SELECT name FROM sqlite_master WHERE type='table'", -1, &stmt, nil
+                conn,
+                "SELECT name FROM sqlite_master WHERE type='table'",
+                -1,
+                &stmt,
+                nil
             ) == SQLITE_OK
         else { return [] }
         defer { sqlite3_finalize(stmt) }

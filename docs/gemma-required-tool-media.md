@@ -7,7 +7,7 @@ for Gemma requests with explicit required/named tool selection. The June 12
 implementation (`518f6a60a5`) reconstructed that message with only role, text
 and tool-call fields, discarding its media parts and in-process metadata.
 Both complete and streamed local tool responses use this helper before
-`mapOpenAIChatToMLX`. Native Chat's `ChatToolChoicePolicy.resolve` can request
+`makeMLXChatMessages`. Native Chat's `ChatToolChoicePolicy.resolve` can request
 required tool selection when the user explicitly names an available tool.
 
 This is separate from #2805's typed MCP tool-result attachment conversion.

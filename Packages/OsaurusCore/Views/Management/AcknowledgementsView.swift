@@ -324,6 +324,14 @@ struct AcknowledgementsView: View {
             license: "MIT",
             licenseUrl: "https://github.com/orlandos-nl/IkigaJSON/blob/master/LICENSE"
         ),
+        Acknowledgement(
+            name: "potion-base-4M (embedding model)",
+            identity: "potion-base-4m",
+            version: "9b3cff41",
+            repository: "https://huggingface.co/minishlab/potion-base-4M",
+            license: "MIT",
+            licenseUrl: "https://huggingface.co/minishlab/potion-base-4M"
+        ),
     ]
 }
 

@@ -317,12 +317,15 @@ public actor ModelRuntime {
         var selectedDFlash2 = false
         /// A `uno/` self-speculation adapter in the bundle that fits it (validated by the engine).
         var bundledUno = false
-        var hasCompatibleDFlash2: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno }
-        var speculationAvailable: Bool { hasCompatibleDFlash2 || (bundleHasMTP && isTargetMTPFamily) }
-        var speculationBlocked: Bool { !hasCompatibleDFlash2 && isBlocked }
-        var familyDefaultOn: Bool { hasCompatibleDFlash2 || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
+        /// DeepSeek V4.1 stores its separate speculative head in `dspark/`.
+        var bundledDSpark = false
+        var hasCompatibleDrafter: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno || bundledDSpark }
+        var speculationAvailable: Bool { hasCompatibleDrafter || (bundleHasMTP && isTargetMTPFamily) }
+        var speculationBlocked: Bool { !hasCompatibleDrafter && isBlocked }
+        var familyDefaultOn: Bool { hasCompatibleDrafter || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
         var speculationCapabilityDescription: String {
             if selectedDFlash2 { return "Compatible selected DFlash 2 drafter detected" }
+            if bundledDSpark { return "Bundled DSpark drafter detected" }
             if bundledUno { return "Bundled Uno self-speculation adapter detected" }
             if bundledDFlash2 { return "Compatible bundled DFlash 2 drafter detected" }
             if !bundleHasMTP { return "No MTP head or compatible drafter detected" }
@@ -364,6 +367,12 @@ public actor ModelRuntime {
             configData: config, bundleDirectory: directory) != nil
         let bundledUno = VMLXServerRuntimeSettings().bundledUnoAdapter(
             configData: config, bundleDirectory: directory) != nil
+        // Use the runtime's bundle resolver, not a second architecture/name list.
+        // Capability stays visible under Off; execution still follows the saved mode.
+        var availabilitySettings = VMLXServerRuntimeSettings()
+        availabilitySettings.mtp.mode = .familyDefault
+        let bundledDSpark = availabilitySettings.bundledDSparkDrafter(
+            configData: config, bundleDirectory: directory) != nil
         // Availability remains discoverable under Off, so re-enabling never
         // requires loading weights. The selected mode controls execution/display.
         var selectedSettings = ServerRuntimeSettingsStore.snapshot()
@@ -379,6 +388,7 @@ public actor ModelRuntime {
             bundledDFlash2: bundledDFlash2,
             selectedDFlash2: selectedDFlash2,
             bundledUno: bundledUno,
+            bundledDSpark: bundledDSpark,
             statusLine: status.statusLine
         )
     }
@@ -426,6 +436,7 @@ public actor ModelRuntime {
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
         let nativeMTPAdmission: NativeMTPAdmission
+        let preparedMTP: VMLXServerMTPSettings
         /// Numeric allocator-cache cap resolved from the user-visible
         /// memory-safety plan used for this exact load. `nil` means no numeric
         /// cap; the decode-path-specific admitted-ceiling requirement is
@@ -462,6 +473,7 @@ public actor ModelRuntime {
             nativeMTPStatus: String? = nil,
             nativeMTPReason: String? = nil,
             nativeMTPAdmission: NativeMTPAdmission = .init(),
+            preparedMTP: VMLXServerMTPSettings = .init(),
             allocatorCacheLimitBytes: Int? = nil,
             admittedWorkingSetBytes: UInt64? = nil,
             admittedLoadBudgetBytes: UInt64? = nil,
@@ -480,6 +492,7 @@ public actor ModelRuntime {
             self.nativeMTPStatus = nativeMTPStatus
             self.nativeMTPReason = nativeMTPReason
             self.nativeMTPAdmission = nativeMTPAdmission
+            self.preparedMTP = preparedMTP
             self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
             self.admittedWorkingSetBytes = admittedWorkingSetBytes
             self.admittedLoadBudgetBytes = admittedLoadBudgetBytes
@@ -525,6 +538,8 @@ public actor ModelRuntime {
     // MARK: - State
 
     private var modelCache: [String: SessionHolder] = [:]
+    /// Serializes graph preparation, not generation. Same-model batching resumes after lease acquisition.
+    private var preparationGates: [String: MLXBatchAdapter.SoloGenerationGate] = [:]
     private struct LoadingTaskRecord {
         let id: UInt64
         let task: Task<SessionHolder, Error>
@@ -680,6 +695,20 @@ public actor ModelRuntime {
     /// chat window closes. `nil` (never generated — e.g. a warm preload) is
     /// treated as chat-sourced, since preloads are chat-driven.
     private var lastUseSource: [String: RequestSource] = [:]
+    /// When each model last served a turn of the owner's phone call
+    /// (`ChatExecutionContext.isVoiceCall`), or was warmed for one: kept
+    /// loaded a while longer, as the phone speaks each reply before the next
+    /// turn comes (see `voiceCallIdleResidency`). By time rather than by the
+    /// latest generation, so a title, memory or Mac chat generation on the
+    /// same model mid-call doesn't drop it back to the short wait.
+    private var voiceCallTurnAt: [String: Date] = [:]
+
+    /// Whether `modelName` served a call turn recently enough to still be on
+    /// that call: within one call residency of the turn.
+    private func isOnVoiceCall(_ modelName: String) -> Bool {
+        guard let last = voiceCallTurnAt[modelName] else { return false }
+        return Date().timeIntervalSince(last) < TimeInterval(Self.voiceCallResidencySeconds)
+    }
 
     /// Grace period applied when the last chat window referencing a model
     /// closes. Zero: closing the chat evicts the model immediately — the
@@ -1281,7 +1310,7 @@ public actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Installed model not found for preload: \(trimmed)"]
             )
         }
-        let loadedHolder = try await loadContainer(
+        let loadedHolder = try await prepareContainer(
             id: found.id,
             name: found.name,
             intent: intent,
@@ -1305,6 +1334,28 @@ public actor ModelRuntime {
         if await ModelLease.shared.count(for: found.name) == 0 {
             await scheduleIdleResidency(for: found.name)
         }
+    }
+
+    /// Whether a generation on `name` would load an installed local model
+    /// first: a phone run says so on its stream while it waits.
+    func needsLoad(_ name: String) -> Bool {
+        // Resident under any name the generation would find it by (the
+        // requested one, the canonical one, or a case or repo-tail match).
+        if residentKey(matching: name) != nil { return false }
+        return ModelManager.findInstalledModel(named: name) != nil
+    }
+
+    /// Loads a local model as the owner's phone call connects (`POST
+    /// /agents/{id}/warm`, MOBILE_PROTOCOL §6.5), so the first turn doesn't
+    /// wait on it, and keeps it as a call's turn does. Whether it was loaded
+    /// already; nil for a name that is no installed local model (a cloud one).
+    func warmForVoiceCall(name: String) async throws -> Bool? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let found = ModelManager.findInstalledModel(named: trimmed) else { return nil }
+        let already = modelCache[found.name] != nil
+        voiceCallTurnAt[found.name] = Date()
+        try await preload(name: found.name)
+        return already
     }
 
     /// Best-effort MLX freed-buffer pool trim under OS memory pressure.
@@ -2247,7 +2298,7 @@ public actor ModelRuntime {
         // Use the same bounded allocator window as a visible MTP request so
         // warmup materializes the actual D3 working set, then retain only its
         // most-recently-used portion under the persistent ceiling.
-        let warmupRuntime = await getConfig()
+        let warmupRuntime = await getConfig().withPreparedMTP(holder.preparedMTP)
         let warmupStrategy = try? holder.nativeMTPAdmission.requestStrategy(
             loaded: holder.draftStrategy,
             mtp: warmupRuntime.mtp
@@ -2859,6 +2910,26 @@ public actor ModelRuntime {
         return configured
     }
 
+    /// How long a model stays loaded after a phone call's turn: on a call the
+    /// phone speaks the reply for 15–20 s after the text is done, then the
+    /// user answers, so the default 30 s unloaded it before most next turns
+    /// and each paid a reload. 3.5 minutes from the turn's end, unless the
+    /// configured wait is longer. A user who chose to unload at once, or to
+    /// keep models loaded, keeps that choice.
+    static let voiceCallResidencySeconds = 210
+
+    nonisolated static func voiceCallIdleResidency(
+        _ policy: ModelIdleResidencyPolicy,
+        configured: ModelIdleResidencyPolicy
+    ) -> ModelIdleResidencyPolicy {
+        guard case .afterSeconds(let configuredSeconds) = configured else { return policy }
+        switch policy {
+        case .never: return .never
+        case .afterSeconds(let seconds): return .afterSeconds(max(seconds, voiceCallResidencySeconds))
+        case .immediately: return .afterSeconds(max(configuredSeconds, voiceCallResidencySeconds))
+        }
+    }
+
     private func scheduleIdleResidency(for modelName: String) async {
         let policyRevision = idleResidencyPolicyRevision
         guard !isClearingAllResidency,
@@ -2883,12 +2954,15 @@ public actor ModelRuntime {
         let hasHandoffOwner =
             residentMetadata[modelName]?.childOwnershipToken != nil
             || parentRetentions.holds(residentMetadata[modelName]?.identity)
-        let policy = Self.resolvedIdleResidencyPolicy(
+        let resolved = Self.resolvedIdleResidencyPolicy(
             configured: configured,
             source: lastUseSource[modelName],
             referencedByChat: referencedByChat,
             hasHandoffOwner: hasHandoffOwner
         )
+        let policy =
+            isOnVoiceCall(modelName)
+            ? Self.voiceCallIdleResidency(resolved, configured: configured) : resolved
         genLog.info(
             "idleResidency: model=\(modelName, privacy: .public) policy=\(String(describing: policy), privacy: .public) handoffOwned=\(hasHandoffOwner, privacy: .public) chatReferenced=\(referencedByChat, privacy: .public)"
         )
@@ -4573,13 +4647,66 @@ public actor ModelRuntime {
         }
     }
 
+    /// The preparation permit spans a possible head upgrade AND acquiring the stream lease.
+    /// This prevents a second request from evicting a holder another request is about to use.
+    /// Existing streams drain naturally; cancellation never cancels another agent's work.
+    private func prepareContainer(
+        id: String,
+        name: String,
+        intent: ModelLoadIntent = .interactive,
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil,
+        alignmentRepairActivity: UUID? = nil,
+        alignmentRepairSession: String? = nil,
+        mtp: VMLXServerMTPSettings? = nil,
+        pinForGeneration: Bool = false
+    ) async throws -> SessionHolder {
+        let gate = preparationGates[name] ?? MLXBatchAdapter.SoloGenerationGate()
+        preparationGates[name] = gate
+        guard let permit = await gate.acquire(modelName: name) else { throw CancellationError() }
+        do {
+            try Task.checkCancellation()
+            if let mtp, let previous = modelCache[name]?.preparedMTP,
+                AgentSpeculationPolicy.requiresPreparation(
+                    previous: previous, next: mtp, hasLoadedStrategy: modelCache[name]?.draftStrategy != nil)
+            {
+                try await ModelLease.shared.waitForZeroCancellable(name)
+                try Task.checkCancellation()
+                try await strictEvict(name)
+            }
+            while true {
+                let holder = try await loadContainer(
+                    id: id, name: name, intent: intent,
+                    restoreOwnershipToken: restoreOwnershipToken,
+                    alignmentRepairActivity: alignmentRepairActivity,
+                    alignmentRepairSession: alignmentRepairSession, mtp: mtp)
+                // A cancelled warmup can already have published this holder. Return it
+                // leased so generation's post-load cancellation cleanup can unload it;
+                // throwing here would orphan the resident graph before that cleanup.
+                if pinForGeneration {
+                    await ModelLease.shared.acquire(name)
+                    // GC/global settings can suspend this actor too. Never return an evicted graph.
+                    guard modelCache[name] === holder else {
+                        await ModelLease.shared.release(name)
+                        continue
+                    }
+                }
+                await permit.release()
+                return holder
+            }
+        } catch {
+            await permit.release()
+            throw error
+        }
+    }
+
     private func loadContainer(
         id: String,
         name: String,
         intent: ModelLoadIntent = .interactive,
         restoreOwnershipToken: ModelResidencyOwnershipToken? = nil,
         alignmentRepairActivity: UUID? = nil,
-        alignmentRepairSession: String? = nil
+        alignmentRepairSession: String? = nil,
+        mtp: VMLXServerMTPSettings? = nil
     ) async throws -> SessionHolder {
         try Task.checkCancellation()
         let parentRetention = ParentResidencyRetentionContext.current
@@ -4953,7 +5080,8 @@ public actor ModelRuntime {
         // reclaims file cache, so proceeding into a shortfall dies as a
         // Metal command-buffer abort mid-load, not graceful pressure
         // (observed live: available 101 GB loaded clean, 89 GB crashed).
-        let preloadServerSettings = ServerRuntimeSettingsStore.snapshot()
+        var preloadServerSettings = ServerRuntimeSettingsStore.snapshot()
+        if let mtp { preloadServerSettings.mtp = mtp }
         let automaticMemoryLimitsDisabled =
             ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(
                 for: preloadServerSettings
@@ -5089,7 +5217,11 @@ public actor ModelRuntime {
             )
             try Task.checkCancellation()
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
-            let serverSettings = ServerRuntimeSettingsStore.snapshot()
+            let serverSettings: VMLXServerRuntimeSettings = {
+                var settings = ServerRuntimeSettingsStore.snapshot()
+                if let mtp { settings.mtp = mtp }
+                return settings
+            }()
             Self.applyPerformancePolicy(serverSettings)
             let mtpPlan = try Self.resolveNativeMTPLaunchPlan(
                 modelName: name,
@@ -5199,6 +5331,7 @@ public actor ModelRuntime {
                 nativeMTPStatus: mtpPlan.statusLine,
                 nativeMTPReason: mtpPlan.reason,
                 nativeMTPAdmission: mtpPlan.admission,
+                preparedMTP: serverSettings.mtp,
                 // Profile allocator defaults must not replace the dynamic pool.
                 // The total admitted budget also bounds its remaining capacity.
                 // Routing the resolved plan value here folded the profile
@@ -6022,12 +6155,15 @@ public actor ModelRuntime {
             incoming: parameters.requestSource,
             preserveExisting: parameters.preserveExistingResidencyOwner
         )
+        if ChatExecutionContext.isVoiceCall {
+            voiceCallTurnAt[modelName] = Date()
+        }
 
         // Scoped start/finish around ONLY a cold container load. Hot
         // resident turns still call `loadContainer` to get the holder, but
         // that is a cache hit and must not flash the UI back to
         // "Loading Model..." on every message.
-        let cfg = await getConfig()
+        let cfg = await getConfig().resolvingSpeculation(parameters.speculativeDecoding)
         await MLXBatchAdapter.recordPendingEffectiveGenerationSettings(
             modelName: modelName,
             modelId: modelId,
@@ -6036,7 +6172,11 @@ public actor ModelRuntime {
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
         trace?.mark("load_container_start")
-        let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI
+        let needsPreparation = modelCache[modelName].map {
+            AgentSpeculationPolicy.requiresPreparation(
+                previous: $0.preparedMTP, next: cfg.mtp, hasLoadedStrategy: $0.draftStrategy != nil)
+        } ?? true
+        let shouldReportModelLoad = needsPreparation && !parameters.suppressProgressUI
         if shouldReportModelLoad {
             InferenceProgressManager.shared.modelLoadWillStartAsync()
         }
@@ -6048,18 +6188,25 @@ public actor ModelRuntime {
         let holder: SessionHolder
         let requestStrategy: MLXLMCommon.DraftStrategy?
         do {
-            holder = try await loadContainer(
+            holder = try await prepareContainer(
                 id: modelId,
                 name: modelName,
                 intent: parameters.loadIntent,
                 alignmentRepairActivity: parameters.authorizesAlignmentRepair(for: modelId)
                     ? activityID : nil,
-                alignmentRepairSession: parameters.sessionId
+                alignmentRepairSession: parameters.sessionId,
+                mtp: cfg.mtp,
+                pinForGeneration: true
             )
             // Settings may change without reloading weights (Auto ↔ manual
             // depth). Validate against the evidence belonging to this holder
             // before acquiring a stream lease or submitting GPU work.
-            requestStrategy = try holder.nativeMTPAdmission.requestStrategy(loaded: holder.draftStrategy, mtp: cfg.mtp)
+            do {
+                requestStrategy = try holder.nativeMTPAdmission.requestStrategy(loaded: holder.draftStrategy, mtp: cfg.mtp)
+            } catch {
+                await ModelLease.shared.release(modelName)
+                throw error
+            }
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
@@ -6078,6 +6225,7 @@ public actor ModelRuntime {
         trace?.mark("load_container_done")
 
         if Task.isCancelled {
+            await ModelLease.shared.release(modelName)
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
                 await unload(name: modelName)
@@ -6088,8 +6236,7 @@ public actor ModelRuntime {
             throw CancellationError()
         }
 
-        // Pin the model against eviction for the stream's lifetime.
-        await ModelLease.shared.acquire(modelName)
+        // prepareContainer already pinned this holder for the stream's lifetime.
 
         // `MLXLMCommon.Chat.Message` is non-Sendable but the message array
         // never escapes the producer task. Heap-box the snapshot so the
@@ -6261,7 +6408,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
             chatBuilder: {
-                try ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.makeMLXChatMessages(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -6424,7 +6571,7 @@ public actor ModelRuntime {
         let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)
         return try await generateEventStream(
             chatBuilder: {
-                try ModelRuntime.mapOpenAIChatToMLX(
+                try ModelRuntime.makeMLXChatMessages(
                     augmented,
                     trace: parameters.ttftTrace,
                     preserveStructuredToolHistory: !tools.isEmpty
@@ -7172,7 +7319,7 @@ public actor ModelRuntime {
     /// XML-in-content workaround (which raised
     /// `TemplateException: "Message has tool role, but there was no
     /// previous assistant message with a tool call!"` on MiniMax).
-    nonisolated static func mapOpenAIChatToMLX(
+    nonisolated static func makeMLXChatMessages(
         _ msgs: [ChatMessage],
         trace: TTFTTrace? = nil,
         preserveStructuredToolHistory: Bool = true
@@ -7211,7 +7358,7 @@ public actor ModelRuntime {
             case "assistant":
                 let content = m.content ?? ""
                 let reasoningContent = m.reasoning_content
-                let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil
+                let toolCalls = preserveStructuredToolHistory ? makeMLXToolCalls(m.tool_calls) : nil
                 // Skip fully-empty assistant turns. Reasoning-only assistant
                 // turns are NOT empty for local MLX templates: ZAYA,
                 // Nemotron-H/Omni, MiniMax and DSV4 read
@@ -7298,7 +7445,7 @@ public actor ModelRuntime {
     /// the vmlx `MLXLMCommon.ToolCall` list (arguments: `[String: JSONValue]`).
     /// Returns `nil` for a nil/empty input so callers can pass the result
     /// straight into `Chat.Message(toolCalls:)`.
-    nonisolated private static func toMLXToolCalls(
+    nonisolated private static func makeMLXToolCalls(
         _ calls: [ToolCall]?
     ) -> [MLXLMCommon.ToolCall]? {
         guard let calls, !calls.isEmpty else { return nil }

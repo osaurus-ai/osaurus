@@ -176,17 +176,54 @@ public final class ToastWindowController: NSObject {
     private var toastPanel: NSPanel?
     private var hostingView: NSHostingView<ToastOverlayWindowContent>?
     private var cancellables = Set<AnyCancellable>()
+    /// Set once `setup()` has run. The overlay panel itself is created lazily.
+    private var isActive = false
+
+    /// Whether the overlay panel has been materialized (exposed for tests).
+    var hasPanel: Bool { toastPanel != nil }
 
     private override init() {
         super.init()
     }
 
-    /// Setup the toast overlay window
+    /// Arm the toast overlay. This is intentionally cheap: creating the
+    /// screen-sized panel requires a synchronous WindowServer round-trip
+    /// (SLSNewWindow) that can stall the main thread for seconds at launch,
+    /// so the panel is only created on first use via `showOverlayIfNeeded()`.
     public func setup() {
-        guard toastPanel == nil else { return }
+        guard !isActive else { return }
+        isActive = true
 
+        // Observe screen changes to resize window
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenDidChange),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+
+        // Observe window focus changes to move toast panel to active window's screen
+        ChatWindowManager.shared.$lastFocusedWindowId
+            .sink { [weak self] windowId in
+                self?.updatePanelScreen(forWindowId: windowId)
+            }
+            .store(in: &cancellables)
+
+        print("[Osaurus] Toast window controller armed (panel created on first use)")
+    }
+
+    /// Ensure the overlay panel exists and is on screen. Call before
+    /// presenting a toast or a `.toastOverlay`-scoped alert. No-op until
+    /// `setup()` has run (e.g. headless test mode) or once the panel exists.
+    public func showOverlayIfNeeded() {
+        guard isActive, toastPanel == nil else { return }
+        createPanel()
+        updatePanelScreen(forWindowId: ChatWindowManager.shared.lastFocusedWindowId)
+    }
+
+    private func createPanel() {
         // Get the main screen bounds
-        guard let screen = NSScreen.main else { return }
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
 
         // Create a panel (NSPanel is better for floating utility windows)
         let panel = NSPanel(
@@ -227,21 +264,6 @@ public final class ToastWindowController: NSObject {
         // Show the panel
         panel.orderFrontRegardless()
 
-        // Observe screen changes to resize window
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(screenDidChange),
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil
-        )
-
-        // Observe window focus changes to move toast panel to active window's screen
-        ChatWindowManager.shared.$lastFocusedWindowId
-            .sink { [weak self] windowId in
-                self?.updatePanelScreen(forWindowId: windowId)
-            }
-            .store(in: &cancellables)
-
         print("[Osaurus] Toast window controller setup complete on screen: \(screen.localizedName)")
     }
 
@@ -252,6 +274,7 @@ public final class ToastWindowController: NSObject {
         toastPanel?.close()
         toastPanel = nil
         hostingView = nil
+        isActive = false
     }
 
     @objc private func screenDidChange() {

@@ -13,7 +13,7 @@ import Testing
 
 struct ModelRuntimeMappingTests {
     @Test func developerRoleSurvivesLocalRuntimeMapping() throws {
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([
+        let mapped = try ModelRuntime.makeMLXChatMessages([
             ChatMessage(role: "system", content: "System instruction"),
             ChatMessage(role: "developer", content: "Developer instruction"),
             ChatMessage(role: "user", content: "Question"),
@@ -27,7 +27,7 @@ struct ModelRuntimeMappingTests {
             .text("before"), .videoUrl(url: "file:///tmp/mimo-order-test.mp4"),
             .imageUrl(url: try validImageURL(), detail: nil), .text("after"),
         ])
-        let mapped = try #require(ModelRuntime.mapOpenAIChatToMLX([message]).first)
+        let mapped = try #require(ModelRuntime.makeMLXChatMessages([message]).first)
         #expect(mapped.contentParts == [.text("before"), .video, .image, .text("after")])
         #expect(mapped.images.count == 1 && mapped.videos.count == 1)
     }
@@ -68,14 +68,14 @@ struct ModelRuntimeMappingTests {
     func malformedImageFailsInsteadOfBecomingTextOnly(_ url: String) throws {
         let message = try imageMessage([url])
         #expect(throws: ModelRuntime.ImageInputError.self) {
-            try ModelRuntime.mapOpenAIChatToMLX([message])
+            try ModelRuntime.makeMLXChatMessages([message])
         }
     }
 
     @Test func mixedImagesCannotSilentlyLoseOneAttachment() throws {
         let message = try imageMessage([validImageURL(), "data:image/png;base64,bm90IGFuIGltYWdl"])
         do {
-            _ = try ModelRuntime.mapOpenAIChatToMLX([message])
+            _ = try ModelRuntime.makeMLXChatMessages([message])
             Issue.record("corrupt second image was silently accepted")
         } catch let error as ModelRuntime.ImageInputError {
             #expect(error.imageIndex == 1)
@@ -87,7 +87,7 @@ struct ModelRuntimeMappingTests {
     @Test func validImagesKeepTheirOrderAndDimensions() throws {
         let url = try validImageURL()
         let message = try imageMessage([url, "https://example.com/second.png", url])
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([message])
+        let mapped = try ModelRuntime.makeMLXChatMessages([message])
         let images = try #require(mapped.first?.images)
         #expect(images.count == 3)
         guard case .ciImage(let first) = images[0],
@@ -102,7 +102,7 @@ struct ModelRuntimeMappingTests {
 
     // MARK: - Multi-turn tool history fidelity
     //
-    // `mapOpenAIChatToMLX` used to serialize assistant tool_calls into the
+    // `makeMLXChatMessages` used to serialize assistant tool_calls into the
     // `content` string as Qwen-style `<tool_call>{...}</tool_call>` XML and
     // prefix tool results with `[tool: <name>]`. vmlx ≥ a99efeb added
     // structured `Chat.Message.toolCalls` / `toolCallId` fields and a
@@ -134,7 +134,7 @@ struct ModelRuntimeMappingTests {
             tool_call_id: "call_1"
         )
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([assistant, toolMsg])
+        let mapped = try ModelRuntime.makeMLXChatMessages([assistant, toolMsg])
 
         #expect(mapped.count == 2, "assistant tool_call turn must not be dropped")
 
@@ -177,7 +177,7 @@ struct ModelRuntimeMappingTests {
             tool_call_id: nil
         )
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([assistant])
+        let mapped = try ModelRuntime.makeMLXChatMessages([assistant])
         #expect(mapped.count == 1)
         let asst = mapped[0]
         #expect(asst.role == .assistant)
@@ -210,7 +210,7 @@ struct ModelRuntimeMappingTests {
         let tool2 = ChatMessage(role: "tool", content: "12:34", tool_calls: nil, tool_call_id: "c2")
         let user2 = ChatMessage(role: "user", content: "thanks")
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([user1, asst1, tool1, asst2, tool2, user2])
+        let mapped = try ModelRuntime.makeMLXChatMessages([user1, asst1, tool1, asst2, tool2, user2])
         #expect(mapped.count == 6)
         #expect(mapped[0].role == .user)
         #expect(mapped[1].role == .assistant)
@@ -248,7 +248,7 @@ struct ModelRuntimeMappingTests {
         )
         let user = ChatMessage(role: "user", content: "How many lines?")
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX(
+        let mapped = try ModelRuntime.makeMLXChatMessages(
             [assistant, tool, user],
             preserveStructuredToolHistory: false
         )
@@ -268,7 +268,7 @@ struct ModelRuntimeMappingTests {
         let empty = ChatMessage(role: "assistant", content: nil, tool_calls: nil, tool_call_id: nil)
         let whitespace = ChatMessage(role: "assistant", content: "   \n  ", tool_calls: nil, tool_call_id: nil)
         let valid = ChatMessage(role: "user", content: "hello")
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([empty, whitespace, valid])
+        let mapped = try ModelRuntime.makeMLXChatMessages([empty, whitespace, valid])
         #expect(mapped.count == 1)
         #expect(mapped[0].role == .user)
     }
@@ -286,7 +286,7 @@ struct ModelRuntimeMappingTests {
             reasoning_content: "Prior reasoning."
         )
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([assistant])
+        let mapped = try ModelRuntime.makeMLXChatMessages([assistant])
 
         #expect(mapped.count == 1)
         #expect(mapped[0].role == .assistant)
@@ -303,7 +303,7 @@ struct ModelRuntimeMappingTests {
             reasoning_content: "\nPrior reasoning.  "
         )
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([assistant])
+        let mapped = try ModelRuntime.makeMLXChatMessages([assistant])
 
         #expect(mapped.count == 1)
         #expect(mapped[0].role == .assistant)
@@ -320,7 +320,7 @@ struct ModelRuntimeMappingTests {
             reasoning_content: "Reasoning with no visible content yet."
         )
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([assistant])
+        let mapped = try ModelRuntime.makeMLXChatMessages([assistant])
 
         #expect(mapped.count == 1)
         #expect(mapped[0].role == .assistant)
@@ -342,7 +342,7 @@ struct ModelRuntimeMappingTests {
             tool_calls: [toolCall],
             tool_call_id: nil
         )
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([assistant])
+        let mapped = try ModelRuntime.makeMLXChatMessages([assistant])
         #expect(mapped.count == 1)
         #expect(mapped[0].toolCalls?.count == 1)
         #expect(mapped[0].toolCalls?.first?.function.name == "f")

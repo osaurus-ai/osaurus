@@ -212,6 +212,7 @@ public enum ConfigManifest {
                         comment: "0..2"),
                     ConfigKeySpec(
                         "max_tokens", .scalar(.integer, example: "null", nullable: true)),
+                    ConfigKeySpec("show_response_metrics", .scalar(.boolean, example: "false")),
                     ConfigKeySpec(
                         "generation_settings", .nullableMapping(agentGenerationKeys),
                         comment: "replaces advanced overrides; absent preserves, null clears"),
@@ -776,6 +777,7 @@ public enum ConfigManifest {
         ConfigKeySpec("enable_thinking", .scalar(.boolean, example: "null", nullable: true)),
         ConfigKeySpec("reasoning_effort", .scalar(.string, example: "null", nullable: true)),
         ConfigKeySpec("template_kwargs", .jsonObject(nullable: true)),
+        ConfigKeySpec("speculative_decoding", .scalar(.boolean, example: "null", nullable: true)),
     ]
 
     // MARK: - Derived: strict validation tables

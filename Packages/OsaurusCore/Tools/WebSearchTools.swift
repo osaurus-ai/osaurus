@@ -83,6 +83,26 @@ enum WebSearchArgs {
 
 // MARK: - Result formatting
 
+/// Smaller searches on a turn of the owner's phone call
+/// (`ChatExecutionContext.isVoiceCall`, MOBILE_PROTOCOL §6.5). A local model
+/// reads every token a tool returns before it can answer (about 1,000 a
+/// second on a 9B model), so three extracted pages, ~10K tokens, held a
+/// spoken reply back ten seconds; and a spoken reply only needs the gist.
+enum VoiceCallSearch {
+    static var isActive: Bool { ChatExecutionContext.isVoiceCall }
+    /// `web_search` hits, at most.
+    static let webResults = 5
+    /// `search_and_extract`: results, pages extracted by default and at most.
+    static let extractResults = 3
+    static let extractCount = 1
+    static let maxExtractCount = 2
+    /// Page text kept per extracted page.
+    static let pageCharacters = 4_000
+
+    /// Page text kept per page on this turn.
+    static var pageLimit: Int { isActive ? pageCharacters : SearchReadability.maxMarkdownCharacters }
+}
+
 enum WebSearchResultFormatter {
     /// Cap snippet length so local models don't drown in tokens; frontier
     /// callers still get the full structure.
@@ -97,12 +117,6 @@ enum WebSearchResultFormatter {
             "query": request.query,
             "category": request.category,
             "provider": outcome.provider ?? "",
-            "next_action": [
-                "tool": "search_and_extract",
-                "instruction":
-                    "Pass a selected result URL in `url` to retrieve its actual page text or raw CSV/JSON before processing or charting it. Do not rephrase the discovery query.",
-                "candidate_urls": candidateURLs,
-            ],
             "results": outcome.hits.enumerated().map { index, hit -> [String: Any] in
                 var d = hit.toDict(rank: index + 1)
                 if let snippet = d["snippet"] as? String, snippet.count > maxSnippetLength {
@@ -112,6 +126,16 @@ enum WebSearchResultFormatter {
             },
             "count": outcome.hits.count,
         ]
+        // On a call the snippets are usually enough; pointing at the page
+        // fetch sent a local model on to read three whole pages.
+        if !VoiceCallSearch.isActive {
+            out["next_action"] = [
+                "tool": "search_and_extract",
+                "instruction":
+                    "Pass a selected result URL in `url` to retrieve its actual page text or raw CSV/JSON before processing or charting it. Do not rephrase the discovery query.",
+                "candidate_urls": candidateURLs,
+            ]
+        }
         if outcome.hits.count == request.maxResults {
             out["next_offset"] = request.offset + request.maxResults
         }
@@ -273,7 +297,9 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
         let region = WebSearchArgs.sanitizeRegion(args["region"], warnings: &warnings)
         let maxCap = category == SearchCategory.images ? 100 : 50
         let defaultMax = category == SearchCategory.images ? 20 : 10
-        let maxResults = max(1, min(ArgumentCoercion.int(args["max_results"]) ?? defaultMax, maxCap))
+        let callCap =
+            VoiceCallSearch.isActive && category != SearchCategory.images ? VoiceCallSearch.webResults : maxCap
+        let maxResults = max(1, min(ArgumentCoercion.int(args["max_results"]) ?? defaultMax, maxCap, callCap))
         let offset = max(0, ArgumentCoercion.int(args["offset"]) ?? 0)
 
         let request = SearchRequest(
@@ -444,9 +470,12 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
             let hits = directURLs.map {
                 SearchHit(title: $0, url: $0, snippet: "", engine: "direct_url")
             }
+            // On a call, as many pages as a call's search extracts at most;
+            // the rest are listed without their text.
             let results = await enrichedResults(
                 hits: hits,
-                extractCount: directURLs.count,
+                extractCount: VoiceCallSearch.isActive
+                    ? min(directURLs.count, VoiceCallSearch.maxExtractCount) : directURLs.count,
                 timeout: timeout,
                 hostedTexts: hostedTexts
             )
@@ -470,8 +499,17 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
 
         var warnings: [String] = []
         let timeRange = WebSearchArgs.sanitizeTimeRange(args["time_range"], warnings: &warnings)
-        let maxResults = max(1, min(ArgumentCoercion.int(args["max_results"]) ?? 5, 20))
-        let extractCount = max(1, min(ArgumentCoercion.int(args["extract_count"]) ?? 3, maxResults))
+        let onCall = VoiceCallSearch.isActive
+        let maxResults = max(
+            1, min(ArgumentCoercion.int(args["max_results"]) ?? 5, onCall ? VoiceCallSearch.extractResults : 20))
+        let extractCount = max(
+            1,
+            min(
+                ArgumentCoercion.int(args["extract_count"]) ?? (onCall ? VoiceCallSearch.extractCount : 3),
+                onCall ? VoiceCallSearch.maxExtractCount : maxResults,
+                maxResults
+            )
+        )
         let request = SearchRequest(
             query: query ?? "",
             category: SearchCategory.web,
@@ -488,7 +526,7 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         let run = await SearchProviderManager.shared.runHostedFirstSearch(
             request,
             idempotencyKey: idempotencyKey,
-            extractTextMaxCharacters: SearchReadability.maxMarkdownCharacters
+            extractTextMaxCharacters: VoiceCallSearch.pageLimit
         )
         let outcome = run.outcome
         if outcome.hits.isEmpty {
@@ -618,6 +656,11 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         var enriched: [[String: Any]] = []
         for (index, hit) in hits.enumerated() {
             var entry = hit.toDict(rank: index + 1)
+            // On a call the snippets stay as short as web_search's.
+            let cap = WebSearchResultFormatter.maxSnippetLength
+            if VoiceCallSearch.isActive, let snippet = entry["snippet"] as? String, snippet.count > cap {
+                entry["snippet"] = String(snippet.prefix(cap)) + "…"
+            }
             let shouldExtract = index < extractCount && !hit.url.isEmpty && !Task.isCancelled
             // Hosted-extracted pages skip the local fetch entirely; structured
             // endpoints never use hosted text (see `looksLikeStructuredData`).
@@ -628,7 +671,7 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
             {
                 if let title = hosted.title, !title.isEmpty { entry["title"] = title }
                 let (text, truncated) = SearchDiagnostics.truncate(
-                    hosted.text, maxCharacters: SearchReadability.maxMarkdownCharacters)
+                    hosted.text, maxCharacters: VoiceCallSearch.pageLimit)
                 entry["extract_status"] = SearchExtractionStatus.ok.rawValue
                 entry["extracted"] = true
                 entry["extract_source"] = "premium"
@@ -698,6 +741,17 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
                             if let nextAction = metadata.nextAction {
                                 entry["next_action"] = nextAction
                             }
+                        }
+                    } else if VoiceCallSearch.isActive {
+                        let (text, cut) = SearchDiagnostics.truncate(
+                            extraction.markdown, maxCharacters: VoiceCallSearch.pageLimit)
+                        entry["markdown"] = text
+                        entry["truncated"] = extraction.truncated || cut
+                        if cut {
+                            // What the model actually gets; the page's own count
+                            // stays as the total.
+                            entry["word_count"] = text.split(whereSeparator: \.isWhitespace).count
+                            if entry["word_count_total"] == nil { entry["word_count_total"] = extraction.wordCount }
                         }
                     } else {
                         entry["markdown"] = extraction.markdown

@@ -48,6 +48,15 @@ struct RuntimeConfig: Sendable {
         )
     }
 
+    func resolvingSpeculation(_ enabled: Bool?) -> RuntimeConfig {
+        RuntimeConfig(generation: generation, concurrency: concurrency,
+            mtp: AgentSpeculationPolicy.resolve(enabled, inheriting: mtp))
+    }
+
+    func withPreparedMTP(_ settings: VMLXServerMTPSettings) -> RuntimeConfig {
+        RuntimeConfig(generation: generation, concurrency: concurrency, mtp: settings)
+    }
+
     private static func diskBackedServerConfiguration() -> ServerConfiguration? {
         let url = OsaurusPaths.resolvePath(
             new: OsaurusPaths.serverConfigFile(),

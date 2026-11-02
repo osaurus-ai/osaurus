@@ -71,12 +71,13 @@ struct InstalledModelInventoryTests {
     private static func installedExternalBundle(
         id: String,
         under root: URL,
-        sizeBytes: Int64? = 1
+        sizeBytes: Int64? = 1,
+        config: String = "{}"
     ) throws -> MLXModel {
         let dir = root.appendingPathComponent(
             id.replacingOccurrences(of: "/", with: "--"), isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
         try Data("{}".utf8).write(to: dir.appendingPathComponent("tokenizer.json"))
         try Data().write(to: dir.appendingPathComponent("model.safetensors"))
         return MLXModel(
@@ -362,6 +363,76 @@ struct InstalledModelInventoryTests {
         // The On Device list from the same input agrees with the badge count.
         #expect(lists.downloaded.map { $0.id } == [installedId])
         #expect(ManagementBadgeStore.modelsBadgeCount(inventoryCandidates: input.deduplicatedModels) == 1)
+    }
+
+    // MARK: - Embedding bundles
+
+    private static let model2VecConfig = #"{"model_type": "model2vec", "architectures": ["StaticModel"]}"#
+
+    /// An embedding bundle found on disk (potion left in the HF cache) is not
+    /// part of the installed inventory: not on the On Device tab, not in the
+    /// badge, not in the inventory itself. A chat bundle beside it still is.
+    @Test func embeddingBundlesAreExcludedFromTheInstalledInventory() throws {
+        let root = try Self.makeBundleRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let chatId = "OsaurusAI/Inventory-Embedding-Neighbor-JANG_4M"
+        let embeddingId = "minishlab/inventory-potion-fixture"
+        let chat = try Self.installedExternalBundle(id: chatId, under: root)
+        let embedding = try Self.installedExternalBundle(
+            id: embeddingId,
+            under: root,
+            config: Self.model2VecConfig
+        )
+        #expect(embedding.isDownloaded)
+        #expect(embedding.isEmbedding)
+
+        let available = [chat, embedding]
+        let candidates = ModelManager.deduplicatedModels(suggested: [], available: available)
+        #expect(ModelManager.installedModels(among: candidates).map(\.id) == [chatId])
+        #expect(ManagementBadgeStore.modelsBadgeCount(inventoryCandidates: candidates) == 1)
+
+        let input = ModelDownloadView.GridListInput(
+            availableModels: available,
+            suggestedModels: [],
+            deduplicatedModels: candidates,
+            downloadStates: [:],
+            searchText: "",
+            filterState: ModelManager.ModelFilterState(),
+            selectedTab: .downloaded,
+            sortOption: .recommended,
+            totalMemoryGB: 128
+        )
+        #expect(ModelDownloadView.makeGridLists(input).downloaded.map(\.id) == [chatId])
+    }
+
+    /// `/v1/models` and chat model lookup read `installedModelNames()` /
+    /// `findInstalledMLXModel`; an embedding bundle must not be offered there.
+    @Test func embeddingBundlesAreExcludedFromInstalledModelNames() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.makeBundleRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let chat = try Self.installedExternalBundle(id: "fixture/names-chat-model-4bit", under: root)
+            let embedding = try Self.installedExternalBundle(
+                id: "fixture/names-potion-fixture",
+                under: root,
+                config: Self.model2VecConfig
+            )
+
+            let prevScan = ModelManager.scanLocalModelsOverrideForTests
+            let prevWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+            ModelManager.localModelsScanWaitLimitOverrideForTests = 2.0
+            ModelManager.scanLocalModelsOverrideForTests = { _ in [chat, embedding] }
+            ModelManager.invalidateLocalModelsCache()
+            defer {
+                ModelManager.scanLocalModelsOverrideForTests = prevScan
+                ModelManager.localModelsScanWaitLimitOverrideForTests = prevWait
+                ModelManager.invalidateLocalModelsCache()
+            }
+
+            let names = ModelManager.installedModelNames()
+            #expect(names.contains("names-chat-model-4bit"))
+            #expect(!names.contains("names-potion-fixture"))
+        }
     }
 
     // MARK: - Dedupe and merge contracts

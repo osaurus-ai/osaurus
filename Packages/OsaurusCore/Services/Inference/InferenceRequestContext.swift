@@ -25,6 +25,8 @@ struct AgentReasoningDefaults: Sendable, Equatable {
 /// explicit admission budget or turn a background load into an interactive one.
 struct InferenceRequestContext: Sendable {
     var agentReasoningDefaults: AgentReasoningDefaults? = nil
+    /// Local execution preference; never encoded into provider Responses/Chat payloads.
+    var speculativeDecoding: Bool? = nil
     var modelOptions: [String: ModelOptionValue]? = nil
     var ttftTrace: TTFTTrace? = nil
     var turnId: UUID? = nil

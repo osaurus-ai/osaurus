@@ -905,12 +905,19 @@ struct SelectableTextView: NSViewRepresentable {
 
     /// Read the markdown parser's inline presentation intent off a run's
     /// attributes. Bridged NSAttributedStrings carry it as an NSNumber.
+    ///
+    /// The NSNumber check must come first: a failing
+    /// `as? InlinePresentationIntent` cast on an ObjC-bridged value forces a
+    /// slow Swift runtime conformance lookup. This runs once per attribute run
+    /// on the main thread during `applyThemeStyling`, so the old cast order
+    /// caused app hangs on long/streaming messages.
     nonisolated static func inlineIntent(_ attributes: [NSAttributedString.Key: Any]) -> InlinePresentationIntent {
-        if let intent = attributes[.inlinePresentationIntent] as? InlinePresentationIntent {
-            return intent
+        guard let raw = attributes[.inlinePresentationIntent] else { return [] }
+        if let number = raw as? NSNumber {
+            return InlinePresentationIntent(rawValue: number.uintValue)
         }
-        if let raw = attributes[.inlinePresentationIntent] as? NSNumber {
-            return InlinePresentationIntent(rawValue: raw.uintValue)
+        if let intent = raw as? InlinePresentationIntent {
+            return intent
         }
         return []
     }

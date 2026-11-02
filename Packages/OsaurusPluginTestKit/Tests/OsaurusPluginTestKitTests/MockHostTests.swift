@@ -144,4 +144,70 @@ struct MockHostTests {
         host.uninstall()
         host.uninstall()  // second call must not crash
     }
+
+    @Test func uninstallingAnotherMockLeavesInstalledHostInPlace() {
+        // A mock that was never installed must not clear the thread-local
+        // slot (or drop the retain) that belongs to the installed host.
+        let host = MockHost()
+        host.onConfigGet = { _ in "installed" }
+
+        host.withInstalled { ptr in
+            let api = ptr.pointee
+
+            MockHost().uninstall()
+
+            let value = "k".withCString { keyPtr -> String? in
+                guard let cstr = api.configGet?(keyPtr) else { return nil }
+                let s = String(cString: cstr)
+                free(UnsafeMutableRawPointer(mutating: cstr))
+                return s
+            }
+            #expect(value == "installed")
+        }
+    }
+
+    @Test func droppingAnotherMockLeavesInstalledHostInPlace() {
+        // Same contract through `deinit`: a temporary MockHost that goes
+        // out of scope mid-test must not detach the installed host.
+        let host = MockHost()
+        host.onConfigGet = { _ in "installed" }
+
+        host.withInstalled { ptr in
+            let api = ptr.pointee
+
+            func makeAndDropTemporaryMock() {
+                let temporary = MockHost()
+                temporary.onConfigGet = { _ in "temporary" }
+            }
+            makeAndDropTemporaryMock()
+
+            let value = "k".withCString { keyPtr -> String? in
+                guard let cstr = api.configGet?(keyPtr) else { return nil }
+                let s = String(cString: cstr)
+                free(UnsafeMutableRawPointer(mutating: cstr))
+                return s
+            }
+            #expect(value == "installed")
+        }
+    }
+
+    @Test func uninstallAfterWithInstalledReleasesSlotForNextHost() {
+        // After the owner uninstalls, the slot is free again and a new
+        // host can install without tripping the single-install guard.
+        let first = MockHost()
+        first.withInstalled { _ in }
+
+        let second = MockHost()
+        second.onConfigGet = { _ in "second" }
+        second.withInstalled { ptr in
+            let api = ptr.pointee
+            let value = "k".withCString { keyPtr -> String? in
+                guard let cstr = api.configGet?(keyPtr) else { return nil }
+                let s = String(cString: cstr)
+                free(UnsafeMutableRawPointer(mutating: cstr))
+                return s
+            }
+            #expect(value == "second")
+        }
+    }
 }

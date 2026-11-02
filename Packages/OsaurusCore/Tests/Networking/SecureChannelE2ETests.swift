@@ -283,6 +283,7 @@ struct SecureChannelE2ETests {
             ("PATCH", "/agents/\(id)", #"{"autonomous_exec_enabled":true}"#),
             ("DELETE", "/agents/\(id)", nil),
             ("POST", "/agents/\(id)/tools/preset", #"{"preset":"all"}"#),
+            ("POST", "/agents/\(id)/warm", #"{"model":"x"}"#),
             ("PATCH", "/agents/\(id)/tools/shell", #"{"enabled":true}"#),
             ("PATCH", "/sessions/\(id)", #"{"title":"x"}"#),
             ("DELETE", "/sessions/\(id)", nil),
@@ -303,7 +304,7 @@ struct SecureChannelE2ETests {
         let id = UUID().uuidString
         let reads = [
             "/sessions", "/sessions/\(id)", "/runs/\(id)/events", "/privacy/reviews", "/secrets/prompts",
-            "/approvals", "/agents/\(id)", "/models/picker",
+            "/approvals", "/agents/\(id)", "/models/picker", "/sessions/\(id)/context?agent_id=\(id)",
         ]
         for path in reads {
             let request = plaintextOwnerRequest(server: server, method: "GET", path: path)

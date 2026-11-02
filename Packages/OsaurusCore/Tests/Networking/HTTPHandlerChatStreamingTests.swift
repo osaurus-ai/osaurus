@@ -19,6 +19,39 @@ fileprivate extension URLRequest {
 
 struct HTTPHandlerChatStreamingTests {
 
+    @Test func activityLoggingPreservesReportedCountsWithoutChangingWireSchema() async throws {
+        let model = "provenance-http-sse-\(UUID().uuidString)"
+        let engine = MockChatEngine(deltas: [StreamingInputTokenHint.encode(12), "hello",
+            StreamingStatsHint.encode(tokenCount: 2, tokensPerSecond: 3, inputTokenCount: 12)],
+            completeText: "hello", model: model)
+        let server = try await startChatStreamingTestServer(with: engine)
+        defer { Task { await server.shutdown() } }
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": model, "messages": [["role": "user", "content": "fixture request"]],
+            "stream": true, "stream_options": ["include_usage": true],
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        #expect(!String(decoding: data, as: UTF8.self).contains("inputTokenSource"))
+        #expect(!String(decoding: data, as: UTF8.self).contains("outputTokenSource"))
+        for _ in 0..<200 {
+            if let row = await MainActor.run(body: { InsightsService.shared.logs.first { $0.model == model } }) {
+                #expect(row.inputTokens == 12)
+                #expect(row.outputTokens == 2)
+                #expect(row.inputTokenSource == .reported)
+                #expect(row.outputTokenSource == .reported)
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("No HTTP activity row for the completed fixture request")
+    }
+
     @MainActor
     @Test(arguments: [true, false], [
         (reason: "stop", inputTokens: 7),

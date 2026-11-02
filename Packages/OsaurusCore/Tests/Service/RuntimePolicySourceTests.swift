@@ -820,7 +820,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "cac3a4357b6e55d1b473a6d048d0c0764b79c0fb"
+        let expectedRuntimeHardenedRevision = "a0990f0bd8ec68449054dbdee9b770e1d30a0d90"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -830,7 +830,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the required vmlx-swift revision cac3a435 for the LFM3 text, vision, video and speech-input runtime, including native audio text-stop handling, on top of the existing runtime hardening. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the required vmlx-swift revision a0990f0b for request-sized SSM replay and throwing SSM companion materialization, serialized tokenizer contracts, checked text-prefill error propagation and declared bundle thinking/effort defaults, on top of the LFM3 text, vision, video and speech-input runtime, native audio text-stop handling and existing runtime hardening. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -872,13 +872,26 @@ struct RuntimePolicySourceTests {
     func cancelledColdLoadUnloadsBeforeStreamSetup() throws {
         let source = try Self.source("Services/ModelRuntime.swift")
         let loadDone = try #require(source.range(of: #"trace?.mark("load_container_done")"#))
-        let leaseAcquire = try #require(
+        let streamSetup = try #require(
             source.range(
-                of: "await ModelLease.shared.acquire(modelName)",
+                of: "let buildChat:",
                 range: loadDone.upperBound ..< source.endIndex
             )
         )
-        let postLoadWindow = String(source[loadDone.lowerBound ..< leaseAcquire.lowerBound])
+        let postLoadWindow = String(source[loadDone.lowerBound ..< streamSetup.lowerBound])
+        // Graph preparation now pins before returning. A cancelled request must release that
+        // pin before attempting the same cold-load cleanup; no producer may start in between.
+        #expect(postLoadWindow.contains("await ModelLease.shared.release(modelName)"))
+        let preparationStart = try #require(source.range(of: "private func prepareContainer("))
+        let preparationEnd = try #require(source.range(of: "private func loadContainer("))
+        let preparation = String(source[preparationStart.lowerBound ..< preparationEnd.lowerBound])
+        #expect(preparation.contains("await ModelLease.shared.acquire(name)"))
+        #expect(preparation.contains("guard modelCache[name] === holder"))
+        #expect(preparation.contains("await ModelLease.shared.release(name)"))
+        let returnedLoad = try #require(preparation.range(of: "let holder = try await loadContainer("))
+        let acquiredLease = try #require(preparation.range(of: "await ModelLease.shared.acquire(name)"))
+        #expect(!preparation[returnedLoad.upperBound ..< acquiredLease.lowerBound].contains("Task.checkCancellation"),
+            "A published holder must reach post-load cancellation cleanup, never be orphaned by a throw before its lease")
 
         #expect(postLoadWindow.contains("if Task.isCancelled"))
         #expect(postLoadWindow.contains("await ModelResidencyManager.shared.cancel(modelName: modelName)"))
@@ -1238,19 +1251,26 @@ struct RuntimePolicySourceTests {
         #expect(!adapter.contains(#""cacheStableSystemPrefix""#))
     }
 
-    @Test("near-limit wrap-up notice stages only on a mid-run tool tail")
-    func nearLimitNoticeStagesOnlyMidRun() throws {
-        // The "Context is nearly full — wrap up" notice is a mid-run nudge.
-        // Staging it on a fresh user question appends it as the trailing
-        // user-role message and displaces the real query (observed live:
-        // the model reasoned about the notice instead of the question), and
-        // staging it on a non-tool tail also breaks the byte-identical
-        // rebuild contract of reasoning-continuation retries.
+    @Test("context pressure never injects the legacy task-abandonment notice")
+    func contextPressureDoesNotInjectWrapUp() throws {
+        // The old notice made a real bulk-file task stop after its first
+        // read. Context pressure belongs to compaction, not an instruction
+        // to abandon work, even when history ends in a completed tool batch.
         let chatView = try Self.source("Views/Chat/ChatView.swift")
-        #expect(chatView.contains(#"let midRunToolTail = msgs.last?.role == "tool""#))
-        #expect(
-            chatView.contains("!tokenBudgetNoticeFired,\n                                midRunToolTail,")
-        )
+        let loop = try Self.source("Services/Chat/AgentToolLoop.swift")
+        #expect(!chatView.contains("contextNearLimitNotice"))
+        #expect(!chatView.contains("tokenBudgetNoticeFired"))
+        #expect(!loop.contains("Wrap up the current work and provide a summary."))
+    }
+
+    @Test("tool-loop LLM compaction precedes deterministic history trimming")
+    func toolLoopCompactionPrecedesTrimming() throws {
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        let start = try #require(chatView.range(of: "buildMessages: { notices in"))
+        let hook = String(chatView[start.lowerBound...])
+        let compaction = try #require(hook.range(of: "try await self.compactBeforeToolContinuation("))
+        let trimming = try #require(hook.range(of: "trimPreservingSystemPrefixReportingOverflow("))
+        #expect(compaction.lowerBound < trimming.lowerBound)
     }
 
     @Test("Cache topology changes reload models while size changes refresh resident caps")
@@ -1610,7 +1630,7 @@ struct RuntimePolicySourceTests {
             "ModelRuntime must not preserve structured assistant/tool history when the request is routed with no active tool schemas."
         )
         #expect(
-            runtime.contains("let toolCalls = preserveStructuredToolHistory ? toMLXToolCalls(m.tool_calls) : nil"),
+            runtime.contains("let toolCalls = preserveStructuredToolHistory ? makeMLXToolCalls(m.tool_calls) : nil"),
             "Assistant tool_calls must be omitted from the MLX template context when structured tool history is disabled."
         )
         #expect(
@@ -2823,7 +2843,13 @@ struct RuntimePolicySourceTests {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
         #expect(runtime.contains("MTPBundleInspector.inspect("))
-        #expect(runtime.contains("let serverSettings = ServerRuntimeSettingsStore.snapshot()"))
+        let loadSettingsStart = try #require(runtime.range(of: "let serverSettings: VMLXServerRuntimeSettings = {"))
+        let loadSettingsEnd = try #require(runtime.range(
+            of: "Self.applyPerformancePolicy(serverSettings)", range: loadSettingsStart.upperBound ..< runtime.endIndex))
+        let loadSettings = String(runtime[loadSettingsStart.lowerBound ..< loadSettingsEnd.lowerBound])
+        #expect(loadSettings.contains("var settings = ServerRuntimeSettingsStore.snapshot()"))
+        #expect(loadSettings.contains("if let mtp { settings.mtp = mtp }"))
+        #expect(loadSettings.contains("return settings"))
         #expect(runtime.contains("settings: serverSettings"))
         #expect(!runtime.contains("settings.mtp.mode = .auto"))
         #expect(runtime.contains("resolvedMTPLaunch("))
@@ -3379,9 +3405,12 @@ struct RuntimePolicySourceTests {
     func residentSameModelTurnsDoNotFlashModelLoadingUI() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
+        #expect(runtime.contains("let needsPreparation = modelCache[modelName].map"))
+        #expect(runtime.contains("previous: $0.preparedMTP, next: cfg.mtp, hasLoadedStrategy: $0.draftStrategy != nil"))
+
         #expect(
             runtime.contains(
-                "let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI"
+                "let shouldReportModelLoad = needsPreparation && !parameters.suppressProgressUI"
             )
         )
         #expect(

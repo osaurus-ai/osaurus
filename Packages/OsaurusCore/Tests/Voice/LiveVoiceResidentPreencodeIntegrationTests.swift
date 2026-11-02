@@ -119,7 +119,7 @@ struct LiveVoiceResidentPreencodeIntegrationTests {
         #expect(chatMessage.audioInputsWithLocalSamples.count == 1)
         #expect(chatMessage.audioInputsWithLocalSamples[0].localSamples?.preencodedAttachmentId == attachmentId)
 
-        let mapped = try ModelRuntime.mapOpenAIChatToMLX([chatMessage])
+        let mapped = try ModelRuntime.makeMLXChatMessages([chatMessage])
         #expect(mapped.count == 1)
         #expect(mapped[0].audios.count == 1)
         guard

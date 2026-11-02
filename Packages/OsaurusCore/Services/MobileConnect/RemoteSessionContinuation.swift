@@ -54,8 +54,22 @@ enum RemoteSessionContinuation {
     /// Appends the messages produced by a remote run to the session.
     /// `model` updates the stored chat's recorded model, matching what the Mac
     /// does when a turn runs under a different model.
-    static func append(_ messages: [ChatMessage], to sessionId: UUID, model: String?) async {
-        await append(turns: ChatHistoryWriter.turns(from: messages), to: sessionId, model: model)
+    /// A call's turns (`voiceCall`) are saved without the `[end call]` the
+    /// agent ends its goodbye with: it is for the phone, and kept in the
+    /// history it would be sent back to the model on later turns.
+    static func append(
+        _ messages: [ChatMessage],
+        to sessionId: UUID,
+        model: String?,
+        voiceCall: Bool = false
+    ) async {
+        var turns = ChatHistoryWriter.turns(from: messages)
+        if voiceCall {
+            for index in turns.indices where turns[index].role == .assistant {
+                turns[index].content = StringCleaning.stripCallEndMarker(turns[index].content)
+            }
+        }
+        await append(turns: turns, to: sessionId, model: model)
     }
 
     /// Appends an image model's exchange from the phone (§12.5): the prompt,
@@ -206,13 +220,35 @@ enum RemoteSessionContinuation {
     /// Whether `session` is one of the phone's chats: one it started (see
     /// `startPhoneChat`), or an older hosted row (see `isFromPairedPhone`).
     static func isFromPairedPhone(_ session: ChatSessionData) -> Bool {
-        if session.source == .chat, session.externalSessionKey == phoneChatKey { return true }
-        return session.workspace.map(isFromPairedPhone) ?? false
+        isFromPairedPhone(
+            source: session.source,
+            externalSessionKey: session.externalSessionKey,
+            workspace: session.workspace
+        )
+    }
+
+    /// The same, from a chat's fields, for the open `ChatSession` the tab
+    /// strip shows, so the two never disagree.
+    static func isFromPairedPhone(
+        source: SessionSource,
+        externalSessionKey: String?,
+        workspace: WorkspaceSessionContext?
+    ) -> Bool {
+        if source == .chat, isPhoneChatKey(externalSessionKey) { return true }
+        return workspace.map(isFromPairedPhone) ?? false
     }
 
     /// Marks a chat the phone started. It is otherwise an ordinary chat:
     /// no workspace stamp, so the Mac can open and continue it as its own.
     static let phoneChatKey = "osaurus-connect-phone"
+
+    /// Whether `key` marks a chat the phone started. Chats started while
+    /// several phones could pair (reverted in 5b29a6bd9) carry
+    /// `:<device id>` after it, and are still the owner's phone chats.
+    static func isPhoneChatKey(_ key: String?) -> Bool {
+        guard let key else { return false }
+        return key == phoneChatKey || key.hasPrefix("\(phoneChatKey):")
+    }
 
     /// Whether the caller's access key is the one the phone was paired with.
     static func isPairedPhoneKey(_ keyNonce: String?) -> Bool {

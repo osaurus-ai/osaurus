@@ -762,7 +762,7 @@ public final class ModelManager: NSObject, ObservableObject {
 
     /// `!installedModels().isEmpty`, stopping at the first installed entry
     /// instead of probing every candidate.
-    var hasInstalledModels: Bool { deduplicatedModels().contains { $0.isDownloaded } }
+    var hasInstalledModels: Bool { deduplicatedModels().contains(where: Self.isInstalledInventoryModel) }
 
     /// The installed subset of an inventory candidate list (the output of
     /// `deduplicatedModels()`), computed wherever the caller is. Pure over
@@ -771,7 +771,14 @@ public final class ModelManager: NSObject, ObservableObject {
         // INVARIANT: UI, configuration and setup checks share this installed
         // subset; catalog refresh preserves local evidence. Guarded by
         // InstalledModelInventoryTests (landing orders and surface counts).
-        candidates.filter { $0.isDownloaded }
+        candidates.filter(isInstalledInventoryModel)
+    }
+
+    /// Complete on disk and able to chat. Embedding bundles (e.g. potion
+    /// imported from the HF cache) are excluded: Osaurus ships its own
+    /// embedder, and they can't serve chat completions.
+    nonisolated private static func isInstalledInventoryModel(_ model: MLXModel) -> Bool {
+        model.isDownloaded && !model.isEmbedding
     }
 
     // MARK: - Private Methods
@@ -1555,7 +1562,7 @@ extension ModelManager {
         let models = discoverLocalModels()
         var seen: Set<String> = []
         var names: [String] = []
-        for m in models where !m.isDecision {
+        for m in models where !m.isDecision && !m.isEmbedding {
             let repo = m.id.split(separator: "/").last.map(String.init)?.lowercased() ?? m.id.lowercased()
             if !seen.contains(repo) {
                 seen.insert(repo)

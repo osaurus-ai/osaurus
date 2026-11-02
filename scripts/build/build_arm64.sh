@@ -46,6 +46,15 @@ xcodebuild -workspace osaurus.xcworkspace \
 # keychain-access-groups, was removed — it shipped without a provisioning
 # profile and made AMFI kill the app at launch). Manual Developer ID signing
 # therefore archives directly against the entitlements file with no profile.
+#
+# Per-file -O instead of whole-module optimization: the whole-module job for
+# OsaurusCore (~700k lines) runs its optimizer on a single core, 67 of the
+# ~90 archive minutes on CI runners; per-file compiles run in parallel
+# batches. Swift packages default to -Owholemodule in Release, which
+# outranks SWIFT_COMPILATION_MODE, so all three settings are needed. They
+# must be build settings, not -no-whole-module-optimization in Package.swift:
+# Xcode plans whole-module outputs from the settings and fails the archive
+# when the compiler does not produce them.
 echo "Archiving App (osaurus)..."
 xcodebuild -workspace osaurus.xcworkspace \
   -scheme osaurus \
@@ -58,6 +67,9 @@ xcodebuild -workspace osaurus.xcworkspace \
   ARCHS=arm64 \
   VALID_ARCHS=arm64 \
   ONLY_ACTIVE_ARCH=NO \
+  SWIFT_OPTIMIZATION_LEVEL=-O \
+  SWIFT_WHOLE_MODULE_OPTIMIZATION=NO \
+  SWIFT_COMPILATION_MODE=singlefile \
   MARKETING_VERSION="${VERSION}" \
   CURRENT_PROJECT_VERSION="${VERSION}" \
   APTABASE_APP_KEY="${APTABASE_APP_KEY:-}" \

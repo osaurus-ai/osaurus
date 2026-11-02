@@ -50,6 +50,16 @@ public enum ComposerSpellCheckSetting {
     }
 }
 
+/// Settings ▸ Conversation ▸ "Collapse Long Pastes": turn a large paste
+/// into the composer into a pasted-content attachment chip instead of
+/// inserting it as text. Default on. Turning it off keeps every paste as
+/// plain text in the field, which dictation and automation tools that paste
+/// and then read the field back over Accessibility rely on (#3271).
+public enum ComposerPasteCollapseSetting {
+    public static let defaultsKey = "chatComposerCollapseLongPastes"
+    public static let defaultValue = true
+}
+
 /// Manages multiple chat windows in the application
 @MainActor
 public final class ChatWindowManager: NSObject, ObservableObject {

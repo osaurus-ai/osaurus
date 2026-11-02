@@ -172,6 +172,7 @@ struct SettingsSearchSelfFindProbe {
             ("Automatically Name Chats", "settings.chat.autoGenerateTitles"),
             ("Suggest Follow-Up Questions", "settings.chat.generateFollowUps"),
             ("Check Spelling While Typing", "settings.chat.spellCheck"),
+            ("Collapse Long Pastes", "settings.chat.collapseLongPastes"),
             ("Expand Thinking While Streaming", "settings.chat.thinkingDisplay"),
             ("Compaction Model", "settings.chat.compactionModel"),
             ("Top P Override", "settings.chat.topP"),
@@ -309,6 +310,7 @@ struct SettingsSearchSelfFindProbe {
             ("apple_apps", "agents.appleApps"),
             // Per-agent generation controls use their exact on-screen labels.
             ("Temperature", "agents.generation.temperature"),
+            ("Show Response Metrics", "agents.showResponseMetrics"),
             ("Max Tokens", "agents.generation.maxTokens"),
             ("Top P", "agents.generation.topP"),
             ("Top K", "agents.generation.topK"),
@@ -317,8 +319,9 @@ struct SettingsSearchSelfFindProbe {
             ("Frequency penalty", "agents.generation.frequencyPenalty"),
             ("Presence penalty", "agents.generation.presencePenalty"),
             ("Seed", "agents.generation.seed"),
-            ("Stop sequences (JSON array)", "agents.generation.stop"),
+            ("Stop sequences", "agents.generation.stop"),
             ("Thinking", "agents.generation.thinking"),
+            ("Speculative Decoding", "agents.generation.speculativeDecoding"),
             ("Reasoning effort", "agents.generation.reasoningEffort"),
             ("Template parameters (JSON)", "agents.generation.templateKwargs"),
             // Agents → Abilities → Tools: the per-agent skill allow-list card.

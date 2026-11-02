@@ -119,6 +119,69 @@ struct ChatHistoryDatabaseTests {
     }
 
     @Test
+    func compactionSummaryRoundTripsUpdatesAndClearsWithoutReplacingTurns() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+        var session = makeSession(turnCount: 4)
+        try db.saveSession(session)
+        #expect(db.loadSession(id: session.id)?.conversationSummary == nil)
+        for text in ["First accepted summary", "Updated accepted summary"] {
+            let summary = ConversationSummary(
+                summaryText: text,
+                coveredTurnIds: Array(session.turns.prefix(2).map(\.id)),
+                modelIdentifier: "summary-model",
+                savedTokensEstimate: 100
+            )
+            session.conversationSummary = summary
+            try db.saveSession(session)
+            let loaded = try #require(db.loadSession(id: session.id))
+            #expect(loaded.conversationSummary == summary)
+            #expect(loaded.turns.map(\.content) == session.turns.map(\.content))
+            #expect(db.loadAllMetadata().first?.conversationSummary == summary)
+        }
+        session.conversationSummary = nil
+        try db.saveSession(session)
+        #expect(db.loadSession(id: session.id)?.conversationSummary == nil)
+        #expect(db.loadSession(id: session.id)?.turns.count == 4)
+    }
+
+    @Test
+    func asynchronousSaveRetainsCompactionSummary() async throws {
+        let db = try openInMemory()
+        defer { db.close() }
+        var session = makeSession(turnCount: 4)
+        session.conversationSummary = ConversationSummary(
+            summaryText: "Accepted facts",
+            coveredTurnIds: Array(session.turns.prefix(2).map(\.id)),
+            modelIdentifier: "summary-model",
+            savedTokensEstimate: 100
+        )
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            db.saveSessionAsync(
+                session,
+                onSaved: { continuation.resume() },
+                onDropped: { _ in
+                    Issue.record("summary save must commit")
+                    continuation.resume()
+                }
+            )
+        }
+        #expect(db.loadSession(id: session.id)?.conversationSummary == session.conversationSummary)
+    }
+
+    @Test
+    func malformedStoredSummaryFallsBackToIntactTranscript() throws {
+        let db = try openInMemory()
+        defer { db.close() }
+        let session = makeSession(turnCount: 4)
+        try db.saveSession(session)
+        try db.executeForTesting("UPDATE sessions SET conversation_summary = 'invalid json'")
+        let loaded = try #require(db.loadSession(id: session.id))
+        #expect(loaded.conversationSummary == nil)
+        #expect(loaded.turns.map(\.content) == session.turns.map(\.content))
+    }
+
+    @Test
     func terminalStopReasonUpdateInvalidatesContentHash() throws {
         let db = try openInMemory()
         let id = UUID()

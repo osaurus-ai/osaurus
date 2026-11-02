@@ -1253,6 +1253,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path.hasPrefix("/sessions/"), path.hasSuffix("/context") {
+                // Before the `/sessions/{id}` catch-all below.
+                handleSessionContextEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path.hasPrefix("/sessions/"), path.hasSuffix("/truncate") {
                 handleSessionTruncateEndpoint(
                     head: head,
@@ -1302,6 +1311,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/warm") {
+                handleAgentWarmEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/tools/preset") {
                 handleAgentToolPresetEndpoint(
                     head: head,
@@ -4952,7 +4969,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// `session_create`: a run may start a chat with `osaurus_create_session`.
-    static let connectFeatures = ["session_create"]
+    /// `context_usage`: `GET /sessions/{id}/context` prices a chat's next send.
+    /// `voice_call_context`: `osaurus_voice_call` adds nothing to the messages (the phone sends
+    /// its own call instructions), keeps call turns lean and the model warm between them.
+    static let connectFeatures = ["session_create", "context_usage", "voice_call_context"]
 
     /// The Action Bar a client shows for `agent`: its own, else for the
     /// Orchestrator the configure-oriented defaults its Mac chat shows (a
@@ -6286,6 +6306,91 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
                     .map { String(decoding: $0, as: UTF8.self) } ?? #"{"tools":[]}"#
                 return (.ok, json)
+            }
+            hop {
+                self.sendAgentEditResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /agents/{id}/warm with `{"model": "…"}` (optional; the agent's
+    /// own model without it): loads that local model as the owner's phone
+    /// call connects, so its first turn doesn't wait on the load, and keeps
+    /// it loaded as a call's turn does (MOBILE_PROTOCOL §6.5). Answers once
+    /// loaded: `{"loaded":true,"already":false}`; a cloud model has nothing
+    /// to load, `{"loaded":false}`. Owner-only and over the Secure Channel
+    /// only, as it changes what the Mac holds in memory.
+    private func handleAgentWarmEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        struct WarmRequest: Decodable { let model: String? }
+        let requested = body.isEmpty ? nil : (try? JSONDecoder().decode(WarmRequest.self, from: body))?.model
+        guard components.count == 3, let agentId = UUID(uuidString: String(components[1])) else {
+            sendAgentEditResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected /agents/{id}/warm"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            // An agent with no model set has nothing to warm: that is no
+            // missing agent, so it answers as for a cloud model.
+            let (exists, model): (Bool, String?) = await MainActor.run {
+                guard AgentManager.shared.agent(for: agentId) != nil else { return (false, nil) }
+                let model =
+                    requested.flatMap { $0.isEmpty ? nil : $0 } ?? AgentManager.shared.effectiveModel(for: agentId)
+                return (true, model)
+            }
+            let outcome: (status: HTTPResponseStatus, json: String)
+            if !exists {
+                outcome = (.notFound, #"{"error":"agent_not_found"}"#)
+            } else if let model {
+                do {
+                    switch try await ModelRuntime.shared.warmForVoiceCall(name: model) {
+                    case nil: outcome = (.ok, #"{"loaded":false}"#)
+                    case let already?: outcome = (.ok, #"{"loaded":true,"already":\#(already)}"#)
+                    }
+                } catch {
+                    outcome = (.internalServerError, #"{"error":"load_failed"}"#)
+                }
+            } else {
+                outcome = (.ok, #"{"loaded":false}"#)
             }
             hop {
                 self.sendAgentEditResponse(
@@ -7821,6 +7926,87 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// GET /sessions/{id}/context?agent_id=…&model=… — the composer's context
+    /// ring for a phone chat (MOBILE_PROTOCOL §14.13). A session the Mac has
+    /// no history for yet is priced as empty: the prompt, tools and memory.
+    private func handleSessionContextEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        let query = Self.queryItems(from: head.uri)
+        guard components.count == 3, let sessionId = UUID(uuidString: String(components[1])),
+            let agentId = query["agent_id"].flatMap({ UUID(uuidString: $0) })
+        else {
+            sendSessionContextResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected /sessions/{id}/context?agent_id="}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+        let model = query["model"].flatMap { $0.isEmpty ? nil : $0 }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let usage = await PhoneContextUsage.compute(sessionId: sessionId, agentId: agentId, model: model)
+            let json =
+                (try? JSONEncoder().encode(usage)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"error":"encoding_failed"}"#
+            hop {
+                self.sendSessionContextResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: .ok,
+                    json: json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private func sendSessionContextResponse(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        cors: [(String, String)],
+        status: HTTPResponseStatus,
+        json: String,
+        path: String,
+        userAgent: String?,
+        startTime: Date
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: cors)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+        logRequest(
+            method: "GET",
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: json,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
     private func sendTruncateResponse(
         context: ChannelHandlerContext,
         head: HTTPRequestHead,
@@ -8207,12 +8393,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    /// GET /artifacts/{context id}/{filename} — an image an agent shared
+    /// GET /artifacts/{context id}/{filename} — a file an agent shared
     /// (`share_artifact`, the `image` tool), as its tool result names it
     /// (`context_id`, `filename`). Owner-only, and over the Secure Channel
-    /// only even though it is a read: a shared image can be anything the
-    /// agent saw. Nothing but images in `~/.osaurus/artifacts/` is ever
-    /// served (docs/MOBILE_PROTOCOL.md §14.12).
+    /// only even though it is a read: a shared file can be anything the
+    /// agent saw. Nothing outside `~/.osaurus/artifacts/` is ever served
+    /// (docs/MOBILE_PROTOCOL.md §14.12).
+    /// The largest file `GET /artifacts/…` sends (§14.12).
+    static let maxArtifactFileBytes = 100 * 1024 * 1024
+
     private func handleArtifactFileEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -8241,8 +8430,36 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             let file =
                 components.count == 3 && components[0] == "artifacts"
-                ? SessionTurnImages.artifactImageFile(contextId: components[1], filename: components[2]) : nil
-            guard let file, let data = try? Data(contentsOf: file) else {
+                ? SessionTurnImages.artifactFile(contextId: components[1], filename: components[2]) : nil
+            // Any file can be shared now, and the body goes out whole (the
+            // phone reads it whole too): past the cap it is refused rather
+            // than held in memory twice over.
+            let size = file.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize } ?? 0
+            if size > Self.maxArtifactFileBytes {
+                hop {
+                    let body = #"{"error":"artifact_too_large"}"#
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .payloadTooLarge,
+                        headers: headers,
+                        body: body
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: body,
+                        responseStatus: 413,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            guard let file, let data = try? Data(contentsOf: file, options: .mappedIfSafe) else {
                 hop {
                     let body = #"{"error":"artifact_not_found"}"#
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -10513,26 +10730,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     RemoteSessionContinuation.beginPhoneRun(continuedSessionId)
                 }
             }
-            // A turn of the owner's phone call: ask for a short, spoken reply,
-            // after the conversation so the prompt and history keep their cache
-            // (docs/MOBILE_PROTOCOL.md §6.5). Taken off again before saving.
+            // A turn of the owner's phone call (docs/MOBILE_PROTOCOL.md §6.5).
+            // The phone sends its own call instructions as a fixed system
+            // message, so nothing is added to the messages here: a note on the
+            // latest user message was gone when that message was replayed on
+            // the next turn, and a local model read the last exchange again.
+            // The flag keeps call turns lean (`isVoiceCall`) and the model
+            // warm between them.
             let voiceCall = includeToolDetail && req.osaurus_voice_call == true
-            if voiceCall { VoiceCallReplies.addNote(to: &messages) }
             // Append this run's turns to the continued chat when the request
             // ends, however it ends (finished, errored, client gone).
             defer {
                 if let continuedSessionId {
                     let start = min(persistFrom.value, messages.count)
                     let turns = Array(messages[start...])
-                    let saved = voiceCall ? VoiceCallReplies.removingNote(from: turns) : turns
-                    let appended = saved.filter { $0.role != "system" }
+                    let appended = turns.filter { $0.role != "system" }
                     let runModel = model
                     Task { @MainActor in
                         if !appended.isEmpty {
                             await RemoteSessionContinuation.append(
                                 appended,
                                 to: continuedSessionId,
-                                model: runModel
+                                model: runModel,
+                                voiceCall: voiceCall
                             )
                             PhoneChatHandoff.shared.notePhoneRun(
                                 sessionId: continuedSessionId,
@@ -10923,7 +11143,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     var inboundStepMarkedWriting = false
                     var accumulator = ResponsesGenerationAccumulator()
+                    // A local model not in memory loads before the stream
+                    // starts: say so, so the phone shows why it waits.
+                    let loadsModel = await ModelRuntime.shared.needsLoad(model)
+                    if loadsModel {
+                        hop {
+                            writerBound.value.writeModelLoad(
+                                "loading",
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
                     let stream = try await chatEngine.streamResponses(request: iterationReq)
+                    if loadsModel {
+                        hop {
+                            writerBound.value.writeModelLoad(
+                                "ready",
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
                     generation: for try await event in stream {
                         try Task.checkCancellation()
                         if disconnected.value { throw CancellationError() }
@@ -11240,7 +11485,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // The owner's phone call may turn the Privacy Filter off, or
                 // its review to auto-accept, for its own turns (§6.5).
                 let callPrivacy = remoteReviewer ? req.osaurus_privacy.flatMap(VoiceCallPrivacy.init(rawValue:)) : nil
-                let runResult = try await ChatExecutionContext.$voiceCallPrivacy
+                let runResult = try await ChatExecutionContext.$isVoiceCall
+                    .withValue(voiceCall) {
+                    try await ChatExecutionContext.$voiceCallPrivacy
                     .withValue(callPrivacy) {
                     try await ChatExecutionContext.$hasRemoteReviewer
                     .withValue(remoteReviewer) {
@@ -11262,6 +11509,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         )
                                     }
                             }
+                    }
                     }
                     }
                     }
@@ -14214,6 +14462,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     tokensInput: resolvedPromptTokens,
                     tokensOutput: resolvedCompletionTokens,
+                    inputTokenSource: actualPromptTokens == nil ? .estimated : .reported,
+                    outputTokenSource: actualCompletionTokens == nil ? .estimated : .reported,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens
                 )
@@ -14286,6 +14536,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     tokensInput: resolvedPromptTokens,
                     tokensOutput: completionTokens,
+                    inputTokenSource: actualPromptTokens == nil ? .estimated : .reported,
+                    outputTokenSource: actualCompletionTokens == nil ? .estimated : .reported,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens,
                     finishReason: RequestLog.FinishReason(rawValue: finishReason) ?? .stop
@@ -14772,6 +15024,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     logSelf.logRequest(method: "POST", path: "/chat/completions", userAgent: logUserAgent,
                         requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
                         tokensInput: response.inputTokenCount, tokensOutput: completion.tokenCount,
+                        inputTokenSource: .reported, outputTokenSource: .reported,
                         toolCalls: calls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
                         temperature: logTemperature, maxTokens: logMaxTokens,
                         finishReason: Self.openResponsesFinishReason(completion))
@@ -14890,6 +15143,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         model: logModel,
                         tokensInput: tokensIn,
                         tokensOutput: tokensOut,
+                        inputTokenSource: .reported, outputTokenSource: .reported,
                         temperature: logTemperature,
                         maxTokens: logMaxTokens,
                         finishReason: finishReason
@@ -15162,6 +15416,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 logSelf.logRequest(method: "POST", path: "/chat", userAgent: logUserAgent,
                     requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
                     tokensInput: input, tokensOutput: output,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: calls.map { ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments) },
                     temperature: logTemperature, maxTokens: logMaxTokens, finishReason: finish)
             } catch {
@@ -15238,6 +15493,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     tokensInput: response.inputTokenCount,
                     tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     temperature: request.temperature,
                     maxTokens: request.max_tokens,
                     finishReason: message.tool_calls?.isEmpty == false ? .toolCalls : .stop
@@ -15447,7 +15703,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 logSelf.logRequest(method: "POST", path: "/generate", userAgent: logUserAgent,
                     requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
-                    tokensInput: input, tokensOutput: output, temperature: logTemperature,
+                    tokensInput: input, tokensOutput: output,
+                    inputTokenSource: .reported, outputTokenSource: .reported, temperature: logTemperature,
                     maxTokens: logMaxTokens, finishReason: finish)
             } catch {
                 hop {
@@ -15520,6 +15777,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: request.model,
                     tokensInput: response.inputTokenCount,
                     tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     temperature: request.temperature,
                     maxTokens: request.max_tokens,
                     finishReason: .stop
@@ -17159,6 +17417,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 logSelf.logRequest(method: "POST", path: "/messages", userAgent: logUserAgent,
                     requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
                     tokensInput: response.inputTokenCount, tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: calls.map { ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments) }, finishReason: finish)
             } catch {
                 // SSE response head was already 200 — surface as in-band
@@ -17279,6 +17538,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: logModel,
                     tokensInput: response.inputTokenCount,
                     tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: response.completion.dispatchableFunctionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
                     finishReason: finish
                 )
@@ -17873,6 +18133,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 self.logRequest(method: "POST", path: "/responses", userAgent: userAgent,
                     requestBody: requestBodyString, responseStatus: 200, startTime: startTime, model: model,
                     tokensInput: response.inputTokenCount, tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: response.completion.functionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
                     finishReason: Self.openResponsesFinishReason(response.completion))
             } catch {
@@ -18031,6 +18292,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: logModel,
                     tokensInput: response.inputTokenCount,
                     tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     toolCalls: response.completion.functionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
                     finishReason: Self.openResponsesFinishReason(response.completion)
                 )
@@ -18209,6 +18471,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String? = nil,
         tokensInput: Int? = nil,
         tokensOutput: Int? = nil,
+        inputTokenSource: RequestLog.TokenCountSource? = nil,
+        outputTokenSource: RequestLog.TokenCountSource? = nil,
         toolCalls: [ToolCallLog]? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
@@ -18238,6 +18502,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             model: model,
             tokensInput: tokensInput,
             tokensOutput: tokensOutput,
+            inputTokenSource: inputTokenSource,
+            outputTokenSource: outputTokenSource,
             temperature: temperature,
             maxTokens: maxTokens,
             toolCalls: toolCalls,
