@@ -33,6 +33,10 @@ public final class ThemedAlertCenter: ObservableObject {
     @Published private var stacksByScope: [ThemedAlertScope: [ThemedAlertRequest]] = [:]
 
     func present(_ request: ThemedAlertRequest, scope: ThemedAlertScope) {
+        if scope == .toastOverlay {
+            // The overlay host panel is created lazily; make sure it exists.
+            ToastWindowController.shared.showOverlayIfNeeded()
+        }
         var stack = stacksByScope[scope] ?? []
         if let index = stack.firstIndex(where: { $0.id == request.id }) {
             // Re-presenting an id (e.g. a progress alert updating its
