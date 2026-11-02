@@ -26,6 +26,7 @@ struct AgentGenerationSettingsEditor: View {
     @State private var modelDefaults = LocalGenerationDefaults.Defaults.empty
     @State private var runtimeDefaults = VMLXServerGenerationDefaults()
     @State private var defaultsModelID: String?
+    @State private var applicability = AgentGenerationApplicability.unrestricted
     @State private var appTopP: Float?
     @State private var modelOptions: [String: ModelOptionValue] = [:]
 
@@ -45,6 +46,10 @@ struct AgentGenerationSettingsEditor: View {
         )
     }
 
+    private var currentApplicability: AgentGenerationApplicability {
+        defaultsModelID == modelID ? applicability : .unrestricted
+    }
+
     private struct CapabilityKey: Hashable {
         let modelID: String?
         let isLocal: Bool
@@ -57,6 +62,14 @@ struct AgentGenerationSettingsEditor: View {
             header
             Divider().overlay(theme.cardBorder)
             VStack(alignment: .leading, spacing: 24) {
+                if currentApplicability == .nativeBlockDiffusion {
+                    Text(
+                        "This model uses its native denoising schedule. Temperature, probability filters and repetition penalties are not used. Saved overrides are kept for models that use them.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 12)).foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
                 group("Sampling", subtitle: "How tokens are chosen") {
                     parameter(
                         "Temperature",
@@ -175,11 +188,13 @@ struct AgentGenerationSettingsEditor: View {
             let snapshot = await Task.detached(priority: .utility) {
                 let runtime = await RuntimeConfig.snapshot()
                 let bundle = id.flatMap { local ? LocalGenerationDefaults.defaults(forModelId: $0) : nil } ?? .empty
-                return (runtime.generation, bundle)
+                let applicability = AgentGenerationApplicability.resolve(modelID: id, isLocal: local)
+                return (runtime.generation, bundle, applicability)
             }.value
             guard !Task.isCancelled else { return }
             runtimeDefaults = snapshot.0
             modelDefaults = snapshot.1
+            applicability = snapshot.2
             defaultsModelID = modelID
             guard let modelID else { return }
             var resolved = await AgentGenerationReasoningChoices.resolve(
@@ -304,18 +319,26 @@ struct AgentGenerationSettingsEditor: View {
                 Text("Generation Overrides", bundle: .module)
                     .font(.system(size: 16, weight: .semibold)).foregroundColor(theme.primaryText)
                 Text(
-                    "Every setting inherits the model and server defaults. Switch a setting to Custom to override it for this agent only.",
+                    "Available settings inherit the model and server defaults. Switch a setting to Custom to override it for this agent only.",
                     bundle: .module
                 )
                 .font(.system(size: 12)).foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            Text("Overrides: \(draft.overrideCount)", bundle: .module)
-                .font(.system(size: 11, weight: .medium)).foregroundColor(theme.accentColor)
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(theme.accentColor.opacity(0.10), in: Capsule())
-                .fixedSize()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("Overrides: \(draft.overrideCount)", bundle: .module)
+                    .font(.system(size: 11, weight: .medium)).foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(theme.accentColor.opacity(0.10), in: Capsule())
+                    .fixedSize()
+                let inactive = currentApplicability.inactiveOverrideCount(in: draft)
+                if inactive > 0 {
+                    Text("\(inactive) not used by this model", bundle: .module)
+                        .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }.padding(16)
     }
 
@@ -363,6 +386,7 @@ struct AgentGenerationSettingsEditor: View {
             Text(localized: "Custom").tag(true)
         }.pickerStyle(.segmented).labelsHidden().frame(width: 148)
             .accessibilityLabel(Text("\(title) mode"))
+            .disabled(!currentApplicability.isApplicable(field))
     }
 
     private func inheritedValue(_ field: AgentGenerationField) -> some View {
@@ -411,7 +435,23 @@ struct AgentGenerationSettingsEditor: View {
 
     @ViewBuilder
     private func parameterValue(_ title: String, field: AgentGenerationField) -> some View {
-        if draft[keyPath: field.path].isCustom {
+        if !currentApplicability.isApplicable(field) {
+            VStack(alignment: .leading, spacing: 4) {
+                if draft[keyPath: field.path].isCustom {
+                    Text(draft[keyPath: field.path].text)
+                        .font(.system(size: 12, design: .monospaced))
+                    Text("Saved; not used by this model", bundle: .module)
+                        .font(.system(size: 11))
+                } else {
+                    Text("Not used by this model", bundle: .module)
+                        .font(.system(size: 12))
+                }
+            }
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .accessibilityLabel(Text("\(title): not used by this model"))
+        } else if draft[keyPath: field.path].isCustom {
             StyledTextField(
                 placeholder: L("Value"),
                 text: Binding(get: { draft[keyPath: field.path].text }, set: { draft[keyPath: field.path].text = $0 })

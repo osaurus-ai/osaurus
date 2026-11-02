@@ -1918,8 +1918,8 @@ public enum SettingsSearchIndex {
             tab: .agents,
             section: "Generation Overrides",
             title: "Temperature",
-            keywords: ["agent temperature", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            keywords: ["agent temperature", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -1936,8 +1936,8 @@ public enum SettingsSearchIndex {
             tab: .agents,
             section: "Generation Overrides",
             title: "Top P",
-            keywords: ["agent top p", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            keywords: ["agent top p", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -1945,8 +1945,8 @@ public enum SettingsSearchIndex {
             tab: .agents,
             section: "Generation Overrides",
             title: "Top K",
-            keywords: ["agent top k", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            keywords: ["agent top k", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -1954,8 +1954,8 @@ public enum SettingsSearchIndex {
             tab: .agents,
             section: "Generation Overrides",
             title: "Min P",
-            keywords: ["agent min p", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            keywords: ["agent min p", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -1963,8 +1963,8 @@ public enum SettingsSearchIndex {
             tab: .agents,
             section: "Generation Overrides",
             title: "Repetition penalty",
-            keywords: ["agent repetition penalty", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            keywords: ["agent repetition penalty", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -1972,8 +1972,8 @@ public enum SettingsSearchIndex {
             tab: .agents,
             section: "Generation Overrides",
             title: "Frequency penalty",
-            keywords: ["agent frequency penalty", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            keywords: ["agent frequency penalty", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
@@ -1981,8 +1981,8 @@ public enum SettingsSearchIndex {
             tab: .agents,
             section: "Generation Overrides",
             title: "Presence penalty",
-            keywords: ["agent presence penalty", "per-agent generation", "agent defaults"],
-            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model.",
+            keywords: ["agent presence penalty", "per-agent generation", "agent defaults", "DiffusionGemma", "inactive sampling"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings → Generation Overrides. Inherit preserves existing defaults; reasoning choices depend on the selected model. For native DiffusionGemma, this override stays visible but inactive; saved values remain available for other models.",
             declarativeSection: "agents"
         ),
         .init(
