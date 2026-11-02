@@ -48,7 +48,7 @@ Displayed tool durations include permission waiting and must not be presented
 as shell or model execution time.
 
 The tool-result continuation restored 5,997 of 6,137 prompt tokens from disk
-and prefetched only the remaining 140. Live topology was FP16 KV, 27 rotating
+and prefilled only the remaining 140. Live topology was FP16 KV, 27 rotating
 and 9 full layers, disk-backed restore, and zero effective paged KV layers.
 This is not a TurboQuant layer claim. Owned weight loading was retained;
 observed lifetime maximum physical footprint was about 5.98 GiB. This does not
