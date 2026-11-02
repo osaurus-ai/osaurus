@@ -1,6 +1,6 @@
 # Runtime campaign consumer integration
 
-The four dependency pins and two contract expectations use runtime `75ff99a24296eec31496a396a403c87b3e7d0453`. It includes all twelve merged original runtime PRs, the combined integration and goldens, current parser/cache/error fixes, and merged M2 core `3b39b5e79`. The consumer retains agent defaults and pickers, request-sized terminal SSM replay, export/token provenance and the bundled embedder.
+The four dependency pins and two contract expectations use runtime `5e6b2c0ad17c6750a1207746e55836497809728e` (main `75ff99a24` + osaurus-ai/vmlx-swift#717). It includes all twelve merged original runtime PRs, the combined integration and goldens, current parser/cache/error fixes, and merged M2 core `3b39b5e79`. The consumer retains agent defaults and pickers, request-sized terminal SSM replay, export/token provenance and the bundled embedder.
 
 The M2 Max-only long-batched reduction route is capped at 32 matrices, excluding the measured 64-matrix slowdown. Local correctness and regression checks qualified its landing; physical M2 prevention and the separate fused-attention report remain unconfirmed. No device or sampler policy changes here.
 
