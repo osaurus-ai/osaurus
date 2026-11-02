@@ -1,8 +1,9 @@
 # Native diffusion settings applicability
 
-Status: implementation, syntax/diff checks and focused validation pass. Actual app
-UI and real-model/runtime qualification remain pending. No model load, inference,
-Studio deployment or release action is included.
+Status: focused validation passed on source 418; the later accessibility
+correction below has syntax/diff checks and awaits a fresh build, tests and AX
+inspection. Actual app UI and real-model/runtime qualification remain pending.
+No model load, inference, Studio deployment or release action is included.
 
 The shared agent generation editor previously displayed autoregressive sampling
 and penalty controls as effective for native DiffusionGemma. Its runtime instead
@@ -69,6 +70,19 @@ private `parameter-parity/PAR04-REBASED-VALIDATION-FINAL-418a10e02.json` receipt
 records source, binary, resource and raw-log hashes. There were no failures in
 these three runs. They are metadata/host/controlled-CPU fixtures, not app UI or
 real-model speed, cache, quality or family qualification.
+
+## Accessibility follow-up from the fresh app
+
+The fresh 418 app displayed the correct inactive saved values, but its AX tree
+repeated each inactive label and omitted the numeric text. The retained
+`parameter-parity/par04-ui-native-unsaved.ax.txt` captures that failure; the visual
+values included 0, 0.8, 11 and 0.07. The inactive value stack now exposes one
+read-only accessibility element with ignored children, the parameter title as
+its label, and the saved text plus inactive explanation as its value. Inherited
+rows expose the inactive status. Visual values, classification, editing and
+persistence are unchanged. This correction has syntax/diff checks only; the
+root agent will build a fresh app, rerun the 293-test matrix and inspect actual
+AX labels/values. The test results above remain tied to the earlier 418 source.
 
 Remaining acceptance: frozen Release app build; real agent creation/editing,
 model switching, saving, navigation and relaunch. Inspect

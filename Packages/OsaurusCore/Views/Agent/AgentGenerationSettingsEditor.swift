@@ -450,7 +450,13 @@ struct AgentGenerationSettingsEditor: View {
             .foregroundColor(theme.tertiaryText)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-            .accessibilityLabel(Text("\(title): not used by this model"))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(title))
+            .accessibilityValue(
+                draft[keyPath: field.path].isCustom
+                    ? Text("\(draft[keyPath: field.path].text). Saved; not used by this model", bundle: .module)
+                    : Text("Not used by this model", bundle: .module)
+            )
         } else if draft[keyPath: field.path].isCustom {
             StyledTextField(
                 placeholder: L("Value"),
