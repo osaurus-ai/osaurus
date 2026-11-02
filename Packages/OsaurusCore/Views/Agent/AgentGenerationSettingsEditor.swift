@@ -29,6 +29,10 @@ struct AgentGenerationSettingsEditor: View {
     @State private var appTopP: Float?
     @State private var modelOptions: [String: ModelOptionValue] = [:]
 
+    private var savedDraft: AgentGenerationDraft {
+        .init(temperature: savedTemperature, maxTokens: savedMaxTokens, settings: savedSettings)
+    }
+
     private var inherited: AgentGenerationInheritedValues {
         .resolve(
             modelID: defaultsModelID == modelID ? modelID : nil,
@@ -144,6 +148,9 @@ struct AgentGenerationSettingsEditor: View {
             restore(); expandForLanding(pendingLanding)
         }
         .onChange(of: pendingLanding) { _, value in expandForLanding(value) }
+        .onChange(of: savedDraft) { previous, latest in
+            draft.mergeSavedChanges(from: previous, to: latest)
+        }
         .onChange(of: draft) { _, value in
             onDraftChange?(value)
             if !showsSaveButton {
@@ -539,13 +546,7 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     private func restore() {
-        draft =
-            initialDraft
-            ?? AgentGenerationDraft(
-                temperature: savedTemperature,
-                maxTokens: savedMaxTokens,
-                settings: savedSettings
-            )
+        draft = initialDraft ?? savedDraft
         error = nil
     }
 

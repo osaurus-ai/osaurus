@@ -8,6 +8,42 @@ import Testing
 /// over from the live record instead of resetting it (#3110).
 @Suite("Agent editor save preserves working folder")
 struct AgentEditorSavePreservesWorkingFolderTests {
+    @Test("an unrelated editor save preserves a newer picker model and generation choice")
+    func unrelatedSaveKeepsLiveGeneration() {
+        var live = Agent(name: "Notes", systemPrompt: "Prompt", defaultModel: "old-model",
+            temperature: 0.4, maxTokens: 128, generationSettings: .init(reasoningEffort: "high"))
+        var rebuilt = live
+        rebuilt.name = "Renamed"
+        live.defaultModel = "new-model"
+        live.temperature = 0.6
+        live.maxTokens = 1024
+        live.generationSettings = .init(topP: 0.9, reasoningEffort: "low")
+
+        AgentDetailView.carryDirectlySavedFields(from: live, into: &rebuilt)
+
+        #expect(rebuilt.name == "Renamed")
+        #expect(rebuilt.defaultModel == "new-model")
+        #expect(rebuilt.temperature == 0.6)
+        #expect(rebuilt.maxTokens == 1024)
+        #expect(rebuilt.generationSettings == live.generationSettings)
+    }
+
+    @Test("explicit generation Save can reset overrides while preserving the live model")
+    func explicitGenerationResetIsNotAnUnrelatedSave() {
+        let live = Agent(name: "Notes", systemPrompt: "Prompt", defaultModel: "live-model",
+            temperature: 0.6, maxTokens: 1024, generationSettings: .init(reasoningEffort: "low"))
+        var rebuilt = live
+        let inherited = AgentGenerationDraft.Values(temperature: nil, maxTokens: nil, settings: nil)
+
+        AgentDetailView.carryDirectlySavedFields(from: live, into: &rebuilt, generationValues: inherited)
+
+        #expect(rebuilt.defaultModel == "live-model")
+        #expect(rebuilt.temperature == nil)
+        #expect(rebuilt.maxTokens == nil)
+        #expect(rebuilt.generationSettings == nil)
+        #expect(live.generationSettings?.reasoningEffort == "low")
+    }
+
 
     @Test func promptEditKeepsTheWorkingFolder() {
         var live = Agent(name: "Notes", systemPrompt: "Old prompt")
