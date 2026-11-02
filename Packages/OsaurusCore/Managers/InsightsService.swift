@@ -89,6 +89,11 @@ final class InsightsService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     /// Fired on every append / clear so the dashboard refreshes (debounced).
     private let changed = PassthroughSubject<Void, Never>()
+    /// Store presence answers for `hasLog`, which the Credits timeline asks
+    /// once per row on every body pass. Emptied on every `changed` signal
+    /// (each append, clear, prune and settings write sends one on main), so
+    /// an answer never outlives the store state it was read from.
+    private var presenceCache: [String: Bool] = [:]
     private var retentionTimer: Timer?
 
     // MARK: - Initialization
@@ -134,6 +139,10 @@ final class InsightsService: ObservableObject {
                 self?.pagesLoaded = 1
                 self?.reload()
             }
+            .store(in: &cancellables)
+
+        changed
+            .sink { [weak self] in self?.presenceCache.removeAll() }
             .store(in: &cancellables)
 
         changed
@@ -271,7 +280,9 @@ final class InsightsService: ObservableObject {
     func hasLog(turnId: UUID) -> Bool {
         if logs.contains(where: { $0.turnId == turnId }) { return true }
         guard storeAvailable else { return false }
-        return (try? store.exists(turnId: turnId)) ?? false
+        return cachedPresence("turn:\(turnId.uuidString)") {
+            (try? store.exists(turnId: turnId)) ?? false
+        }
     }
 
     func hasLog(requestId: String) -> Bool {
@@ -279,7 +290,16 @@ final class InsightsService: ObservableObject {
         guard !normalized.isEmpty else { return false }
         if logs.contains(where: { $0.requestId == normalized }) { return true }
         guard storeAvailable else { return false }
-        return ((try? store.find(requestId: normalized)) ?? nil) != nil
+        return cachedPresence("request:\(normalized)") {
+            (try? store.exists(requestId: normalized)) ?? false
+        }
+    }
+
+    private func cachedPresence(_ key: String, probe: () -> Bool) -> Bool {
+        if let hit = presenceCache[key] { return hit }
+        let found = probe()
+        presenceCache[key] = found
+        return found
     }
 
     private func focus(log: RequestLog) {
