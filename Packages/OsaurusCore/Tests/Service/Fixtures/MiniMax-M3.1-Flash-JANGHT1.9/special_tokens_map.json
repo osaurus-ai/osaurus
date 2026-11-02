@@ -1,0 +1,16 @@
+{
+  "bos_token": {
+    "content": "]~b]",
+    "lstrip": false,
+    "normalized": false,
+    "rstrip": false,
+    "single_word": false
+  },
+  "eos_token": {
+    "content": "[e~[",
+    "lstrip": false,
+    "normalized": false,
+    "rstrip": false,
+    "single_word": false
+  }
+}

@@ -2315,11 +2315,37 @@ enum AgentToolLoop {
     /// `isolation` inherits the caller's actor isolation (`#isolation`) so
     /// non-Sendable hooks/state never cross an isolation boundary: chat
     /// drives the loop on the MainActor; HTTP/plugin drive it nonisolated.
+    ///
+    /// The whole run holds the local models it generates with resident
+    /// (`ConversationResidencyHold`): a tool that runs longer than the idle
+    /// setting no longer unloads the model between two steps of one turn. The
+    /// hold is released on every exit path (result, throw, cancellation), and
+    /// the idle timer then counts from the loop's end.
     static func run(
         policy: AgentLoopPolicy,
         state: AgentTaskState,
         hooks: AgentLoopHooks,
         isolation: isolated (any Actor)? = #isolation
+    ) async throws -> RunResult {
+        let hold = ConversationResidencyHold()
+        let result: RunResult
+        do {
+            result = try await ConversationResidencyHoldContext.$current.withValue(hold) {
+                try await runHoldingResidency(policy: policy, state: state, hooks: hooks, isolation: isolation)
+            }
+        } catch {
+            await ModelRuntime.shared.releaseConversationResidencyHold(hold)
+            throw error
+        }
+        await ModelRuntime.shared.releaseConversationResidencyHold(hold)
+        return result
+    }
+
+    private static func runHoldingResidency(
+        policy: AgentLoopPolicy,
+        state: AgentTaskState,
+        hooks: AgentLoopHooks,
+        isolation: isolated (any Actor)?
     ) async throws -> RunResult {
         var iteration = 0
         // The `tool_not_found` notice lists what the request may execute;

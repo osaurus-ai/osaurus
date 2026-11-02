@@ -65,6 +65,42 @@ enum VisionBundleFixture {
         return root
     }
 
+    /// A MiniMax-M3.1 bundle: `vision_config` + `image_token_index` in config.json, the bundle's
+    /// `preprocessor_config.json`, the tower / projector / patch-merge tensors next to the text weights.
+    static func makeMiniMaxM3(
+        omit: String? = nil, depth: Int = 2, imageTokenId: Int? = 200025, processor: Bool = true
+    ) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var config: [String: Any] = [
+            "model_type": "minimax_m3_vl",
+            "quantization": ["group_size": 64, "bits": 8],
+            "text_config": ["model_type": "minimax_m3", "hidden_size": 64],
+            "vision_config": ["model_type": "clip_vision_model", "num_hidden_layers": depth, "hidden_size": 32,
+                "num_attention_heads": 2, "intermediate_size": 24, "patch_size": 14],
+            "projector_hidden_size": 64,
+        ]
+        if let imageTokenId { config["image_token_index"] = imageTokenId }
+        try writeJSON(config, to: root.appendingPathComponent("config.json"))
+        if processor {
+            try writeJSON(["processor_class": "MiniMaxVLProcessor", "patch_size": 14,
+                           "image_mean": [0.48145466, 0.4578275, 0.40821073],
+                           "image_std": [0.26862954, 0.26130258, 0.27577711]],
+                          to: root.appendingPathComponent("preprocessor_config.json"))
+        }
+        let tower = "vision_tower.vision_model."
+        var names = ["model.embed_tokens.weight", tower + "embeddings.patch_embedding.weight",
+            tower + "pre_layrnorm.weight", "multi_modal_projector.linear_1.weight",
+            "multi_modal_projector.linear_2.weight", "patch_merge_mlp.linear_1.weight", "patch_merge_mlp.linear_2.weight"]
+        for i in 0..<2 {
+            names += ["self_attn.q_proj.weight", "self_attn.out_proj.weight", "mlp.fc1.weight", "mlp.fc2.weight"]
+                .map { tower + "encoder.layers.\(i)." + $0 }
+        }
+        if let omit { names.removeAll { $0.contains(omit) } }
+        try writeWeights(names, to: root.appendingPathComponent("model.safetensors"))
+        return root
+    }
+
     static func make(type: String = "qwen3_5", omit: String? = nil, indexed: Bool = false) throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

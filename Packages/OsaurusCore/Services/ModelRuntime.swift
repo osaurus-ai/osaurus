@@ -431,12 +431,22 @@ public actor ModelRuntime {
         /// entry cannot outlive them. See `weightsFingerprint(for:)`.
         let weightsFingerprint: String
         let isVLM: Bool
-        let draftStrategy: MLXLMCommon.DraftStrategy?
+        /// The loaded speculative strategy. `var` only for compatible speculative-selection changes: a Speculative Decoding
+        /// change the resident graph already serves (a lazily attached DSpark drafter) updates it in place
+        /// instead of reloading the weights. Mutated on the runtime actor only.
+        var draftStrategy: MLXLMCommon.DraftStrategy?
         let dflash2BlockSize: Int?
-        let nativeMTPStatus: String?
-        let nativeMTPReason: String?
-        let nativeMTPAdmission: NativeMTPAdmission
-        let preparedMTP: VMLXServerMTPSettings
+        var nativeMTPStatus: String?
+        var nativeMTPReason: String?
+        var nativeMTPAdmission: NativeMTPAdmission
+        /// The MTP settings this holder's graph serves (`AgentSpeculationPolicy.requiresPreparation` compares a
+        /// request's selection against it). Compatible global and per-request changes record a kept,
+        /// non-Off selection here so the next request does not reload the graph it just kept.
+        var preparedMTP: VMLXServerMTPSettings
+        /// What the load contained (`SpeculativeLoadFacts`) and where from: lets a later Speculative Decoding
+        /// change be judged against this bundle's own launch plan.
+        var speculativeLoadFacts: SpeculativeLoadFacts?
+        let modelDirectory: URL?
         /// Numeric allocator-cache cap resolved from the user-visible
         /// memory-safety plan used for this exact load. `nil` means no numeric
         /// cap; the decode-path-specific admitted-ceiling requirement is
@@ -478,7 +488,9 @@ public actor ModelRuntime {
             admittedWorkingSetBytes: UInt64? = nil,
             admittedLoadBudgetBytes: UInt64? = nil,
             requiresAdmittedMLXAllocatorCeiling: Bool = false,
-            modelVolumeKind: String? = nil
+            modelVolumeKind: String? = nil,
+            speculativeLoadFacts: SpeculativeLoadFacts? = nil,
+            modelDirectory: URL? = nil
         ) {
             self.name = name
             self.container = container
@@ -497,6 +509,8 @@ public actor ModelRuntime {
             self.admittedWorkingSetBytes = admittedWorkingSetBytes
             self.admittedLoadBudgetBytes = admittedLoadBudgetBytes
             self.requiresAdmittedMLXAllocatorCeiling = requiresAdmittedMLXAllocatorCeiling
+            self.speculativeLoadFacts = speculativeLoadFacts
+            self.modelDirectory = modelDirectory
         }
     }
 
@@ -560,6 +574,9 @@ public actor ModelRuntime {
     }
     private var residentMetadata: [String: ResidentMetadata] = [:]
     private var parentRetentions = ParentResidencyRetentions()
+    /// Models a running conversation loop generates with (`ConversationResidencyHold`): no idle timer runs for them
+    /// until the loop exits.
+    private var conversationHolds = ConversationResidencyHolds()
     /// Serializes teardown of one exact published generation. Without this,
     /// two actor-reentrant unload calls can both pass an identity check, then
     /// one can remove/reload the name while the other is suspended draining a
@@ -1165,6 +1182,35 @@ public actor ModelRuntime {
         {
             await scheduleIdleResidency(for: parent.modelName)
         }
+    }
+
+    /// Ends a conversation loop's hold (`AgentToolLoop.run` calls it when the loop exits, on every path). Each model
+    /// no live loop holds anymore gets its configured idle policy now, i.e. its idle timer counts from the loop's
+    /// end. A model still generating keeps its lease; that generation's end schedules it as usual.
+    func releaseConversationResidencyHold(_ hold: ConversationResidencyHold) async {
+        let freed = conversationHolds.release(hold)
+        guard !freed.isEmpty else { return }
+        genLog.info(
+            "conversationHold: release id=\(String(hold.id.uuidString.prefix(8)), privacy: .public) models=\(freed.joined(separator: ","), privacy: .public)"
+        )
+        for name in freed {
+            await scheduleIdleResidency(for: name)
+        }
+    }
+
+    /// Registers the current task's conversation loop (`ConversationResidencyHoldContext.current`), if any, as
+    /// holding `modelName` resident. Called at every generation start; returns the hold when one was registered.
+    @discardableResult
+    func registerConversationGeneration(modelName: String) -> ConversationResidencyHold? {
+        guard let hold = ConversationResidencyHoldContext.current,
+            conversationHolds.register(hold, model: modelName)
+        else { return nil }
+        return hold
+    }
+
+    /// Test/diagnostic view: whether a running conversation loop holds `name`.
+    func isHeldByConversation(_ name: String) -> Bool {
+        conversationHolds.holds(name)
     }
 
     private func validateParentRetention(
@@ -2867,6 +2913,75 @@ public actor ModelRuntime {
         return tailMatches.count == 1 ? tailMatches.first : nil
     }
 
+    /// A Speculative Decoding change that may alter what a load contains (`ServerController.mtpLoadInputsChanged`,
+    /// with every other load input unchanged). Each resident model is judged against its own bundle's launch plan
+    /// under `settings` (`SpeculativeLoadFacts.keepsResidentWeights`): a model whose loaded graph already serves the
+    /// new selection stays resident and its request strategy follows the new setting (Off (AR) <-> On (Adaptive) on
+    /// a DSpark bundle, the untouched default -> an explicit On that loads the same thing); every other model is
+    /// unloaded and reloads on its next request, as before. In-flight cold loads resolved their plan under the old
+    /// settings and are cancelled, as the full clear did. Returns the number of models unloaded.
+    ///
+    /// A DSpark drafter that was attached stays attached after Off: requests under Off name no strategy, so vmlx
+    /// neither drafts nor verifies with it (the GUI proof's Off turns: `draft=none`, no `[dSpark]` lines). Its
+    /// memory (MiniMax-M3.1: ~2.1 GiB) is released with the model; vmlx has no detach call today.
+    func applySpeculativeLoadChange(settings: VMLXServerRuntimeSettings) async -> Int {
+        let loading = loadingTasks.map { ($0.key, $0.value) }
+        if !loading.isEmpty {
+            await cancelAndDrainLoadingTasks(loading)
+        }
+        var unloaded = 0
+        for name in Array(modelCache.keys) {
+            guard let holder = modelCache[name] else { continue }
+            let keep = keepResidentForSpeculativeChange(holder, settings: settings)
+            if !keep, await unload(name: name, reason: .settingsClear) {
+                unloaded += 1
+            }
+        }
+        return unloaded
+    }
+
+    /// Reconcile one holder against the same bundle plan for both global settings changes
+    /// and per-agent request preparation. DSpark can attach to an AR-loaded target lazily;
+    /// native graph upgrades and changes of drafter still require eviction.
+    private func keepResidentForSpeculativeChange(
+        _ holder: SessionHolder, settings: VMLXServerRuntimeSettings
+    ) -> Bool {
+        var keep = false
+        var nextFacts: SpeculativeLoadFacts?
+        if let loadedFacts = holder.speculativeLoadFacts, let directory = holder.modelDirectory,
+            let plan = try? Self.resolveNativeMTPLaunchPlan(
+                modelName: holder.name, modelDirectory: directory, settings: settings)
+        {
+            let facts = SpeculativeLoadFacts(
+                loadConfiguration: plan.loadConfiguration, draftStrategy: plan.draftStrategy)
+            nextFacts = facts
+            keep = SpeculativeLoadFacts.keepsResidentWeights(loaded: loadedFacts, next: facts)
+            if keep {
+                let resident = SpeculativeLoadFacts.residentAfterKeptChange(
+                    resident: .init(
+                        strategy: holder.draftStrategy, admission: holder.nativeMTPAdmission, facts: loadedFacts),
+                    next: .init(strategy: plan.draftStrategy, admission: plan.admission, facts: facts))
+                holder.draftStrategy = resident.strategy
+                holder.nativeMTPAdmission = resident.admission
+                holder.speculativeLoadFacts = resident.facts
+                holder.nativeMTPStatus = plan.statusLine
+                holder.nativeMTPReason = plan.reason
+                holder.preparedMTP = AgentSpeculationPolicy.preparedAfterKeptChange(
+                    previous: holder.preparedMTP, next: settings.mtp)
+            }
+        }
+        genLog.info(
+            "speculativeChange: model=\(holder.name, privacy: .public) decision=\(keep ? "keep" : "reload", privacy: .public) loaded=\(Self.describeSpeculativeLoadFacts(holder.speculativeLoadFacts), privacy: .public) next=\(Self.describeSpeculativeLoadFacts(nextFacts), privacy: .public)"
+        )
+        return keep
+    }
+
+    nonisolated static func describeSpeculativeLoadFacts(_ facts: SpeculativeLoadFacts?) -> String {
+        guard let facts else { return "unknown" }
+        let strategy = facts.strategy.map { $0.kind + ($0.blockSize.map { ":b\($0)" } ?? "") } ?? "none"
+        return "\(strategy)/nativeMTP=\(facts.nativeMTPInGraph)"
+    }
+
     /// Invalidates the cached RuntimeConfig so the next request reads fresh values.
     func invalidateConfig() {
         cachedConfig = nil
@@ -2897,13 +3012,18 @@ public actor ModelRuntime {
     /// AppleScript warm deadline. The handoff's exact-token cleanup, not the
     /// ordinary chat idle timer, releases it. Sharing the resident with a new
     /// request revokes ownership and restores the configured idle policy.
+    ///
+    /// A model a running conversation loop holds (`ConversationResidencyHold`: mid-turn, waiting on a tool result or
+    /// a permission prompt) is not idle either: no timer runs until the loop exits, and the configured policy then
+    /// counts from the loop's end.
     nonisolated static func resolvedIdleResidencyPolicy(
         configured: ModelIdleResidencyPolicy,
         source: RequestSource?,
         referencedByChat: Bool,
-        hasHandoffOwner: Bool
+        hasHandoffOwner: Bool,
+        heldByConversation: Bool = false
     ) -> ModelIdleResidencyPolicy {
-        if hasHandoffOwner { return .never }
+        if hasHandoffOwner || heldByConversation { return .never }
         if case .afterSeconds = configured, source == .chatUI, !referencedByChat {
             return .immediately
         }
@@ -2954,17 +3074,19 @@ public actor ModelRuntime {
         let hasHandoffOwner =
             residentMetadata[modelName]?.childOwnershipToken != nil
             || parentRetentions.holds(residentMetadata[modelName]?.identity)
+        let heldByConversation = conversationHolds.holds(modelName)
         let resolved = Self.resolvedIdleResidencyPolicy(
             configured: configured,
             source: lastUseSource[modelName],
             referencedByChat: referencedByChat,
-            hasHandoffOwner: hasHandoffOwner
+            hasHandoffOwner: hasHandoffOwner,
+            heldByConversation: heldByConversation
         )
         let policy =
             isOnVoiceCall(modelName)
             ? Self.voiceCallIdleResidency(resolved, configured: configured) : resolved
         genLog.info(
-            "idleResidency: model=\(modelName, privacy: .public) policy=\(String(describing: policy), privacy: .public) handoffOwned=\(hasHandoffOwner, privacy: .public) chatReferenced=\(referencedByChat, privacy: .public)"
+            "idleResidency: model=\(modelName, privacy: .public) policy=\(String(describing: policy), privacy: .public) handoffOwned=\(hasHandoffOwner, privacy: .public) chatReferenced=\(referencedByChat, privacy: .public) conversationHeld=\(heldByConversation, privacy: .public)"
         )
         if case .never = policy {
             pendingIdleResidencyDecisions.removeValue(forKey: modelName)
@@ -4671,7 +4793,17 @@ public actor ModelRuntime {
             {
                 try await ModelLease.shared.waitForZeroCancellable(name)
                 try Task.checkCancellation()
-                try await strictEvict(name)
+                var requestSettings = ServerRuntimeSettingsStore.snapshot()
+                requestSettings.mtp = mtp
+                // A per-agent Off -> On selection reaches this path without a global
+                // settings notification. Resolve its real load facts before evicting
+                // the target, just as applySpeculativeLoadChange does for Server edits.
+                let kept = modelCache[name].map {
+                    keepResidentForSpeculativeChange($0, settings: requestSettings)
+                } ?? false
+                if !kept {
+                    try await strictEvict(name)
+                }
             }
             while true {
                 let holder = try await loadContainer(
@@ -5353,7 +5485,10 @@ public actor ModelRuntime {
                 requiresAdmittedMLXAllocatorCeiling:
                     loadBundleFacts.isPlainDeepseekV4AffineJANG
                     || loadBundleFacts.isDeepseekV41AffineJANG,
-                modelVolumeKind: HandledGPUFailureReport.volumeKind(of: localURL)
+                modelVolumeKind: HandledGPUFailureReport.volumeKind(of: localURL),
+                speculativeLoadFacts: SpeculativeLoadFacts(
+                    loadConfiguration: mtpPlan.loadConfiguration, draftStrategy: mtpPlan.draftStrategy),
+                modelDirectory: localURL
             )
 
             // Install the cache coordinator before the coalesced load task
@@ -6136,7 +6271,12 @@ public actor ModelRuntime {
             phase: modelCache[modelName] == nil ? .loading : .queued
         )
 
-        genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
+        // A generation inside a conversation loop keeps its model resident until the loop exits (tool waits,
+        // permission prompts, the next step), not only until this generation ends.
+        let conversationHold = registerConversationGeneration(modelName: modelName)
+        genLog.info(
+            "generateEventStream: start model=\(modelName, privacy: .public) conversationHold=\(conversationHold.map { String($0.id.uuidString.prefix(8)) } ?? "none", privacy: .public)"
+        )
         await markModelActiveForResidency(modelName)
         // Ownership belongs only to the handoff that cold-published this
         // generation. If another surface later reuses it, that surface has

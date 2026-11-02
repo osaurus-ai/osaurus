@@ -27,4 +27,15 @@ enum AgentSpeculationPolicy {
         }
         return ServerController.mtpLoadInputsChanged(previous: previous, next: next)
     }
+
+    /// The settings a resident graph serves after `ModelRuntime.applySpeculativeLoadChange` KEPT it for `next`
+    /// (`SessionHolder.preparedMTP`, which every request checks with `requiresPreparation`). A non-Off selection the
+    /// kept graph serves is recorded, so the next request under it reuses the graph instead of reloading it (a
+    /// MiniMax-M3.1 model loaded under Off, then switched On: its DSpark drafter attaches lazily). Off keeps the
+    /// previous record: Off never prepares, and a return to the previous selection then needs nothing new.
+    static func preparedAfterKeptChange(
+        previous: VMLXServerMTPSettings, next: VMLXServerMTPSettings
+    ) -> VMLXServerMTPSettings {
+        next.mode == .off ? previous : next
+    }
 }
