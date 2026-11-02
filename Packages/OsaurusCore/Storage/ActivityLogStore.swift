@@ -753,8 +753,22 @@ public final class ActivityLogStore: @unchecked Sendable {
         try first(where: "access_key_id = ?1", binds: [.text(accessKeyId)])
     }
 
+    /// Presence checks skip the payload: decoding a full `RequestLog` (wire
+    /// bodies included) just to test for a row is the expensive part.
     func exists(turnId: UUID) throws -> Bool {
-        try find(turnId: turnId) != nil
+        try exists(where: "turn_id = ?1", binds: [.text(turnId.uuidString)])
+    }
+
+    func exists(requestId: String) throws -> Bool {
+        try exists(where: "request_id = ?1", binds: [.text(requestId)])
+    }
+
+    private func exists(where clause: String, binds: [Bind]) throws -> Bool {
+        var found = false
+        try prepareAndExecute("SELECT 1 FROM activity WHERE \(clause) LIMIT 1", binds: binds) { stmt in
+            found = sqlite3_step(stmt) == SQLITE_ROW
+        }
+        return found
     }
 
     private func first(where clause: String, binds: [Bind]) throws -> RequestLog? {

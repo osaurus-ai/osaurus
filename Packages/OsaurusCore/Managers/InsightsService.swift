@@ -89,6 +89,11 @@ final class InsightsService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     /// Fired on every append / clear so the dashboard refreshes (debounced).
     private let changed = PassthroughSubject<Void, Never>()
+    /// Store presence answers for `hasLog`, which the Credits timeline asks
+    /// once per row on every body pass. Emptied on every `changed` signal
+    /// (each append, clear, prune and settings write sends one on main), so
+    /// an answer never outlives the store state it was read from.
+    private var presenceCache: [String: Bool] = [:]
     private var retentionTimer: Timer?
 
     // MARK: - Initialization
@@ -102,13 +107,24 @@ final class InsightsService: ObservableObject {
     init(store: ActivityLogStore, openStore: Bool) {
         self.store = store
         if openStore {
-            do {
-                try store.open()
-                storeAvailable = true
-            } catch {
-                storeAvailable = false
-                storeError = error.localizedDescription
-                NSLog("[Osaurus][Insights] activity log unavailable: %@", "\(error)")
+            // Never park the main thread on a key rotation. `store.open()`
+            // waits in `StorageMutationGate.blockingAwaitNotMutating()`, and
+            // the rotation can only finish by hopping onto the main actor
+            // for `endMutating()`, which this thread is holding. Defer the
+            // open until the rotation-complete notification; the hot cache
+            // serves rows in the meantime.
+            if Thread.isMainThread, StorageMutationGate.isRotationInFlight {
+                NotificationCenter.default.publisher(for: StorageMutationGate.didFinishMutatingNotification)
+                    .receive(on: DispatchQueue.main)
+                    .first()
+                    .sink { [weak self] _ in
+                        guard let self, self.openStoreNow() else { return }
+                        self.startRetention()
+                        self.reload()
+                    }
+                    .store(in: &cancellables)
+            } else {
+                openStoreNow()
             }
         } else {
             storeAvailable = store.isOpen
@@ -126,6 +142,10 @@ final class InsightsService: ObservableObject {
             .store(in: &cancellables)
 
         changed
+            .sink { [weak self] in self?.presenceCache.removeAll() }
+            .store(in: &cancellables)
+
+        changed
             .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
             .sink { [weak self] in self?.reload() }
             .store(in: &cancellables)
@@ -139,13 +159,32 @@ final class InsightsService: ObservableObject {
             }
             .store(in: &cancellables)
 
-        if openStore {
-            pruneForRetention()
-            retentionTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.pruneForRetention() }
-            }
+        if openStore, storeAvailable {
+            startRetention()
         }
         reload()
+    }
+
+    @discardableResult
+    private func openStoreNow() -> Bool {
+        do {
+            try store.open()
+            storeAvailable = true
+            storeError = nil
+        } catch {
+            storeAvailable = false
+            storeError = error.localizedDescription
+            NSLog("[Osaurus][Insights] activity log unavailable: %@", "\(error)")
+        }
+        return storeAvailable
+    }
+
+    private func startRetention() {
+        pruneForRetention()
+        retentionTimer?.invalidate()
+        retentionTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pruneForRetention() }
+        }
     }
 
     // MARK: - Logging
@@ -241,7 +280,9 @@ final class InsightsService: ObservableObject {
     func hasLog(turnId: UUID) -> Bool {
         if logs.contains(where: { $0.turnId == turnId }) { return true }
         guard storeAvailable else { return false }
-        return (try? store.exists(turnId: turnId)) ?? false
+        return cachedPresence("turn:\(turnId.uuidString)") {
+            (try? store.exists(turnId: turnId)) ?? false
+        }
     }
 
     func hasLog(requestId: String) -> Bool {
@@ -249,7 +290,16 @@ final class InsightsService: ObservableObject {
         guard !normalized.isEmpty else { return false }
         if logs.contains(where: { $0.requestId == normalized }) { return true }
         guard storeAvailable else { return false }
-        return ((try? store.find(requestId: normalized)) ?? nil) != nil
+        return cachedPresence("request:\(normalized)") {
+            (try? store.exists(requestId: normalized)) ?? false
+        }
+    }
+
+    private func cachedPresence(_ key: String, probe: () -> Bool) -> Bool {
+        if let hit = presenceCache[key] { return hit }
+        let found = probe()
+        presenceCache[key] = found
+        return found
     }
 
     private func focus(log: RequestLog) {

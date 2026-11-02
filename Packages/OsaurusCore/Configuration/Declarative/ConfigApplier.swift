@@ -391,6 +391,9 @@ enum ConfigApplier {
         var matchedIds = Set<UUID>()
 
         for entry in entries {
+            // Bookmark minting opens the folder on disk; do it here, off the
+            // main actor, so a slow or unmounted volume cannot stall the UI.
+            let preparedFolder = prepareWorkingFolder(entry.workingFolder)
             let result: ConfigApplyResult = await MainActor.run {
                 var entry = entry
                 let existing = AgentManager.shared.agents.first {
@@ -443,7 +446,7 @@ enum ConfigApplier {
                     }
                 }
                 if var agent = existing {
-                    let outcome = patch(&agent, from: entry, options: options)
+                    let outcome = patch(&agent, from: entry, options: options, preparedFolder: preparedFolder)
                     AgentManager.shared.update(agent)
                     if outcome.runtimeChanged {
                         let agentId = agent.id
@@ -480,7 +483,7 @@ enum ConfigApplier {
                         maxTokens: entry.maxTokens.valueOrNil
                     )
                     matchedIds.insert(agent.id)
-                    let outcome = patch(&agent, from: entry, options: options)
+                    let outcome = patch(&agent, from: entry, options: options, preparedFolder: preparedFolder)
                     AgentManager.shared.update(agent)
                     applyRelay(entry.capabilities?.relayEnabled, to: agent.id)
                     // New agents join the Default spawn pool on create
@@ -568,7 +571,8 @@ enum ConfigApplier {
     @MainActor
     @discardableResult
     private static func patch(
-        _ agent: inout Agent, from entry: AgentEntry, options: ConfigApplyOptions = .default
+        _ agent: inout Agent, from entry: AgentEntry, options: ConfigApplyOptions = .default,
+        preparedFolder: PreparedWorkingFolder? = nil
     ) -> AgentPatchOutcome {
         var outcome = AgentPatchOutcome()
         if let v = entry.description { agent.description = v }
@@ -591,7 +595,10 @@ enum ConfigApplier {
         if let subagents = entry.subagents {
             patchSubagents(&agent, from: subagents, outcome: &outcome)
         }
-        patchWorkingFolder(&agent, from: entry.workingFolder, outcome: &outcome)
+        patchWorkingFolder(
+            &agent, from: entry.workingFolder,
+            prepared: preparedFolder ?? prepareWorkingFolder(entry.workingFolder),
+            outcome: &outcome)
         if let source = entry.sourceTemplate {
             agent.sourceTemplateName = source.isEmpty ? nil : source
         }
@@ -830,9 +837,35 @@ enum ConfigApplier {
     /// attached and the result tells the user to pick the folder, so an
     /// agent never carries a path it cannot actually read (the classic
     /// "orchestrator said it has folder access but it loops forever").
+    /// Disk-touching half of `patchWorkingFolder`: tilde expansion, the
+    /// directory probe and the bookmark mint. Nonisolated so `applyAgents`
+    /// can run it before hopping onto the main actor.
+    struct PreparedWorkingFolder: Sendable {
+        let expandedPath: String
+        let bookmark: Data?
+    }
+
+    nonisolated private static func prepareWorkingFolder(
+        _ field: ConfigField<String>
+    ) -> PreparedWorkingFolder? {
+        guard case .value(let raw) = field else { return nil }
+        let expanded = (raw.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)
+            .expandingTildeInPath
+        guard !expanded.isEmpty else { return nil }
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory)
+        let bookmark =
+            exists && isDirectory.boolValue
+            ? FolderContextService.makeSecurityScopedBookmark(
+                for: URL(fileURLWithPath: expanded, isDirectory: true))
+            : nil
+        return PreparedWorkingFolder(expandedPath: expanded, bookmark: bookmark)
+    }
+
     @MainActor
     private static func patchWorkingFolder(
-        _ agent: inout Agent, from field: ConfigField<String>, outcome: inout AgentPatchOutcome
+        _ agent: inout Agent, from field: ConfigField<String>, prepared: PreparedWorkingFolder?,
+        outcome: inout AgentPatchOutcome
     ) {
         switch field {
         case .absent:
@@ -841,17 +874,11 @@ enum ConfigApplier {
             agent.workingFolderBookmark = nil
             agent.workingFolderPath = nil
         case .value(let raw):
-            let expanded = (raw.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)
-                .expandingTildeInPath
-            guard !expanded.isEmpty else { return }
+            guard let prepared else { return }
+            let expanded = prepared.expandedPath
             let currentPath = agent.workingFolderPath.map { ($0 as NSString).expandingTildeInPath }
             if agent.workingFolderBookmark != nil, currentPath == expanded { return }
-            let url = URL(fileURLWithPath: expanded, isDirectory: true)
-            var isDirectory: ObjCBool = false
-            let exists = FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory)
-            if exists, isDirectory.boolValue,
-                let bookmark = FolderContextService.makeSecurityScopedBookmark(for: url)
-            {
+            if let bookmark = prepared.bookmark {
                 agent.workingFolderBookmark = bookmark
                 agent.workingFolderPath = expanded
             } else {

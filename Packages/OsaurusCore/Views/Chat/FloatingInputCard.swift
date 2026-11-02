@@ -3265,7 +3265,10 @@ extension FloatingInputCard {
         )
         .anchoredCard(isPresented: $showModelPicker, size: modelPickerCardSize, accessibilityLabel: L("Model picker")) {
             ChatModelPickerCard(
-                providers: chatPickerProviders,
+                // `anchoredCard` builds this content on every body pass, open
+                // or not, and grouping + sorting every picker item is the
+                // expensive part. A closed card shows nothing, so skip it.
+                providers: showModelPicker ? chatPickerProviders : [],
                 selectedModel: $selectedModel,
                 optionsControl: modelPickerOptionsControl,
                 selectedHarnessID: selectedHarnessPickerID,
