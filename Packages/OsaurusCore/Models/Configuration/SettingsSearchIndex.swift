@@ -288,6 +288,19 @@ public enum SettingsSearchIndex {
             keywords: ["clipboard", "copied text", "grab selection", "paste context"]
         ),
         .init(
+            id: "settings.chat.collapseLongPastes",
+            tab: .chat,
+            section: "Behavior",
+            title: "Collapse Long Pastes",
+            keywords: [
+                "paste", "pasted", "pasted content", "long paste", "large paste",
+                "paste chip", "paste attachment", "collapse", "dictation",
+                "typewhisper", "insert as text", "composer", "input",
+            ],
+            disambiguation:
+                "Controls what happens when you paste into the message box. Clipboard Monitoring is separate and only offers text you copied elsewhere."
+        ),
+        .init(
             id: "settings.chat.keepAwakeForAgentRuns",
             tab: .chat,
             section: "Agent Sessions",
@@ -343,9 +356,10 @@ public enum SettingsSearchIndex {
             keywords: [
                 "compaction", "compact", "summarize", "context", "summary model",
                 "auto compact", "compact conversation", "fallback", "context full",
+                "summary thinking off", "empty summary", "truncated summary",
             ],
             disambiguation:
-                "Which model writes the summary. Unset means the chat's current model. Compaction runs automatically near the limit and from the Compact button in the context budget popover."
+                "Which model writes the summary. Unset means the chat's current model. Summary requests use Thinking Off when supported; chat and agent settings are unchanged. Compaction runs automatically near the limit and from the Compact button in the context budget popover."
         ),
         .init(
             id: "settings.orchestrator.temperature",
@@ -1888,6 +1902,15 @@ public enum SettingsSearchIndex {
             ],
             disambiguation:
                 "Per-agent Advanced generation and capability toggles. Orchestrator defaults live under Orchestrator → Generation.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.showResponseMetrics",
+            tab: .agents,
+            section: "Advanced Settings",
+            title: "Show Response Metrics",
+            keywords: ["tokenizer", "token count", "tokens per second", "tok/s", "response statistics", "agent display"],
+            disambiguation: "Custom agent → General → Configure → Advanced Settings. Shows existing measured response statistics in that agent's chats.",
             declarativeSection: "agents"
         ),
         .init(

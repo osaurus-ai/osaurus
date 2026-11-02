@@ -126,7 +126,7 @@ struct AuxiliaryModelHandoffTests {
             contentsOf: root.appendingPathComponent("Services/Chat/ContextCompactionService.swift"),
             encoding: .utf8
         )
-        let deadline = try #require(service.range(of: "responseText = try await valueWithDeadline("))
+        let deadline = try #require(service.range(of: "try await valueWithDeadline("))
         let handoff = try #require(service.range(of: "try await AuxiliaryModelHandoff.run("))
         let generate = try #require(service.range(of: "try await service.generateOneShot("))
         #expect(deadline.lowerBound < handoff.lowerBound && handoff.lowerBound < generate.lowerBound)

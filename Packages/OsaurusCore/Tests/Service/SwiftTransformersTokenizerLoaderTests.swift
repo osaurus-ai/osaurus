@@ -701,8 +701,6 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
 
         #expect(!(tokenizerTools?.isEmpty ?? true))
-        let arrayTypedPaths = collectArrayTypedSchemaPaths(tokenizerTools as Any)
-        #expect(arrayTypedPaths.isEmpty, "Array-valued schema type paths: \(arrayTypedPaths)")
 
         let tokenIds = try tokenizer.applyChatTemplate(
             messages: [
@@ -727,7 +725,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(!decoded.contains("capabilities_discover"), "Decoded: \(decoded)")
     }
 
-    @Test func loaderNormalizesRawGemmaSensitiveToolSchemas() throws {
+    @Test func loaderPreservesRawToolSchemasForEveryTemplate() throws {
         let parameters: [String: any Sendable] = [
             "type": ["object", "null"] as [any Sendable],
             "additionalProperties": false,
@@ -775,24 +773,24 @@ struct SwiftTransformersTokenizerLoaderTests {
         let metadataProperties = try #require(metadata["properties"] as? [String: any Sendable])
         let propertyNamedType = try #require(metadataProperties["type"] as? [String: any Sendable])
         let tags = try #require(metadataProperties["tags"] as? [String: any Sendable])
-        let closed = try #require(metadataProperties["closed"] as? [String: any Sendable])
+        let closed = try #require(metadataProperties["closed"] as? Bool)
 
-        #expect(normalizedParameters["type"] as? String == "object")
-        #expect(normalizedParameters["nullable"] as? Bool == true)
-        #expect(normalizedParameters["additionalProperties"] == nil)
-        #expect(set["additionalProperties"] == nil)
-        #expect(metadata["type"] as? String == "object")
-        #expect(metadata["nullable"] as? Bool == true)
+        #expect(normalizedParameters["type"] as? [String] == ["object", "null"])
+        #expect(normalizedParameters["nullable"] == nil)
+        #expect(normalizedParameters["additionalProperties"] as? Bool == false)
+        #expect(set["additionalProperties"] as? Bool == true)
+        #expect(metadata["type"] as? [String] == ["object", "null"])
+        #expect(metadata["nullable"] == nil)
         #expect(propertyNamedType["type"] as? String == "string")
-        #expect(tags["type"] as? String == "array")
-        #expect(tags["nullable"] as? Bool == true)
-        #expect(closed["type"] as? String == "string")
+        #expect(tags["type"] as? [String] == ["array", "null"])
+        #expect(tags["nullable"] == nil)
+        #expect(closed == false)
         #expect(
-            collectArrayTypedSchemaPaths(tools as Any).isEmpty,
+            collectArrayTypedSchemaPaths(tools as Any).count == 3,
             "Array-valued schema type paths: \(collectArrayTypedSchemaPaths(tools as Any))"
         )
         #expect(
-            collectBooleanAdditionalPropertiesPaths(tools as Any).isEmpty,
+            collectBooleanAdditionalPropertiesPaths(tools as Any).count == 2,
             "Boolean additionalProperties paths: \(collectBooleanAdditionalPropertiesPaths(tools as Any))"
         )
     }

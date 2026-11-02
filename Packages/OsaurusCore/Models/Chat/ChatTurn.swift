@@ -343,7 +343,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// replaying the abandoned reasoning beside the successful retry.
     var modelContextExcluded: Bool = false
     /// For role==.tool messages, associates this result with the originating call id
-    var toolCallId: String? = nil
+    var toolCallId: String? = nil {
+        didSet { Self.bumpTokenEstimateRevision() }
+    }
     /// Frozen memory / screen-context block this USER turn was originally
     /// sent with, INCLUDING the trailing separator (see
     /// `SystemPromptComposer.composeInjectedUserPrefix`). Recorded once at

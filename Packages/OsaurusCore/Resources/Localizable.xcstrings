@@ -1,6 +1,303 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Reported" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reported"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemeldet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已报告"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보고됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Получено"
+          }
+        }
+      }
+    },
+    "Source unknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Source unknown"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quelle unbekannt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来源未知"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "출처 알 수 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Источник неизвестен"
+          }
+        }
+      }
+    },
+    "Request rate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Request rate"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anfragerate"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请求速率"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "요청 처리 속도"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скорость запроса"
+          }
+        }
+      }
+    },
+    "Output tokens divided by the full request duration, including prompt processing and network waits." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Output tokens divided by the full request duration, including prompt processing and network waits."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ausgabetoken geteilt durch die gesamte Anfragedauer, einschließlich Prompt-Verarbeitung und Netzwerkwartezeiten."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输出 token 数除以完整请求耗时，包括提示处理和网络等待时间。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "프롬프트 처리 및 네트워크 대기를 포함한 전체 요청 시간으로 출력 토큰 수를 나눈 값입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Число выходных токенов, делённое на полное время запроса, включая обработку промпта и ожидание сети."
+          }
+        }
+      }
+    },
+    "Choose reasoning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose reasoning"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Denkeinstellung auswählen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择推理设置"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "추론 설정 선택"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите режим рассуждений"
+          }
+        }
+      }
+    },
+    "Choose a supported reasoning setting." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a supported reasoning setting."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bitte eine unterstützte Denkeinstellung wählen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请选择受支持的推理设置。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지원되는 추론 설정을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите поддерживаемую настройку рассуждений."
+          }
+        }
+      }
+    },
+    "Show Response Metrics" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Antwortmetriken anzeigen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示回复指标"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "응답 지표 표시"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать показатели ответа"
+          }
+        }
+      }
+    },
+    "Show measured token count, tokens per second and timings below responses. Metrics remain available in Inspect response." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gemessene Tokenanzahl, Token pro Sekunde und Zeiten unter Antworten anzeigen. Die Werte bleiben unter „Antwort untersuchen“ verfügbar."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在回复下方显示测量的词元数、每秒词元数和耗时。仍可在“检查回复”中查看这些指标。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "응답 아래에 측정된 토큰 수, 초당 토큰 수 및 소요 시간을 표시합니다. 지표는 응답 검사에서도 계속 확인할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать измеренное число токенов, токены в секунду и время под ответами. Эти данные также доступны в разделе «Проверить ответ»."
+          }
+        }
+      }
+    },
+    "response metrics" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Antwortmetriken"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回复指标"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "응답 지표"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "показатели ответа"
+          }
+        }
+      }
+    },
     "Off uses ordinary decoding. On requests adaptive drafting without changing sampling." : {
       "localizations" : {
         "de" : {
@@ -61610,6 +61907,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "摺疊所有步驟"
+          }
+        }
+      }
+    },
+    "Collapse Long Pastes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lange Einfügungen einklappen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "긴 붙여넣기 접기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сворачивать длинные вставки"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "折叠长粘贴内容"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "摺疊長貼上內容"
           }
         }
       }
@@ -123598,6 +123929,40 @@
         }
       }
     },
+    "Insert as Text" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Als Text einfügen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "텍스트로 삽입"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставить как текст"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作为文本插入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以文字插入"
+          }
+        }
+      }
+    },
     "Insert into message" : {
       "localizations" : {
         "de" : {
@@ -147395,6 +147760,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "當聊天超出上下文視窗時用於摘要較早訊息的模型（上下文壓縮）。壓縮會在接近上限時自動執行，也可在上下文預算彈出視窗中手動觸發。遠端模型會經過你的隱私過濾器。未設定時由目前聊天模型進行摘要。"
+          }
+        }
+      }
+    },
+    "Model used to summarize older messages when a chat outgrows its context window. Runs automatically near the limit and on demand from the context budget popover. Compaction requests Thinking Off when supported, without changing chat or agent settings. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model used to summarize older messages when a chat outgrows its context window. Runs automatically near the limit and on demand from the context budget popover. Compaction requests Thinking Off when supported, without changing chat or agent settings. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes."
           }
         }
       }
@@ -184555,7 +184930,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Port, Netzwerkfreigabe, CORS, top-P, Modell-Eviction und Leerlauf-Residenz befinden sich jetzt unter Server → Einstellungen, gestützt auf den vmlx-Server-Runtime-Vertrag."
+            "value" : "Port, Netzwerkfreigabe, CORS, top-P, Modell-Eviction und Leerlauf-Residenz befinden sich jetzt unter Server → Einstellungen, gestützt auf den Server-Runtime-Vertrag von vMLX."
           }
         },
         "ko" : {
@@ -274825,6 +275200,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "關閉中繼？"
+          }
+        }
+      }
+    },
+    "Turn long pasted text into a compact attachment instead of filling the message box. Turn off if a dictation or automation tool needs the pasted text to stay in the field." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lange eingefügte Texte werden zu einem kompakten Anhang, statt das Nachrichtenfeld zu füllen. Deaktivieren, wenn ein Diktier- oder Automatisierungstool den eingefügten Text im Feld benötigt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "긴 붙여넣은 텍스트를 메시지 상자에 채우는 대신 간단한 첨부 파일로 바꿉니다. 받아쓰기 또는 자동화 도구가 붙여넣은 텍스트를 입력란에 그대로 두어야 한다면 끄세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Превращать длинный вставленный текст в компактное вложение вместо заполнения поля сообщения. Отключите, если инструменту диктовки или автоматизации нужно, чтобы вставленный текст оставался в поле."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将长粘贴文本转换为紧凑的附件，而不是填满消息框。如果听写或自动化工具需要粘贴的文本保留在输入框中，请关闭此选项。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將長貼上文字轉換為精簡的附件，而不是填滿訊息框。如果聽寫或自動化工具需要貼上的文字保留在輸入框中，請關閉此選項。"
           }
         }
       }

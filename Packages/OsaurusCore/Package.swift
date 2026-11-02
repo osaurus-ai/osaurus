@@ -345,9 +345,18 @@ let package = Package(
         // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
         // vmlx-swift#687: MiniMax-M3.1-Flash (JANGT experts, block-sparse MSA, dspark/ drafter, aligned prefix cache,
         // thinking_mode, image input).
+        // Integration pin (main 9ec1d561 + #687, #689, #699 / #700, #697, #696, #703, #709 / #710, cache-detail fix): MiniMax-M3.1 JANGT
+        // prefill on expert-aligned tiles (bit-identical); prefix cache serves from SSD only by default (RAM tier opt-in
+        // via VMLX_RESIDENT_CACHE_GB), DeepSeek-V4 boundaries captured in prefill (a cold prefill cuts only at stable
+        // boundaries within 512 tokens of the prompt end) and named-tool turns reuse the prefix;
+        // DeepSeek-V4.1 prefill runs only the last KV-source layer's cache writes and its JANGT experts on
+        // expert-aligned tiles (bit-identical; routed sort without integer floorDivide, SwitchGLU too); the residency
+        // budget applies to bundles reached through a symlinked directory; main's Gemma 4 tool transport and Jinja
+        // namespace fixes. A read of a prefix entry whose SSD file is still being written reports diskPending
+        // (memory now means only the opt-in RAM tier).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "46cc6f6f88cd0189fb106875f813872ee00de1fa"
+            revision: "75ff99a24296eec31496a396a403c87b3e7d0453"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -518,7 +527,9 @@ let package = Package(
             ],
             path: ".",
             exclude: ["Tests", "SQLCipher", "ObjCSupport", "PluginHost"],
-            resources: [.process("Resources")],
+            // `.copy` keeps the embedding model's folder intact; `.process`
+            // would flatten its config.json/tokenizer.json into the bundle root.
+            resources: [.process("Resources"), .copy("EmbeddingModels/potion-base-4M")],
             swiftSettings: [
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
                 // SDK. Enable this flag when building against that SDK (or newer) to

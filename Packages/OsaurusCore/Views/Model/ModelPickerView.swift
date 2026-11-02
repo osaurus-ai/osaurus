@@ -25,6 +25,13 @@ struct ModelPickerThinkingControl {
     /// model's template default applies naturally again.
     let onSetEnabled: (Bool?) -> Void
     var supportsUnspecifiedDefault: Bool = false
+    var selectionIsValid: Bool = true
+
+    var selectedMode: String? {
+        guard selectionIsValid else { return nil }
+        if supportsUnspecifiedDefault && !isExplicit { return "default" }
+        return isEnabled ? "on" : "off"
+    }
 }
 
 /// Inline model-options control state for the picker's currently selected
@@ -54,12 +61,19 @@ struct ModelPickerOptionsControl {
     /// default applies naturally again.
     let onChange: (String, ModelOptionValue?) -> Void
 
-    var isEmpty: Bool { options.isEmpty && thinking == nil }
+    var reasoningValidationMessage: String? = nil
+
+    var isEmpty: Bool { options.isEmpty && thinking == nil && reasoningValidationMessage == nil }
+
+    func canResetOption(_ id: String) -> Bool {
+        options.contains { $0.id == id } || (id == "reasoningEffort" && reasoningValidationMessage != nil)
+    }
 
     /// The segment id the UI marks as selected for a segmented option:
     /// explicit choice first, then the display default, then the first
     /// segment.
     func effectiveSegmentId(for option: ModelOptionDefinition) -> String? {
+        if option.id == "reasoningEffort", reasoningValidationMessage != nil { return nil }
         if let explicit = values[option.id]?.stringValue { return explicit }
         if let fallback = defaults[option.id]?.stringValue { return fallback }
         if case .segmented(let segments) = option.kind { return segments.first?.id }
@@ -92,7 +106,10 @@ struct ModelPickerOptionsControl {
         let availableWidth: CGFloat = 352
         // Thinking row: icon container + title/description stack + padding.
         let thinkingHeight: CGFloat = thinking != nil ? 50 : 0
-        return thinkingHeight + options.reduce(CGFloat(0)) { total, option in
+        let validationHeight: CGFloat = reasoningValidationMessage == nil ? 0 : 44
+        let resetHeight: CGFloat = reasoningValidationMessage != nil && thinking == nil
+            && !options.contains(where: { $0.id == "reasoningEffort" }) ? 24 : 0
+        return validationHeight + resetHeight + thinkingHeight + options.reduce(CGFloat(0)) { total, option in
             switch option.kind {
             case .segmented(let segments):
                 var lines: CGFloat = 1
@@ -980,6 +997,16 @@ struct ModelPickerView: View {
     @ViewBuilder
     private func optionsSection(_ control: ModelPickerOptionsControl) -> some View {
         let rows = VStack(alignment: .leading, spacing: 0) {
+            if let message = control.reasoningValidationMessage {
+                Text(message)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                if control.thinking == nil && !control.options.contains(where: { $0.id == "reasoningEffort" }) {
+                    resetButton { control.onChange("reasoningEffort", nil) }
+                }
+            }
             if let thinking = control.thinking {
                 thinkingOptionRow(thinking)
                 if !control.options.isEmpty {
@@ -1041,13 +1068,13 @@ struct ModelPickerView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(
-                        thinking.isEnabled
+                        thinking.selectionIsValid && thinking.isEnabled
                             ? theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12)
                             : theme.secondaryBackground
                     )
                 Image(systemName: "brain")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(thinking.isEnabled ? theme.accentColor : theme.tertiaryText)
+                    .foregroundColor(thinking.selectionIsValid && thinking.isEnabled ? theme.accentColor : theme.tertiaryText)
             }
             .frame(width: 26, height: 26)
 
@@ -1057,7 +1084,7 @@ struct ModelPickerView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    if !thinking.isExplicit {
+                    if !thinking.isExplicit && thinking.selectionIsValid {
                         defaultPill
                     }
                 }
@@ -1074,15 +1101,20 @@ struct ModelPickerView: View {
                 compactResetButton { thinking.onSetEnabled(nil) }
             }
 
-            if thinking.supportsUnspecifiedDefault {
+            if thinking.supportsUnspecifiedDefault || !thinking.selectionIsValid {
                 Picker(
                     "Thinking",
                     selection: Binding(
-                        get: { thinking.isExplicit ? (thinking.isEnabled ? "on" : "off") : "default" },
+                        get: { thinking.selectedMode ?? "unsupported" },
                         set: { thinking.onSetEnabled($0 == "default" ? nil : $0 == "on") }
                     )
                 ) {
-                    Text("Default", bundle: .module).tag("default")
+                    if !thinking.selectionIsValid {
+                        Text("Choose reasoning", bundle: .module).tag("unsupported").disabled(true)
+                    }
+                    if thinking.supportsUnspecifiedDefault {
+                        Text("Default", bundle: .module).tag("default")
+                    }
                     Text("On", bundle: .module).tag("on")
                     Text("Off", bundle: .module).tag("off")
                 }
@@ -1108,7 +1140,9 @@ struct ModelPickerView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("Thinking", bundle: .module))
         .accessibilityValue(
-            thinking.supportsUnspecifiedDefault && !thinking.isExplicit
+            !thinking.selectionIsValid
+                ? Text("Choose reasoning", bundle: .module)
+                : thinking.supportsUnspecifiedDefault && !thinking.isExplicit
                 ? Text("Default", bundle: .module)
                 : thinking.isEnabled
                     ? Text("On", bundle: .module)
@@ -1147,6 +1181,7 @@ struct ModelPickerView: View {
             return []
         }()
         let isExplicit = control.values[option.id] != nil
+            || (option.id == "reasoningEffort" && control.reasoningValidationMessage != nil)
         let effectiveId = control.effectiveSegmentId(for: option)
         // Catalog levels (with descriptions) back the effort row when the
         // provider published capabilities; other rows have segments only.

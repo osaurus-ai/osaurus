@@ -90,13 +90,33 @@ struct CompactionRequestContractTests {
         #expect(RemoteReasoningPolicy.requestsReasoningOff(params.modelOptions))
     }
 
-    /// Local bundles keep their own template/generation defaults: no reasoning
-    /// option is added for a local compaction model.
-    @Test func localSummaryLeavesModelOptionsUntouched() {
+    @Test func localSummaryWithoutThinkingSwitchKeepsModelOptionsUntouched() {
         let params = ContextCompactionService.summaryParameters(
             sessionId: UUID(), requestSource: .chatUI, remote: false)
         #expect(params.modelOptions.isEmpty)
-        #expect(!params.requireCompleteOutput)
+        #expect(params.requireCompleteOutput)
+    }
+
+    @Test func localSummaryUsesOnlyTheSupportedThinkingSwitch() {
+        let capability = LocalReasoningCapability.analyze(template: """
+            {% if enable_thinking is false %}{{ '<think></think>' }}
+            {% else %}{{ '<think>' }}{% endif %}
+            """)
+        #expect(capability.isToggleableThinking)
+        let params = ContextCompactionService.summaryParameters(
+            sessionId: UUID(), requestSource: .chatUI, remote: false,
+            localThinkingCapability: capability)
+        #expect(params.modelOptions == ["disableThinking": .bool(true)])
+        #expect(params.requireCompleteOutput)
+    }
+
+    @Test func thinkingWithoutATemplateSwitchIsNotOverridden() {
+        let capability = LocalReasoningCapability.analyze(template: "{{ '<think>' }}")
+        #expect(!capability.isToggleableThinking)
+        let params = ContextCompactionService.summaryParameters(
+            sessionId: nil, requestSource: .chatUI, remote: false,
+            localThinkingCapability: capability)
+        #expect(params.modelOptions.isEmpty)
     }
 
     @Test func truncationIsALoudCompactionError() {

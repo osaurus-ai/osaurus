@@ -414,10 +414,13 @@ public final class ActivityLogStore: @unchecked Sendable {
             requestId: log.requestId, method: log.method, path: log.path, statusCode: log.statusCode,
             durationMs: log.durationMs, requestBody: log.requestBody, responseBody: log.responseBody,
             userAgent: log.userAgent, pluginId: log.pluginId, model: log.model,
-            inputTokens: log.inputTokens, outputTokens: log.outputTokens, temperature: log.temperature,
+            inputTokens: log.inputTokens, outputTokens: log.outputTokens,
+            inputTokenSource: log.inputTokenSource, outputTokenSource: log.outputTokenSource,
+            temperature: log.temperature,
             maxTokens: log.maxTokens, toolCalls: log.toolCalls, finishReason: log.finishReason,
             errorMessage: log.errorMessage, wireRequestBody: log.wireRequestBody,
-            wireResponseBody: log.wireResponseBody, connection: log.connection,
+            wireResponseBody: log.wireResponseBody, bodyTruncation: log.bodyTruncation,
+            connection: log.connection,
             category: log.category, locality: log.locality, egress: egress, agentId: log.agentId,
             agentName: log.agentName, sessionId: log.sessionId, clientIP: log.clientIP
         )

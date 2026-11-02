@@ -20,6 +20,7 @@ struct MessageThreadView: View {
     let agentCustomAvatarPath: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
+    var showResponseMetrics: Bool = false
     var autoScrollEnabled: Bool = true
     var expandedBlocksStore: ExpandedBlocksStore = ExpandedBlocksStore()
     var scrollPositionStore: ThreadScrollPositionStore = ThreadScrollPositionStore()
@@ -105,6 +106,7 @@ struct MessageThreadView: View {
             agentCustomAvatarPath: agentCustomAvatarPath,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
+            showResponseMetrics: showResponseMetrics,
             autoScrollEnabled: autoScrollEnabled,
             theme: theme,
             expandedBlocksStore: expandedBlocksStore,

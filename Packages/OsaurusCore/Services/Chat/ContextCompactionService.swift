@@ -41,6 +41,8 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
     case nothingToCompact
     /// The model returned an empty/blank summary.
     case emptySummary
+    /// A summary that costs at least as much context cannot reclaim anything.
+    case summaryNotSmaller
     /// The summary hit the output limit before it finished; a partial summary
     /// is never applied over the conversation (#3036).
     case truncatedSummary(model: String)
@@ -60,6 +62,8 @@ enum ContextCompactionError: Error, LocalizedError, Equatable {
             return "Nothing to compact yet — the recent conversation is already as small as it can get"
         case .emptySummary:
             return "The compaction model returned an empty summary"
+        case .summaryNotSmaller:
+            return "The summary would not reduce context usage, so no conversation history was replaced"
         case .truncatedSummary(let model):
             return "'\(model)' hit its output limit before finishing the summary, so nothing was replaced. If it is a reasoning model served remotely, its server may be ignoring the request to turn reasoning off"
         case .timedOut:
@@ -140,6 +144,8 @@ final class ContextCompactionService {
     /// two-exchange chat sitting at 96% of the budget had no compactable
     /// span at all.
     static let minimumCoveredTokens = 4_000
+
+    static let autoCompactionUsageThreshold = 0.85
 
     private nonisolated static let summaryMaxTokens = 1024
     private nonisolated static let summaryTemperature: Double = 0.2
@@ -222,8 +228,11 @@ final class ContextCompactionService {
     /// from re-summarizing every ordinary exchange at high utilization.
     static func compactionCutIndex(
         turns: [ChatTurn],
-        existingSummary: ConversationSummary?
+        existingSummary: ConversationSummary?,
+        afterToolBatch: Bool = false
     ) -> Int? {
+        let toolBatchStart = afterToolBatch ? completedToolBatchStart(in: turns) : nil
+        if afterToolBatch, toolBatchStart == nil { return nil }
         let userIndices = turns.enumerated()
             .filter { $0.element.role == .user }
             .map(\.offset)
@@ -255,6 +264,31 @@ final class ContextCompactionService {
             return cut
         }
 
+        // INVARIANT: a tool-loop cut never separates calls from their results.
+        // Prefer leaving the latest complete batch verbatim when there is a
+        // token-heavy prefix before it. A fully drained heavy batch can itself
+        // be covered by the last-resort cut below.
+        if afterToolBatch,
+            let batchStart = toolBatchStart,
+            batchStart > alreadyCovered,
+            ContextBudgetManager.estimateTokens(for: Array(turns[alreadyCovered..<batchStart]))
+                >= minimumCoveredTokens
+        {
+            return batchStart
+        }
+
+        // A first bulk tool result can fill the window by itself. Once every
+        // result is recorded, the entire completed batch is a safe last-resort
+        // cut too (like a completed assistant exchange below). Requiring the
+        // newest batch to survive verbatim would make this case uncompactionable.
+        if afterToolBatch,
+            turns.count > alreadyCovered,
+            ContextBudgetManager.estimateTokens(for: Array(turns[alreadyCovered...]))
+                >= minimumCoveredTokens
+        {
+            return turns.count
+        }
+
         // Whole-transcript last resort (see doc comment above).
         guard turns.last?.role == .assistant,
             turns.count > alreadyCovered,
@@ -262,6 +296,25 @@ final class ContextCompactionService {
                 >= minimumCoveredTokens
         else { return nil }
         return turns.count
+    }
+
+    /// Returns the assistant call turn only when every slot in the trailing
+    /// batch has exactly one matching result. Partial/parallel batches and
+    /// output placeholders are not safe compaction boundaries.
+    static func completedToolBatchStart(in turns: [ChatTurn]) -> Int? {
+        guard turns.last?.role == .tool,
+            let start = turns.lastIndex(where: { $0.role != .tool }),
+            turns[start].role == .assistant,
+            let calls = turns[start].toolCalls, !calls.isEmpty
+        else { return nil }
+        let callIDs = calls.map(\.id)
+        let resultIDs = turns[(start + 1)...].compactMap(\.toolCallId)
+        guard Set(callIDs).count == calls.count,
+            resultIDs.count == turns.count - start - 1,
+            resultIDs.count == calls.count,
+            Set(resultIDs) == Set(callIDs)
+        else { return nil }
+        return start
     }
 
     /// Whether the summary's covered turns still line up with the live
@@ -272,7 +325,8 @@ final class ContextCompactionService {
     /// that state, and the next user message simply extends the transcript
     /// past the covered prefix.
     static func summaryIsValid(_ summary: ConversationSummary, for turns: [ChatTurn]) -> Bool {
-        guard !summary.coveredTurnIds.isEmpty,
+        guard !summary.summaryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !summary.coveredTurnIds.isEmpty,
             summary.coveredTurnIds.count <= turns.count
         else { return false }
         for (index, coveredId) in summary.coveredTurnIds.enumerated() {
@@ -283,25 +337,25 @@ final class ContextCompactionService {
 
     /// The summarize request's generation parameters.
     ///
-    /// Remote routes turn reasoning off: a remote thinking model otherwise
-    /// spends the whole budget reasoning and returns no content (#3036), and
-    /// the output must be complete — a cut-off summary is never applied over
-    /// the conversation. Local routes are deliberately unchanged: the local
-    /// engine renders the bundle's own chat template and generation defaults,
-    /// and this fix must not alter how local Qwen/JANG bundles are prompted.
+    /// Summaries request thinking off through the model's supported template
+    /// switch. A model without that capability keeps its native contract.
+    /// This is scoped to the summary request, never chat or saved agent defaults.
+    /// Complete-output validation rejects truncation on every route.
     nonisolated static func summaryParameters(
-        sessionId: UUID?, requestSource: RequestSource, remote: Bool
+        sessionId: UUID?, requestSource: RequestSource, remote: Bool,
+        localThinkingCapability: LocalReasoningCapability.Capability = .none
     ) -> GenerationParameters {
         GenerationParameters(
             temperature: Float(Self.summaryTemperature),
             maxTokens: Self.summaryMaxTokens,
-            modelOptions: remote ? ["disableThinking": .bool(true)] : [:],
+            modelOptions: remote || localThinkingCapability.isToggleableThinking
+                ? ["disableThinking": .bool(true)] : [:],
             sessionId: sessionId?.uuidString,
             requestSource: requestSource,
             // The scoped handoff, not a general interactive eviction, owns
             // any parent swap. Unrelated residents remain protected.
             loadIntent: .background,
-            requireCompleteOutput: remote
+            requireCompleteOutput: true
         )
     }
 
@@ -323,6 +377,7 @@ final class ContextCompactionService {
         sessionId: UUID?,
         invocation: ModelJobInvocation,
         agentId: UUID,
+        afterToolBatch: Bool = false,
         onPhase: @MainActor (ContextCompactionPhase) -> Void
     ) async throws -> ConversationSummary {
         onPhase(.preparing)
@@ -332,7 +387,8 @@ final class ContextCompactionService {
         else {
             throw ContextCompactionError.needsModelSelection
         }
-        guard let cut = Self.compactionCutIndex(turns: turns, existingSummary: existingSummary)
+        guard let cut = Self.compactionCutIndex(
+            turns: turns, existingSummary: existingSummary, afterToolBatch: afterToolBatch)
         else {
             throw ContextCompactionError.nothingToCompact
         }
@@ -369,16 +425,18 @@ final class ContextCompactionService {
             ChatMessage(role: "system", content: Self.systemPrompt),
             ChatMessage(role: "user", content: Self.userPrompt(transcript: transcript)),
         ]
+        let remoteConn = ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false)
+        let localThinkingCapability = service is MLXService
+            ? await LocalReasoningCapability.resolveForDispatch(modelId: modelId) : .none
         let params = Self.summaryParameters(
             sessionId: sessionId, requestSource: invocation.source?.inferenceSource ?? .chatUI,
-            remote: ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false) != nil)
+            remote: remoteConn != nil, localThinkingCapability: localThinkingCapability)
 
         onPhase(.summarizing)
         let startedAt = Date()
         // Activity-log attribution: where the transcript went (local model or
         // which cloud provider), the real post-scrub wire bytes, and the
         // Privacy Filter outcome. The probe is only attached for remote sends.
-        let remoteConn = ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false)
         let wireProbe: WireTransportProbe? = remoteConn != nil ? WireTransportProbe() : nil
         let logContext = InsightsLogContext(
             source: invocation.source?.inferenceSource ?? .chatUI,
@@ -387,9 +445,9 @@ final class ContextCompactionService {
             connection: remoteConn?.info,
             probe: wireProbe
         )
-        let responseText: String
+        let summary: ConversationSummary
         do {
-            responseText = try await valueWithDeadline(
+            let generatedText = try await valueWithDeadline(
                 seconds: Self.timeoutSeconds,
                 operationName: "context compaction"
             ) {
@@ -416,6 +474,8 @@ final class ContextCompactionService {
                     )
                 }
             }
+            summary = try Self.validatedSummary(
+                generatedText, covered: covered, modelId: modelId)
         } catch is DeadlineExceededError {
             Self.logToInsights(
                 model: modelId, messages: messages, response: nil,
@@ -428,6 +488,23 @@ final class ContextCompactionService {
                 model: modelId, messages: messages, response: nil,
                 startedAt: startedAt, error: "truncated at output limit", context: logContext)
             throw ContextCompactionError.truncatedSummary(model: modelId)
+        } catch MLXService.OneShotError.outputTruncated {
+            Self.logToInsights(
+                model: modelId, messages: messages, response: nil,
+                startedAt: startedAt, error: "truncated at output limit", context: logContext)
+            throw ContextCompactionError.truncatedSummary(model: modelId)
+        } catch ContextCompactionError.emptySummary {
+            Self.logToInsights(
+                model: modelId, messages: messages, response: nil,
+                startedAt: startedAt, error: ContextCompactionError.emptySummary.localizedDescription,
+                context: logContext)
+            throw ContextCompactionError.emptySummary
+        } catch ContextCompactionError.summaryNotSmaller {
+            Self.logToInsights(
+                model: modelId, messages: messages, response: nil,
+                startedAt: startedAt, error: ContextCompactionError.summaryNotSmaller.localizedDescription,
+                context: logContext)
+            throw ContextCompactionError.summaryNotSmaller
         } catch {
             Self.logToInsights(
                 model: modelId, messages: messages, response: nil,
@@ -439,33 +516,41 @@ final class ContextCompactionService {
         }
 
         Self.logToInsights(
-            model: modelId, messages: messages, response: responseText,
+            model: modelId, messages: messages, response: summary.summaryText,
             startedAt: startedAt, error: nil, context: logContext)
 
-        let summaryText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !summaryText.isEmpty else { throw ContextCompactionError.emptySummary }
-
         onPhase(.applying)
-        let coveredTokens = ContextBudgetManager.estimateTokens(for: covered)
-        var summary = ConversationSummary(
-            summaryText: summaryText,
-            coveredTurnIds: coveredIds,
-            modelIdentifier: modelId,
-            savedTokensEstimate: 0
-        )
-        let summaryTokens = ContextBudgetManager.estimateTokens(for: summary.contextMessageText)
-        summary = ConversationSummary(
-            id: summary.id,
-            summaryText: summaryText,
-            coveredTurnIds: coveredIds,
-            createdAt: summary.createdAt,
-            modelIdentifier: modelId,
-            savedTokensEstimate: max(0, coveredTokens - summaryTokens)
-        )
         logger.info(
             "Compacted \(coveredIds.count) turns via \(modelId, privacy: .public): ~\(summary.savedTokensEstimate) tokens reclaimed"
         )
         return summary
+    }
+
+    /// INVARIANT: validate before reporting success or applying a summary.
+    /// Failed, empty or non-shrinking output never replaces outbound history.
+    static func validatedSummary(
+        _ responseText: String, covered: [ChatTurn], modelId: String
+    ) throws -> ConversationSummary {
+        let summaryText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summaryText.isEmpty else { throw ContextCompactionError.emptySummary }
+        guard !covered.isEmpty else { throw ContextCompactionError.nothingToCompact }
+        let coveredTokens = ContextBudgetManager.estimateTokens(for: covered)
+        let candidate = ConversationSummary(
+            summaryText: summaryText,
+            coveredTurnIds: covered.map(\.id),
+            modelIdentifier: modelId,
+            savedTokensEstimate: 0
+        )
+        let summaryTokens = ContextBudgetManager.estimateTokens(for: candidate.contextMessageText)
+        guard summaryTokens < coveredTokens else { throw ContextCompactionError.summaryNotSmaller }
+        return ConversationSummary(
+            id: candidate.id,
+            summaryText: summaryText,
+            coveredTurnIds: candidate.coveredTurnIds,
+            createdAt: candidate.createdAt,
+            modelIdentifier: modelId,
+            savedTokensEstimate: coveredTokens - summaryTokens
+        )
     }
 
     // MARK: Prompt
@@ -610,7 +695,9 @@ final class ContextCompactionService {
             source: context.source,
             model: model,
             inputTokens: inputTokens,
-            outputTokens: response.map { TokenEstimator.estimate($0) } ?? 0,
+            outputTokens: response.map { TokenEstimator.estimate($0) },
+            inputTokenSource: .estimated,
+            outputTokenSource: .estimated,
             durationMs: Date().timeIntervalSince(startedAt) * 1000,
             temperature: Float(summaryTemperature),
             maxTokens: summaryMaxTokens,
@@ -619,6 +706,7 @@ final class ContextCompactionService {
             responseBody: response,
             wireRequestBody: wire?.request,
             wireResponseBody: (wire?.response.isEmpty ?? true) ? nil : wire?.response,
+            wireResponseTruncated: wire?.truncated,
             connection: context.connection,
             path: "/internal/compaction",
             privacy: context.probe?.privacyOutcome,

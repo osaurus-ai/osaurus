@@ -172,6 +172,7 @@ struct SettingsSearchSelfFindProbe {
             ("Automatically Name Chats", "settings.chat.autoGenerateTitles"),
             ("Suggest Follow-Up Questions", "settings.chat.generateFollowUps"),
             ("Check Spelling While Typing", "settings.chat.spellCheck"),
+            ("Collapse Long Pastes", "settings.chat.collapseLongPastes"),
             ("Expand Thinking While Streaming", "settings.chat.thinkingDisplay"),
             ("Compaction Model", "settings.chat.compactionModel"),
             ("Top P Override", "settings.chat.topP"),
@@ -309,6 +310,7 @@ struct SettingsSearchSelfFindProbe {
             ("apple_apps", "agents.appleApps"),
             // Per-agent generation controls use their exact on-screen labels.
             ("Temperature", "agents.generation.temperature"),
+            ("Show Response Metrics", "agents.showResponseMetrics"),
             ("Max Tokens", "agents.generation.maxTokens"),
             ("Top P", "agents.generation.topP"),
             ("Top K", "agents.generation.topK"),

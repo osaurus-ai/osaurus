@@ -67,6 +67,9 @@ struct ChatSettingsView: View {
     /// Run the macOS spell checker in the chat composer.
     @AppStorage(ComposerSpellCheckSetting.defaultsKey)
     private var composerSpellCheckEnabled: Bool = ComposerSpellCheckSetting.defaultValue
+    /// Turn large pastes into an attachment chip instead of composer text.
+    @AppStorage(ComposerPasteCollapseSetting.defaultsKey)
+    private var collapseLongPastes: Bool = ComposerPasteCollapseSetting.defaultValue
     /// Prevent idle system sleep while agent sessions are actively running
     /// or queued. Display sleep and explicit system sleep remain available.
     @AppStorage(AgentRunPowerManager.keepAwakeDefaultsKey)
@@ -198,6 +201,14 @@ struct ChatSettingsView: View {
             )
 
             SettingsToggle(
+                title: L("Collapse Long Pastes"),
+                description:
+                    "Turn long pasted text into a compact attachment instead of filling the message box. Turn off if a dictation or automation tool needs the pasted text to stay in the field.",
+                anchorId: "settings.chat.collapseLongPastes",
+                isOn: $collapseLongPastes
+            )
+
+            SettingsToggle(
                 title: L("⌘+N Starts a New Chat in the Current Window"),
                 description:
                     "New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window.",
@@ -262,7 +273,7 @@ struct ChatSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     compactionModelPicker
                     Text(
-                        "Model used to summarize older messages when a chat outgrows its context window. Runs automatically near the limit and on demand from the context budget popover. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes.",
+                        "Model used to summarize older messages when a chat outgrows its context window. Runs automatically near the limit and on demand from the context budget popover. Compaction requests Thinking Off when supported, without changing chat or agent settings. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes.",
                         bundle: .module
                     )
                     .font(.system(size: 11))

@@ -820,7 +820,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "46cc6f6f88cd0189fb106875f813872ee00de1fa"
+        let expectedRuntimeHardenedRevision = "75ff99a24296eec31496a396a403c87b3e7d0453"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -830,7 +830,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the required vmlx-swift revision 46cc6f6f for MiniMax-M3.1-Flash (JANGT experts, block-sparse MSA, DSpark drafter, thinking_mode, image input), serialized tokenizer contracts, checked text-prefill error propagation and declared bundle thinking/effort defaults, on top of the LFM3 text, vision, video and speech-input runtime, native audio text-stop handling and existing runtime hardening. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the required vmlx-swift revision 77020098 for integrated MiniMax-M3.1/DSpark, SSD-only prefix reuse, near-end cold-prefill captures, truthful pending-disk receipts, request-sized SSM replay and throwing SSM companion materialization, serialized tokenizer contracts, checked text-prefill error propagation and declared bundle thinking/effort defaults, on top of the LFM3 text, vision, video and speech-input runtime, native audio text-stop handling and existing runtime hardening. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -1251,19 +1251,26 @@ struct RuntimePolicySourceTests {
         #expect(!adapter.contains(#""cacheStableSystemPrefix""#))
     }
 
-    @Test("near-limit wrap-up notice stages only on a mid-run tool tail")
-    func nearLimitNoticeStagesOnlyMidRun() throws {
-        // The "Context is nearly full — wrap up" notice is a mid-run nudge.
-        // Staging it on a fresh user question appends it as the trailing
-        // user-role message and displaces the real query (observed live:
-        // the model reasoned about the notice instead of the question), and
-        // staging it on a non-tool tail also breaks the byte-identical
-        // rebuild contract of reasoning-continuation retries.
+    @Test("context pressure never injects the legacy task-abandonment notice")
+    func contextPressureDoesNotInjectWrapUp() throws {
+        // The old notice made a real bulk-file task stop after its first
+        // read. Context pressure belongs to compaction, not an instruction
+        // to abandon work, even when history ends in a completed tool batch.
         let chatView = try Self.source("Views/Chat/ChatView.swift")
-        #expect(chatView.contains(#"let midRunToolTail = msgs.last?.role == "tool""#))
-        #expect(
-            chatView.contains("!tokenBudgetNoticeFired,\n                                midRunToolTail,")
-        )
+        let loop = try Self.source("Services/Chat/AgentToolLoop.swift")
+        #expect(!chatView.contains("contextNearLimitNotice"))
+        #expect(!chatView.contains("tokenBudgetNoticeFired"))
+        #expect(!loop.contains("Wrap up the current work and provide a summary."))
+    }
+
+    @Test("tool-loop LLM compaction precedes deterministic history trimming")
+    func toolLoopCompactionPrecedesTrimming() throws {
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        let start = try #require(chatView.range(of: "buildMessages: { notices in"))
+        let hook = String(chatView[start.lowerBound...])
+        let compaction = try #require(hook.range(of: "try await self.compactBeforeToolContinuation("))
+        let trimming = try #require(hook.range(of: "trimPreservingSystemPrefixReportingOverflow("))
+        #expect(compaction.lowerBound < trimming.lowerBound)
     }
 
     @Test("Cache topology changes reload models while size changes refresh resident caps")

@@ -500,7 +500,10 @@ struct AgentLoopHooks {
     /// Set `overBudget` on the returned input when even fully-compacted
     /// history exceeds the estimate. This is advisory: the runtime must
     /// receive the request and report any real context-limit error.
-    var buildMessages: (_ notices: [String]) async -> AgentLoopIterationInput
+    /// This runs between drained model steps and fully recorded tool batches.
+    /// LLM compaction can be awaited here; failures propagate before the next
+    /// model request, without introducing a second history-rendering pass.
+    var buildMessages: (_ notices: [String]) async throws -> AgentLoopIterationInput
 
     /// Perform one model step (request build + stream/complete + delta
     /// routing) and classify the outcome. Thrown errors abort the run and
@@ -644,7 +647,7 @@ struct AgentLoopHooks {
 
     init(
         isCancelled: @escaping () async -> Bool = { false },
-        buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
+        buildMessages: @escaping (_ notices: [String]) async throws -> AgentLoopIterationInput,
         modelStep: @escaping (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep,
         prepareIncompleteReasoningContinuation: (() async -> Void)? = nil,
         prepareTrackedTaskContinuation: (() async -> Void)? = nil,
@@ -1505,25 +1508,6 @@ enum AgentToolLoop {
         + "using only tool results already present. Do not emit or imitate a tool call or "
         + "tool-result payload, do not claim an unexecuted step succeeded, and explicitly "
         + "identify any requested step that remains unfinished."
-
-    /// The mid-run near-limit notice (history estimate crossed ~90% of the
-    /// history budget). When a spawn tool is visible in the schema, the
-    /// notice also nudges delegation: offloading the remaining bulk
-    /// reading/research to a worker costs the parent a digest instead of
-    /// the whole transcript — exactly what a tight window needs. The nudge
-    /// is advisory (same posture as the task-state bias notices).
-    static func contextNearLimitNotice(spawnAvailable: Bool) -> String {
-        var notice =
-            "[System Notice] Context is nearly full — older messages are being compacted. "
-            + "Wrap up the current work and provide a summary."
-        if spawnAvailable {
-            notice +=
-                " If substantial reading, research, or summarization remains, delegate it via "
-                + "your spawn tool with a self-contained input — the returned digest costs a "
-                + "fraction of doing that work inline here."
-        }
-        return notice
-    }
 
     /// Staged once per run, the first time a data-movement step is refunded,
     /// so the model learns it can lean on bulk loads without burning budget.
@@ -2559,7 +2543,10 @@ enum AgentToolLoop {
                 notices.append(n)
                 pendingTodoNotice = nil
             }
-            let input = await hooks.buildMessages(notices)
+            let input = try await hooks.buildMessages(notices)
+            if await hooks.isCancelled() {
+                return RunResult(exit: .cancelled, iterations: iteration - 1)
+            }
             // Budget estimates advise compaction and diagnostics, never
             // admission. Even a metadata-sourced window is compared against
             // heuristic token counts, reservations, and a safety margin.
