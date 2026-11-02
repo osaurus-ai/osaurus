@@ -1964,6 +1964,18 @@ struct AgentDetailView: View {
         .onChange(of: agent.id) { _, _ in
             refreshDetailCaches()
         }
+        .onChange(of: currentAgent.defaultModel) { _, value in
+            selectedModel = value
+        }
+        .onChange(of: currentAgent.temperature) { _, value in
+            temperature = value.map { String($0) } ?? ""
+        }
+        .onChange(of: currentAgent.maxTokens) { _, value in
+            maxTokens = value.map { String($0) } ?? ""
+        }
+        .onChange(of: currentAgent.generationSettings) { _, value in
+            generationSettings = value
+        }
         .onChange(of: loadedPluginsRefreshNonce) { _, _ in
             refreshDetailCaches()
         }
@@ -3724,7 +3736,7 @@ struct AgentDetailView: View {
                     temperature = values.temperature.map { String($0) } ?? ""
                     maxTokens = values.maxTokens.map { String($0) } ?? ""
                     generationSettings = values.settings
-                    saveAgent()
+                    saveAgent(generationValues: values)
                 }
             }
         }
@@ -7387,6 +7399,8 @@ struct AgentDetailView: View {
     // MARK: - Data Loading
 
     private func loadAgentData() {
+        // The navigation selection can predate a change made in chat.
+        let agent = currentAgent
         let globalSpawnConfiguration = SubagentConfigurationStore.snapshot()
         name = agent.name
         description = agent.description
@@ -7559,17 +7573,27 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Fields this form never edits because their own controls save them
-    /// straight to `AgentManager` (the Working Folder picker calls
-    /// `updateWorkingFolder`). Rebuilding the agent without them reset them to
-    /// nil on every unrelated save, e.g. a System Prompt edit (#3110).
-    static func carryDirectlySavedFields(from current: Agent, into updated: inout Agent) {
+    /// Preserve fields saved directly by pickers. Only the generation editor's
+    /// explicit Save may replace live generation defaults; a rename must not
+    /// write a stale snapshot back over a newer chat-picker choice.
+    static func carryDirectlySavedFields(
+        from current: Agent, into updated: inout Agent,
+        generationValues: AgentGenerationDraft.Values? = nil
+    ) {
         updated.workingFolderBookmark = current.workingFolderBookmark
         updated.workingFolderPath = current.workingFolderPath
+        updated.defaultModel = current.defaultModel
+        let values = generationValues ?? .init(
+            temperature: current.temperature, maxTokens: current.maxTokens,
+            settings: current.generationSettings
+        )
+        updated.temperature = values.temperature
+        updated.maxTokens = values.maxTokens
+        updated.generationSettings = values.settings
     }
 
     @MainActor
-    private func saveAgent() {
+    private func saveAgent(generationValues: AgentGenerationDraft.Values? = nil) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
@@ -7703,7 +7727,7 @@ struct AgentDetailView: View {
             order: current.order
         )
 
-        Self.carryDirectlySavedFields(from: current, into: &updated)
+        Self.carryDirectlySavedFields(from: current, into: &updated, generationValues: generationValues)
         agentManager.update(updated)
         // Advance both editor and baseline to the exact state just persisted.
         // A later unrelated save can now distinguish new local permission edits

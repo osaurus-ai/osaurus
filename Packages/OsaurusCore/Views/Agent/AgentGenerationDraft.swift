@@ -89,6 +89,23 @@ struct AgentGenerationDraft: Equatable {
         )
     }
 
+    /// Refresh untouched fields when another surface saves the agent. Keep
+    /// local text, pending chips and reasoning edits until the user saves them.
+    mutating func mergeSavedChanges(from previous: Self, to latest: Self) {
+        for field in AgentGenerationField.allCases {
+            if field == .stop, pendingStopSequence != previous.pendingStopSequence { continue }
+            let path = field.path
+            if self[keyPath: path] == previous[keyPath: path] {
+                self[keyPath: path] = latest[keyPath: path]
+            }
+        }
+        if thinking == previous.thinking, reasoningEffort == previous.reasoningEffort {
+            thinking = latest.thinking
+            reasoningEffort = latest.reasoningEffort
+        }
+        if speculation == previous.speculation { speculation = latest.speculation }
+    }
+
     var overrideCount: Int {
         AgentGenerationField.allCases.filter { self[keyPath: $0.path].isCustom }.count
             + (thinking == "inherit" ? 0 : 1) + (reasoningEffort.isEmpty ? 0 : 1)
