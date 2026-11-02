@@ -3132,8 +3132,40 @@ extension FloatingInputCard {
 
     private var harnessClaudeModelLabel: String? {
         guard let runtime = harnessRuntime, runtime.kind == .claudeCode else { return nil }
-        let model = agentManager.effectiveClaudeCodeConfig(for: effectiveAgentId).resolvedModel
-        return ClaudeCodeModel(rawValue: model) != nil ? model.capitalized : model
+        let config = agentManager.effectiveClaudeCodeConfig(for: effectiveAgentId)
+        let model = config.resolvedModel
+        let label = ClaudeCodeModel(rawValue: model) != nil ? model.capitalized : model
+        guard let effort = config.resolvedEffort else { return label }
+        return "\(label) · \(effort.displayName)"
+    }
+
+    /// Claude Code's Reasoning Effort for the picker's options column. The
+    /// same `effort` the agent's Claude Code Options edit, so both stay in
+    /// step; the chat's process relaunches with it on the next message.
+    private var harnessPickerOptionsControl: ModelPickerOptionsControl? {
+        guard let runtime = harnessRuntime, runtime.kind == .claudeCode else { return nil }
+        let agentId = effectiveAgentId
+        let config = agentManager.effectiveClaudeCodeConfig(for: agentId)
+        let optionID = ClaudeCodeEffort.pickerOptionID
+        return ModelPickerOptionsControl(
+            capabilities: nil,
+            options: [ClaudeCodeEffort.pickerOption],
+            values: config.resolvedEffort.map { [optionID: .string($0.rawValue)] } ?? [:],
+            defaults: [optionID: .string(ModelOptionSegment.defaultID)],
+            onChange: { _, newValue in
+                // Deferred: the chip anchoring the popover renders the effort,
+                // and resizing it during the popover's own update crashes
+                // NSPopover.
+                DispatchQueue.main.async {
+                    var updated = agentManager.effectiveClaudeCodeConfig(for: agentId)
+                    let effort = ClaudeCodeEffort.storedValue(forSegment: newValue?.stringValue)
+                    guard updated.resolvedEffort?.rawValue != effort else { return }
+                    updated.effort = effort
+                    agentManager.updateClaudeCodeConfig(updated, for: agentId)
+                    harnessConfigRevision &+= 1
+                }
+            }
+        )
     }
 
     private var harnessChipHelp: String? {
@@ -3211,7 +3243,8 @@ extension FloatingInputCard {
             providers: chatPickerProviders,
             selectedModel: selectedModel,
             optionsControl: modelPickerOptionsControl,
-            selectedHarnessID: selectedHarnessPickerID
+            selectedHarnessID: selectedHarnessPickerID,
+            harnessOptionsControl: harnessPickerOptionsControl
         )
         showModelPicker = true
     }
@@ -3272,6 +3305,7 @@ extension FloatingInputCard {
                 selectedModel: $selectedModel,
                 optionsControl: modelPickerOptionsControl,
                 selectedHarnessID: selectedHarnessPickerID,
+                harnessOptionsControl: harnessPickerOptionsControl,
                 runtimeSwitchLocked: isStreaming,
                 onSelectHarness: { selectHarness($0) },
                 onExploreLocal: {

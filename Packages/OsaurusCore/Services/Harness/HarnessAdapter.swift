@@ -14,7 +14,9 @@ public enum HarnessEvent: Sendable, Equatable {
     case text(String)
     case reasoning(String)
     case toolStarted(callId: String?, name: String)
-    case toolFinished(callId: String?, name: String, isError: Bool)
+    /// `message` replaces the generic failure text on the tool card. It is a
+    /// fixed Osaurus string, never the tool's raw result.
+    case toolFinished(callId: String?, name: String, isError: Bool, message: String? = nil)
     /// A status line worth showing inline (retry, compaction, rate limit,
     /// extension notification).
     case notice(String, isError: Bool)

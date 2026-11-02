@@ -299196,6 +299196,21 @@
     "Claude Code isn't signed in." : {
 
     },
+    "Claude Code isn't allowed to run shell commands for this agent. Turn on Allow shell commands in the agent's Claude Code Options." : {
+
+    },
+    "Claude Code isn't allowed to change this file. File changes need Allow file changes in the agent's Claude Code Options and stay limited to the chat folder." : {
+
+    },
+    "Claude Code isn't allowed to use this tool for this agent." : {
+
+    },
+    "Default leaves Claude Code on its own per-model default. Applies from the next message." : {
+
+    },
+    "Auto-approve Bash and Monitor under your macOS account. Osaurus can't confine shell commands to the chat folder, and this is not the Osaurus sandbox. When off, Claude isn't offered any tool that runs commands." : {
+
+    },
     "Claude effort" : {
 
     },

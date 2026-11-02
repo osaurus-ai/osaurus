@@ -144,6 +144,7 @@ struct ChatPickerOptionsSnapshot: Equatable {
             switch option.kind {
             case .segmented(let segments):
                 let selectedID = control.effectiveSegmentId(for: option)
+                let hasDefaultSegment = segments.contains { $0.id == ModelOptionSegment.defaultID }
                 let rows = segments.map { segment in
                     Row(
                         id: "option:\(option.id):\(segment.id)",
@@ -159,7 +160,7 @@ struct ChatPickerOptionsSnapshot: Equatable {
                     Section(id: option.id, title: option.label, rows: rows,
                             footnote: option.id == "reasoningEffort" && control.thinking == nil
                                 ? control.reasoningValidationMessage ?? option.help : option.help,
-                            reset: resetRow)
+                            reset: hasDefaultSegment ? nil : resetRow)
                 )
             case .toggle:
                 let isOn = control.effectiveToggleValue(for: option)
@@ -227,6 +228,9 @@ struct ChatModelPickerCard: View {
     /// The harness row the agent runs on; nil on the built-in loop, where
     /// `selectedModel` is the live choice.
     var selectedHarnessID: String? = nil
+    /// Options for the selected harness row (Claude Code's effort). Shown in
+    /// place of `optionsControl`, which belongs to the built-in model.
+    var harnessOptionsControl: ModelPickerOptionsControl? = nil
     /// While a turn runs, rows that would move the agent to another runtime
     /// are disabled; the running turn keeps its process.
     var runtimeSwitchLocked = false
@@ -283,10 +287,36 @@ struct ChatModelPickerCard: View {
     }
 
     private var control: ModelPickerOptionsControl? {
-        guard let builtInSelectedModel,
-            provider?.models.contains(where: { $0.id == builtInSelectedModel }) == true
-        else { return nil }
+        Self.visibleControl(
+            provider: provider,
+            selectedModel: selectedModel,
+            selectedHarnessID: selectedHarnessID,
+            optionsControl: optionsControl,
+            harnessOptionsControl: harnessOptionsControl
+        )
+    }
+
+    /// Options show only beside the live choice: the harness row the agent
+    /// runs on, or the built-in model when it runs on none.
+    private static func visibleControl(
+        provider: ChatModelPickerProvider?,
+        selectedModel: String?,
+        selectedHarnessID: String?,
+        optionsControl: ModelPickerOptionsControl?,
+        harnessOptionsControl: ModelPickerOptionsControl?
+    ) -> ModelPickerOptionsControl? {
+        if let selectedHarnessID {
+            guard provider?.harnessOptions.contains(where: { $0.id == selectedHarnessID }) == true else { return nil }
+            return harnessOptionsControl
+        }
+        guard provider?.models.contains(where: { $0.id == selectedModel }) == true else { return nil }
         return optionsControl
+    }
+
+    /// The row the options column belongs to, so a retained snapshot can't
+    /// write into a different row's options.
+    private var optionsOwnerID: String? {
+        selectedHarnessID ?? selectedModel
     }
 
     private var columnWidth: CGFloat {
@@ -311,21 +341,27 @@ struct ChatModelPickerCard: View {
     }
 
     private var currentOptions: ChatPickerOptionsSnapshot? {
-        ChatPickerOptionsSnapshot.make(modelID: selectedModel, control: control)
+        ChatPickerOptionsSnapshot.make(modelID: optionsOwnerID, control: control)
     }
 
     static func initialSize(
         providers: [ChatModelPickerProvider],
         selectedModel: String?,
         optionsControl: ModelPickerOptionsControl?,
-        selectedHarnessID: String? = nil
+        selectedHarnessID: String? = nil,
+        harnessOptionsControl: ModelPickerOptionsControl? = nil
     ) -> CGSize {
         let provider = selectedProvider(in: providers, selectedModel: selectedModel, selectedHarnessID: selectedHarnessID)
             ?? providers.first { $0.isActive }
-        let control = selectedHarnessID == nil && provider?.models.contains { $0.id == selectedModel } == true
-            ? optionsControl : nil
+        let control = visibleControl(
+            provider: provider,
+            selectedModel: selectedModel,
+            selectedHarnessID: selectedHarnessID,
+            optionsControl: optionsControl,
+            harnessOptionsControl: harnessOptionsControl
+        )
         return cardSize(provider: provider, providerCount: providers.count,
-                        options: ChatPickerOptionsSnapshot.make(modelID: selectedModel, control: control),
+                        options: ChatPickerOptionsSnapshot.make(modelID: selectedHarnessID ?? selectedModel, control: control),
                         columnWidth: ChatPickerLayout.columnWidth,
                         optionsColumnWidth: ChatPickerLayout.optionsColumnWidth)
     }
@@ -438,7 +474,9 @@ struct ChatModelPickerCard: View {
     private func restoreOptionsFocusIfNeeded(_ snapshot: ChatPickerOptionsSnapshot?) {
         guard let focus, Self.isOptionsFocusKey(focus) else { return }
         guard snapshot?.row(forKey: focus) == nil else { return }
-        if let selectedModel, models.contains(where: { $0.id == selectedModel }) {
+        if let selectedHarnessID, harnessOptions.contains(where: { $0.id == selectedHarnessID }) {
+            self.focus = selectedHarnessID
+        } else if let selectedModel, models.contains(where: { $0.id == selectedModel }) {
             self.focus = "model:\(selectedModel)"
         } else {
             self.focus = models.first.map { "model:\($0.id)" } ?? provider.map { "provider:\($0.id)" }
@@ -660,7 +698,7 @@ struct ChatModelPickerCard: View {
     /// retained (clipping-away) snapshot for a previous model can never write
     /// into the newly selected model's options.
     private func perform(_ action: ChatPickerOptionsSnapshot.Action, displayedFor snapshot: ChatPickerOptionsSnapshot) {
-        guard optionsAreRevealed, let control, selectedModel == snapshot.modelID else { return }
+        guard optionsAreRevealed, let control, optionsOwnerID == snapshot.modelID else { return }
         switch action {
         case .thinking(let enabled):
             guard let thinking = control.thinking else { return }

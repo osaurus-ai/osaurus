@@ -102,6 +102,11 @@ struct ClaudeCodeHarnessAdapter: HarnessAdapter {
                 bridgeAttached = true
             }
             arguments += ["--allowedTools", allowed.joined(separator: ",")]
+            let hidden = ClaudeCodeConfiguration.hiddenBuiltinTools(
+                allowWrites: config.allowWrites,
+                allowShell: config.allowShell
+            )
+            arguments += ["--disallowedTools", hidden.joined(separator: ",")]
         }
 
         var promptParts: [String] = []
@@ -221,6 +226,15 @@ final class ClaudeCodeHarnessCodec: HarnessCodec {
                 } else {
                     events.append(.toolFinished(callId: trace.callId, name: trace.name, isError: trace.isError))
                 }
+            case .toolDenied(let callId, let name):
+                events.append(
+                    .toolFinished(
+                        callId: callId,
+                        name: name,
+                        isError: true,
+                        message: ClaudeCodeConfiguration.permissionDeniedMessage(tool: name)
+                    )
+                )
             case .stats(let outputTokens, let tokensPerSecond, let stopReason):
                 events.append(.stats(outputTokens: outputTokens, tokensPerSecond: tokensPerSecond, stopReason: stopReason))
                 turnEnded = true

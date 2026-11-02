@@ -57,6 +57,15 @@ struct RemoteToolActivityTests {
         #expect(ToolEnvelope.isError(turn.remoteToolResults["c1"] ?? ""))
     }
 
+    @Test func refusal_carriesTheCallersMessage() {
+        let turn = makeTurn()
+        turn.noteRemoteToolFinished(callId: "c1", name: "Bash", isError: true, failureMessage: "Shell is off.")
+        let result = turn.remoteToolResults["c1"] ?? ""
+        #expect(ToolEnvelope.isError(result))
+        #expect(ToolEnvelope.failureMessage(result) == "Shell is off.")
+        #expect(result.contains(ToolEnvelope.Kind.rejected.rawValue))
+    }
+
     @Test func doesNotPopulateToolCalls_soHistoryStaysClean() {
         let turn = makeTurn()
         turn.noteRemoteToolStarted(callId: "c1", name: "get_weather")

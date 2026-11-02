@@ -128,6 +128,38 @@ struct ClaudeCodeHarnessAdapterTests {
         #expect(!allowed.contains("Edit"), "an unscoped Edit would reach the whole disk")
     }
 
+    /// A tool `dontAsk` would refuse is hidden so the model never calls it,
+    /// and a granted tool is never hidden — a deny beats the allow.
+    @Test(arguments: [false, true], [false, true])
+    func ungrantedBuiltinsAreHiddenFromTheModel(allowWrites: Bool, allowShell: Bool) throws {
+        let directory = try HarnessFixtures.temporaryDirectory("claude-hidden")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (plan, _) = try plan(
+            ClaudeCodeAgentConfig(allowWrites: allowWrites, allowShell: allowShell),
+            in: directory
+        )
+        defer { cleanup(plan) }
+        let args = plan.spec.arguments
+        let hidden = try #require(value(after: "--disallowedTools", in: args)).split(separator: ",").map(String.init)
+        let allowed = try #require(value(after: "--allowedTools", in: args)).split(separator: ",").map(String.init)
+
+        for tool in ["Bash", "Monitor", "CronCreate", "LSP", "RemoteTrigger", "Workflow"] {
+            #expect(hidden.contains(tool) == !allowShell)
+        }
+        #expect(allowed.contains("Monitor") == allowShell)
+        #expect(!allowed.contains("CronCreate"), "shell access never auto-approves scheduling")
+        for tool in ["Edit", "Write", "NotebookEdit"] {
+            #expect(hidden.contains(tool) == !allowWrites)
+        }
+        #expect(hidden.contains("WebFetch"))
+        #expect(hidden.contains("WebSearch"))
+        for tool in ClaudeCodeConfiguration.defaultAllowedTools {
+            #expect(!hidden.contains(tool))
+        }
+        #expect(Set(hidden).isDisjoint(with: allowed))
+        #expect(!args.contains("--tools"), "permission-free built-ins like TodoWrite stay available")
+    }
+
     /// Claude matches `Edit(...)` against real paths. Foundation's
     /// `resolvingSymlinksInPath` maps `/private/tmp` back to `/tmp`, which
     /// would make every write under a temp folder silently denied.
@@ -153,6 +185,7 @@ struct ClaudeCodeHarnessAdapterTests {
 
         #expect(value(after: "--tools", in: args) == "")
         #expect(!args.contains("--allowedTools"))
+        #expect(!args.contains("--disallowedTools"))
         #expect(!args.contains("--mcp-config"))
         #expect(!args.contains("--permission-mode"))
         #expect(ClaudeCodeHarnessAdapter(runtime: runtime).tokenToolScope(context: context) == [])
@@ -396,6 +429,29 @@ struct ClaudeCodeHarnessAdapterTests {
         #expect(events.visibleText == "done", "the assembled assistant frame must not double the text")
         #expect(events.last == .turnCompleted)
         #expect(events.contains { if case .stats = $0 { return true } else { return false } })
+    }
+
+    @Test func aDeniedToolNamesTheToggleWithoutTheCLIText() {
+        let codec = ClaudeCodeHarnessCodec(runtimeName: "Claude Code")
+        let (events, _) = HarnessFixtures.decodeAll(codec, [
+            #"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01","name":"Bash","input":{}}}}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"tool_use_id":"toolu_01","content":"Permission to use Bash has been denied because Claude Code is running in don't ask mode."}]}}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"tool_use_id":"toolu_02","content":"exit code 1"}]}}"#,
+        ])
+        #expect(
+            events.contains(
+                .toolFinished(
+                    callId: "toolu_01",
+                    name: "Bash",
+                    isError: true,
+                    message: ClaudeCodeConfiguration.permissionDeniedMessage(tool: "Bash")
+                )
+            )
+        )
+        #expect(events.contains(.toolFinished(callId: "toolu_02", name: "", isError: true)))
+        #expect(ClaudeCodeConfiguration.permissionDeniedMessage(tool: "Bash").contains("Allow shell commands"))
+        #expect(ClaudeCodeConfiguration.permissionDeniedMessage(tool: "Write").contains("Allow file changes"))
+        #expect(!ClaudeCodeConfiguration.permissionDeniedMessage(tool: "WebFetch").contains("Allow"))
     }
 
     @Test func anErrorResultFailsTheTurnTyped() {

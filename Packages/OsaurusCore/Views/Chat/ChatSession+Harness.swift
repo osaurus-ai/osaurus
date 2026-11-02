@@ -110,8 +110,13 @@ extension ChatSession {
                     await processor.finalize()
                     turn.noteRemoteToolStarted(callId: callId ?? name, name: name)
                     rebuildVisibleBlocks()
-                case .toolFinished(let callId, let name, let isError):
-                    turn.noteRemoteToolFinished(callId: callId ?? name, name: name, isError: isError)
+                case .toolFinished(let callId, let name, let isError, let message):
+                    turn.noteRemoteToolFinished(
+                        callId: callId ?? name,
+                        name: name,
+                        isError: isError,
+                        failureMessage: message
+                    )
                     rebuildVisibleBlocks()
                 case .notice(let text, _):
                     appendNotice(text)
