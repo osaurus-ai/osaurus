@@ -248,8 +248,8 @@ struct AgentGenerationSettingsEditor: View {
                 unsupportedReasoning
             }
             if choices.showsThinkingControl {
-                rowLabel("Thinking", "Let the model reason before answering, on models that support it.")
-                Picker(L("Thinking"), selection: $draft.thinking) {
+                rowLabel("thinking.mode.label", "Let the model reason before answering, on models that support it.")
+                Picker(L("thinking.mode.label"), selection: $draft.thinking) {
                     Text(localized: "Inherit").tag("inherit")
                     Text(localized: "On").tag("on")
                     Text(localized: "Off").tag("off")
@@ -259,7 +259,7 @@ struct AgentGenerationSettingsEditor: View {
             } else if draft.thinking != "inherit" {
                 if choices.supportsThinking {
                     HStack {
-                        Text(localized: "Thinking")
+                        Text(localized: "thinking.mode.label")
                         Text(draft.thinking == "on" ? L("On") : L("Off"))
                         Spacer()
                         Button(L("Use Inherit")) { draft.thinking = "inherit" }.buttonStyle(.borderless)

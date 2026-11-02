@@ -1080,7 +1080,10 @@ struct ModelPickerView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text("Thinking", bundle: .module)
+                    // Label context (the name of the mode), distinct from the
+                    // streaming "Thinking" status so translators can use a
+                    // noun form here and a progressive form there (#2621).
+                    Text("thinking.mode.label", bundle: .module)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -1103,7 +1106,7 @@ struct ModelPickerView: View {
 
             if thinking.supportsUnspecifiedDefault || !thinking.selectionIsValid {
                 Picker(
-                    "Thinking",
+                    L("thinking.mode.label"),
                     selection: Binding(
                         get: { thinking.selectedMode ?? "unsupported" },
                         set: { thinking.onSetEnabled($0 == "default" ? nil : $0 == "on") }
@@ -1138,7 +1141,7 @@ struct ModelPickerView: View {
         .padding(.vertical, 10)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: thinking.isEnabled)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Thinking", bundle: .module))
+        .accessibilityLabel(Text("thinking.mode.label", bundle: .module))
         .accessibilityValue(
             !thinking.selectionIsValid
                 ? Text("Choose reasoning", bundle: .module)
