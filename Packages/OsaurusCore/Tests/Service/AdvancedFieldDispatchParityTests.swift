@@ -37,12 +37,31 @@ struct AdvancedFieldDispatchParityTests {
         }
     }
 
+    @Test("a local-only speculation override is rejected before a nonlocal service is invoked")
+    func localOnlySpeculationRejectsNonlocalRoute() async throws {
+        let capture = Capture()
+        let engine = ChatEngine(services: [RecordingService(capture: capture)], installedModelsProvider: { [] },
+            remoteServicesProvider: { [] }, source: .httpAPI)
+        var controls = ChatTurnGenerationControls.capture(activeModelOptions: [:])
+        controls.agentSettings = .init(speculativeDecoding: false)
+        var request = ResponsesInferenceRequest(model: "advanced-field-fixture", input: [])
+        controls.apply(to: &request)
+        #expect(request.context.speculativeDecoding == false)
+        do {
+            _ = try await engine.streamResponses(request: request)
+            Issue.record("Local-only speculation reached a nonlocal fake service")
+        } catch let error as ChatTurnOverrides.ValidationError {
+            #expect(error.localizedDescription.contains("require a local model"))
+        }
+        #expect(await capture.values().isEmpty)
+    }
+
     @Test("saved neutral values beat server and bundle defaults on actual dispatch; turn overrides win next")
     func neutralAgentValuesSurviveDispatch() async throws {
         let saved = AgentGenerationSettings(
             topP: 0, topK: 0, minP: 0, repetitionPenalty: 1,
             frequencyPenalty: 0, presencePenalty: 0, seed: 0, stop: [],
-            enableThinking: false, templateKwargs: [:], speculativeDecoding: false)
+            enableThinking: false, templateKwargs: [:])
         // Use the same Codable representation persisted with a custom agent.
         let settings = try JSONDecoder().decode(AgentGenerationSettings.self, from: JSONEncoder().encode(saved))
         var controls = ChatTurnGenerationControls.capture(activeModelOptions: [:])
@@ -52,8 +71,12 @@ struct AdvancedFieldDispatchParityTests {
         controls.agentSettings = settings
         controls.agentDefaultsCaptured = true
         let capture = Capture()
+        // This intentionally nonlocal fake advertises a boolean reasoning control;
+        // it does not claim eligibility for the local-only speculation setting.
         let engine = ChatEngine(services: [RecordingService(capture: capture)], installedModelsProvider: { [] },
-            remoteServicesProvider: { [] }, source: .httpAPI)
+            remoteServicesProvider: { [] }, agentReasoningChoicesProvider: { modelID, _ in
+                AgentGenerationReasoningChoices(modelID: modelID, efforts: nil, supportsThinking: true)
+            }, source: .httpAPI)
         for index in 0..<2 {
             if index == 1 {
                 controls.overrides = .init(temperature: 0.4, topP: 0.7, topK: 5, enableThinking: true)
@@ -77,7 +100,7 @@ struct AdvancedFieldDispatchParityTests {
         #expect(first.frequencyPenalty == 0 && first.presencePenalty == 0 && first.seed == 0)
         #expect(first.maxTokens == 8 && first.maxTokensExplicit)
         #expect(first.modelOptions["disableThinking"]?.boolValue == true)
-        #expect(first.templateKwargs == [:] && first.speculativeDecoding == false)
+        #expect(first.templateKwargs == [:] && first.speculativeDecoding == nil)
         #expect(entries[0].stops == [])
         let second = entries[1].parameters
         #expect(second.temperature == 0.4 && second.topPOverride == 0.7 && second.topKOverride == 5)
