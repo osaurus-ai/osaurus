@@ -334,7 +334,7 @@ enum WorkspaceWriteSafety {
             createsParentDirectories: createsParentDirectories,
             proposedContent: proposedContent
         )
-        let lineCount = proposedContent.components(separatedBy: .newlines).count
+        let lineCount = FolderToolHelpers.contentLines(proposedContent).count
         let resultKind = dryRun ? "workspace_write_preview" : "workspace_write_result"
         let riskLevel = warnings.isEmpty ? "low" : "needs_review"
         var payload: [String: Any] = [
