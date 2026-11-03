@@ -159,7 +159,7 @@ extension ModelManager {
                 guard self.manifestChecks[repositoryKey] == nil || schedule.isDue(model.id, at: started) else { continue }
                 guard !self.manifestChecksInFlight.contains(model.id.lowercased()) else { continue }
                 // Reuse manual/list check coalescing and its short TTL too.
-                await self.checkModelManifest(model)
+                await self.checkModelManifest(model, reason: .automatic)
                 guard !Task.isCancelled, self.automaticallyChecksModelUpdates else { return }
                 guard let result = self.manifestChecks[model.id.lowercased()] else { continue }
                 schedule.record(

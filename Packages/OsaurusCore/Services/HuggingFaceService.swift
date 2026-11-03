@@ -6,10 +6,21 @@
 //
 
 import Foundation
+import os
 
 // MARK: - Hugging Face lightweight metadata fetcher
 actor HuggingFaceService {
     static let shared = HuggingFaceService()
+
+    /// Opt-in local proof diagnostics. Values are fixed categories and random
+    /// request IDs only: never repository names, URLs, headers or error text.
+    enum MetadataReason: String, Sendable {
+        case other, detail, automatic, manual, list, pendingForced
+    }
+    private enum MetadataStage: String { case tree, revision, manifest }
+    private static let metadataDiagnosticsEnabled =
+        ProcessInfo.processInfo.environment["OSAURUS_MODEL_UPDATE_DIAGNOSTICS"] == "1"
+    private static let metadataLog = Logger(subsystem: "ai.osaurus", category: "ModelUpdateRequests")
 
     struct RepoFile: Decodable, Sendable {
         let rfilename: String
@@ -240,7 +251,7 @@ actor HuggingFaceService {
         return files
     }
 
-    private func resolveRevision(repoId: String) async throws -> String {
+    private func resolveRevision(repoId: String, reason: MetadataReason = .other) async throws -> String {
         var components = URLComponents()
         components.scheme = "https"
         components.host = "huggingface.co"
@@ -248,7 +259,7 @@ actor HuggingFaceService {
         components.queryItems = [URLQueryItem(name: "expand[]", value: "sha")]
         guard let infoURL = components.url else { throw URLError(.badURL) }
         struct Revision: Decodable { let sha: String }
-        let (info, _) = try await downloadMetadata(infoURL)
+        let (info, _) = try await downloadMetadata(infoURL, stage: .revision, reason: reason)
         let revision = try JSONDecoder().decode(Revision.self, from: info).sha
         guard revision.count == 40, revision.allSatisfy(\.isHexDigit) else {
             throw URLError(.cannotParseResponse)
@@ -263,10 +274,10 @@ actor HuggingFaceService {
 
     /// A missing sidecar is a legacy repo. Authentication, transport and parsing
     /// failures stay errors, so the UI never misreports a failed check as current.
-    func fetchModelManifest(repoId: String, revision: String? = nil, previous: ManifestSnapshot? = nil) async throws -> ManifestSnapshot {
+    func fetchModelManifest(repoId: String, revision: String? = nil, previous: ManifestSnapshot? = nil, reason: MetadataReason = .other) async throws -> ManifestSnapshot {
         try Task.checkCancellation()
         let pinned: String
-        if let revision { pinned = revision } else { pinned = try await resolveRevision(repoId: repoId) }
+        if let revision { pinned = revision } else { pinned = try await resolveRevision(repoId: repoId, reason: reason) }
         guard pinned.count == 40, pinned.allSatisfy(\.isHexDigit) else { throw URLError(.badURL) }
         // Contents at a commit are immutable, including an absent sidecar.
         // Resolve main each time, but do not redownload unchanged metadata.
@@ -277,7 +288,7 @@ actor HuggingFaceService {
         components.path = "/\(repoId)/resolve/\(pinned)/osaurus.json"
         guard let url = components.url else { throw URLError(.badURL) }
         do {
-            let (data, _) = try await downloadMetadata(url, maximumBytes: ModelManifest.maximumBytes)
+            let (data, _) = try await downloadMetadata(url, maximumBytes: ModelManifest.maximumBytes, stage: .manifest, reason: reason)
             return ManifestSnapshot(revision: pinned, manifest: try ModelManifest.decode(data))
         } catch let error as DirectDownloader.HTTPStatusError where error.statusCode == 404 {
             return ManifestSnapshot(revision: pinned, manifest: nil)
@@ -298,12 +309,23 @@ actor HuggingFaceService {
         return nil
     }
 
-    private func downloadMetadata(_ url: URL, maximumBytes: Int? = nil) async throws -> (Data, HTTPURLResponse) {
+    private func downloadMetadata(_ url: URL, maximumBytes: Int? = nil, stage: MetadataStage = .tree, reason: MetadataReason = .other) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         HuggingFaceAuth.authorize(&request)
         for attempt in 1 ... 3 {
             try Task.checkCancellation()
+            // One start per actual transport invocation, including retries.
+            // A skipped/coalesced check never reaches this boundary.
+            let diagnosticID = Self.metadataDiagnosticsEnabled ? UUID().uuidString : nil
+            if let diagnosticID {
+                Self.metadataLog.notice("metadata_start id=\(diagnosticID, privacy: .public) stage=\(stage.rawValue, privacy: .public) reason=\(reason.rawValue, privacy: .public) attempt=\(attempt)")
+            }
+            defer {
+                if let diagnosticID {
+                    Self.metadataLog.notice("metadata_end id=\(diagnosticID, privacy: .public)")
+                }
+            }
             do {
                 let (data, response): (Data, URLResponse)
                 if let metadataRequest {
