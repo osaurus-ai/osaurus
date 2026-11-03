@@ -356,7 +356,7 @@ let package = Package(
         // (memory now means only the opt-in RAM tier).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "f7a62852659a62ff95ea5ccc213cf4144fa49631"
+            revision: "d7f2925531d0c9b321811a761b620f5fe6b767f6"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
