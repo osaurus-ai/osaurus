@@ -10,6 +10,10 @@ Settings… (⌘,) opens the Management window. Type a name in the sidebar searc
 
 Ask the assistant to change declarative settings in chat (`osaurus_config`); each change shows a one-tap approval card first (see the Declarative Configuration topic).
 
+## Tied head codec
+
+Settings → Server → Settings → Decode Performance → **Tied LM Head Codec** controls optional conversion of an unquantized tied embedding in an otherwise quantized model. **Passthrough (model load dtype)** keeps the unconverted head and the loader's effective activation dtype; it does not promise FP16. The 4/6/8-bit choices trade head precision for size while preserving that effective activation dtype. Save Changes applies the choice on the next model load. Cache state is isolated between codecs and loader precision contracts.
+
 ## Agent descriptions
 
 Each agent has an optional **Brief description (optional)** field under Settings → Agents → the agent → Configure. It is a one-line summary of what the agent does and when to delegate to it, shown beside the agent's name wherever the Orchestrator or an agent picker lists targets. It is never required: agents with a blank description can still be saved, duplicated, and delegated to.

@@ -36,7 +36,8 @@ struct DecodePerformanceSection: View {
             SettingsField(
                 label: "Tied LM Head Codec",
                 hint:
-                    "Quantizes a tied output head that ships unquantized inside an otherwise-quantized bundle (e.g. Gemma 4 QAT's fp16 262k-vocab head, ~1 GB read per decoded token on E2B). q6 matches the precision class of llama.cpp's GGUF Q6_K output head. Never alters heads the bundle ships pre-quantized, and never applies to full-precision bundles."
+                    "Quantizes a tied output head that ships unquantized inside an otherwise-quantized bundle (e.g. Gemma 4 QAT's fp16 262k-vocab head, ~1 GB read per decoded token on E2B). q6 matches the precision class of llama.cpp's GGUF Q6_K output head. Preserves the model loader’s effective activation dtype. Never alters heads the bundle ships pre-quantized, and never applies to full-precision bundles.",
+                anchorId: "server.decode.tiedHeadCodec"
             ) {
                 Picker("", selection: performanceBinding.tiedHeadCodec) {
                     ForEach(VMLXTiedHeadCodec.allCases, id: \.self) { codec in
@@ -71,7 +72,7 @@ struct DecodePerformanceSection: View {
 
     private func codecTitle(_ codec: VMLXTiedHeadCodec) -> String {
         switch codec {
-        case .fp16Passthrough: return L("As shipped (fp16 passthrough)")
+        case .fp16Passthrough: return L("Passthrough (model load dtype)")
         case .q8: return L("8-bit (q8, conservative)")
         case .q6: return L("6-bit (q6, GGUF-head parity)")
         case .q4: return L("4-bit (q4, fastest)")

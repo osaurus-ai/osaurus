@@ -78,6 +78,8 @@ struct SettingsSearchSelfFindProbe {
             ("Small body", "themes.typography.smallBody"),
             ("compact controls", "themes.typography.smallBody"),
             ("model picker", "themes.typography.smallBody"),
+            ("Tied LM Head Codec", "server.decode.tiedHeadCodec"),
+            ("Passthrough (model load dtype)", "server.decode.tiedHeadCodec"),
             ("Concurrent Sessions", "settings.server.concurrentSessions"),
             ("Prompt Prefill Chunk Size", "settings.server.prefillChunkSize"),
             ("Automatically Check Model Updates", "models.automaticUpdates"),

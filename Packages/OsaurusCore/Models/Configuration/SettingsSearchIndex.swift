@@ -863,6 +863,14 @@ public enum SettingsSearchIndex {
             subTab: "decodePerformance"
         ),
         .init(
+            id: "server.decode.tiedHeadCodec",
+            tab: .server,
+            section: "Decode Performance",
+            title: "Tied LM Head Codec",
+            keywords: ["tied head", "codec", "passthrough", "model load dtype", "q4", "q6", "q8"],
+            subTab: "decodePerformance"
+        ),
+        .init(
             id: "server.speculative",
             tab: .server,
             section: "Speculative Decoding",
