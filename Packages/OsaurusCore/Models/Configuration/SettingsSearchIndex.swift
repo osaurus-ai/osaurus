@@ -867,7 +867,10 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Decode Performance",
             title: "Tied LM Head Codec",
-            keywords: ["tied head", "codec", "passthrough", "model load dtype", "q4", "q6", "q8"],
+            keywords: [
+                "tied head", "codec", "passthrough", "Passthrough (model load dtype)",
+                "model load dtype", "q4", "q6", "q8",
+            ],
             subTab: "decodePerformance"
         ),
         .init(
