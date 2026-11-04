@@ -75,7 +75,7 @@ public final class BonjourAdvertiser: NSObject {
     /// Unpublish all active Bonjour services.
     func stopAdvertising() {
         isAdvertising = false
-        for service in services.values { service.stop() }
+        for service in services.values { BonjourRunLoop.shared.stop(service) }
         services.removeAll()
         requestedNames.removeAll()
         publishedTXT.removeAll()
@@ -91,7 +91,7 @@ public final class BonjourAdvertiser: NSObject {
 
         // Remove services for agents that no longer exist or have Bonjour disabled.
         for id in services.keys where !bonjourEnabledIds.contains(id) {
-            services[id]?.stop()
+            if let service = services[id] { BonjourRunLoop.shared.stop(service) }
             services.removeValue(forKey: id)
             requestedNames.removeValue(forKey: id)
             publishedTXT.removeValue(forKey: id)
@@ -115,10 +115,10 @@ public final class BonjourAdvertiser: NSObject {
                 newTXT: txt
             ) {
             case .publish:
-                services[agent.id]?.stop()
+                if let service = services[agent.id] { BonjourRunLoop.shared.stop(service) }
                 publish(agent: agent, name: expectedName, txt: txt)
             case .updateTXT:
-                services[agent.id]?.setTXTRecord(txt)
+                if let service = services[agent.id] { BonjourRunLoop.shared.setTXTRecord(txt, on: service) }
                 publishedTXT[agent.id] = txt
             case .none:
                 break
@@ -185,7 +185,9 @@ public final class BonjourAdvertiser: NSObject {
         )
         service.setTXTRecord(txt)
         service.delegate = self
-        service.publish()
+        // Publishing does a synchronous round-trip to mDNSResponder that can
+        // block for seconds, so it runs on the Bonjour thread, not here.
+        BonjourRunLoop.shared.publish(service)
         services[agent.id] = service
         requestedNames[agent.id] = name
         publishedTXT[agent.id] = txt
@@ -249,7 +251,7 @@ public final class BonjourAdvertiser: NSObject {
             let agent = AgentManager.shared.agents.first(where: { $0.id == id }),
             agent.bonjourEnabled
         else { return }
-        services[id]?.stop()
+        if let service = services[id] { BonjourRunLoop.shared.stop(service) }
         publish(agent: agent, name: Self.instanceName(for: agent), txt: Self.txtRecord(for: agent))
     }
 

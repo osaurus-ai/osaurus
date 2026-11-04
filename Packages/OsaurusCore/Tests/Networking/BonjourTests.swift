@@ -14,6 +14,29 @@ import Testing
 
 @testable import OsaurusCore
 
+// MARK: - Bonjour worker thread
+
+/// `NetService.publish()` blocks on IPC to mDNSResponder, so Bonjour work
+/// must run on the dedicated worker thread, never on the main thread.
+struct BonjourRunLoopTests {
+    @Test func perform_runsOffMainThread() async {
+        let ranOnMain = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            BonjourRunLoop.shared.perform { continuation.resume(returning: Thread.isMainThread) }
+        }
+        #expect(ranOnMain == false)
+    }
+
+    @Test func perform_preservesSubmissionOrder() async {
+        final class Recorder: @unchecked Sendable { var values: [Int] = [] }
+        let recorder = Recorder()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            for i in 0 ..< 5 { BonjourRunLoop.shared.perform { recorder.values.append(i) } }
+            BonjourRunLoop.shared.perform { continuation.resume() }
+        }
+        #expect(recorder.values == [0, 1, 2, 3, 4])
+    }
+}
+
 // MARK: - Advertised TXT record + republish decision
 
 @MainActor
