@@ -284,4 +284,16 @@ struct ModelSSDResidencyTests {
         #expect(model.withSSDResidentBytes(0).weightSizeBytes == model.weightSizeBytes)
     }
 
+    @Test func ssdShareUsesDecimalDownloadUnits() {
+        // 57.60 GB of files is 53.64 GiB; "of this download" must use the former.
+        #expect(MLXModel.formattedFileSize(57_600_276_480).hasPrefix("57.6"))
+        #expect(MLXModel.formattedFileSize(1 << 30).hasPrefix("1.07"))
+    }
+
+    @Test(arguments: ["JANG_6M", "JANG_4M", "JANGH4", "JANGHT1.8"])
+    func precisionSuffixCannotInventModelParameters(format: String) {
+        #expect(ModelMetadataParser.parameterCount(from: "publisher/NuExtract3-\(format)") == nil)
+        #expect(ModelMetadataParser.parameterCount(from: "publisher/Example-7B-\(format)") == "7B")
+    }
+
 }

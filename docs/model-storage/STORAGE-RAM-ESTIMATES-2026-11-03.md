@@ -1,6 +1,8 @@
 # Model storage and RAM estimate hardening
 
-Status: initial regression tests passed; nested-table correction and fresh UI qualification in progress. PR #3303 is draft.
+This document records the storage contract and qualification procedure. Current
+tested source, live UI evidence, CI and merge receipts are recorded in
+[PR #3303](https://github.com/osaurus-ai/osaurus/pull/3303).
 No release tagging is part of this work.
 
 ## Contract
@@ -72,7 +74,7 @@ manifest is 100,683,781,608 bytes versus 98,320,846,968 bytes of target weights.
 `FULL-MANIFEST-VERSUS-TARGET-WEIGHTS.json` preserves all six per-file inventories. The private Qwen
 Hub probe returned HTTP 401; local Qwen file/header evidence remains available.
 
-## Remaining proof and order
+## Qualification and continuation order
 
 Initial source edee1cf5c passed 78 tests in six suites. CI initially failed before
 build because the changed explanation was missing from the localization catalog;
@@ -80,7 +82,25 @@ build because the changed explanation was missing from the localization catalog;
 qualify the subsequent nested-table changes. The first Release build was stopped
 because it predated that correction. Original attempts are retained.
 
-1. Finish focused tests for malformed/overlapping/out-of-bounds metadata,
+Frozen 787d8ff38 passed 93 tests in eight suites and built an isolated Release
+app. Initial live UI showed DeepSeek 304.83 GB download / 98.97 GB target files,
+Allosaurus JANGHT 86.46 / 86.44 GB with 33.6 binary-GB advisory memory, and GLM
+100.68 / 98.32 GB. This exposed two display bugs: SSD bytes were formatted in
+binary units inside a decimal-download sentence, and JANG_6M could become a
+fictitious 6M parameter badge. Follow-up changes share the decimal file formatter
+and remove precision segments before parameter parsing. Preserve original and
+corrected UI captures separately.
+
+The pre-existing 1.25x runtime allowance and conservative GPU budget remain
+advisory policy, not physical-footprint measurements. For example, DeepSeek's
+backbone projects to 115.2 GiB, producing a Not recommended badge on a 128 GiB
+Mac even though its model card targets 128 GiB hardware. Record and compare the
+actual footprint/context/drafter rows during the subsequent runtime qualification
+before changing that policy. Catalog type inference (for example text-only
+Allosaurus v0.2 being tagged Vision from its architecture) is a separate open
+capability-metadata issue; storage accounting does not qualify vision support.
+
+1. Run focused tests for malformed/overlapping/out-of-bounds metadata,
    revision/range behavior, single-file discovery, precision/grouping, local
    symlinks and installed-versus-Hub precedence.
 2. Build a fresh isolated Release app. Inspect actual catalog/detail controls

@@ -61,7 +61,8 @@ enum ModelMetadataParser {
     }
 
     private static func computeParameterCount(from repoId: String) -> String? {
-        let text = repoId.lowercased()
+        // Precision suffixes such as JANG_6M are storage labels, not six million parameters.
+        let text = familySegments(from: repoId).joined(separator: "-").lowercased()
         for regex in parameterCountRegexes {
             let range = NSRange(text.startIndex..., in: text)
             if let match = regex.firstMatch(in: text, options: [], range: range),

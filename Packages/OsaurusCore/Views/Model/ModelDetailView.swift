@@ -609,7 +609,7 @@ struct ModelDetailView: View, Identifiable {
                 MetaItem(label: L("Download size"), value: estimatedSizeString)
 
                 if let weights = model.weightSizeBytes {
-                    MetaItem(label: L("Target weight files"), value: ByteCountFormatter.string(fromByteCount: weights, countStyle: .file))
+                    MetaItem(label: L("Target weight files"), value: MLXModel.formattedFileSize(weights))
                 }
                 if let memory = model.formattedEstimatedMemory {
                     MetaItem(label: L("Estimated memory while running"), value: memory)
@@ -798,7 +798,7 @@ struct ModelDetailView: View, Identifiable {
                 Text(
                     String(
                         format: L("%@ of this download is an SSD-backed n-gram table, excluded from resident weights. File caching and longer chats can still use additional RAM."),
-                        formattedMemoryGB(Double(ssd) / GPUMemoryBudget.bytesPerGB)
+                        MLXModel.formattedFileSize(ssd)
                     )
                 )
                 .font(.system(size: 11))
@@ -1498,7 +1498,7 @@ struct ModelDetailView: View, Identifiable {
     /// params×quantization estimate so the modal isn't blank while loading.
     private var estimatedSizeString: String {
         if let s = estimatedSize, s > 0 {
-            return ByteCountFormatter.string(fromByteCount: s, countStyle: .file)
+            return MLXModel.formattedFileSize(s)
         }
         if let fallback = model.formattedDownloadSize {
             return model.downloadSizeBytes != nil ? fallback : "~\(fallback)"

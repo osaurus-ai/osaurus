@@ -381,7 +381,12 @@ struct MLXModel: Identifiable, Codable {
     /// Formatted download size string (e.g., "3.9 GB").
     var formattedDownloadSize: String? {
         guard let bytes = totalSizeEstimateBytes else { return nil }
-        return Self.formattedSizeCache.withLock { cache in
+        return Self.formattedFileSize(bytes)
+    }
+
+    /// One decimal-byte formatter for downloads, target weight files and the SSD share of a download.
+    static func formattedFileSize(_ bytes: Int64) -> String {
+        Self.formattedSizeCache.withLock { cache in
             if let cached = cache[bytes] { return cached }
             let formatted = bytes.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
             cache[bytes] = formatted
