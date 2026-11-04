@@ -738,6 +738,29 @@ struct ModelManagerTests {
         #expect((diagnostic["error"] as? String)?.contains("missing") == true)
     }
 
+    @Test func downloadedSizeFollowsBundleAndShardSymlinks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let target = root.appendingPathComponent("external")
+        let nested = target.appendingPathComponent("engram")
+        let mirror = root.appendingPathComponent("hf-snapshot")
+        let fm = FileManager.default
+        try fm.createDirectory(at: nested, withIntermediateDirectories: true)
+        try fm.createDirectory(at: mirror.appendingPathComponent("engram"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        for (path, count) in [("model.safetensors", 8193), ("engram/table.safetensors", 4097)] {
+            try Data(repeating: 7, count: count).write(to: target.appendingPathComponent(path))
+            try fm.createSymbolicLink(
+                at: mirror.appendingPathComponent(path), withDestinationURL: target.appendingPathComponent(path))
+        }
+        let linkedBundle = root.appendingPathComponent("publisher/managed-model")
+        try fm.createDirectory(at: linkedBundle.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: linkedBundle, withDestinationURL: target)
+        let direct = try #require(ModelDownloadService.directoryAllocatedSize(at: target))
+        #expect(direct > 0)
+        #expect(ModelDownloadService.directoryAllocatedSize(at: linkedBundle) == direct)
+        #expect(ModelDownloadService.directoryAllocatedSize(at: mirror) == direct)
+    }
+
     @Test func deleteModel_removesDirectoryAndResetsState() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

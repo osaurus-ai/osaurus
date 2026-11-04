@@ -1711,7 +1711,7 @@ final class ModelDownloadService: ObservableObject {
         var total: Int64 = 0
         guard
             let enumerator = fileManager.enumerator(
-                at: url,
+                at: url.resolvingSymlinksInPath(),
                 includingPropertiesForKeys: [
                     .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey, .isRegularFileKey,
                 ],
@@ -1721,7 +1721,7 @@ final class ModelDownloadService: ObservableObject {
         else { return nil }
         for case let fileURL as URL in enumerator {
             do {
-                let rv = try fileURL.resourceValues(forKeys: [
+                let rv = try fileURL.resolvingSymlinksInPath().resourceValues(forKeys: [
                     .isRegularFileKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey,
                 ])
                 guard rv.isRegularFile == true else { continue }
