@@ -1523,6 +1523,8 @@ final class TextSubagentKind:
         // grounding plus `share_artifact`, the worker's only path for
         // delivering generated files to the user.
         var names: Set<String> = ToolRegistry.spawnedWorkerBaselineToolNames
+        if !caps.calculatorEnabled { names.remove(CalculatorTool.toolName) }
+        if !caps.artifactsEnabled { names.remove("share_artifact") }
         if caps.webSearchEnabled {
             names.formUnion(["web_search", "search_and_extract"])
         }

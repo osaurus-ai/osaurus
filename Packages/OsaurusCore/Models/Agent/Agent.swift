@@ -874,6 +874,17 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// always empty (it configures these on other agents via `osaurus_config`
     /// rather than calling them itself).
     public var enabledAppleApps: Set<AppleApp>
+    /// `calculate` (exact arithmetic) exposed to the model — per-agent opt-in.
+    public var calculatorEnabled: Bool
+    /// `detect_pii` / `redact_file` in host-folder chats — per-agent opt-in.
+    public var redactionToolsEnabled: Bool
+    /// `todo` + `complete` exposed to the model. Default on; the pair is one
+    /// switch because `todo` without `complete` cannot close tracked work.
+    public var taskChecklistEnabled: Bool
+    /// `clarify` exposed to the model. Default on.
+    public var clarifyEnabled: Bool
+    /// `share_artifact` exposed to the model. Default on.
+    public var artifactsEnabled: Bool
 
     public init(
         toolsEnabled: Bool,
@@ -897,7 +908,12 @@ public struct AgentCapabilities: Sendable, Equatable {
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
         knowledgeCuratorEnabled: Bool = false,
-        enabledAppleApps: Set<AppleApp> = []
+        enabledAppleApps: Set<AppleApp> = [],
+        calculatorEnabled: Bool = false,
+        redactionToolsEnabled: Bool = false,
+        taskChecklistEnabled: Bool = true,
+        clarifyEnabled: Bool = true,
+        artifactsEnabled: Bool = true
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -921,6 +937,11 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
         self.enabledAppleApps = enabledAppleApps
+        self.calculatorEnabled = calculatorEnabled
+        self.redactionToolsEnabled = redactionToolsEnabled
+        self.taskChecklistEnabled = taskChecklistEnabled
+        self.clarifyEnabled = clarifyEnabled
+        self.artifactsEnabled = artifactsEnabled
     }
 }
 
@@ -1282,6 +1303,19 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// `AppleApp.toolNames` into the model-visible schema. The Default agent
     /// ignores this (it never calls Apple tools directly).
     public var enabledAppleApps: Set<AppleApp>
+    /// Per-agent opt-in for the `calculate` tool. Default off: agents whose
+    /// job involves numbers (finance, budgets, data analysis) enable it.
+    public var calculatorEnabled: Bool
+    /// Per-agent opt-in for `detect_pii` / `redact_file` in host-folder
+    /// chats. Default off.
+    public var redactionToolsEnabled: Bool
+    /// Per-agent gate for the `todo` checklist and its `complete` closer.
+    /// Default on.
+    public var taskChecklistEnabled: Bool
+    /// Per-agent gate for `clarify`. Default on.
+    public var clarifyEnabled: Bool
+    /// Per-agent gate for `share_artifact`. Default on.
+    public var artifactsEnabled: Bool
 
     public init(
         dbEnabled: Bool,
@@ -1318,7 +1352,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         knowledgeCollectionIds: [UUID] = [],
         knowledgeCuratorEnabled: Bool = false,
         spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
-        enabledAppleApps: Set<AppleApp> = []
+        enabledAppleApps: Set<AppleApp> = [],
+        calculatorEnabled: Bool = false,
+        redactionToolsEnabled: Bool = false,
+        taskChecklistEnabled: Bool = true,
+        clarifyEnabled: Bool = true,
+        artifactsEnabled: Bool = true
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -1358,6 +1397,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
         self.spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(spawnableWorkspaceAgents)
         self.enabledAppleApps = enabledAppleApps
+        self.calculatorEnabled = calculatorEnabled
+        self.redactionToolsEnabled = redactionToolsEnabled
+        self.taskChecklistEnabled = taskChecklistEnabled
+        self.clarifyEnabled = clarifyEnabled
+        self.artifactsEnabled = artifactsEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -1463,6 +1507,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         // rather than failing the decode.
         let rawAppleApps = (try? c.decodeIfPresent([String].self, forKey: .enabledAppleApps)) ?? []
         enabledAppleApps = Set(rawAppleApps.compactMap(AppleApp.init(rawValue:)))
+        // Specialist tools decode to off for agents written before the
+        // toggles existed; the agent-loop tools keep their always-on past.
+        calculatorEnabled = try c.decodeIfPresent(Bool.self, forKey: .calculatorEnabled) ?? false
+        redactionToolsEnabled = try c.decodeIfPresent(Bool.self, forKey: .redactionToolsEnabled) ?? false
+        taskChecklistEnabled = try c.decodeIfPresent(Bool.self, forKey: .taskChecklistEnabled) ?? true
+        clarifyEnabled = try c.decodeIfPresent(Bool.self, forKey: .clarifyEnabled) ?? true
+        artifactsEnabled = try c.decodeIfPresent(Bool.self, forKey: .artifactsEnabled) ?? true
     }
 
     /// Trim values and drop blank entries so a cleared override (empty string)
@@ -1529,6 +1580,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case knowledgeCuratorEnabled
         case spawnableWorkspaceAgents
         case enabledAppleApps
+        case calculatorEnabled
+        case redactionToolsEnabled
+        case taskChecklistEnabled
+        case clarifyEnabled
+        case artifactsEnabled
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -1572,6 +1628,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         }
         // Sorted for a stable on-disk shape.
         try c.encode(AppleApp.sorted(enabledAppleApps).map(\.rawValue), forKey: .enabledAppleApps)
+        try c.encode(calculatorEnabled, forKey: .calculatorEnabled)
+        try c.encode(redactionToolsEnabled, forKey: .redactionToolsEnabled)
+        try c.encode(taskChecklistEnabled, forKey: .taskChecklistEnabled)
+        try c.encode(clarifyEnabled, forKey: .clarifyEnabled)
+        try c.encode(artifactsEnabled, forKey: .artifactsEnabled)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

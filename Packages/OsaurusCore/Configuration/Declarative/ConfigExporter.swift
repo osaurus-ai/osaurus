@@ -153,6 +153,11 @@ enum ConfigExporter {
         caps.applescriptEnabled = agent.settings.appleScriptEnabled
         caps.speakEnabled = agent.settings.speakEnabled
         caps.renderChartEnabled = agent.settings.renderChartEnabled
+        caps.calculatorEnabled = agent.settings.calculatorEnabled
+        caps.redactionToolsEnabled = agent.settings.redactionToolsEnabled
+        caps.taskChecklistEnabled = agent.settings.taskChecklistEnabled
+        caps.clarifyEnabled = agent.settings.clarifyEnabled
+        caps.artifactsEnabled = agent.settings.artifactsEnabled
         caps.relayEnabled = relay.isEnabled(for: agent.id)
         entry.capabilities = caps
         exportToolSelection(of: agent, into: &entry, groups: toolGroups)

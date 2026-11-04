@@ -38,6 +38,7 @@
       "agent_loop.calculator-compound-interest",
       "agent_loop.calculator-exact-large-product",
       "agent_loop.calculator-solve-quadratic",
+      "agent_loop.calculator-sum-from-file",
       "agent_loop.calculator-tip-percent",
       "agent_loop.cancel-after-two-calls-no-zombie",
       "agent_loop.cancel-during-reads-no-side-effects",
@@ -81,6 +82,7 @@
       "agent_loop.read-image-directly",
       "agent_loop.read-pdf-directly",
       "agent_loop.read-pptx-directly",
+      "agent_loop.read-statement-batch",
       "agent_loop.read-xlsx-directly",
       "agent_loop.recover-from-failing-command",
       "agent_loop.rejection-stops-run",
@@ -330,8 +332,12 @@
     "DefaultAgent": [
       "default_agent.agent-activate",
       "default_agent.agent-create",
+      "default_agent.agent-create-finance-calculator",
       "default_agent.agent-create-from-template",
+      "default_agent.agent-create-redaction-tools",
+      "default_agent.agent-create-writer-no-specialist-tools",
       "default_agent.agent-delete",
+      "default_agent.agent-enable-calculator",
       "default_agent.agent-update",
       "default_agent.agent-update-capabilities",
       "default_agent.apply-first-single-change",
@@ -473,6 +479,9 @@
     "PromptSurface": [
       "prompt_surface.baseline-census",
       "prompt_surface.compact-forced",
+      "prompt_surface.custom-agent-large-model-surface",
+      "prompt_surface.custom-agent-lean-default",
+      "prompt_surface.custom-agent-opt-in-tools",
       "prompt_surface.drop-code-style-saves",
       "prompt_surface.protected-section-refused",
       "prompt_surface.unknown-section-refused"

@@ -1621,7 +1621,12 @@ extension AgentManager {
             // Curator is a child of the knowledge opt-in.
             knowledgeCuratorEnabled: agent.settings.knowledgeEnabled
                 && agent.settings.knowledgeCuratorEnabled,
-            enabledAppleApps: agent.settings.enabledAppleApps
+            enabledAppleApps: agent.settings.enabledAppleApps,
+            calculatorEnabled: agent.settings.calculatorEnabled,
+            redactionToolsEnabled: agent.settings.redactionToolsEnabled,
+            taskChecklistEnabled: agent.settings.taskChecklistEnabled,
+            clarifyEnabled: agent.settings.clarifyEnabled,
+            artifactsEnabled: agent.settings.artifactsEnabled
         )
     }
 

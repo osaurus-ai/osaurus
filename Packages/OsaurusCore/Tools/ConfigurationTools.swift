@@ -60,6 +60,11 @@ enum AgentCapabilitiesPayload {
             "apple_apps": AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue),
             "speak_enabled": agent.settings.speakEnabled,
             "render_chart_enabled": agent.settings.renderChartEnabled,
+            "calculator_enabled": agent.settings.calculatorEnabled,
+            "redaction_tools_enabled": agent.settings.redactionToolsEnabled,
+            "task_checklist_enabled": agent.settings.taskChecklistEnabled,
+            "clarify_enabled": agent.settings.clarifyEnabled,
+            "artifacts_enabled": agent.settings.artifactsEnabled,
             "theme_id": agent.themeId?.uuidString ?? "",
         ]
     }

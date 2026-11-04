@@ -25,9 +25,9 @@ struct OrchestratorSchemaBudgetTests {
 
     /// Upper bound for the whole turn-1 Orchestrator schema (composed
     /// tools + `spawn_agent`). Measured ≈ 1.5K after the 2026 description
-    /// trims (≈1.7K with `spawn_agent`); the bound leaves slack for legitimate schema additions while
+    /// trims (≈1.9K with `spawn_agent` and template capability overrides); the bound leaves slack for legitimate schema additions while
     /// still failing loudly on a runaway description.
-    static let orchestratorSchemaTokenBound = 1_900
+    static let orchestratorSchemaTokenBound = 1_925
 
     /// Per-tool bounds for the tools the Orchestrator carries every turn. A
     /// single tool past its bound is the usual culprit when the total drifts.

@@ -2802,7 +2802,7 @@ public final class ToolRegistry: ObservableObject {
     /// executing chat's folder root) but NOT of `coreWorkspaceToolNames`,
     /// because that set also surfaces in sandbox/VM mode where these have
     /// no bridge routing and would dead-end in `noActiveFolderEnvelope`.
-    static let redactionToolNames: Set<String> = [
+    nonisolated static let redactionToolNames: Set<String> = [
         "detect_pii", "redact_file",
     ]
 
@@ -3440,9 +3440,10 @@ extension ToolRegistry {
     // Orchestrator's schema.
     .union(AppleApp.allToolNames)
 
-    /// Baseline names every agent-target spawned worker carries regardless
-    /// of the target's capability toggles: time for grounding, `calculate`
-    /// for exact math, and `share_artifact` so a worker can hand a file straight to the user
+    /// Baseline names an agent-target spawned worker carries: time for
+    /// grounding, `calculate` for exact math (when the target agent has the
+    /// calculator on), and `share_artifact` (unless the target switched
+    /// artifacts off) so a worker can hand a file straight to the user
     /// (deliverables otherwise land in the working folder and the parent
     /// receives a short summary naming them).
     nonisolated static let spawnedWorkerBaselineToolNames: Set<String> = [

@@ -1812,6 +1812,9 @@ public enum EvalRunner {
         // loop; `.default` (filter off) is the pre-case state when the
         // store had never been written.
         let privacyConfigBeforeCase = PrivacyFilterStore.load()
+        // A memory-disable apply would otherwise start the case's next
+        // trial with memory already off, where "nothing to change" is right.
+        let memoryConfigBeforeCase = MemoryConfigurationStore.load()
         // `modelId` is the run label: a routable id for explicit/foundation
         // selections, or the pre-run binding for keep-current ("(unset)"
         // when nothing was configured — fall back to the store for that).
@@ -1825,6 +1828,7 @@ public enum EvalRunner {
         }
         await MainActor.run { ChatConfigurationStore.save(chatConfigBeforeCase) }
         PrivacyFilterStore.save(privacyConfigBeforeCase ?? .default)
+        MemoryConfigurationStore.save(memoryConfigBeforeCase)
         // Normalized latency: loop-only (judge timed separately below).
         let elapsed = Date().timeIntervalSince(started) * 1000
         cleanupDefaultAgentMCPFixtures(seededMCPIds)

@@ -1468,6 +1468,13 @@ struct AgentDetailView: View {
     /// overview binds individual cards to these; `saveAgent` folds
     /// them back into the persisted `AgentSettings` block.
     @State private var renderChartEnabled: Bool = false
+    /// Specialist (`calculate`, redaction pair) and agent-loop
+    /// (`todo`+`complete`, `clarify`, `share_artifact`) tool gates.
+    @State private var calculatorEnabled: Bool = false
+    @State private var redactionToolsEnabled: Bool = false
+    @State private var taskChecklistEnabled: Bool = true
+    @State private var clarifyEnabled: Bool = true
+    @State private var artifactsEnabled: Bool = true
     @State private var showResponseMetrics: Bool = false
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
@@ -3835,6 +3842,11 @@ struct AgentDetailView: View {
             spawnableAgentIDs: spawnableAgentIDs,
             spawnConfiguration: spawnConfiguration,
             enabledAppleApps: enabledAppleApps,
+            calculatorEnabled: calculatorEnabled,
+            redactionToolsEnabled: redactionToolsEnabled,
+            taskChecklistEnabled: taskChecklistEnabled,
+            clarifyEnabled: clarifyEnabled,
+            artifactsEnabled: artifactsEnabled,
             autonomousConfig: autonomous,
             knowledgeCollections: collections,
             registryRevision: abilityPreviewRegistryRevision
@@ -3883,6 +3895,11 @@ struct AgentDetailView: View {
                 memoryEnabled,
                 renderChartEnabled,
                 speakEnabled,
+                artifactsEnabled,
+                taskChecklistEnabled,
+                clarifyEnabled,
+                calculatorEnabled,
+                redactionToolsEnabled,
                 searchMemoryEnabled,
                 knowledgeEnabled,
                 webSearchEnabled,
@@ -4086,6 +4103,56 @@ struct AgentDetailView: View {
                 pausedNote: toolsPausedNote,
                 onPausedNoteTap: flashToolsToggle
             )
+            AgentAbilityCard(
+                title: "Share Artifacts",
+                subtitle: "Let the agent post finished files, images, and reports as cards in the chat.",
+                icon: "square.and.arrow.up",
+                isOn: toolBackedSaveBinding($artifactsEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            )
+            .settingsLandingAnchor("agents.artifacts")
+
+            AgentAbilityGroupHeader(
+                label: "Task Tools",
+                description: "Built-in helpers for working through a task."
+            )
+            AgentAbilityCard(
+                title: "Task Checklist",
+                subtitle: "Let the agent keep a visible checklist for multi-step work and close out a blocked task.",
+                icon: "checklist",
+                isOn: toolBackedSaveBinding($taskChecklistEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            )
+            .settingsLandingAnchor("agents.taskChecklist")
+            AgentAbilityCard(
+                title: "Clarifying Questions",
+                subtitle: "Let the agent pause and ask you a question when a task is ambiguous.",
+                icon: "questionmark.bubble",
+                isOn: toolBackedSaveBinding($clarifyEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            )
+            .settingsLandingAnchor("agents.clarify")
+            AgentAbilityCard(
+                title: "Calculator",
+                subtitle: "Exact arithmetic for agents that work with numbers: totals, percentages, budgets, conversions.",
+                icon: "function",
+                isOn: toolBackedSaveBinding($calculatorEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            )
+            .settingsLandingAnchor("agents.calculator")
+            AgentAbilityCard(
+                title: "Redaction Tools",
+                subtitle: "Find and mask names, emails, phone numbers, and other personal data in files of the working folder.",
+                icon: "eye.slash",
+                isOn: toolBackedSaveBinding($redactionToolsEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            )
+            .settingsLandingAnchor("agents.redactionTools")
 
             AgentAbilityGroupHeader(
                 label: "Memory & Recall",
@@ -7418,6 +7485,11 @@ struct AgentDetailView: View {
         memoryEnabled = agent.memoryEnabled
         dbEnabled = agent.settings.dbEnabled
         renderChartEnabled = agent.settings.renderChartEnabled
+        calculatorEnabled = agent.settings.calculatorEnabled
+        redactionToolsEnabled = agent.settings.redactionToolsEnabled
+        taskChecklistEnabled = agent.settings.taskChecklistEnabled
+        clarifyEnabled = agent.settings.clarifyEnabled
+        artifactsEnabled = agent.settings.artifactsEnabled
         showResponseMetrics = agent.settings.showResponseMetrics
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
@@ -7722,7 +7794,12 @@ struct AgentDetailView: View {
                 // `AgentManager.updateEnabledAppleApps` (instant save, like
                 // `manualToolNames`), so pass the persisted value through.
                 // The Default agent never carries any.
-                enabledAppleApps: agent.id == Agent.defaultId ? [] : current.settings.enabledAppleApps
+                enabledAppleApps: agent.id == Agent.defaultId ? [] : current.settings.enabledAppleApps,
+                calculatorEnabled: calculatorEnabled,
+                redactionToolsEnabled: redactionToolsEnabled,
+                taskChecklistEnabled: taskChecklistEnabled,
+                clarifyEnabled: clarifyEnabled,
+                artifactsEnabled: artifactsEnabled
             ),
             order: current.order
         )

@@ -327,6 +327,12 @@ struct SettingsSearchSelfFindProbe {
             // Agents → Abilities → Tools: the per-agent skill allow-list card.
             ("Limit to selected skills", "agents.skills"),
             ("skill allow-list", "agents.skills"),
+            // Agents → Abilities → Overview: optional built-in tool cards.
+            ("Calculator", "agents.calculator"),
+            ("Redaction Tools", "agents.redactionTools"),
+            ("Task Checklist", "agents.taskChecklist"),
+            ("Clarifying Questions", "agents.clarify"),
+            ("Share Artifacts", "agents.artifacts"),
             ("Keep File History", "storage.fileHistory.retention"),
             ("file history retention", "storage.fileHistory.retention"),
             ("File History Size Limit", "storage.fileHistory.sizeLimit"),

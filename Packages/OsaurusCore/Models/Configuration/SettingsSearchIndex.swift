@@ -2183,6 +2183,79 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
 
+        // Agents → (custom agent) → Abilities → Overview: optional built-in
+        // tool cards. Also writable via `capabilities.*_enabled`.
+        .init(
+            id: "agents.calculator",
+            tab: .agents,
+            section: "Abilities → Overview",
+            title: "Calculator",
+            keywords: [
+                "calculator", "calculate", "math", "arithmetic", "numbers", "sum", "totals",
+                "percentages", "finance", "budget", "invoices", "accounting", "unit conversion",
+                "calculator_enabled",
+            ],
+            subTab: "abilities",
+            disambiguation:
+                "Per-custom-agent card, off by default. On: the agent gets the `calculate` tool for exact arithmetic. Turn it on for finance, budgeting, invoicing, or data-analysis agents. Declarative: capabilities.calculator_enabled.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.redactionTools",
+            tab: .agents,
+            section: "Abilities → Overview",
+            title: "Redaction Tools",
+            keywords: [
+                "redaction", "redact", "pii", "personal data", "anonymize", "mask", "scrub",
+                "privacy", "detect_pii", "redact_file", "redaction_tools_enabled",
+            ],
+            subTab: "abilities",
+            disambiguation:
+                "Per-custom-agent card, off by default. On: in chats with a working folder the agent gets detect_pii and redact_file to find and mask personal data in files. Not the Privacy filter (Privacy in the sidebar), which screens what leaves for cloud models. Declarative: capabilities.redaction_tools_enabled.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.taskChecklist",
+            tab: .agents,
+            section: "Abilities → Overview",
+            title: "Task Checklist",
+            keywords: [
+                "todo", "checklist", "task list", "plan", "progress", "complete", "steps",
+                "task_checklist_enabled",
+            ],
+            subTab: "abilities",
+            disambiguation:
+                "Per-custom-agent card, on by default. On: the agent can keep a todo checklist for multi-step work and close a blocked task with complete. Declarative: capabilities.task_checklist_enabled.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.clarify",
+            tab: .agents,
+            section: "Abilities → Overview",
+            title: "Clarifying Questions",
+            keywords: [
+                "clarify", "ask questions", "clarification", "ambiguous", "ask user", "clarify_enabled",
+            ],
+            subTab: "abilities",
+            disambiguation:
+                "Per-custom-agent card, on by default. On: the agent can pause a task to ask you a question. Delegated runs never ask regardless. Declarative: capabilities.clarify_enabled.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.artifacts",
+            tab: .agents,
+            section: "Abilities → Overview",
+            title: "Share Artifacts",
+            keywords: [
+                "artifacts", "share artifact", "share_artifact", "file cards", "deliverables",
+                "attachments", "artifacts_enabled",
+            ],
+            subTab: "abilities",
+            disambiguation:
+                "Per-custom-agent card, on by default. On: the agent can post finished files, images, and reports as cards in the chat. Files it writes still land in the working folder either way. Declarative: capabilities.artifacts_enabled.",
+            declarativeSection: "agents"
+        ),
+
         // MARK: Search
         .init(
             id: "search.providers",

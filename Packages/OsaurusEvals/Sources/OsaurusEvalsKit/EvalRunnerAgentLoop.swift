@@ -960,7 +960,12 @@ extension EvalRunner {
                     var budgets = caps?.childBudgets ?? SubagentBudgets()
                     if let maximum = caps?.maxParallelSpawns { budgets.maxParallelSpawns = maximum }
                     return budgets.normalized
-                }()
+                }(),
+                calculatorEnabled: caps?.calculatorEnabled ?? false,
+                redactionToolsEnabled: caps?.redactionToolsEnabled ?? false,
+                taskChecklistEnabled: caps?.taskChecklistEnabled ?? true,
+                clarifyEnabled: caps?.clarifyEnabled ?? true,
+                artifactsEnabled: caps?.artifactsEnabled ?? true
             )
         )
         AgentStore.save(agent)
