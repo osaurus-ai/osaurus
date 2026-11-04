@@ -14,6 +14,8 @@ import Testing
 
 @testable import OsaurusCore
 
+// The queue is a value type and #expect/#require capture their argument
+// immutably, so every mutating call runs on its own line before the check.
 struct RelayAddAgentQueueTests {
 
     private let address = "0xABCD000000000000000000000000000000000601"
@@ -25,13 +27,18 @@ struct RelayAddAgentQueueTests {
         queue.enqueue(first)
         queue.enqueue(second)
 
-        let attempt = try #require(queue.start())
+        let started = queue.start()
+        let attempt = try #require(started)
         #expect(attempt.agentId == first)
         // The second waits until the relay has answered the first.
-        #expect(queue.start() == nil)
-        #expect(queue.markSent(attempt.token, address: address))
-        #expect(queue.confirm(address: address.lowercased()) == first)
-        #expect(queue.start()?.agentId == second)
+        let blocked = queue.start()
+        #expect(blocked == nil)
+        let sent = queue.markSent(attempt.token, address: address)
+        #expect(sent)
+        let confirmed = queue.confirm(address: address.lowercased())
+        #expect(confirmed == first)
+        let next = queue.start()
+        #expect(next?.agentId == second)
     }
 
     @Test func enqueueIgnoresAgentsAlreadyWaiting() {
@@ -46,18 +53,22 @@ struct RelayAddAgentQueueTests {
         var queue = RelayAddAgentQueue()
         let rotated = UUID()
         queue.enqueue(rotated)
-        let stale = try #require(queue.start())
+        let started = queue.start()
+        let stale = try #require(started)
 
         queue.enqueue(rotated)  // address rotated mid-add
         #expect(!queue.isCurrent(stale.token))
-        #expect(!queue.markSent(stale.token, address: address))
+        let sent = queue.markSent(stale.token, address: address)
+        #expect(!sent)
 
         // All of its attempts are still left.
         for _ in 1...RelayAddAgentQueue.maxAttempts {
-            #expect(queue.start()?.agentId == rotated)
+            let retry = queue.start()
+            #expect(retry?.agentId == rotated)
             _ = queue.fail()
         }
-        #expect(queue.start() == nil)
+        let after = queue.start()
+        #expect(after == nil)
     }
 
     @Test func removedAgentsHandlerCanNoLongerSend() throws {
@@ -66,12 +77,17 @@ struct RelayAddAgentQueueTests {
         let next = UUID()
         queue.enqueue(off)
         queue.enqueue(next)
-        let attempt = try #require(queue.start())
+        let started = queue.start()
+        let attempt = try #require(started)
 
-        #expect(queue.remove(off))
-        #expect(!queue.markSent(attempt.token, address: address))
-        #expect(queue.start()?.agentId == next)
-        #expect(!queue.remove(UUID()))
+        let removed = queue.remove(off)
+        #expect(removed)
+        let sent = queue.markSent(attempt.token, address: address)
+        #expect(!sent)
+        let following = queue.start()
+        #expect(following?.agentId == next)
+        let removedUnknown = queue.remove(UUID())
+        #expect(!removedUnknown)
     }
 
     @Test func refusedAddRetriesFirstThenGivesUp() {
@@ -82,21 +98,25 @@ struct RelayAddAgentQueueTests {
         queue.enqueue(next)
 
         for attempt in 1...RelayAddAgentQueue.maxAttempts {
-            #expect(queue.start()?.agentId == refused)
+            let started = queue.start()
+            #expect(started?.agentId == refused)
             let failure = queue.fail()
             #expect(failure?.id == refused)
             #expect(failure?.willRetry == (attempt < RelayAddAgentQueue.maxAttempts))
         }
         // Given up on: the queue moves on rather than stalling.
-        #expect(queue.start()?.agentId == next)
+        let following = queue.start()
+        #expect(following?.agentId == next)
     }
 
     @Test func aRetryGetsAFreshToken() throws {
         var queue = RelayAddAgentQueue()
         queue.enqueue(UUID())
-        let first = try #require(queue.start())
+        let firstStarted = queue.start()
+        let first = try #require(firstStarted)
         _ = queue.fail()
-        let retry = try #require(queue.start())
+        let retryStarted = queue.start()
+        let retry = try #require(retryStarted)
         #expect(retry.token != first.token)
         #expect(!queue.isCurrent(first.token))
     }
@@ -104,10 +124,12 @@ struct RelayAddAgentQueueTests {
     @Test func onlyAnAddThatWentOutAwaitsTheRelay() throws {
         var queue = RelayAddAgentQueue()
         queue.enqueue(UUID())
-        let attempt = try #require(queue.start())
+        let started = queue.start()
+        let attempt = try #require(started)
         // An error frame now would be about something else.
         #expect(!queue.isAwaitingRelay)
-        #expect(queue.markSent(attempt.token, address: address))
+        let sent = queue.markSent(attempt.token, address: address)
+        #expect(sent)
         #expect(queue.isAwaitingRelay)
     }
 
@@ -115,27 +137,35 @@ struct RelayAddAgentQueueTests {
         var queue = RelayAddAgentQueue()
         let id = UUID()
         queue.enqueue(id)
-        let attempt = try #require(queue.start())
-        #expect(queue.confirm(address: address) == nil)  // not sent yet
-        #expect(queue.markSent(attempt.token, address: address))
-        #expect(queue.confirm(address: "0xother") == nil)
-        #expect(queue.confirm(address: address.uppercased()) == id)
+        let started = queue.start()
+        let attempt = try #require(started)
+        let early = queue.confirm(address: address)
+        #expect(early == nil)  // not sent yet
+        let sent = queue.markSent(attempt.token, address: address)
+        #expect(sent)
+        let other = queue.confirm(address: "0xother")
+        #expect(other == nil)
+        let confirmed = queue.confirm(address: address.uppercased())
+        #expect(confirmed == id)
         #expect(queue.inFlight == nil)
     }
 
     @Test func failWithNothingInFlightIsIgnored() {
         var queue = RelayAddAgentQueue()
-        #expect(queue.fail() == nil)
+        let failure = queue.fail()
+        #expect(failure == nil)
     }
 
     @Test func resetDropsEverything() throws {
         var queue = RelayAddAgentQueue()
         queue.enqueue(UUID())
         queue.enqueue(UUID())
-        let attempt = try #require(queue.start())
+        let started = queue.start()
+        let attempt = try #require(started)
         queue.reset()
         #expect(!queue.isCurrent(attempt.token))
         #expect(queue.waiting.isEmpty)
-        #expect(queue.start() == nil)
+        let after = queue.start()
+        #expect(after == nil)
     }
 }
