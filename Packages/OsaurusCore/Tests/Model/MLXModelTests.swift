@@ -10,6 +10,27 @@ import Testing
 
 struct MLXModelTests {
 
+    @Test func localManifestSizeCanonicalizesParentsAndKeepsLinkedShards() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bundle = root.appendingPathComponent("snapshot", isDirectory: true)
+        let engram = bundle.appendingPathComponent("engram", isDirectory: true)
+        let fm = FileManager.default
+        try fm.createDirectory(at: engram, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let blob = root.appendingPathComponent("blob")
+        try Data(repeating: 7, count: 4097).write(to: blob)
+        try fm.createSymbolicLink(at: bundle.appendingPathComponent("model.safetensors"), withDestinationURL: blob)
+        try Data(repeating: 7, count: 517).write(to: engram.appendingPathComponent("table.safetensors"))
+        try Data("{}".utf8).write(to: bundle.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: bundle.appendingPathComponent("tokenizer.json"))
+        let link = root.appendingPathComponent("managed-link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: bundle)
+        for directory in [bundle, URL(fileURLWithPath: bundle.path, isDirectory: false), link] {
+            #expect(MLXModel.localBundleDownloadSizeBytes(at: directory) == 4097 + 517 + 2 + 2)
+            #expect(MLXModel.localBundleWeightSizeBytes(at: directory) == 4097)
+        }
+    }
+
     @Test func localDirectory_buildsNestedPathFromRepoId() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

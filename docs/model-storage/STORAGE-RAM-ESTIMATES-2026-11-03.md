@@ -13,6 +13,11 @@ root-level safetensors file sizes, following directory/shard symlinks. The index
 `metadata.total_size` is a fallback when no weight files are available; it must
 not override real files after conversion.
 
+Installed manifest walks canonicalize the logical parent of each root shard.
+Foundation can preserve `/var` while enumeration returns `/private/var`; raw URL
+identity must not turn that alias into an unknown full download. Compare the
+logical parent, rather than a resolved HF shard destination in a blob store.
+
 Resident-weight estimates start from target weight file bytes, independently of the
 full download. The target loader reads top-level safetensors: nested Engram tables
 and optional draft bundles are separate. This prevents DeepSeek's roughly 203 GB

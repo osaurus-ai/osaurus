@@ -265,7 +265,10 @@ struct MLXModel: Identifiable, Codable {
                 ]),
                 values.isRegularFile == true, let size = values.fileSize
             else { return nil }
-            if url.deletingLastPathComponent() == root, url.pathExtension == "safetensors", size > 0 {
+            // Enumeration can spell /var as /private/var. Canonicalize the logical parent,
+            // not the shard destination: HF cache weight symlinks can point outside the bundle.
+            if url.deletingLastPathComponent().resolvingSymlinksInPath().path == root.path,
+                url.pathExtension == "safetensors", size > 0 {
                 hasTargetWeights = true
             }
             let sum = total.addingReportingOverflow(Int64(size))

@@ -361,6 +361,7 @@ struct ExternalModelLocatorTests {
         // The index deliberately advertises a stale 44 GB payload. Actual installed
         // files win; nested SSD tables count toward download, not target weights.
         let expectedDownloadBytes = Int64(config.count + index.count + engram.count + 2 + 1)
+        #expect(MLXModel.localBundleDownloadSizeBytes(at: bundle) == expectedDownloadBytes)
 
         ExternalModelLocator.testRootsOverride = [(root: customRoot, source: .customModelFolder)]
         ExternalModelLocator.rescan()
@@ -374,15 +375,12 @@ struct ExternalModelLocatorTests {
         #expect(resolved?.standardizedFileURL.path == bundle.standardizedFileURL.path)
 
         let models = ExternalModelLocator.models()
-        #expect(
-            models.contains {
-                $0.id == "publisher/repo"
-                    && $0.externalSource == "Custom model folder"
-                    && $0.modelType == "gemma4"
-                    && $0.downloadSizeBytes == expectedDownloadBytes
-                    && $0.weightSizeBytes == 1
-            }
-        )
+        let model = models.first { $0.id == "publisher/repo" }
+        #expect(model != nil)
+        #expect(model?.externalSource == "Custom model folder")
+        #expect(model?.modelType == "gemma4")
+        #expect(model?.downloadSizeBytes == expectedDownloadBytes)
+        #expect(model?.weightSizeBytes == 1)
 
         #expect(report?.discovered.contains { $0.id == "publisher/repo" } == true)
         #expect(report?.skipped.isEmpty == true)
