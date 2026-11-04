@@ -738,6 +738,34 @@ struct ModelManagerTests {
         #expect((diagnostic["error"] as? String)?.contains("missing") == true)
     }
 
+    @Test func downloadedInventorySummaryPairsCountAndBytes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: root) }
+        var models: [MLXModel] = []
+        for name in ["First", "Second", "Missing"] {
+            let directory = root.appendingPathComponent(name)
+            if name != "Missing" {
+                try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+                try Data("{}".utf8).write(to: directory.appendingPathComponent("config.json"))
+                try Data("{}".utf8).write(to: directory.appendingPathComponent("tokenizer.json"))
+                try Data(repeating: 7, count: 8193).write(to: directory.appendingPathComponent("model.safetensors"))
+            }
+            models.append(MLXModel(
+                id: "publisher/\(name)", name: name, description: "",
+                downloadURL: "https://example.com/\(name)", bundleDirectory: directory))
+        }
+        let snapshot = ModelDownloadService.measureDownloadedInventory(models)
+        let expectedBytes = try #require(ModelDownloadService.directoryAllocatedSize(at: models[0].localDirectory))
+            + #require(ModelDownloadService.directoryAllocatedSize(at: models[1].localDirectory))
+        #expect(snapshot.modelCount == 2)
+        #expect(snapshot.allocatedBytes == expectedBytes)
+        #expect(snapshot.allocatedBytes > 0)
+        let missing = ModelDownloadService.measureDownloadedInventory([models[2]])
+        #expect(missing.modelCount == 0)
+        #expect(missing.allocatedBytes == 0)
+    }
+
     @Test func downloadedSizeFollowsBundleAndShardSymlinks() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let target = root.appendingPathComponent("external")

@@ -51,6 +51,12 @@ Installed bundle facts take precedence over unrelated Hub measurements, includin
 when the local table cannot be validated. The detail sheet, cards, onboarding,
 filters and handoff estimates consume the shared model assessment.
 
+The Local Models header describes the entire installed inventory. Its model
+count and allocated disk bytes are published together from the same background
+measurement. Search and fit filters narrow the grid and tab counts; they do not
+change either half of the global header summary. Directory and shard symlinks
+are measured through their targets without changing deletion ownership.
+
 ## Source and validation
 
 Base main: `13a7b1719c06128043586e8be095026f604eaf0a`.
