@@ -25,9 +25,12 @@ struct MLXModelTests {
         try Data("{}".utf8).write(to: bundle.appendingPathComponent("tokenizer.json"))
         let link = root.appendingPathComponent("managed-link")
         try fm.createSymbolicLink(at: link, withDestinationURL: bundle)
+        let expectedDownloadBytes: Int64 = 4097 + 517 + 2 + 2
         for directory in [bundle, URL(fileURLWithPath: bundle.path, isDirectory: false), link] {
-            #expect(MLXModel.localBundleDownloadSizeBytes(at: directory) == 4097 + 517 + 2 + 2)
-            #expect(MLXModel.localBundleWeightSizeBytes(at: directory) == 4097)
+            let downloaded = try #require(MLXModel.localBundleDownloadSizeBytes(at: directory))
+            let weights = try #require(MLXModel.localBundleWeightSizeBytes(at: directory))
+            #expect(downloaded == expectedDownloadBytes)
+            #expect(weights == 4097)
         }
     }
 
