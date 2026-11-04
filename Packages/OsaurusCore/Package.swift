@@ -354,9 +354,11 @@ let package = Package(
         // budget applies to bundles reached through a symlinked directory; main's Gemma 4 tool transport and Jinja
         // namespace fixes. A read of a prefix entry whose SSD file is still being written reports diskPending
         // (memory now means only the opt-in RAM tier).
+        // Gemma unified vision: match reference LayerNorm epsilon and invalidate
+        // old image-conditioned KV under a versioned unified-only cache identity.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "983d88617b59ac581cbbf9beb0f36de1a3bec786"
+            revision: "4a76ab058da9c515b4c71e5b236f1977a7217869"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
