@@ -39,6 +39,25 @@ remain errors. Metadata checks never download or replace model weights.
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
 - Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Sampling Defaults.
 
+## Download size and estimated memory
+
+The download size counts the files Osaurus downloads, including any bundled
+draft model. For installed bundles, weight sizes are measured from the actual
+files, including linked shards. Index payload totals can differ from file sizes.
+
+Running memory is an estimate, not a measured physical footprint or a guarantee
+that a particular context will fit. Osaurus checks tensor metadata for the
+runtime's SSD-backed n-gram tables and excludes those tables from resident
+weights. The full table remains in the download size. This discovery does not
+rely on a model's name, quantization label or Hub tags. Ordinary weights, native
+MTP heads and vision weights are retained in the estimate.
+
+JANG, JANGH and JANGHT can use mixed precisions; their labels do not specify an
+exact byte size. Until a Hub or local measurement is available, Osaurus leaves
+those sizes unknown instead of assuming four bits per parameter. Unavailable or
+invalid table metadata keeps the conservative full-size estimate. Context, file
+caching and other runtime allocations can use additional RAM.
+
 ## Native MTP
 
 Speculative Decoding defaults to **Default**, resolved from the selected bundle.

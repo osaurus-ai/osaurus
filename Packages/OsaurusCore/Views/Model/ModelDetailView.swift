@@ -794,7 +794,7 @@ struct ModelDetailView: View, Identifiable {
             if let ssd = model.ssdResidentBytes, ssd > 0 {
                 Text(
                     String(
-                        format: L("%@ of this download is an n-gram table that stays on SSD and is not counted toward running memory."),
+                        format: L("%@ of this download is an SSD-backed n-gram table, excluded from resident weights. File caching and longer chats can still use additional RAM."),
                         formattedMemoryGB(Double(ssd) / GPUMemoryBudget.bytesPerGB)
                     )
                 )

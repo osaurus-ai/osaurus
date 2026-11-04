@@ -41,24 +41,24 @@ struct ModelSSDResidencyTests {
         #expect(ModelSSDResidency.localSSDResidentBytes(at: dir) == 4000)
     }
 
-    @Test func otherArchitecturesAreNeverScanned() throws {
-        let dir = try bundle(modelType: "qwen3_5", ngram: 4000, other: 1000)
+    @Test(arguments: ["future_architecture", "qwen3_5", "qwen4_exp"])
+    func storageContractDoesNotDependOnArchitectureLabel(modelType: String) throws {
+        let dir = try bundle(modelType: modelType, ngram: 4000, other: 1000)
         defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(ModelSSDResidency.localSSDResidentBytes(at: dir) == nil)
-    }
-
-    @Test func hubTagsGateTheRemoteLookup() {
-        #expect(ModelSSDResidency.mayHaveNGramTable(modelType: nil, tags: ["mlx", "qwen4_exp", "jangh"]))
-        #expect(ModelSSDResidency.mayHaveNGramTable(modelType: "qwen4_exp", tags: nil))
-        #expect(!ModelSSDResidency.mayHaveNGramTable(modelType: "qwen3_5", tags: ["mlx", "gemma4"]))
+        #expect(ModelSSDResidency.localSSDResidentBytes(at: dir) == 4000)
     }
 
     @Test func ramVerdictExcludesTheTableButDownloadSizeKeepsIt() {
         let gb: Int64 = 1 << 30
         // Allosaurus-like: 88 GB download, 53.6 GB of it n-gram -> ~34.4 GB of weights.
         let model = MLXModel(
-            id: "OsaurusAI/Allosaurus-v0.1-125B-A6B-JANGH2", name: "Allosaurus", description: "",
-            downloadURL: "", downloadSizeBytes: 88 * gb, ssdResidentBytes: 53 * gb + gb / 2)
+            id: "OsaurusAI/Allosaurus-v0.1-125B-A6B-JANGH2",
+            name: "Allosaurus",
+            description: "",
+            downloadURL: "",
+            downloadSizeBytes: 88 * gb,
+            ssdResidentBytes: 53 * gb + gb / 2
+        )
         #expect(model.totalSizeEstimateBytes == 88 * gb)
         #expect(model.residentWeightEstimateBytes == 34 * gb + gb / 2)
         let assessment = model.memoryAssessment(totalMemoryGB: 128)
@@ -84,7 +84,7 @@ struct ModelSSDResidencyTests {
         #expect(ModelRuntime.residentWeightBytes(rawWeightsBytes: 5000 + 200, modelDirectory: dir) == 1200)
         let plain = try bundle(modelType: "qwen3_5", ngram: 4000, other: 1000)
         defer { try? FileManager.default.removeItem(at: plain) }
-        #expect(ModelRuntime.residentWeightBytes(rawWeightsBytes: 5200, modelDirectory: plain) == 5200)
+        #expect(ModelRuntime.residentWeightBytes(rawWeightsBytes: 5200, modelDirectory: plain) == 1200)
     }
 
     @Test("Routed Qwen admission retains core, MTP and vision and excludes only SSD tables")
@@ -166,18 +166,25 @@ struct ModelSSDResidencyTests {
         )
         facts.ssdResidentTableBytes = 57_600_276_480
         let estimate = GPUMemoryBudget.estimatedChatWorkingSetBytes(
-            onDiskBytes: Int64(facts.gpuResidentWeightBytes))
+            onDiskBytes: Int64(facts.gpuResidentWeightBytes)
+        )
         let request = VMLXMemoryRequestEstimate(workingSetBytes: estimate)
         let settings = VMLXServerRuntimeSettings()
         let automatic = settings.resolvedMemorySafetyPlan(
-            baseLoadConfiguration: .osaurusProduction, bundleFacts: facts, request: request)
+            baseLoadConfiguration: .osaurusProduction,
+            bundleFacts: facts,
+            request: request
+        )
         #expect(automatic.blockingIssues.isEmpty)
         #expect(!automatic.warnings.isEmpty)
 
         var strictSettings = settings
         strictSettings.memorySafety.mode = .strict
         let strict = strictSettings.resolvedMemorySafetyPlan(
-            baseLoadConfiguration: .osaurusProduction, bundleFacts: facts, request: request)
+            baseLoadConfiguration: .osaurusProduction,
+            bundleFacts: facts,
+            request: request
+        )
         #expect(strict.blockingIssues.contains { $0.field == "memorySafety.requestEstimate" })
     }
 
@@ -191,7 +198,54 @@ struct ModelSSDResidencyTests {
         ]
         let header = try JSONSerialization.data(withJSONObject: hostile)
         // No trap; with a known payload length, ranges past the file are ignored.
-        #expect(ModelSSDResidency.ngramBytes(inHeader: header, payloadLength: 100) == 100)
+        #expect(ModelSSDResidency.ngramBytes(inHeader: header, payloadLength: 100) == 0)
         _ = ModelSSDResidency.ngramBytes(inHeader: header)
     }
+    @Test(arguments: ["JANG_2L", "JANG_6M", "JANGH4", "JANGHT1.8", "JANGTQ_K"])
+    func mixedFormatsWaitForMeasuredBytes(format: String) {
+        let model = MLXModel(id: "publisher/Unknown-125B-\(format)", name: "model", description: "", downloadURL: "")
+        #expect(model.totalSizeEstimateBytes == nil)
+        #expect(model.estimatedMemoryGB == nil)
+        let measured = model.withDownloadSize(86_438_394_488).withSSDResidentBytes(57_600_276_480)
+        #expect(measured.totalSizeEstimateBytes == 86_438_394_488)
+        #expect(measured.residentWeightEstimateBytes == 28_838_118_008)
+    }
+
+    @Test func metadataFallbackCannotSubtractMeasuredTablesFromGuessedTotal() {
+        let model = MLXModel(
+            id: "publisher/Future-100B-4bit",
+            name: "model",
+            description: "",
+            downloadURL: "",
+            ssdResidentBytes: 40_000_000_000
+        )
+        #expect(model.residentWeightEstimateBytes == 50_000_000_000)
+    }
+
+    @Test func linkedBundlesHaveIdenticalStorageFacts() throws {
+        let dir = try bundle(modelType: "renamed", ngram: 4000, other: 1000)
+        let link = dir.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: link); try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: dir)
+        #expect(ModelSSDResidency.localSSDResidentBytes(at: link) == 4000)
+    }
+
+    @Test(arguments: ["JANG_2L", "JANG_6M", "JANGH4", "JANGHT1.8"])
+    func packedVariantsShareFamilyWithoutLosingPrecisionLabel(format: String) {
+        let id = "publisher/Future-125B-\(format)"
+        #expect(ModelMetadataParser.familyKey(from: id) == "publisher/future-125b")
+        #expect(ModelMetadataParser.quantization(from: id) == format.replacingOccurrences(of: "_", with: " "))
+    }
+
+    @Test func localUnknownTableFactsClearUnrelatedHubTableMeasurement() {
+        let remote = MLXModel(id: "publisher/model", name: "model", description: "", downloadURL: "",
+            downloadSizeBytes: 1000, ssdResidentBytes: 900)
+        let installed = MLXModel(id: remote.id, name: "local", description: "", downloadURL: "",
+            downloadSizeBytes: 500, rootDirectory: URL(fileURLWithPath: "/fixture"))
+        let merged = remote.mergingLocalInstallationMetadata(from: installed)
+        #expect(merged.downloadSizeBytes == 500)
+        #expect(merged.ssdResidentBytes == nil)
+        #expect(merged.residentWeightEstimateBytes == 500)
+    }
+
 }

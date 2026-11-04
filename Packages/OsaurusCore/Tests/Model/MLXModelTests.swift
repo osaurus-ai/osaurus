@@ -297,4 +297,19 @@ struct MLXModelTests {
         )
         #expect(model.releasedAt == date)
     }
+    @Test func realFileSizesOverrideStaleIndexAndResolveShardSymlinks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bundle = root.appendingPathComponent("bundle")
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"metadata":{"total_size":999999}}"#.utf8)
+            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        let blob = root.appendingPathComponent("blob")
+        try Data(count: 17).write(to: blob)
+        try FileManager.default.createSymbolicLink(
+            at: bundle.appendingPathComponent("model.safetensors"), withDestinationURL: blob)
+        try Data(count: 23).write(to: bundle.appendingPathComponent("jangtq_runtime.safetensors"))
+        #expect(MLXModel.localBundleWeightSizeBytes(at: bundle) == 40)
+    }
+
 }

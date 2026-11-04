@@ -157,7 +157,7 @@ struct MLXModel: Identifiable, Codable {
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
             downloadSizeBytes: localBytes ?? downloadSizeBytes,
-            ssdResidentBytes: local.ssdResidentBytes ?? ssdResidentBytes,
+            ssdResidentBytes: local.hasLocalInstallationEvidence ? local.ssdResidentBytes : (local.ssdResidentBytes ?? ssdResidentBytes),
             modelType: local.modelType ?? modelType,
             releasedAt: releasedAt,
             downloads: downloads,
@@ -168,125 +168,44 @@ struct MLXModel: Identifiable, Codable {
         )
     }
 
-    /// Read a local bundle's authoritative weight size without recursively
-    /// walking it. Hugging Face/JANG indexes expose `metadata.total_size`; if
-    /// that is absent, sum the bounded unique shard map, direct weight file,
-    /// or one shallow directory listing. Callers use this only from existing
-    /// off-main model discovery paths, never from SwiftUI rendering.
+    /// Measure top-level weight files, resolving Hugging Face shard/directory symlinks. Index
+    /// `total_size` describes tensor payloads and may be stale after conversion; real file sizes win.
+    /// No tensor payloads are read, and draft subdirectories are not priced as resident target weights.
     nonisolated static func localBundleWeightSizeBytes(at directory: URL) -> Int64? {
         let fm = FileManager.default
-        let root = directory.standardizedFileURL
-        let maximumIndexBytes: Int64 = 16 * 1_024 * 1_024
-
-        func positiveInt64(_ value: Any?) -> Int64? {
-            let result: Int64?
-            switch value {
-            case let number as NSNumber:
-                result = number.int64Value
-            case let string as String:
-                result = Int64(string)
-            default:
-                result = nil
-            }
-            guard let result, result > 0 else { return nil }
-            return result
-        }
-
-        func boundedJSONData(at url: URL) -> Data? {
-            guard let attrs = try? fm.attributesOfItem(atPath: url.path),
-                  let size = attrs[.size] as? NSNumber,
-                  size.int64Value > 0,
-                  size.int64Value <= maximumIndexBytes
-            else { return nil }
-            return try? Data(contentsOf: url, options: [.mappedIfSafe])
-        }
-
-        func containedShardURL(_ name: String) -> URL? {
-            guard !name.isEmpty, !name.hasPrefix("/") else { return nil }
-            let candidate = root.appendingPathComponent(name).standardizedFileURL
-            let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-            guard candidate.path.hasPrefix(rootPrefix) else { return nil }
-            return candidate
-        }
-
-        for indexName in [
-            "model.safetensors.index.json",
-            "pytorch_model.safetensors.index.json",
-        ] {
-            let indexURL = root.appendingPathComponent(indexName)
-            guard let data = boundedJSONData(at: indexURL),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { continue }
-
-            if let metadata = object["metadata"] as? [String: Any],
-               let total = positiveInt64(metadata["total_size"])
-            {
+        let root = directory.resolvingSymlinksInPath()
+        if let entries = try? fm.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+        {
+            let shards = entries.filter { $0.pathExtension.lowercased() == "safetensors" }
+            if !shards.isEmpty {
+                var total: Int64 = 0
+                for shard in shards {
+                    guard let values = try? shard.resolvingSymlinksInPath().resourceValues(
+                        forKeys: [.isRegularFileKey, .fileSizeKey]),
+                        values.isRegularFile == true, let size = values.fileSize, size > 0
+                    else { return nil }
+                    let sum = total.addingReportingOverflow(Int64(size))
+                    guard !sum.overflow else { return nil }
+                    total = sum.partialValue
+                }
                 return total
             }
-
-            if let weightMap = object["weight_map"] as? [String: String] {
-                let shardNames = Set(weightMap.values)
-                guard !shardNames.isEmpty, shardNames.count <= 4_096 else { continue }
-                var total: Int64 = 0
-                var complete = true
-                for shardName in shardNames {
-                    guard let shardURL = containedShardURL(shardName) else {
-                        complete = false
-                        break
-                    }
-                    let path = shardURL.path
-                    guard let attrs = try? fm.attributesOfItem(atPath: path),
-                          let size = attrs[.size] as? NSNumber,
-                          size.int64Value > 0
-                    else {
-                        complete = false
-                        break
-                    }
-                    let addition = total.addingReportingOverflow(size.int64Value)
-                    guard !addition.overflow else {
-                        complete = false
-                        break
-                    }
-                    total = addition.partialValue
-                }
-                if complete, total > 0 { return total }
-            }
         }
-
-        for name in [
-            "model.safetensors",
-            "weights.safetensors",
-            "model-00001-of-00001.safetensors",
-            "weights-00001-of-00001.safetensors",
-        ] {
-            let path = root.appendingPathComponent(name).path
-            if let attrs = try? fm.attributesOfItem(atPath: path),
-               let size = attrs[.size] as? NSNumber,
-               size.int64Value > 0
-            {
-                return size.int64Value
-            }
-        }
-
-        guard let entries = try? fm.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
-        var total: Int64 = 0
-        for entry in entries where entry.pathExtension.lowercased() == "safetensors" {
-            guard let values = try? entry.resourceValues(forKeys: [
-                .isRegularFileKey, .fileSizeKey,
-            ]),
-                values.isRegularFile == true,
-                let size = values.fileSize,
-                size > 0
+        // Advertised payload size remains useful for a not-yet-installed index-only bundle.
+        for name in ["model.safetensors.index.json", "pytorch_model.safetensors.index.json"] {
+            let url = root.appendingPathComponent(name)
+            guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+                let size = attrs[.size] as? NSNumber, size.int64Value > 0, size.int64Value <= 16 << 20,
+                let data = try? Data(contentsOf: url),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let metadata = object["metadata"] as? [String: Any]
             else { continue }
-            let addition = total.addingReportingOverflow(Int64(size))
-            guard !addition.overflow else { return nil }
-            total = addition.partialValue
+            let total = (metadata["total_size"] as? NSNumber)?.int64Value
+                ?? (metadata["total_size"] as? String).flatMap(Int64.init)
+            if let total, total > 0 { return total }
         }
-        return total > 0 ? total : nil
+        return nil
     }
 
     /// Returns a copy carrying the bundle's SSD-resident (n-gram) byte count.
@@ -427,8 +346,8 @@ struct MLXModel: Identifiable, Codable {
         if let bytes = downloadSizeBytes, bytes > 0 { return bytes }
 
         // Estimate based on params and quantization (without the runtime overhead multiplier)
-        if let params = parameterCountBillions {
-            let bytes = params * bytesPerParameter * Self.bytesPerGB
+        if let params = parameterCountBillions, let bytesPerParameter {
+            let bytes = params * bytesPerParameter * 1_000_000_000
             guard bytes.isFinite, bytes > 0, bytes <= Double(Int64.max) else { return nil }
             return Int64(bytes.rounded(.up))
         }
@@ -752,7 +671,14 @@ struct MLXModel: Identifiable, Codable {
     }
 
     /// Bytes per parameter based on the quantization extracted from the model name.
-    private var bytesPerParameter: Double {
+    private var bytesPerParameter: Double? {
+        // Mixed packed formats and SSD tables cannot be sized from a marketing precision label.
+        // Wait for the measured Hub/local inventory rather than present an invented 4-bit estimate.
+        if id.range(of: #"(?i)(^|[-/])jang(?:h|ht|tq|[_0-9]|$)"#, options: .regularExpression) != nil,
+            quantization == nil || quantization?.uppercased().hasPrefix("JANG") == true
+        {
+            return nil
+        }
         guard let quant = quantization?.lowercased() else { return 0.5 }
 
         // MXFP / FP8 precision formats encode the bit-width in the suffix and
@@ -806,7 +732,7 @@ struct MLXModel: Identifiable, Codable {
     /// Weights that must be resident to run: the download minus SSD-resident tables.
     var residentWeightEstimateBytes: Int64? {
         guard let total = totalSizeEstimateBytes else { return nil }
-        guard let ssd = ssdResidentBytes, ssd > 0, ssd < total else { return total }
+        guard sizeEstimateSource == .measured, let ssd = ssdResidentBytes, ssd > 0, ssd < total else { return total }
         return total - ssd
     }
 

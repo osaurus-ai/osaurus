@@ -60,6 +60,24 @@ struct ModelManagerTests {
         )
     }
 
+    @Test("Hub refreshes cannot overwrite installed bundle storage measurements")
+    @MainActor
+    func resolvedHubSizesPreserveInstalledFacts() async {
+        let local = MLXModel(id: "publisher/Future-125B-JANGHT1.8", name: "local", description: "", downloadURL: "",
+            downloadSizeBytes: 5000, ssdResidentBytes: 1000, rootDirectory: URL(fileURLWithPath: "/fixture"))
+        let remote = MLXModel(id: local.id, name: "catalog", description: "", downloadURL: "")
+        let manager = ModelManager()
+        manager.availableModels = [local]
+        manager.suggestedModels = [remote]
+        manager.applyResolvedDownloadSize(9000, for: local.id)
+        manager.applyResolvedSSDResidentBytes(7000, for: local.id)
+        #expect(manager.availableModels.first?.downloadSizeBytes == 5000)
+        #expect(manager.availableModels.first?.ssdResidentBytes == 1000)
+        #expect(manager.suggestedModels.first?.downloadSizeBytes == 9000)
+        #expect(manager.suggestedModels.first?.ssdResidentBytes == 7000)
+        #expect(await manager.estimateDownloadSize(for: local) == 5000)
+    }
+
     @Test("installed matcher prefers full ids and rejects ambiguous short aliases")
     func installedMatcherUsesStableIdentity() {
         let models = [

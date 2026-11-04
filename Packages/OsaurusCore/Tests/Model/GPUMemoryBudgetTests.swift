@@ -137,7 +137,7 @@ struct GPUMemoryBudgetTests {
 
         #expect(fallback.sizeEstimateSource == .metadataFallback)
         #expect(resolved.sizeEstimateSource == .measured)
-        #expect(fallback.totalSizeEstimateBytes == Int64(13.5 * Self.bytesPerGB))
+        #expect(fallback.totalSizeEstimateBytes == 13_500_000_000)
         #expect(resolved.totalSizeEstimateBytes == 16_870_000_000)
         let resolvedMemory = try #require(resolved.estimatedMemoryGB)
         let fallbackMemory = try #require(fallback.estimatedMemoryGB)
