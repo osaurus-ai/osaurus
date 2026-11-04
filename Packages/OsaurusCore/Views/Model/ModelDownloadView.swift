@@ -342,7 +342,7 @@ struct ModelDownloadView: View {
     private func headerView(lists: GridLists) -> some View {
         ManagerHeaderWithTabs(
             title: L("Local Models"),
-            subtitle: L("\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)")
+            subtitle: L("\(modelManager.totalDownloadedModelCount) downloaded • \(modelManager.totalDownloadedSizeString)")
         ) {
             HStack(spacing: 12) {
                 // Refresh OsaurusAI HF org listing (Recommended section lives inside All)
@@ -2069,16 +2069,6 @@ struct ModelDownloadView: View {
 
     private static func isOsaurusAI(_ model: MLXModel) -> Bool {
         model.id.lowercased().hasPrefix("osaurusai/")
-    }
-
-    /// Count of installed models respecting current search and filters. Reads
-    /// the installed inventory (`installedModels()`), the set the sidebar
-    /// badge counts and `totalDownloadedSizeString` beside it sums.
-    private var completedDownloadedModelsCount: Int {
-        let completed = modelManager.installedModels()
-        let searched = SearchService.filterModels(Array(completed), with: debouncedSearchText)
-        let filtered = filterState.apply(to: searched, totalMemoryGB: systemMonitor.totalMemoryGB)
-        return filtered.count
     }
 
     /// Average progress across all active downloads (0.0 to 1.0)

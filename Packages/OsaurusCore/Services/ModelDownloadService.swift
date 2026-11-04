@@ -80,7 +80,11 @@ final class ModelDownloadService: ObservableObject {
     /// it without blocking the UI. `ModelManager` drives the refresh after
     /// each local-discovery merge, which is also what `.localModelsChanged`
     /// triggers, so the figure always covers the same set the header counts.
-    @Published private(set) var totalDownloadedSizeBytes: Int64 = 0
+    struct DownloadedInventorySize: Equatable, Sendable {
+        let modelCount: Int
+        let allocatedBytes: Int64
+    }
+    @Published private(set) var downloadedInventorySize = DownloadedInventorySize(modelCount: 0, allocatedBytes: 0)
 
     /// Categorised failure info shown in the alert. The `title` describes
     /// the kind of failure, `message` is the human-readable cause, and
@@ -1224,7 +1228,9 @@ final class ModelDownloadService: ObservableObject {
         activeDownloadTasks[modelId] != nil
     }
 
+    var totalDownloadedSizeBytes: Int64 { downloadedInventorySize.allocatedBytes }
     var totalDownloadedSize: Int64 { totalDownloadedSizeBytes }
+    var totalDownloadedModelCount: Int { downloadedInventorySize.modelCount }
 
     var totalDownloadedSizeString: String {
         ByteCountFormatter.string(fromByteCount: totalDownloadedSizeBytes, countStyle: .file)
@@ -1240,14 +1246,19 @@ final class ModelDownloadService: ObservableObject {
     /// SwiftUI body, which is where the header reads `totalDownloadedSizeString`.
     func refreshTotalDownloadedSize(inventoryCandidates: [MLXModel]) {
         Task { @MainActor [weak self] in
-            let bytes = await Task.detached(priority: .utility) { () -> Int64 in
-                ModelManager.installedModels(among: inventoryCandidates)
-                    .reduce(Int64(0)) { partial, model in
-                        partial + (ModelDownloadService.directoryAllocatedSize(at: model.localDirectory) ?? 0)
-                    }
+            let snapshot = await Task.detached(priority: .utility) {
+                Self.measureDownloadedInventory(inventoryCandidates)
             }.value
-            self?.totalDownloadedSizeBytes = bytes
+            self?.downloadedInventorySize = snapshot
         }
+    }
+
+    nonisolated static func measureDownloadedInventory(_ candidates: [MLXModel]) -> DownloadedInventorySize {
+        let installed = ModelManager.installedModels(among: candidates)
+        let bytes = installed.reduce(Int64(0)) { partial, model in
+            partial + (directoryAllocatedSize(at: model.localDirectory) ?? 0)
+        }
+        return DownloadedInventorySize(modelCount: installed.count, allocatedBytes: bytes)
     }
 
     // MARK: - State Management

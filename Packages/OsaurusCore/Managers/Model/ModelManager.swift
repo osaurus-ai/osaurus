@@ -692,6 +692,7 @@ public final class ModelManager: NSObject, ObservableObject {
     var downloadStates: [String: DownloadState] { downloadService.downloadStates }
     var downloadMetrics: [String: ModelDownloadService.DownloadMetrics] { downloadService.downloadMetrics }
     var totalDownloadedSize: Int64 { downloadService.totalDownloadedSize }
+    var totalDownloadedModelCount: Int { downloadService.totalDownloadedModelCount }
     var totalDownloadedSizeString: String { downloadService.totalDownloadedSizeString }
     var activeDownloadsCount: Int { downloadService.activeDownloadsCount }
     var downloadAlert: ModelDownloadService.DownloadAlertInfo? {
