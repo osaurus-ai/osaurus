@@ -1390,12 +1390,16 @@ public actor MemoryService {
         currentIdentity: Identity,
         model: String
     ) {
-        let existing = Set(currentIdentity.overrides.map { $0.lowercased() })
         var updated = currentIdentity
         var added = 0
         for raw in facts {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !existing.contains(trimmed.lowercased()) else { continue }
+            guard !trimmed.isEmpty,
+                !updated.overrides.contains(where: { $0.lowercased() == trimmed.lowercased() })
+            else { continue }
+            if let slot = MemoryDistillateScreen.identitySlot(trimmed) {
+                updated.overrides.removeAll { MemoryDistillateScreen.identitySlot($0) == slot }
+            }
             updated.overrides.append(trimmed)
             added += 1
         }

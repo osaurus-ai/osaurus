@@ -203,6 +203,16 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// the Default agent never receives any Apple tool (its allowlist wins).
     public let enabledAppleApps: Set<AppleApp>
 
+    /// Per-agent opt-ins for the specialist built-ins (`calculate`, and the
+    /// host-folder redaction pair `detect_pii` / `redact_file`).
+    public let calculatorEnabled: Bool
+    public let redactionToolsEnabled: Bool
+    /// Per-agent gates for the agent-loop built-ins: `todo` + `complete`,
+    /// `clarify`, and `share_artifact`. Default on.
+    public let taskChecklistEnabled: Bool
+    public let clarifyEnabled: Bool
+    public let artifactsEnabled: Bool
+
     public init(
         agentId: UUID,
         toolsDisabled: Bool,
@@ -235,7 +245,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         knowledgeCollections: [KnowledgeGrantDescriptor] = [],
         hasChannelPublishDestinations: Bool = false,
         projectId: UUID? = nil,
-        enabledAppleApps: Set<AppleApp> = []
+        enabledAppleApps: Set<AppleApp> = [],
+        calculatorEnabled: Bool = false,
+        redactionToolsEnabled: Bool = false,
+        taskChecklistEnabled: Bool = true,
+        clarifyEnabled: Bool = true,
+        artifactsEnabled: Bool = true
     ) {
         self.agentId = agentId
         self.projectId = projectId
@@ -269,6 +284,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.knowledgeCollections = knowledgeCollections
         self.hasChannelPublishDestinations = hasChannelPublishDestinations
         self.enabledAppleApps = enabledAppleApps
+        self.calculatorEnabled = calculatorEnabled
+        self.redactionToolsEnabled = redactionToolsEnabled
+        self.taskChecklistEnabled = taskChecklistEnabled
+        self.clarifyEnabled = clarifyEnabled
+        self.artifactsEnabled = artifactsEnabled
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -392,7 +412,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
                 )
                 .isEmpty,
             projectId: projectId,
-            enabledAppleApps: caps.enabledAppleApps
+            enabledAppleApps: caps.enabledAppleApps,
+            calculatorEnabled: caps.calculatorEnabled,
+            redactionToolsEnabled: caps.redactionToolsEnabled,
+            taskChecklistEnabled: caps.taskChecklistEnabled,
+            clarifyEnabled: caps.clarifyEnabled,
+            artifactsEnabled: caps.artifactsEnabled
         )
     }
 }

@@ -426,6 +426,16 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Expose `applescript` / `mac_query` delegation tools (requires an
         /// installed AppleScript model at run time).
         public let appleScriptEnabled: Bool?
+        /// Expose the `calculate` tool.
+        public let calculatorEnabled: Bool?
+        /// Expose `detect_pii` / `redact_file` in host-folder runs.
+        public let redactionToolsEnabled: Bool?
+        /// `todo` + `complete`; production default on.
+        public let taskChecklistEnabled: Bool?
+        /// `clarify`; production default on.
+        public let clarifyEnabled: Bool?
+        /// `share_artifact`; production default on.
+        public let artifactsEnabled: Bool?
         /// Temporary worker agents the orchestrator may select by exact UUID.
         public let spawnAgents: [SpawnAgentFixture]?
         /// Per-call/concurrency ceiling applied to the temporary orchestrator.
@@ -439,6 +449,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             speakEnabled: Bool? = nil,
             searchMemoryEnabled: Bool? = nil,
             appleScriptEnabled: Bool? = nil,
+            calculatorEnabled: Bool? = nil,
+            redactionToolsEnabled: Bool? = nil,
+            taskChecklistEnabled: Bool? = nil,
+            clarifyEnabled: Bool? = nil,
+            artifactsEnabled: Bool? = nil,
             spawnAgents: [SpawnAgentFixture]? = nil,
             maxParallelSpawns: Int? = nil,
             childBudgets: SubagentBudgets? = nil
@@ -449,17 +464,25 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.speakEnabled = speakEnabled
             self.searchMemoryEnabled = searchMemoryEnabled
             self.appleScriptEnabled = appleScriptEnabled
+            self.calculatorEnabled = calculatorEnabled
+            self.redactionToolsEnabled = redactionToolsEnabled
+            self.taskChecklistEnabled = taskChecklistEnabled
+            self.clarifyEnabled = clarifyEnabled
+            self.artifactsEnabled = artifactsEnabled
             self.spawnAgents = spawnAgents
             self.maxParallelSpawns = maxParallelSpawns
             self.childBudgets = childBudgets
         }
 
-        /// True when any flag is explicitly enabled — the runner only
-        /// pays the temp-agent setup cost when something is on.
+        /// True when any flag departs from the production default — the
+        /// runner only pays the temp-agent setup cost when one does.
         public var requestsAnyCapability: Bool {
             (dbEnabled ?? false) || (selfSchedulingEnabled ?? false)
                 || (renderChartEnabled ?? false) || (speakEnabled ?? false)
                 || (searchMemoryEnabled ?? false) || (appleScriptEnabled ?? false)
+                || (calculatorEnabled ?? false) || (redactionToolsEnabled ?? false)
+                || taskChecklistEnabled == false || clarifyEnabled == false
+                || artifactsEnabled == false
                 || !(spawnAgents?.isEmpty ?? true)
         }
     }

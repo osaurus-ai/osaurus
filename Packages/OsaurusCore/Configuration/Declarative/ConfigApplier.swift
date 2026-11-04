@@ -919,6 +919,11 @@ enum ConfigApplier {
         if let v = caps.applescriptEnabled { agent.settings.appleScriptEnabled = v }
         if let v = caps.speakEnabled { agent.settings.speakEnabled = v }
         if let v = caps.renderChartEnabled { agent.settings.renderChartEnabled = v }
+        if let v = caps.calculatorEnabled { agent.settings.calculatorEnabled = v }
+        if let v = caps.redactionToolsEnabled { agent.settings.redactionToolsEnabled = v }
+        if let v = caps.taskChecklistEnabled { agent.settings.taskChecklistEnabled = v }
+        if let v = caps.clarifyEnabled { agent.settings.clarifyEnabled = v }
+        if let v = caps.artifactsEnabled { agent.settings.artifactsEnabled = v }
     }
 
     /// Relay enablement lives outside the Agent record. Route through the

@@ -28,7 +28,8 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 ## Per-agent features (agent → Abilities → Overview)
 
 - Tools (on by default) and Memory (on by default).
-- Off by default, opt in per agent: Charts, Voice output, Memory Recall (search past memory), Self-scheduling, Computer Use, Database (per-agent private SQLite), Knowledge collections, sandbox execution options.
+- Off by default, opt in per agent: Charts, Voice output, Calculator (exact arithmetic, `calculator_enabled`), Redaction Tools (`detect_pii` / `redact_file` in working-folder chats, `redaction_tools_enabled`), Memory Recall (search past memory), Self-scheduling, Computer Use, Database (per-agent private SQLite), Knowledge collections, sandbox execution options. Turn Calculator on for agents that work with numbers: finance, budgets, invoices, data analysis.
+- On by default, can be switched off per agent: Share Artifacts (`share_artifact` file cards, `artifacts_enabled`), Task Checklist (`todo` + `complete`, `task_checklist_enabled`), Clarifying Questions (`clarify`, `clarify_enabled`).
 - Working Folder: the one folder the agent works inside. Picking a folder with the chat Folder chip — or in the picker the agent itself opens with `prompt_working_folder` when a folder-less chat needs files — remembers it on the agent, so new chats, schedules, watchers, and other background runs without their own folder start there; it also grants remote agent runs file access confined to that folder. Inside it, `file_read` handles every file type (text, PDF, Word, PowerPoint, Excel preview, images for vision models or via OCR) and `file_write` generates `.xlsx`, `.docx`, and `.pdf` as well as text — see the Chat topic, "File formats the folder tools handle".
 
 ## Skills per agent (agent → Abilities → Tools)

@@ -1377,6 +1377,16 @@ enum ConfigPlanner {
         if let folder = entry.workingFolder.valueOrNil {
             changes.append("working_folder: \(folder)")
         }
+        if let caps = entry.capabilities,
+            let data = try? JSONEncoder().encode(caps),
+            let toggles = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?
+                .compactMapValues({ $0 as? Bool })
+        {
+            let on = toggles.filter(\.value).keys.sorted()
+            let off = toggles.filter { !$0.value }.keys.sorted()
+            if !on.isEmpty { changes.append("capabilities on: \(on.joined(separator: ", "))") }
+            if !off.isEmpty { changes.append("capabilities off: \(off.joined(separator: ", "))") }
+        }
     }
 
     private static func planAgents(
@@ -1518,6 +1528,21 @@ enum ConfigPlanner {
         diff(
             "render_chart_enabled", desired: caps.renderChartEnabled,
             current: agent.settings.renderChartEnabled, into: &changes)
+        diff(
+            "calculator_enabled", desired: caps.calculatorEnabled,
+            current: agent.settings.calculatorEnabled, into: &changes)
+        diff(
+            "redaction_tools_enabled", desired: caps.redactionToolsEnabled,
+            current: agent.settings.redactionToolsEnabled, into: &changes)
+        diff(
+            "task_checklist_enabled", desired: caps.taskChecklistEnabled,
+            current: agent.settings.taskChecklistEnabled, into: &changes)
+        diff(
+            "clarify_enabled", desired: caps.clarifyEnabled,
+            current: agent.settings.clarifyEnabled, into: &changes)
+        diff(
+            "artifacts_enabled", desired: caps.artifactsEnabled,
+            current: agent.settings.artifactsEnabled, into: &changes)
         let currentRelay = RelayConfigurationStore.load().isEnabled(for: agent.id)
         diff("relay_enabled", desired: caps.relayEnabled, current: currentRelay, into: &changes)
         if let desiredApps = Self.appleApps(from: caps) {

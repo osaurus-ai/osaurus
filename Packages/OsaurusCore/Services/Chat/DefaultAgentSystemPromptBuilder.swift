@@ -314,6 +314,7 @@ public enum DefaultAgentSystemPromptBuilder {
                     + "read or find — never answer one from memory, and never spawn a "
                     + "specialist or Computer Use agent to click through Settings. "
                     + Self.appleAppsDelegationLine(exposure: exposure)
+                    + " " + Self.agentCapabilitiesLine
             )
             lines.append("")
             return lines.joined(separator: "\n")
@@ -448,6 +449,7 @@ public enum DefaultAgentSystemPromptBuilder {
                 + "through Settings."
         )
         lines.append("- " + Self.appleAppsDelegationLine(exposure: exposure))
+        lines.append("- " + Self.agentCapabilitiesLine)
         lines.append("")
         return lines.joined(separator: "\n")
     }
@@ -511,8 +513,8 @@ public enum DefaultAgentSystemPromptBuilder {
         if exposure.folderReadable {
             return
                 "Workers write deliverables into the working folder; the result's "
-                + "`artifact_paths` lists them — read one with `file_read` / `file_search` when "
-                + "you need the content. "
+                + "`artifact_paths` lists them — read them with `file_read` (several at once with "
+                + "`paths`) / `file_search` when you need the content. "
         }
         return
             "No working folder is set on this chat: neither you nor a worker you create can "
@@ -526,8 +528,8 @@ public enum DefaultAgentSystemPromptBuilder {
         if exposure.folderReadable {
             return
                 "Deliverables live in the working folder: workers write files there and the "
-                + "result's `artifact_paths` lists what they wrote. Read one with `file_read` / "
-                + "`file_search` when you need the content; never ask a worker to paste a whole "
+                + "result's `artifact_paths` lists what they wrote. Read them with `file_read` "
+                + "(several at once with `paths`) / `file_search` when you need the content; never ask a worker to paste a whole "
                 + "file back."
         }
         return
@@ -564,6 +566,14 @@ public enum DefaultAgentSystemPromptBuilder {
             + "notes/reminders/contacts/maps/music/shortcut work, " + routing
             + " macOS asks the user for the app's permission the first time a tool runs."
     }
+
+    /// Specialist tools (exact arithmetic, PII redaction, …) are off on a new
+    /// agent, so the agent's job decides them at creation. One example only:
+    /// the settings catalog behind `osaurus_help` find is the full list.
+    static let agentCapabilitiesLine =
+        "When you create or retarget an agent, switch on the capability toggles its job needs in "
+        + "the same apply (an agent that works with numbers needs `calculator_enabled: true`); "
+        + "`osaurus_help` find lists the toggles."
 
     /// Backticked tool names the rendered addendum tells the model to call,
     /// restricted to `known` (the registered tool universe) so YAML keys and

@@ -250,6 +250,22 @@ public enum ConfigManifest {
                             ConfigKeySpec(
                                 "render_chart_enabled", .scalar(.boolean, example: "false")),
                             ConfigKeySpec(
+                                "calculator_enabled", .scalar(.boolean, example: "false"),
+                                comment: "exact arithmetic tool; enable for agents that work with numbers",
+                                moreComments: ["(finance, budgets, invoices, data analysis, unit conversions)"]),
+                            ConfigKeySpec(
+                                "redaction_tools_enabled", .scalar(.boolean, example: "false"),
+                                comment: "detect_pii + redact_file in host-folder chats (PII scrubbing)"),
+                            ConfigKeySpec(
+                                "task_checklist_enabled", .scalar(.boolean, example: "true"),
+                                comment: "todo checklist + complete; default on"),
+                            ConfigKeySpec(
+                                "clarify_enabled", .scalar(.boolean, example: "true"),
+                                comment: "ask the user a question mid-task; default on"),
+                            ConfigKeySpec(
+                                "artifacts_enabled", .scalar(.boolean, example: "true"),
+                                comment: "share_artifact file cards in chat; default on"),
+                            ConfigKeySpec(
                                 "relay_enabled", .scalar(.boolean, example: "false"),
                                 comment: "relay tunnel forwards to this agent",
                                 moreComments: ["(HIGH RISK: reachable from outside)"]),

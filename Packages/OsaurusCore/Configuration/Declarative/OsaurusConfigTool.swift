@@ -31,13 +31,14 @@
 //
 
 import Foundation
+import Yams
 
 public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     public let name = "osaurus_config"
     // The first sentence must stay ≤180 chars: the Default agent's compact
     // bootstrap schema keeps only that sentence.
     public let description =
-        "Configure Osaurus by applying a declarative YAML document: agents, models, "
+        "Configure Osaurus via a declarative YAML document: agents, models, "
         + "plugins, MCP, providers, schedules, watchers, tools, memory, delegation, commands, "
         + "knowledge, channels. "
         + "`action`: schema (the YAML reference — read it when unsure of a key), "
@@ -51,7 +52,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         + "templates (list whole-config YAML templates in ~/.osaurus/templates plus agent templates; "
         + "optional `kind`: agent or all). "
         + "To create an agent from an agent template, pass its name as `template` with optional "
-        + "`overrides` {name, description, system_prompt, model}; prefer this over hand-picking tools "
+        + "`overrides` {name, description, system_prompt, model, capabilities}; prefer this over hand-picking tools "
         + "whenever the user names a template or one fits the request. "
         + "Documents are merge-by-default: absent keys stay untouched, explicit null clears an "
         + "override. Entities match by name. plan/apply accept YAML or JSON; export/schema take "
@@ -101,10 +102,14 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
                         "type": .string("string"),
                         "description": .string("Model id; omit to keep the template's model."),
                     ]),
+                    "capabilities": .object([
+                        "type": .string("object"),
+                        "additionalProperties": .object(["type": .string("boolean")]),
+                        "description": .string("e.g. {calculator_enabled: true}"),
+                    ]),
                 ]),
                 "description": .string(
-                    "For plan / apply with an AGENT `template`: fields merged on top of the template's "
-                        + "agent, e.g. a task-specific name and system prompt."),
+                    "With an AGENT `template`: name, system prompt, capabilities merged onto its agent."),
             ]),
             "sections": .object([
                 "type": .string("array"),
@@ -340,17 +345,19 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         let prune = coerceBool(args["prune"]) ?? false
         let document: OsaurusConfigDocument
         let basedOn: AgentTemplate?
+        let autoNamed: String?
         switch await loadDocument(args) {
         case .failure(let envelope): return envelope
-        case .success(let doc, let template):
+        case .success(let doc, let template, let generatedName):
             document = doc
             basedOn = template
+            autoNamed = generatedName
         }
 
         do {
             let plan = try await MainActor.run { [document] in
                 var plan = try ConfigPlanner.plan(document: document, prune: prune)
-                Self.annotate(&plan, basedOn: basedOn)
+                Self.annotate(&plan, basedOn: basedOn, autoNamed: autoNamed)
                 return plan
             }
             var result = plan.payload()
@@ -397,18 +404,20 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         let prune = coerceBool(args["prune"]) ?? false
         let document: OsaurusConfigDocument
         let basedOn: AgentTemplate?
+        let autoNamed: String?
         switch await loadDocument(args) {
         case .failure(let envelope): return envelope
-        case .success(let doc, let template):
+        case .success(let doc, let template, let generatedName):
             document = doc
             basedOn = template
+            autoNamed = generatedName
         }
 
         let plan: ConfigPlan
         do {
             plan = try await MainActor.run { [document] in
                 var plan = try ConfigPlanner.plan(document: document, prune: prune)
-                Self.annotate(&plan, basedOn: basedOn)
+                Self.annotate(&plan, basedOn: basedOn, autoNamed: autoNamed)
                 return plan
             }
         } catch let issues as ConfigPlanIssues {
@@ -654,16 +663,27 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
                 "To create an agent from an agent template: {action: \"plan\", template: \"<name>\", "
                 + "overrides: {name: \"...\", system_prompt: \"...\"}} then apply. The template fixes "
                 + "model, tools, MCP servers, sandbox and subagent settings; only override what the "
-                + "user asked to change."
+                + "user asked to change. Opt-in tools are off by default: put "
+                + "`capabilities: {calculator_enabled: true}` (math) or "
+                + "`{redaction_tools_enabled: true}` (PII detection/redaction) in `overrides` when the "
+                + "agent's job needs them."
         }
         return ToolEnvelope.success(tool: name, result: result)
     }
 
     /// Plan note so the approval card and the model both see the lineage.
     @MainActor
-    private static func annotate(_ plan: inout ConfigPlan, basedOn template: AgentTemplate?) {
+    private static func annotate(
+        _ plan: inout ConfigPlan, basedOn template: AgentTemplate?, autoNamed: String? = nil
+    ) {
         guard let template else { return }
         plan.notes.insert("Based on template: \(template.name)", at: 0)
+        if let autoNamed {
+            plan.notes.insert(
+                "No `overrides.name` given, so the agent is named `\(autoNamed)`. "
+                    + "To use the name the user asked for, pass `overrides: {name: \"...\"}`.",
+                at: 1)
+        }
         if case .fallbackToDefault(let requested) = template.modelResolution() {
             plan.notes.append(
                 "Template prefers model `\(requested)`, which is not installed here; "
@@ -680,19 +700,65 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
     // MARK: - Document loading
 
     private enum DocumentLoad {
-        case success(OsaurusConfigDocument, basedOn: AgentTemplate?)
+        case success(OsaurusConfigDocument, basedOn: AgentTemplate?, autoNamed: String? = nil)
         case failure(String)
     }
 
     /// Parses the `overrides` argument into a Sendable entry BEFORE the
     /// main-actor hop (the raw `[String: Any]` cannot cross it).
-    private static func parseOverrides(_ raw: Any?) -> AgentEntry? {
-        guard let dict = raw as? [String: Any] else { return nil }
+    private static func parseOverrides(_ raw: Any?) -> Result<AgentEntry?, OverridesError> {
+        guard let dict = raw as? [String: Any] else { return .success(nil) }
+        let unknownKeys = dict.keys.filter { !overrideKeys.contains($0) }.sorted()
+        guard unknownKeys.isEmpty else {
+            return .failure(
+                OverridesError(
+                    "Unknown `overrides` key(s): \(unknownKeys.joined(separator: ", ")). "
+                        + "Valid keys: \(overrideKeys.sorted().joined(separator: ", "))."))
+        }
         var entry = AgentEntry(name: (dict["name"] as? String) ?? "")
         entry.description = dict["description"] as? String
         entry.systemPrompt = dict["system_prompt"] as? String
         if let model = dict["model"] as? String, !model.isEmpty { entry.model = .value(model) }
-        return entry
+        if let caps = dict["capabilities"] {
+            let valid = AgentCapabilitiesEntry.CodingKeys.allCases.map(\.rawValue)
+            guard let capsDict = caps as? [String: Any] else {
+                return .failure(OverridesError("`overrides.capabilities` must be a mapping, e.g. {calculator_enabled: true}."))
+            }
+            let unknown = capsDict.keys.filter { !valid.contains($0) }.sorted()
+            guard unknown.isEmpty else {
+                return .failure(
+                    OverridesError(
+                        "Unknown `overrides.capabilities` key(s): \(unknown.joined(separator: ", ")). "
+                            + "Valid keys: \(valid.joined(separator: ", "))."))
+            }
+            let nonBoolean = capsDict.filter { !Self.isBoolean($0.value) }.keys.sorted()
+            guard nonBoolean.isEmpty else {
+                return .failure(
+                    OverridesError(
+                        "`overrides.capabilities` takes on/off toggles (true or false); "
+                            + "\(nonBoolean.joined(separator: ", ")) is not one. Set list fields "
+                            + "in an `agents:` entry in `yaml` instead."))
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: capsDict),
+                let decoded = try? JSONDecoder().decode(AgentCapabilitiesEntry.self, from: data)
+            else {
+                return .failure(OverridesError("`overrides.capabilities` could not be read."))
+            }
+            entry.capabilities = decoded
+        }
+        return .success(entry)
+    }
+
+    /// `JSONSerialization` hands numbers and booleans back as `NSNumber`, and
+    /// `as? Bool` accepts 0 and 1; only a real boolean counts.
+    private static func isBoolean(_ value: Any) -> Bool {
+        guard let number = value as? NSNumber else { return value is Bool }
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
+    }
+
+    struct OverridesError: Error {
+        let message: String
+        init(_ message: String) { self.message = message }
     }
 
     /// Builds the one-agent document for an agent template plus `overrides`.
@@ -736,35 +802,90 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         if (overrides?.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let taken = Set(AgentManager.shared.agents.map { AgentTemplate.slug(for: $0.name) })
             entry.name = AgentTemplate.availableName(for: entry.name, takenSlugs: taken)
+            document.agents = [entry]
+            return .success(document, basedOn: template, autoNamed: entry.name)
         }
         document.agents = [entry]
         return .success(document, basedOn: template)
     }
 
+    /// Models that fill every argument send `yaml: "{}"` next to a
+    /// `template`; an empty document carries nothing, so it counts as absent.
+    static func isEmptyDocument(_ yaml: String) -> Bool {
+        ["", "{}", "null", "~"].contains(yaml.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Keys `overrides` accepts on an agent template.
+    static let overrideKeys: Set<String> = ["name", "description", "system_prompt", "model", "capabilities"]
+
+    /// The agent fields in a `yaml` sent next to an agent `template`: a bare
+    /// mapping of override keys, or a one-entry `agents:` list of them, with
+    /// an `overrides:` mapping inside either folded in. Nil for anything else
+    /// (a whole document), which stays a conflict.
+    static func agentFields(inYAML yaml: String) -> [String: Any]? {
+        guard let tree = try? Yams.load(yaml: yaml),
+            JSONSerialization.isValidJSONObject(tree),
+            let data = try? JSONSerialization.data(withJSONObject: tree),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        var fields = root
+        if Set(root.keys) == ["agents"] {
+            guard let list = root["agents"] as? [[String: Any]], list.count == 1 else { return nil }
+            fields = list[0]
+        }
+        if let nested = fields.removeValue(forKey: "overrides") {
+            guard let nested = nested as? [String: Any] else { return nil }
+            fields.merge(nested) { outer, _ in outer }
+        }
+        guard !fields.isEmpty, Set(fields.keys).isSubset(of: overrideKeys) else { return nil }
+        return fields
+    }
+
+    private func conflictingYAMLEnvelope() -> String {
+        ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "Pass `yaml` OR `template`, not both. With an agent `template`, put the agent's "
+                + "name, system_prompt, model, and capabilities in `overrides`; without one, send the "
+                + "whole `agents:` entry in `yaml`.",
+            field: "yaml",
+            tool: name,
+            retryable: false)
+    }
+
     private func loadDocument(_ args: [String: Any]) async -> DocumentLoad {
-        let inlineYAML = (args["yaml"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedYAML = (args["yaml"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inlineYAML = trimmedYAML.flatMap { Self.isEmptyDocument($0) ? nil : $0 }
         let templateName = (args["template"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let yaml: String
-        if let inlineYAML, !inlineYAML.isEmpty {
-            if let templateName, !templateName.isEmpty {
+        if let templateName, !templateName.isEmpty {
+            var rawOverrides = (args["overrides"] as? [String: Any]).flatMap { $0.isEmpty ? nil : $0 }
+            let overridesFromYAML = inlineYAML != nil
+            if let inlineYAML {
+                guard rawOverrides == nil, let fields = Self.agentFields(inYAML: inlineYAML) else {
+                    return .failure(conflictingYAMLEnvelope())
+                }
+                rawOverrides = fields
+            }
+            let overrides: AgentEntry?
+            switch Self.parseOverrides(rawOverrides) {
+            case .success(let entry): overrides = entry
+            case .failure(let error):
                 return .failure(
                     ToolEnvelope.failure(
-                        kind: .invalidArgs,
-                        message: "Pass `yaml` OR `template`, not both.",
-                        tool: name))
+                        kind: .invalidArgs, message: error.message, field: "overrides", tool: name,
+                        retryable: false))
             }
-            yaml = inlineYAML
-        } else if let templateName, !templateName.isEmpty {
             // Agent templates (Templates tab) take precedence over whole-config
             // YAML templates of the same name.
-            let overrides = Self.parseOverrides(args["overrides"])
             if let load = await agentTemplateDocument(named: templateName, overrides: overrides) {
                 return load
             }
             switch ConfigTemplateStore.load(name: templateName) {
-            case .success(let contents): yaml = contents
+            case .success(let contents):
+                if overridesFromYAML { return .failure(conflictingYAMLEnvelope()) }
+                yaml = contents
             case .failure(let message):
                 let agentNames = await MainActor.run {
                     TemplateStore.shared.orchestratorVisible(kind: .agent).map(\.name)
@@ -791,6 +912,8 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
                     ToolEnvelope.failure(
                         kind: .invalidArgs, message: fullMessage, field: "template", tool: name))
             }
+        } else if let inlineYAML {
+            yaml = inlineYAML
         } else {
             return .failure(
                 ToolEnvelope.failure(

@@ -112,8 +112,16 @@ extension Template {
         if let v = over.selfSchedulingEnabled { out.selfSchedulingEnabled = v }
         if let v = over.computerUseEnabled { out.computerUseEnabled = v }
         if let v = over.browserUseEnabled { out.browserUseEnabled = v }
+        if let v = over.imageEnabled { out.imageEnabled = v }
+        if let v = over.applescriptEnabled { out.applescriptEnabled = v }
+        if let v = over.appleApps { out.appleApps = v }
         if let v = over.speakEnabled { out.speakEnabled = v }
         if let v = over.renderChartEnabled { out.renderChartEnabled = v }
+        if let v = over.calculatorEnabled { out.calculatorEnabled = v }
+        if let v = over.redactionToolsEnabled { out.redactionToolsEnabled = v }
+        if let v = over.taskChecklistEnabled { out.taskChecklistEnabled = v }
+        if let v = over.clarifyEnabled { out.clarifyEnabled = v }
+        if let v = over.artifactsEnabled { out.artifactsEnabled = v }
         if let v = over.relayEnabled { out.relayEnabled = v }
         return out
     }

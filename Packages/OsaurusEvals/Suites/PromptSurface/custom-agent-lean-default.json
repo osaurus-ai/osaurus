@@ -1,0 +1,21 @@
+{
+  "id": "prompt_surface.custom-agent-lean-default",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • custom host-folder agent ships the lean default tool surface",
+  "query": "",
+  "notes": "A custom agent with a host folder and no opt-ins: `calculate` and the redaction pair (`detect_pii`, `redact_file`) are per-agent opt-ins, so they are absent, while the workspace core, file history, and the default-on loop tools stay. Composed with Raptor (compact-prompt class) so the census prices the small-model surface.",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "composeModel": "OsaurusAI/Raptor-0.6-4B-JANG_6M",
+      "expectCompactPrompt": true,
+      "expectDeterministic": true,
+      "mustIncludeTools": [
+        "file_read", "file_search", "file_write", "file_edit", "shell_run",
+        "file_undo", "file_operation_history",
+        "todo", "complete", "clarify", "share_artifact"
+      ],
+      "mustExcludeTools": ["calculate", "detect_pii", "redact_file"]
+    }
+  }
+}

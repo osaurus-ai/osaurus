@@ -1038,10 +1038,7 @@ public struct SystemPromptComposer: Sendable {
                             + "After creating or changing runnable code, run an available "
                             + "syntax/build/test/behavior check before saying it works; a successful "
                             + "file mutation proves only that bytes were saved. "
-                            + "To append while preserving a file, call file_write with mode "
-                            + "append and put only the new bytes in content. "
-                            + "file_write content has no length limit; if your own output would be cut short "
-                            + "on a very large text file, write it in parts with mode append. "
+                            + SystemPromptTemplates.batchReadLine + " "
                             + SystemPromptTemplates.folderDocumentFormatsLine
                     )
                 )
@@ -1059,7 +1056,10 @@ public struct SystemPromptComposer: Sendable {
                     .static(
                         id: "folderContext",
                         label: L("Working Directory"),
-                        content: SystemPromptTemplates.leanFolderContext(from: folder)
+                        content: SystemPromptTemplates.leanFolderContext(
+                            from: folder,
+                            toolNames: resolvedNames
+                        )
                     )
                 )
             }
@@ -2031,6 +2031,9 @@ public struct SystemPromptComposer: Sendable {
     /// `capabilities_load` that would have restored the full spec.
     private static let constraintPreservingBootstrapToolNames: Set<String> = [
         "complete", "clarify", "share_artifact",
+        // Small schemas whose property descriptions carry the syntax: the
+        // checklist line format and the recall query shape.
+        "todo", "search_memory",
         "write_knowledge", "delete_knowledge", "edit_knowledge",
         // The `reason` property description is the only place the model
         // learns the argument is a user-facing sentence shown in the picker.
@@ -2710,6 +2713,18 @@ public struct SystemPromptComposer: Sendable {
         return visible
     }
 
+    /// Optional built-ins this agent has switched off. Custom agents only;
+    /// a session `capabilities_load` or a manual pick still keeps one.
+    static func disabledOptionalToolNames(_ snapshot: AgentConfigSnapshot) -> Set<String> {
+        var names: Set<String> = []
+        if !snapshot.calculatorEnabled { names.insert(CalculatorTool.toolName) }
+        if !snapshot.redactionToolsEnabled { names.formUnion(ToolRegistry.redactionToolNames) }
+        if !snapshot.taskChecklistEnabled { names.formUnion(["todo", "complete"]) }
+        if !snapshot.clarifyEnabled { names.insert("clarify") }
+        if !snapshot.artifactsEnabled { names.insert("share_artifact") }
+        return names
+    }
+
     @MainActor
     static func resolveTools(
         snapshot: AgentConfigSnapshot,
@@ -2773,9 +2788,16 @@ public struct SystemPromptComposer: Sendable {
         // but are stripped below unless the agent opts in. The first-turn baseline
         // uses compact schema skeletons; manual picks and `capabilities_load`
         // replace those skeletons with full specs when a task proves it needs
-        // the heavier argument contract.
+        // the heavier argument contract. Custom agents on models outside the
+        // compact-prompt class keep the full specs: the trimmed one-liners drop
+        // examples and argument rules a larger model can afford and uses. The
+        // Default agent's turn-1 schema has a fixed budget at every size.
+        let compactBaseline =
+            snapshot.agentId == Agent.defaultId
+            || ContextSizeResolver.resolve(modelId: snapshot.model).prefersCompactPrompt
+        let compactBaselineSpec: (Tool) -> Tool = { compactBaseline ? compactBootstrapSpec($0) : $0 }
         let baseline = filtered(ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode))
-            .map(compactBootstrapSpec)
+            .map(compactBaselineSpec)
         add(baseline)
 
         // Design C: the auto-mode schema is the fixed hot set above plus
@@ -2885,6 +2907,12 @@ public struct SystemPromptComposer: Sendable {
             }
             if !snapshot.knowledgeCuratorEnabled {
                 for name in knowledgeCuratorToolNames where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
+            // The Default agent's surface is its own allowlist below.
+            if snapshot.agentId != Agent.defaultId {
+                for name in disabledOptionalToolNames(snapshot) where !keep.contains(name) {
                     byName.removeValue(forKey: name)
                 }
             }
@@ -3092,7 +3120,7 @@ public struct SystemPromptComposer: Sendable {
                 additionalToolNames.contains("image")
                 || (isManual && (snapshot.manualToolNames?.contains("image") ?? false))
             let genOnly = ImageTool.generationOnlySpec()
-            byName["image"] = imageLoadedExplicitly ? genOnly : compactBootstrapSpec(genOnly)
+            byName["image"] = imageLoadedExplicitly ? genOnly : compactBaselineSpec(genOnly)
         }
 
         // The chat contract exposes one compact capability gateway. Keep the
@@ -3226,7 +3254,10 @@ public struct SystemPromptComposer: Sendable {
             // chat's folder root directly and have no sandbox bridge, so
             // VM-only mode must not offer them.
             if executionMode.usesHostFolderTools {
-                let hostOnly = ToolRegistry.hostFolderExtraToolNames
+                var hostOnly = ToolRegistry.hostFolderExtraToolNames
+                if !snapshot.redactionToolsEnabled {
+                    hostOnly.subtract(ToolRegistry.redactionToolNames.subtracting(additionalToolNames))
+                }
                 add(
                     ToolRegistry.shared.specs(forTools: Array(hostOnly)),
                     replacingExisting: true
@@ -3386,14 +3417,27 @@ public struct SystemPromptComposer: Sendable {
             // extractors as a trusted folder (`WorkspaceShareRoute`).
             description =
                 "Read a file or list a directory. Handles source/text, PDF, Word (.docx/.doc/.rtf), "
-                + "PowerPoint (.pptx), Excel (.xlsx preview; `sheet_name`), and images (shown to vision "
-                + "models, OCR text otherwise). Call it on the document itself; do not unzip or convert first."
+                +                 "PowerPoint (.pptx), Excel (.xlsx preview; `sheet_name`), and images (shown to vision "
+                + "models, OCR text otherwise). Call it on the document itself; do not unzip or convert first. "
+                + "Read several files in one call: the first in `path`, the rest in `paths`."
                 + (executionMode.usesSandboxTools
                     ? " Paths resolve in the VM working folder (`/workspace/...`)." : "")
             properties = [
                 "path": .object([
                     "type": .string("string"),
                     "description": .string("Relative file or directory path"),
+                ]),
+                "paths": .object([
+                    "type": .string("array"),
+                    "items": .object(["type": .string("string")]),
+                    "maxItems": .number(Double(FileReadTool.maxBatchPaths)),
+                    "description": .string(
+                        "Optional more files read with `path` in the same call (\(FileReadTool.maxBatchPaths) total); the other options apply to each"
+                    ),
+                ]),
+                "pages": .object([
+                    "type": .string("string"),
+                    "description": .string("Optional PDF page or range (\"3\", \"3-5\")"),
                 ]),
                 "max_depth": .object([
                     "type": .string("integer"),
@@ -3421,11 +3465,11 @@ public struct SystemPromptComposer: Sendable {
                 ]),
                 "max_rows": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional XLSX rows per sheet (max 50)"),
+                    "description": .string("Optional XLSX rows per sheet (default 8, max 50)"),
                 ]),
                 "max_columns": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional XLSX columns per row (max 30)"),
+                    "description": .string("Optional XLSX columns per row (default 8, max 30)"),
                 ]),
             ]
             if let mode = fullProperties["mode"] {
@@ -3574,6 +3618,10 @@ public struct SystemPromptComposer: Sendable {
                 "max_results": .object([
                     "type": .string("integer"),
                     "description": .string("Optional result cap (default 50)"),
+                ]),
+                "offset": .object([
+                    "type": .string("integer"),
+                    "description": .string("Skip this many matches; pass the previous `next_offset` to page"),
                 ]),
             ]
             required = ["pattern"]
@@ -3869,7 +3917,13 @@ public struct SystemPromptComposer: Sendable {
         timeContext: String? = nil
     ) -> String? {
         var prefix = ""
-        if let memorySection {
+        let hasTimeContext =
+            timeContext.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
+        if var memorySection {
+            // Two clocks in one turn disagree in format; `[Current Time]` wins.
+            if hasTimeContext {
+                memorySection = MemoryContextAssembler.removingCurrentDateLine(memorySection)
+            }
             let trimmed = memorySection.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { prefix = "[Memory]\n\(trimmed)\n[/Memory]\n\n" }
         }

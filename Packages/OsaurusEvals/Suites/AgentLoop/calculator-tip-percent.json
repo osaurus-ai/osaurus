@@ -4,7 +4,9 @@
   "label": "agent loop • calculator: percent of a bill",
   "query": "Our dinner bill was $186.40. What's an 18% tip, and what's the total with tip?",
   "notes": "Percent arithmetic: tip 33.552 → $33.55, total $219.95. Off-CI (needs a model).",
-  "fixtures": {},
+  "fixtures": {
+    "agentCapabilities": { "calculatorEnabled": true }
+  },
   "expect": {
     "agentLoop": {
       "maxIterations": 4,

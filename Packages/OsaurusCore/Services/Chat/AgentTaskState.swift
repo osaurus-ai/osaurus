@@ -789,8 +789,11 @@ public final class AgentTaskState {
         // `retryable:false` contract. Transient extraction failures therefore
         // execute again, while an unchanged challenge-page request is replayed
         // rather than sent to the network indefinitely.
+        // A batch `file_read` (`paths`) has no single path a later write
+        // could invalidate against, so it is never held or replayed.
         if Self.deterministicErrorTools.contains(name)
-            || Self.deterministicAsIsFailureTools.contains(name)
+            || Self.deterministicAsIsFailureTools.contains(name),
+            !(name == "file_read" && Self.hasBatchPaths(argsJSON))
         {
             let holdsByKind = Self.errorKind(result).map(Self.deterministicErrorKinds.contains)
                 ?? false
@@ -997,7 +1000,9 @@ public final class AgentTaskState {
         // Search tools may omit `path` (it defaults to the root); key them
         // on "." — write invalidation clears search entries wholesale, so
         // the sentinel never has to match a written path.
-        if Self.readLikeTools.contains(name), ToolEnvelope.isSuccess(result) {
+        if Self.readLikeTools.contains(name), ToolEnvelope.isSuccess(result),
+            !(name == "file_read" && Self.hasBatchPaths(argsJSON))
+        {
             if let target = pathArgument(argsJSON) {
                 freshReads[sig] = FreshRead(
                     canonicalPath: Self.canonicalPath(target),
@@ -1104,7 +1109,7 @@ public final class AgentTaskState {
         case .populatedListing:
             guard isWandering else { return nil }
             return
-                "Entries are in `result.entries`. To read one, call `file_read` with that entry's `path` value. Do not re-list this directory."
+                "Entries are in `result.entries`. To read one, call `file_read` with that entry's `path` value; to read several, pass their `path` values together as `paths`. Do not re-list this directory."
         case .emptyListing:
             guard isWandering else { return nil }
             return
@@ -1225,6 +1230,22 @@ public final class AgentTaskState {
                     nextStartLine: nextStart,
                     nextEndLine: nextEnd
                 )
+            }
+            return .fileContent
+        case "files":
+            // A batch read: the first file cut short by the output cap
+            // drives the continuation steer, like a single partial read.
+            for file in payload["files"] as? [[String: Any]] ?? []
+            where file["truncated"] as? Bool == true {
+                if let nextStart = file["next_start_line"] as? Int,
+                    let nextEnd = file["next_end_line"] as? Int
+                {
+                    return .partialFileContent(
+                        path: file["path"] as? String ?? "",
+                        nextStartLine: nextStart,
+                        nextEndLine: nextEnd
+                    )
+                }
             }
             return .fileContent
         case "native_image_generation_job":
@@ -1477,6 +1498,13 @@ public final class AgentTaskState {
         // machine sees the raw call, so it must resolve the same target or
         // a verify-read after that edit would replay stale content.
         return Self.sharedEntryPath(dict)
+    }
+
+    static func hasBatchPaths(_ argsJSON: String) -> Bool {
+        guard let data = argsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (FileReadTool.batchPaths(dict)?.count ?? 0) > 1
     }
 
     /// The one `path` every `edits` / `operations` entry names (entries may

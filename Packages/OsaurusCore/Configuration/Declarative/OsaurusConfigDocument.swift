@@ -358,10 +358,20 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
     /// Custom agents only — the Orchestrator configures these, never calls
     /// them.
     public var appleApps: [String]?
+    /// `calculate` (exact arithmetic) on this agent.
+    public var calculatorEnabled: Bool?
+    /// `detect_pii` / `redact_file` in this agent's host-folder chats.
+    public var redactionToolsEnabled: Bool?
+    /// `todo` + `complete` on this agent.
+    public var taskChecklistEnabled: Bool?
+    /// `clarify` on this agent.
+    public var clarifyEnabled: Bool?
+    /// `share_artifact` on this agent.
+    public var artifactsEnabled: Bool?
 
     public init() {}
 
-    enum CodingKeys: String, CodingKey {
+    enum CodingKeys: String, CodingKey, CaseIterable {
         case toolsEnabled = "tools_enabled"
         case memoryEnabled = "memory_enabled"
         case searchMemoryEnabled = "search_memory_enabled"
@@ -378,6 +388,11 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
         case renderChartEnabled = "render_chart_enabled"
         case relayEnabled = "relay_enabled"
         case appleApps = "apple_apps"
+        case calculatorEnabled = "calculator_enabled"
+        case redactionToolsEnabled = "redaction_tools_enabled"
+        case taskChecklistEnabled = "task_checklist_enabled"
+        case clarifyEnabled = "clarify_enabled"
+        case artifactsEnabled = "artifacts_enabled"
     }
 }
 

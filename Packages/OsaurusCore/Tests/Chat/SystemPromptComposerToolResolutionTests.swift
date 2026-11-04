@@ -134,7 +134,12 @@ struct SystemPromptComposerToolResolutionTests {
         browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
-        spawnableAgentIDs: [UUID] = []
+        spawnableAgentIDs: [UUID] = [],
+        calculatorEnabled: Bool = false,
+        redactionToolsEnabled: Bool = false,
+        taskChecklistEnabled: Bool = true,
+        clarifyEnabled: Bool = true,
+        artifactsEnabled: Bool = true
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
             agentId: UUID(),
@@ -153,7 +158,12 @@ struct SystemPromptComposerToolResolutionTests {
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
-            spawnableAgentNames: []
+            spawnableAgentNames: [],
+            calculatorEnabled: calculatorEnabled,
+            redactionToolsEnabled: redactionToolsEnabled,
+            taskChecklistEnabled: taskChecklistEnabled,
+            clarifyEnabled: clarifyEnabled,
+            artifactsEnabled: artifactsEnabled
         )
     }
 
@@ -874,19 +884,74 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     /// The folder prompt tells the model to review and undo with these; the
-    /// real request must carry them, not just the five-tool core.
+    /// real request must carry them, not just the five-tool core. Redaction
+    /// is a per-agent opt-in.
     @Test
-    func hostFolderSchemaCarriesHistoryCopyAndRedactionTools() {
+    func hostFolderSchemaCarriesHistoryAndCopyTools_redactionOnlyWhenEnabled() {
         withRegisteredFolderTools { folder in
-            let tools = SystemPromptComposer.resolveTools(
-                snapshot: makeSnapshot(),
-                executionMode: .hostFolder(folder),
-                query: "Undo the last change to report.docx"
+            let lean = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(),
+                    executionMode: .hostFolder(folder),
+                    query: "Undo the last change to report.docx"
+                ).map(\.function.name)
             )
-            let names = Set(tools.map(\.function.name))
-            for name in ["file_undo", "file_operation_history", "file_copy", "redact_file", "detect_pii"] {
-                #expect(names.contains(name), "missing \(name)")
+            for name in ["file_undo", "file_operation_history", "file_copy"] {
+                #expect(lean.contains(name), "missing \(name)")
             }
+            #expect(lean.isDisjoint(with: ToolRegistry.redactionToolNames))
+
+            let optedIn = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(redactionToolsEnabled: true),
+                    executionMode: .hostFolder(folder),
+                    query: "Undo the last change to report.docx"
+                ).map(\.function.name)
+            )
+            #expect(optedIn.isSuperset(of: ToolRegistry.redactionToolNames))
+        }
+    }
+
+    @Test
+    func calculatorIsOptInForCustomAgents() {
+        withRegisteredFolderTools { folder in
+            @MainActor func names(_ snapshot: AgentConfigSnapshot) -> Set<String> {
+                Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: snapshot,
+                        executionMode: .hostFolder(folder),
+                        query: "Total the April statement"
+                    ).map(\.function.name)
+                )
+            }
+            #expect(!names(makeSnapshot()).contains(CalculatorTool.toolName))
+            #expect(names(makeSnapshot(calculatorEnabled: true)).contains(CalculatorTool.toolName))
+        }
+    }
+
+    @Test
+    func agentLoopToolsCanBeSwitchedOffPerAgent() {
+        withRegisteredFolderTools { folder in
+            @MainActor func names(_ snapshot: AgentConfigSnapshot) -> Set<String> {
+                Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: snapshot,
+                        executionMode: .hostFolder(folder),
+                        query: "Refactor the parser in three steps"
+                    ).map(\.function.name)
+                )
+            }
+            let defaults = names(makeSnapshot())
+            #expect(defaults.isSuperset(of: ["todo", "complete", "clarify", "share_artifact"]))
+            let off = names(
+                makeSnapshot(taskChecklistEnabled: false, clarifyEnabled: false, artifactsEnabled: false)
+            )
+            #expect(off.isDisjoint(with: ["todo", "complete", "clarify", "share_artifact"]))
+            // A manual pick still keeps a switched-off tool.
+            let manual = names(
+                makeSnapshot(toolMode: .manual, manualToolNames: ["todo"], taskChecklistEnabled: false)
+            )
+            #expect(manual.contains("todo"))
         }
     }
 
@@ -1702,7 +1767,7 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(
                     propertyNames("file_read") == [
                         "path", "max_depth", "sheet_name", "start_line", "end_line",
-                        "tail_lines", "max_chars", "max_rows", "max_columns", "mode",
+                        "tail_lines", "max_chars", "max_rows", "max_columns", "mode", "paths", "pages",
                     ]
                 )
                 let readDescription = byName["file_read"]?.function.description ?? ""
@@ -1710,7 +1775,7 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(readDescription.contains("do not unzip"))
                 #expect(
                     propertyNames("file_search") == [
-                        "pattern", "path", "target", "file_pattern", "max_results",
+                        "pattern", "path", "target", "file_pattern", "max_results", "offset",
                     ]
                 )
                 #expect(

@@ -96,6 +96,26 @@ struct TimeContextTests {
         #expect(chatA == chatB)
     }
 
+    @Test func memoryDateLineGivesWayToCurrentTime() throws {
+        let zone = try #require(TimeZone(identifier: "Asia/Kolkata"))
+        let memory = "Current date: 3 November 2026\n\n## What I should always remember\n- User works at Osaurus"
+        let withTime = try #require(
+            SystemPromptComposer.composeInjectedUserPrefix(
+                memorySection: memory,
+                screenContext: nil,
+                timeContext: SystemPromptTemplates.timeContext(now: fixedInstant, timeZone: zone)
+            )
+        )
+        #expect(!withTime.contains("Current date:"))
+        #expect(withTime.contains("- User works at Osaurus"))
+        #expect(withTime.contains("[Current Time]"))
+
+        let withoutTime = try #require(
+            SystemPromptComposer.composeInjectedUserPrefix(memorySection: memory, screenContext: nil)
+        )
+        #expect(withoutTime.contains("Current date: 3 November 2026"))
+    }
+
     @Test func timeContextAloneProducesPrefix() throws {
         let zone = try #require(TimeZone(identifier: "Asia/Kolkata"))
         let time = SystemPromptTemplates.timeContext(now: fixedInstant, timeZone: zone)
