@@ -795,7 +795,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         startTime: Date,
         inferenceSource: InferenceSource,
         temperature: Float?,
-        maxTokens: Int,
+        maxTokens: Int?,
         tokensPerSecond: Double? = nil,
         completionTokens: Int? = nil,
         cachedInputTokens: Int? = nil,
@@ -954,13 +954,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         }()
         let loggedModel = connection?.info.mode == .remoteAgentRun
             ? request.context.remoteAgentLogModel?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        // Record caller overrides, not the dispatch placeholder. An omitted
+        // limit is resolved later from runtime/bundle defaults; logging 16K
+        // here would misrepresent that inherited request as an explicit cap.
         return wrapStreamWithLogging(inner, logEvent: Self.responsesLogEvent,
             source: source, turnId: turnID, parentTurnId: parentTurnID,
             requestId: request.context.idempotencyKey,
             model: loggedModel?.isEmpty == false ? loggedModel! : effectiveModel,
             inputTokens: estimateInputTokens(request.input),
             temperature: request.generation.temperature,
-            maxTokens: request.generation.maxOutputTokens ?? 16384,
+            maxTokens: request.generation.maxOutputTokens,
             requestBodyJSON: shouldLog ? Self.serializeResponseRequestForLog(request) : nil,
             connection: connection?.info, logPath: connection?.path ?? "/responses",
             wireProbe: probe,
@@ -1041,7 +1044,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         // Pulled out for logging convenience; the actual dispatch values
         // (incl. these two) live on `dispatch.params`.
         let temperature = request.temperature
-        let maxTokens = request.resolvedMaxTokens ?? 16384
+        let maxTokens = request.resolvedMaxTokens
 
         let dispatch = try await prepareDispatch(request: request, trace: trace)
         let params = dispatch.params
@@ -1363,7 +1366,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         model: String,
         inputTokens: Int,
         temperature: Float?,
-        maxTokens: Int,
+        maxTokens: Int?,
         requestBodyJSON: String? = nil,
         connection: RequestConnectionInfo? = nil,
         logPath: String? = nil,
@@ -1792,7 +1795,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         let messages = request.messages
         let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature
-        let maxTokens = request.resolvedMaxTokens ?? 16384
+        let maxTokens = request.resolvedMaxTokens
         let shouldLogToInsights = Self.shouldLogInferenceToInsights(
             source: loggedSource,
             warmupPrefill: request.warmupPrefill

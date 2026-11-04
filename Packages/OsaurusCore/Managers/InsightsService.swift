@@ -874,7 +874,9 @@ extension InsightsService {
     /// Accepts optional `requestBody`/`responseBody` so Chat UI inferences
     /// can surface the same level of detail as HTTP API requests in the
     /// Insights detail pane (system prompt, tools, accumulated assistant
-    /// text). Defaults are nil to preserve existing call-site ergonomics.
+    /// text). An omitted caller output limit remains absent; runtime dispatch
+    /// placeholders are not explicit request settings. Defaults are nil to
+    /// preserve existing call-site ergonomics.
     nonisolated static func logInference(
         source: RequestSource,
         turnId: UUID? = nil,
@@ -887,7 +889,7 @@ extension InsightsService {
         outputTokenSource: RequestLog.TokenCountSource? = nil,
         durationMs: Double,
         temperature: Float?,
-        maxTokens: Int,
+        maxTokens: Int?,
         toolCalls: [ToolCallLog]? = nil,
         finishReason: RequestLog.FinishReason = .stop,
         errorMessage: String? = nil,

@@ -113,6 +113,8 @@ Optional fields are **omitted** when nil.
 | `agentId`, `agentName`, `sessionId`, `turnId`, `requestId` | | Attribution. `turnId` links a row to the chat assistant turn (delegated subagent and helper-loop rows inherit the parent turn). |
 | `pluginId`, `userAgent`, `clientIP` |                            | Inbound / plugin attribution.                                                                            |
 
+For in-process Chat/Responses inference, `temperature` and `maxTokens` describe caller overrides. An omitted output limit stays absent in the log and appears as defaults in Insights; it is resolved by the runtime/model bundle. A dispatch placeholder is not an explicit user cap. Explicit limits, including 16,384 and 1,048,576, remain recorded exactly. Request-rate and generation-rate fields have distinct timing scopes; the request log does not by itself establish the final effective sampler or bundle limit.
+
 `egress.details` is a flat `String → String` map. The store bounds it to
 **32 keys**, key length **64**, value length **2 048** characters
 (`ActivityLogStore.boundedDetails`). Emitters use it for category-specific
