@@ -199,6 +199,12 @@ extension EvalRunner {
             }
         )
         let expectedSessionCount = 1 + sessionBoundaries.count
+        if exp.reloadModelOnNewSession == true, sessionBoundaries.isEmpty {
+            return Self.errored(
+                testCase, label: label, modelId: modelId,
+                note: "reloadModelOnNewSession requires at least one valid fresh-session turn"
+            )
+        }
         if exp.systemPrompt != nil, exp.systemPromptsPerSession != nil {
             return Self.errored(
                 testCase, label: label, modelId: modelId,
@@ -240,6 +246,7 @@ extension EvalRunner {
             systemPrompt: isolatedInputs.systemPrompt,
             systemPromptsPerSession: isolatedInputs.systemPromptsPerSession,
             startNewSessionBeforeTurns: exp.startNewSessionBeforeTurns ?? [],
+            reloadModelOnNewSession: exp.reloadModelOnNewSession ?? false,
             toolResultFollowUps: exp.toolResultFollowUps
         )
         let elapsedMs = Date().timeIntervalSince(started) * 1000
@@ -259,6 +266,9 @@ extension EvalRunner {
                 + "diskHits +\(transcript.diskL2HitsDelta) · diskStores +\(transcript.diskL2StoresDelta)",
         ]
         let turnMetrics = transcript.turnMetrics ?? []
+        if exp.reloadModelOnNewSession == true {
+            notes.append("session lifecycle: model drained/unloaded before fresh-session turns \(sessionBoundaries.sorted())")
+        }
         for turn in turnMetrics {
             notes.append(
                 "turn \(turn.turnNumber) session \(turn.sessionNumber): "

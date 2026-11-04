@@ -885,6 +885,16 @@ that explicitly target those tiers.
 
 - `systemPromptsPerSession` must contain one prompt per configured session and
   enables short-prefix → extended-prefix → longest-match three-chat proofs.
+- `reloadModelOnNewSession` explicitly drains and unloads the local model
+  before turns listed in `startNewSessionBeforeTurns`. The next request loads
+  it again and restores serialized files through a new cache coordinator.
+  Completed-file SSD proofs use this mode to exclude a previous coordinator's
+  `diskPending` RAM payload; `diskPending` still cannot satisfy a `disk` gate.
+  It defaults to false. Ordinary chats and tool continuations keep their
+  nonblocking write-behind behavior. TTFT in reload rows includes model load
+  and is not comparable to warm-chat TTFT; filesystem-cache state is not a
+  claim of cold physical-drive throughput. A failed drain stops the row with
+  its earlier turn evidence intact.
 - `minStructuredCacheRestoreTurns` counts post-first turns with a nonzero typed
   restore event; it does not infer reuse from aggregate counters or UI color.
 - `requirePrefillProgressAccounting` requires a stable prompt total, bounded and

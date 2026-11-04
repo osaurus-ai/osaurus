@@ -93,6 +93,7 @@ struct AgentLoopCacheProofCampaignTests {
         let expectation = try #require(testCase.expect.cacheProof)
 
         #expect(expectation.startNewSessionBeforeTurns == [2])
+        #expect(expectation.reloadModelOnNewSession == true)
         #expect(expectation.maxTokens == 512)
         #expect(expectation.systemPrompt?.contains("shared operating reference") == true)
         #expect(expectation.minCacheRestoredTokens == 128)
@@ -116,6 +117,7 @@ struct AgentLoopCacheProofCampaignTests {
         let expectation = try #require(testCase.expect.cacheProof)
 
         #expect(expectation.startNewSessionBeforeTurns == [2, 3])
+        #expect(expectation.reloadModelOnNewSession == true)
         #expect(expectation.systemPrompt?.contains("shared operating reference") == true)
         #expect(expectation.systemPromptsPerSession == nil)
         #expect(expectation.followUpTurns?.count == 2)
@@ -139,6 +141,7 @@ struct AgentLoopCacheProofCampaignTests {
 
         #expect(expectation.startNewSessionBeforeTurns == [2, 3])
         #expect(expectation.systemPromptsPerSession?.count == 3)
+        #expect(expectation.reloadModelOnNewSession == true)
         #expect(expectation.systemPromptsPerSession?[0] != expectation.systemPromptsPerSession?[1])
         #expect(expectation.systemPromptsPerSession?[1] == expectation.systemPromptsPerSession?[2])
         #expect(expectation.requireNoCacheRestoreOnTurns == [2])
