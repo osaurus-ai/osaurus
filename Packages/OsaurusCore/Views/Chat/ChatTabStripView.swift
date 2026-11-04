@@ -576,7 +576,7 @@ private struct ChatTabItemView: View {
     }
 
     private var originLabel: String? {
-        if isFromPairedPhone { return "via iPhone" }
+        if isFromPairedPhone { return "via Mobile" }
         guard session.source != .chat else { return nil }
         // A run hosted for a remote caller names them ("for Alice · Workspace").
         if session.source == .workspace, let context = session.workspaceContext, context.isServedForTeammate {
