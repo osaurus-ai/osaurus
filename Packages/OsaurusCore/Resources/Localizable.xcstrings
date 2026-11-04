@@ -98466,7 +98466,7 @@
         }
       }
     },
-    "%@ of this download is an n-gram table that stays on SSD and is not counted toward running memory." : {
+    "%@ of this download is an SSD-backed n-gram table, excluded from resident weights. File caching and longer chats can still use additional RAM." : {
 
     },
     "Estimated memory while running" : {
