@@ -350,10 +350,17 @@ struct ExternalModelLocatorTests {
 
         let bundle = customRoot.appendingPathComponent("publisher/repo", isDirectory: true)
         writeBundle(at: bundle)
-        try? Data(#"{"model_type":"gemma4"}"#.utf8)
-            .write(to: bundle.appendingPathComponent("config.json"))
-        try? Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
-            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        let config = Data(#"{"model_type":"gemma4"}"#.utf8)
+        let index = Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
+        try? config.write(to: bundle.appendingPathComponent("config.json"))
+        try? index.write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        let engram = Data(repeating: 7, count: 517)
+        try? FileManager.default.createDirectory(
+            at: bundle.appendingPathComponent("engram"), withIntermediateDirectories: true)
+        try? engram.write(to: bundle.appendingPathComponent("engram/table.safetensors"))
+        // The index deliberately advertises a stale 44 GB payload. Actual installed
+        // files win; nested SSD tables count toward download, not target weights.
+        let expectedDownloadBytes = Int64(config.count + index.count + engram.count + 2 + 1)
 
         ExternalModelLocator.testRootsOverride = [(root: customRoot, source: .customModelFolder)]
         ExternalModelLocator.rescan()
@@ -372,7 +379,8 @@ struct ExternalModelLocatorTests {
                 $0.id == "publisher/repo"
                     && $0.externalSource == "Custom model folder"
                     && $0.modelType == "gemma4"
-                    && $0.downloadSizeBytes == 44_298_536_392
+                    && $0.downloadSizeBytes == expectedDownloadBytes
+                    && $0.weightSizeBytes == 1
             }
         )
 
