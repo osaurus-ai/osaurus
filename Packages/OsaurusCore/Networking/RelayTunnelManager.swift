@@ -233,6 +233,11 @@ public final class RelayTunnelManager: ObservableObject {
     /// `addAgentToTunnel()` clobber the `connect()` handler, permanently
     /// stalling tunnel auth.
     private var pendingNonceHandlers: [(String) -> Void] = []
+    /// Agents waiting to be added to the live tunnel, one at a time (see
+    /// `RelayAddAgentQueue`), and the timer on the one in flight.
+    private var addQueue = RelayAddAgentQueue()
+    private var addTimeoutTask: Task<Void, Never>?
+    private static let addAgentTimeout: TimeInterval = 15
     /// Bounded retry budget for `auth_error` frames (e.g. transient clock
     /// skew). Reset on a successful auth.
     private var authErrorRetries = 0
@@ -301,6 +306,10 @@ public final class RelayTunnelManager: ObservableObject {
                 Task { await connect() }
             }
         } else {
+            if addQueue.remove(agentId) {
+                addTimeoutTask?.cancel()
+                pumpAddQueue()
+            }
             if isConnected {
                 removeAgentFromTunnel(agentId: agentId)
             }
@@ -395,6 +404,8 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        addQueue.reset()
+        addTimeoutTask?.cancel()
         supersededAgentIds.removeAll()
         supersededAddresses.removeAll()
         cancelAllPublicChecks()
@@ -587,6 +598,9 @@ public final class RelayTunnelManager: ObservableObject {
             let errorMsg = json["error"] as? String ?? "unknown"
             print("[Relay] Error frame: \(errorMsg)")
             MobileConnectLog.write("relay: error frame from the relay: \(errorMsg)")
+            // The only frame the relay answers an `add_agent` with besides
+            // `agent_added`: without this the agent would wait forever.
+            if addQueue.inFlight != nil { failInFlightAdd(errorMsg) }
         default:
             break
         }
@@ -639,6 +653,8 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        addQueue.reset()
+        addTimeoutTask?.cancel()
         cancelAllPublicChecks()
 
         // An auth_error used to permanently kill the tunnel: the receive loop
@@ -673,6 +689,11 @@ public final class RelayTunnelManager: ObservableObject {
         if let agent = findAgent(byAddress: lower) {
             addressToAgentId[lower] = agent.id
             beginPublicRouteCheck(for: agent.id, url: url)
+            if addQueue.inFlight == agent.id {
+                addTimeoutTask?.cancel()
+                addQueue.finish(agent.id)
+                pumpAddQueue()
+            }
         }
     }
 
@@ -1117,23 +1138,73 @@ public final class RelayTunnelManager: ObservableObject {
 
     // MARK: - Mid-Session Agent Management
 
+    /// Adds an agent to the live tunnel once those queued before it are done:
+    /// the relay holds one challenge per tunnel, so adds sent together all
+    /// but the last fail with `invalid_nonce`.
     private func addAgentToTunnel(agentId: UUID) async {
+        addQueue.enqueue(agentId)
+        pumpAddQueue()
+    }
+
+    /// Starts the next queued add if none is in flight.
+    private func pumpAddQueue() {
+        guard isConnected, let agentId = addQueue.start() else { return }
+        addTimeoutTask?.cancel()
+        addTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.addAgentTimeout * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.addQueue.inFlight == agentId else { return }
+            self.failInFlightAdd("no answer in \(Int(Self.addAgentTimeout))s")
+        }
+        Task { await sendAddAgent(agentId: agentId) }
+    }
+
+    /// The relay refused the in-flight add or never answered: try it again
+    /// while attempts remain, then show the error and move on.
+    private func failInFlightAdd(_ reason: String) {
+        addTimeoutTask?.cancel()
+        guard let failure = addQueue.fail() else { return }
+        let agentId = failure.id
+        if failure.willRetry {
+            MobileConnectLog.write("relay: adding \(agentId.uuidString) failed (\(reason)), trying again")
+        } else {
+            MobileConnectLog.write(
+                "relay: FAILED to add \(agentId.uuidString) after \(RelayAddAgentQueue.maxAttempts) tries (\(reason))"
+            )
+            agentStatuses[agentId] = .error(reason)
+        }
+        pumpAddQueue()
+    }
+
+    /// An add that can't be sent at all: report it and move on to the next.
+    private func abandonAdd(_ agentId: UUID, _ reason: String) {
+        addTimeoutTask?.cancel()
+        addQueue.finish(agentId)
+        agentStatuses[agentId] = .error(reason)
+        pumpAddQueue()
+    }
+
+    private func sendAddAgent(agentId: UUID) async {
         ensureAgentIdentity(agentId)
 
         guard let agent = AgentManager.shared.agent(for: agentId),
             let keyPath = agent.agentKeyPath,
             let address = agent.agentAddress
         else {
-            agentStatuses[agentId] = .error("No identity")
+            abandonAdd(agentId, "No identity")
             return
         }
 
         guard let masterKey = await obtainMasterKey() else {
-            agentStatuses[agentId] = .error("No identity")
+            abandonAdd(agentId, "No identity")
+            return
+        }
+        // The tunnel dropped, or the agent was turned off, while the key was read.
+        var keyBox: Data? = masterKey
+        guard addQueue.inFlight == agentId, isConnected else {
+            keyBox?.zeroOut()
             return
         }
 
-        var keyBox: Data? = masterKey
         pendingNonceHandlers.append { [weak self] nonce in
             guard let self else {
                 keyBox?.zeroOut()
@@ -1163,7 +1234,7 @@ public final class RelayTunnelManager: ObservableObject {
                     "timestamp": timestamp,
                 ])
             } catch {
-                self.agentStatuses[agentId] = .error("Signing failed")
+                self.abandonAdd(agentId, "Signing failed")
             }
         }
 
@@ -1207,6 +1278,8 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        addQueue.reset()
+        addTimeoutTask?.cancel()
         cancelAllPublicChecks()
 
         let stillOurs = configuration.enabledAgentIds.filter { !isSupersededAgent($0) }
