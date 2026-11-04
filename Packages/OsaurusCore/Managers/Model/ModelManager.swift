@@ -301,6 +301,8 @@ public final class ModelManager: NSObject, ObservableObject {
         // a cached Hub measurement still replaces it here.
         let curated = Self.curatedSuggestedModels.map { model in
             model.withDownloadSize(ModelSizeCache.bytes(forId: model.id))
+                .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
+                .withSSDResidentBytes(ModelSSDResidency.cachedBytes(repoId: model.id))
         }
 
         suggestedModels = curated
@@ -626,7 +628,8 @@ public final class ModelManager: NSObject, ObservableObject {
     func deleteModel(_ model: MLXModel) async { await downloadService.delete(model) }
 
     func estimateDownloadSize(for model: MLXModel) async -> Int64? {
-        await downloadService.estimateSize(for: model)
+        if model.hasLocalInstallationEvidence, let bytes = model.downloadSizeBytes, bytes > 0 { return bytes }
+        return await downloadService.estimateSize(for: model)
     }
 
     /// Publish a size resolved on demand by the detail sheet back into the
@@ -640,7 +643,8 @@ public final class ModelManager: NSObject, ObservableObject {
         func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
             var changed = false
             let updated = models.map { model in
-                guard model.id.caseInsensitiveCompare(modelId) == .orderedSame, model.ssdResidentBytes != bytes
+                guard !model.hasLocalInstallationEvidence,
+                    model.id.caseInsensitiveCompare(modelId) == .orderedSame, model.ssdResidentBytes != bytes
                 else { return model }
                 changed = true
                 return model.withSSDResidentBytes(bytes)
@@ -659,11 +663,13 @@ public final class ModelManager: NSObject, ObservableObject {
         func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
             var changed = false
             let updated = models.map { model in
-                guard model.id.caseInsensitiveCompare(modelId) == .orderedSame,
+                guard !model.hasLocalInstallationEvidence,
+                    model.id.caseInsensitiveCompare(modelId) == .orderedSame,
                     model.downloadSizeBytes != bytes
                 else { return model }
                 changed = true
                 return model.withDownloadSize(bytes)
+                    .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
             }
             return (updated, changed)
         }
@@ -1723,13 +1729,15 @@ extension ModelManager {
         repoId: String,
         revision: String?
     ) async -> Int64? {
-        if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision) {
+        if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision),
+            ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(repoId), matchingRevision: revision) != nil {
             return cached
         }
         let fetched = await HuggingFaceService.shared.estimateTotalSize(
             repoId: repoId,
             patterns: ModelDownloadService.downloadFilePatterns,
-            excludedFiles: ModelDownloadService.downloadExcludedFiles
+            excludedFiles: ModelDownloadService.downloadExcludedFiles,
+            revision: revision
         )
         if let fetched {
             ModelSizeCache.record(id: repoId, bytes: fetched, revision: revision)
@@ -2011,32 +2019,32 @@ extension ModelManager {
             return collected
         }
 
-        // Repos whose architecture ships an SSD-resident n-gram table (Qwen4Exp: Flash-Next, Allosaurus): size
-        // that table too so the RAM verdict excludes it. Only these repos are touched; cached per revision.
-        var ngramCandidates = raw.filter { ModelSSDResidency.mayHaveNGramTable(modelType: nil, tags: $0.tags) }
-            .map(\.id)
-        for model in Self.curatedSuggestedModels
-        where ModelSSDResidency.mayHaveNGramTable(modelType: model.modelType, tags: nil)
-            && !ngramCandidates.contains(where: { $0.caseInsensitiveCompare(model.id) == .orderedSame })
-        {
-            ngramCandidates.append(model.id)
-        }
-        let ssdById: [String: Int64] = await withTaskGroup(of: (String, Int64?).self) { group in
-            for repoId in ngramCandidates {
+        // Discover table storage from tensor metadata for every repo. Tags and product names are not
+        // reliable architecture contracts; negative results are revision-cached too.
+        let ngramCandidates = repoIdsToSize
+        let cachedSSD = Dictionary(uniqueKeysWithValues: ngramCandidates.compactMap { repoId -> (String, Int64)? in
+            let key = repoId.lowercased()
+            guard let bytes = ModelSSDResidency.cachedBytes(repoId: repoId, revision: revisionById[key]) else { return nil }
+            return (key, bytes)
+        })
+        // Publish catalog sizes immediately. Header inspections must not delay first paint or downloads.
+        applyOsaurusOrgFetch(
+            autoFetched: autoFetched, statsById: statsById, sizesById: sizesById, ssdById: cachedSSD)
+        await withTaskGroup(of: (String, Int64?).self) { group in
+            var pending = ngramCandidates.makeIterator()
+            func add(_ repoId: String) {
                 let revision = revisionById[repoId.lowercased()]
                 group.addTask {
                     (repoId.lowercased(), await ModelSSDResidency.remoteNGramBytes(repoId: repoId, revision: revision))
                 }
             }
-            var collected: [String: Int64] = [:]
+            // Header responses are bounded but may be large; cap concurrent inspections.
+            for _ in 0..<8 { if let repoId = pending.next() { add(repoId) } }
             for await (key, value) in group {
-                if let value { collected[key] = value }
+                if let value { applyResolvedSSDResidentBytes(value, for: key) }
+                if let repoId = pending.next() { add(repoId) }
             }
-            return collected
         }
-
-        applyOsaurusOrgFetch(
-            autoFetched: autoFetched, statsById: statsById, sizesById: sizesById, ssdById: ssdById)
     }
 
     /// Replace the auto-fetched portion of `suggestedModels` while preserving
@@ -2059,6 +2067,7 @@ extension ModelManager {
                 model
                 .withDownloads(statsById[key] ?? model.downloads)
                 .withDownloadSize(sizesById[key])
+                .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
                 .withSSDResidentBytes(ssdById[key])
         }
         let curated = Self.curatedSuggestedModels.map(enrich)
@@ -2360,6 +2369,9 @@ extension ModelManager {
         diagnosticHandler: (([String: Any]) -> Void)? = nil
     ) -> [MLXModel] {
         let fm = FileManager.default
+        // Nested scans shadow `root` with the publisher directory. Keep the inventory root
+        // for logical bundle paths so <root>/<publisher>/<model> never duplicates publisher.
+        let inventoryRoot = root
         var rootIsDir: ObjCBool = false
         let rootExists = fm.fileExists(atPath: root.path, isDirectory: &rootIsDir)
         let rootReadable = access(root.path, R_OK | X_OK) == 0
@@ -2554,13 +2566,16 @@ extension ModelManager {
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
                         downloadURL: "https://huggingface.co/\(id)",
-                        downloadSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        downloadSizeBytes: MLXModel.localBundleDownloadSizeBytes(at: resolved)
+                            ?? MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        weightSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
                         ssdResidentBytes: ModelSSDResidency.localSSDResidentBytes(at: resolved),
                         // The scan already runs off-main. Preserve the bundle's
                         // architecture tag here so hot UI paths can distinguish
                         // image-only from video-capable local VLMs without
                         // re-reading config.json during SwiftUI layout.
-                        modelType: VLMDetection.readModelType(at: resolved)
+                        modelType: VLMDetection.readModelType(at: resolved),
+                        bundleDirectory: inventoryRoot.appendingPathComponent(id, isDirectory: true)
                     )
                     models.append(model)
                 }

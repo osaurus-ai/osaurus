@@ -74,6 +74,34 @@ struct HuggingFaceDownloadPathTests {
         #expect(ModelDownloadService.resolveURL(repoId: "mlx-community/test", path: "../config.json") == nil)
     }
 
+    @Test func paginatedSizeInventorySeparatesTargetWeightsFromDiskTables() async throws {
+        let repo = "fixture/\(UUID().uuidString)"
+        let service = HuggingFaceService(metadataRequest: { request in
+            let url = request.url!
+            let second = url.query?.contains("cursor=page2") == true
+            let body =
+                second
+                ? #"[{"path":"engram/tables.safetensors","type":"file","size":203000000000},{"path":"dspark/model.safetensors","type":"file","size":1000000000}]"#
+                : #"[{"path":"model.safetensors","type":"file","size":99000000000}]"#
+            let fields =
+                second
+                ? [:]
+                : [
+                    "Link":
+                        "<https://huggingface.co/api/models/\(repo)/tree/main?recursive=1&cursor=page2>; rel=\"next\""
+                ]
+            return (
+                Data(body.utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: fields)!
+            )
+        })
+        let total = await service.estimateTotalSize(repoId: repo, patterns: ["*.safetensors"], revision: "revision")
+        #expect(total == 303_000_000_000)
+        #expect(
+            ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(repo), matchingRevision: "revision")
+                == 99_000_000_000
+        )
+    }
+
     private func makeDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(
             "osaurus-hf-path-\(UUID().uuidString)",

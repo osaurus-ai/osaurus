@@ -608,6 +608,9 @@ struct ModelDetailView: View, Identifiable {
             ) {
                 MetaItem(label: L("Download size"), value: estimatedSizeString)
 
+                if let weights = model.weightSizeBytes {
+                    MetaItem(label: L("Target weight files"), value: MLXModel.formattedFileSize(weights))
+                }
                 if let memory = model.formattedEstimatedMemory {
                     MetaItem(label: L("Estimated memory while running"), value: memory)
                 }
@@ -794,8 +797,8 @@ struct ModelDetailView: View, Identifiable {
             if let ssd = model.ssdResidentBytes, ssd > 0 {
                 Text(
                     String(
-                        format: L("%@ of this download is an n-gram table that stays on SSD and is not counted toward running memory."),
-                        formattedMemoryGB(Double(ssd) / GPUMemoryBudget.bytesPerGB)
+                        format: L("%@ of this download is an SSD-backed n-gram table, excluded from resident weights. File caching and longer chats can still use additional RAM."),
+                        MLXModel.formattedFileSize(ssd)
                     )
                 )
                 .font(.system(size: 11))
@@ -1495,7 +1498,7 @@ struct ModelDetailView: View, Identifiable {
     /// params×quantization estimate so the modal isn't blank while loading.
     private var estimatedSizeString: String {
         if let s = estimatedSize, s > 0 {
-            return ByteCountFormatter.string(fromByteCount: s, countStyle: .file)
+            return MLXModel.formattedFileSize(s)
         }
         if let fallback = model.formattedDownloadSize {
             return model.downloadSizeBytes != nil ? fallback : "~\(fallback)"
@@ -1525,7 +1528,10 @@ struct ModelDetailView: View, Identifiable {
                 // parameter/quantization fallback while Details shows the
                 // resolved download size. The SSD-resident n-gram table is
                 // excluded from the RAM verdict, never from the download size.
-                self.selectedModel = target.withDownloadSize(size).withSSDResidentBytes(ssd)
+                self.selectedModel = target.withDownloadSize(size)
+                    .withWeightSize(target.hasLocalInstallationEvidence ? target.weightSizeBytes
+                        : ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(target.id)))
+                    .withSSDResidentBytes(ssd)
                 self.modelManager.applyResolvedDownloadSize(size, for: target.id)
                 if let ssd { self.modelManager.applyResolvedSSDResidentBytes(ssd, for: target.id) }
             } else {

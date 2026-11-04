@@ -61,7 +61,8 @@ enum ModelMetadataParser {
     }
 
     private static func computeParameterCount(from repoId: String) -> String? {
-        let text = repoId.lowercased()
+        // Precision suffixes such as JANG_6M are storage labels, not six million parameters.
+        let text = familySegments(from: repoId).joined(separator: "-").lowercased()
         for regex in parameterCountRegexes {
             let range = NSRange(text.startIndex..., in: text)
             if let match = regex.firstMatch(in: text, options: [], range: range),
@@ -186,6 +187,7 @@ enum ModelMetadataParser {
             #"^qat$"#,  // quantization-aware-training marker
             #"^jangtq[_0-9a-z]*$"#,  // JANGTQ / JANGTQ4 / JANGTQ_K TurboQuant
             #"^jang_?\d+[a-z]?$"#,  // JANG_4M / JANG_2S mixed precision
+            #"^jang(?:ht|h)\d+(?:\.\d+)?$"#,  // JANGH / JANGHT packed variants
             #"^jang$"#,  // plain affine JANG storage
             #"^ternary$"#,  // ternary / two-bit storage variant
             #"^\d+-?bit$"#,  // 4bit / 8bit / 4-bit
@@ -278,6 +280,9 @@ enum ModelMetadataParser {
             // Underscore suffixes (`JANGTQ_K`) read as "JANGTQ K" in the UI,
             // matching the JANG mixed-precision label treatment below.
             return String(text[match]).uppercased().replacingOccurrences(of: "_", with: " ")
+        }
+        if let match = text.range(of: #"jang(?:ht|h)\d+(?:\.\d+)?"#, options: .regularExpression) {
+            return String(text[match]).uppercased()
         }
         // JANG mixed-precision labels (`JANG_4M`/`4K`/`2L`/`2S`): the leading
         // digit encodes the dominant bit-class (4 ≈ 4-bit, 2 ≈ 2-bit). Surface

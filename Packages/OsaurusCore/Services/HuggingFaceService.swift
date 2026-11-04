@@ -263,7 +263,9 @@ actor HuggingFaceService {
 
     /// A missing sidecar is a legacy repo. Authentication, transport and parsing
     /// failures stay errors, so the UI never misreports a failed check as current.
-    func fetchModelManifest(repoId: String, revision: String? = nil, previous: ManifestSnapshot? = nil) async throws -> ManifestSnapshot {
+    func fetchModelManifest(repoId: String, revision: String? = nil, previous: ManifestSnapshot? = nil) async throws
+        -> ManifestSnapshot
+    {
         try Task.checkCancellation()
         let pinned: String
         if let revision { pinned = revision } else { pinned = try await resolveRevision(repoId: repoId) }
@@ -376,42 +378,20 @@ actor HuggingFaceService {
         comps.queryItems = [URLQueryItem(name: "recursive", value: "1")]
         guard let url = comps.url else { return nil }
 
-        var req = URLRequest(url: url)
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        HuggingFaceAuth.authorize(&req)
-
-        // This fetch gates every download, and it's the request Hugging Face
-        // rate-limits hardest for anonymous clients — retry transient
-        // failures (429/5xx, network blips) with backoff instead of failing
-        // the whole download on the first throttled response.
-        let maxAttempts = 3
-        for attempt in 1 ... maxAttempts {
-            var retryAfter: Double?
-            do {
-                let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
-                guard let http = response as? HTTPURLResponse else { return nil }
-                if (200 ..< 300).contains(http.statusCode) {
-                    let nodes = try JSONDecoder().decode([TreeNode].self, from: data)
-                    return nodes.isEmpty ? nil : nodes
-                }
-                guard http.statusCode == 429 || (500 ... 599).contains(http.statusCode) else {
-                    return nil
-                }
-                retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
-            } catch is CancellationError {
-                return nil
-            } catch {
-                // Transient network or decode error: fall through to the backoff.
+        do {
+            var next: URL? = url
+            var visited: Set<URL> = []
+            var nodes: [TreeNode] = []
+            while let page = next {
+                guard visited.insert(page).inserted else { return nil }
+                let (data, response) = try await downloadMetadata(page)
+                nodes += try JSONDecoder().decode([TreeNode].self, from: data)
+                next = try Self.nextTreePage(response.value(forHTTPHeaderField: "Link"), under: url)
             }
-            guard attempt < maxAttempts else { return nil }
-            let delay = min(max(retryAfter ?? pow(2.0, Double(attempt - 1)), 1), 30)
-            do {
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            } catch {
-                return nil
-            }
+            return nodes.isEmpty ? nil : nodes
+        } catch {
+            return nil
         }
-        return nil
     }
 
     /// Fetch files from a Hugging Face repo that match the given glob patterns.
@@ -686,7 +666,8 @@ actor HuggingFaceService {
     func estimateTotalSize(
         repoId: String,
         patterns: [String],
-        excludedFiles: Set<String> = []
+        excludedFiles: Set<String> = [],
+        revision: String? = nil
     ) async -> Int64? {
         guard
             let files = await fetchMatchingFiles(
@@ -695,7 +676,15 @@ actor HuggingFaceService {
                 excludedFiles: excludedFiles
             )
         else { return nil }
-        let total = files.reduce(Int64(0)) { $0 + $1.size }
+        var total: Int64 = 0
+        for file in files {
+            let sum = total.addingReportingOverflow(file.size)
+            guard file.size > 0, !sum.overflow else { return nil }
+            total = sum.partialValue
+        }
+        if let weights = ModelSSDResidency.targetWeightBytes(in: files) {
+            ModelSizeCache.record(id: ModelSSDResidency.weightFilesCacheKey(repoId), bytes: weights, revision: revision)
+        }
         return total > 0 ? total : nil
     }
 
