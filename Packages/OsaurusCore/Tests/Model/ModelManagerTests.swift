@@ -78,6 +78,27 @@ struct ModelManagerTests {
         #expect(await manager.estimateDownloadSize(for: local) == 5000)
     }
 
+    @Test("local inventory retains the logical model symlink instead of its external target")
+    func localSymlinkInventoryPreservesManagedPath() throws {
+        let fm = FileManager.default
+        let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = temp.appendingPathComponent("models")
+        let target = temp.appendingPathComponent("external")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: temp) }
+        try Data("{}".utf8).write(to: target.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: target.appendingPathComponent("tokenizer.json"))
+        try Data(count: 1).write(to: target.appendingPathComponent("model.safetensors"))
+        let link = root.appendingPathComponent("Renamed-JANGHT2.4")
+        try fm.createSymbolicLink(at: link, withDestinationURL: target)
+        let model = try #require(ModelManager.scanLocalModels(at: root).first)
+        #expect(model.hasLocalInstallationEvidence)
+        #expect(model.localDirectory.standardizedFileURL.path == link.standardizedFileURL.path)
+        try fm.removeItem(at: model.localDirectory)
+        #expect(fm.fileExists(atPath: target.appendingPathComponent("model.safetensors").path))
+    }
+
     @Test("installed matcher prefers full ids and rejects ambiguous short aliases")
     func installedMatcherUsesStableIdentity() {
         let models = [

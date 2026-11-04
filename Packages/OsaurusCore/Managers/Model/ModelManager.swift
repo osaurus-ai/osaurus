@@ -2572,7 +2572,7 @@ extension ModelManager {
                         // image-only from video-capable local VLMs without
                         // re-reading config.json during SwiftUI layout.
                         modelType: VLMDetection.readModelType(at: resolved),
-                        bundleDirectory: resolved
+                        bundleDirectory: root.appendingPathComponent(id, isDirectory: true)
                     )
                     models.append(model)
                 }
