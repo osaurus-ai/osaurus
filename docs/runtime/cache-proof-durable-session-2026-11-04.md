@@ -29,9 +29,48 @@ are unchanged. This is not a user-facing setting or a new settings catalog.
   requested-boundary ordering, preparation failure preserving the earlier
   turn, and ordinary fresh-session behavior without reload. Build/test session
   71546 exits zero; `durable-session-core-tests/run.log` is retained.
-- Full OsaurusEvals unit tests are running. Rebuilt real-model disk cases,
-  complete applicable cache lanes and fresh Release app smoke remain pending.
-  This change is not merge-ready from unit results alone.
+- Full OsaurusEvals units pass: 379 tests in 50 suites, including a second
+  run against the exact committed fixture/test source. Fresh Release26 builds
+  successfully from consumer `8327e0b179b1a2485a53d1dacf8e48e9a9e387ff`,
+  still using runtime pin `f1747342d881ba7b8b6a3bed84fd5fd60b99e96c`.
+- The real E4B MXFP4 q6 CacheProof run scores 9 passed / 4 errored out of
+  13 cases. Errors are longest-prefix turn 3 (256-token cap), five-turn
+  growth turn 2 (192), hybrid-named disk case turn 3 (160), and thinking
+  toggle turn 2 (256, reasoning without visible text). The non-hybrid Gemma
+  cannot qualify hybrid companion state. Original errors remain errors.
+- Three SSD cases repeated three times score 8 passed / 1 errored trials;
+  longest-prefix is 2/3, partial restore 3/3, settings revision 3/3. Majority
+  aggregation labels all three cases passed; that is not 9/9. The initial
+  payload observer watched TMPDIR while Foundation used its actual temporary
+  directory elsewhere, so it retained zero payloads. Prompt dumps survive.
+- Correcting only the observer root preserves 26 published cache payload
+  snapshots (624,817,512 logical bytes) and the exact prompt dumps. Three more
+  longest-prefix trials meet the structural cache gates, using real disk
+  restores of 699–702 tokens. These are **not answer-quality passes**:
+  answers include `White`, a list of reference terms, and a paraphrase instead
+  of the requested exact checkpoint text. The scorer currently requires
+  nonempty visible output, not fixture-specific exact-answer fidelity.
+  No sampler, seed, budget or scoring gate was changed to obtain these rows.
+- A fresh Release26 ordinary UI smoke passes two workflows: executed
+  `calculate({"expression":"43 * 31"})`, final `1333`, followed by
+  history-grounded `calculate({"expression":"2 * 1333"})`, final `2666`.
+  Four actual model requests are retained (Insights seq 1369, 1370, 1373,
+  1374). Both turns settle and unlock input. Saved q6/paged-off/SSD-on settings
+  are observed in the real UI. The post-idle API snapshot has zero loaded
+  models; it is not evidence of loaded cache topology. Runtime receipts and
+  prior setting-toggle/relaunch proofs remain separate. Both owned app and
+  collector exit normally.
+
+`DURABLE-SESSION-REAL-CACHEPROOF-RECEIPT.json` and
+`BUILD26-ORDINARY-TOOL-UI-RECEIPT.json` bind the complete reports, failed
+outputs, typed progress, native requests/screenshots, cache headers, resource
+samples and exact input identities under the evidence directory below.
+An exact-prompt cold/split/completed-file numerical comparison is the next
+root-cause check for the echoed/reference-word answers. A structural cache hit
+is not proof of output fidelity. This change remains partial: current runtime
+CI is not green, full affected controls/cancellation/eviction and the other
+QAT variants remain unqualified, and the consumer still needs the eventual
+normal runtime merge commit as its pin. No merge-ready claim.
 
 Separate memory diagnostics on the preceding consumer source attribute this
 E4B path's growth predominantly to its bounded reusable allocator pool:
