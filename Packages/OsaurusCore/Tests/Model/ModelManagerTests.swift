@@ -99,6 +99,32 @@ struct ModelManagerTests {
         #expect(fm.fileExists(atPath: target.appendingPathComponent("model.safetensors").path))
     }
 
+    @Test("nested local inventory retains one publisher component and remains installed")
+    func nestedLocalSymlinkInventoryPreservesInstalledPath() throws {
+        let fm = FileManager.default
+        let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = temp.appendingPathComponent("models")
+        let publisher = root.appendingPathComponent("publisher")
+        let target = temp.appendingPathComponent("external")
+        try fm.createDirectory(at: publisher, withIntermediateDirectories: true)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: temp) }
+        try Data("{}".utf8).write(to: target.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: target.appendingPathComponent("tokenizer.json"))
+        try Data(count: 1).write(to: target.appendingPathComponent("model.safetensors"))
+        let link = publisher.appendingPathComponent("Example-JANGHT1.8")
+        try fm.createSymbolicLink(at: link, withDestinationURL: target)
+        let model = try #require(ModelManager.scanLocalModels(at: root).first)
+        #expect(model.id == "publisher/Example-JANGHT1.8")
+        #expect(model.localDirectory.standardizedFileURL.path == link.standardizedFileURL.path)
+        #expect(model.computeIsDownloadedFromDisk())
+        #expect(model.isDownloaded)
+        #expect(ModelManager.installedModels(among: [model]).count == 1)
+        #expect(model.weightSizeBytes == 1)
+        try fm.removeItem(at: model.localDirectory)
+        #expect(fm.fileExists(atPath: target.appendingPathComponent("model.safetensors").path))
+    }
+
     @Test("installed matcher prefers full ids and rejects ambiguous short aliases")
     func installedMatcherUsesStableIdentity() {
         let models = [

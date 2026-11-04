@@ -2369,6 +2369,9 @@ extension ModelManager {
         diagnosticHandler: (([String: Any]) -> Void)? = nil
     ) -> [MLXModel] {
         let fm = FileManager.default
+        // Nested scans shadow `root` with the publisher directory. Keep the inventory root
+        // for logical bundle paths so <root>/<publisher>/<model> never duplicates publisher.
+        let inventoryRoot = root
         var rootIsDir: ObjCBool = false
         let rootExists = fm.fileExists(atPath: root.path, isDirectory: &rootIsDir)
         let rootReadable = access(root.path, R_OK | X_OK) == 0
@@ -2572,7 +2575,7 @@ extension ModelManager {
                         // image-only from video-capable local VLMs without
                         // re-reading config.json during SwiftUI layout.
                         modelType: VLMDetection.readModelType(at: resolved),
-                        bundleDirectory: root.appendingPathComponent(id, isDirectory: true)
+                        bundleDirectory: inventoryRoot.appendingPathComponent(id, isDirectory: true)
                     )
                     models.append(model)
                 }
