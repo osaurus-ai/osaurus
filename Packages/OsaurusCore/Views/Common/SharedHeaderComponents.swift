@@ -313,6 +313,8 @@ struct AgentPill: View {
     @StateObject private var keyboard = AgentPickerKeyboardController()
     @Environment(\.theme) private var theme
     @Environment(\.displayScale) private var displayScale
+    /// Bumped when a background mascot render completes.
+    @State private var mascotRenderTick = 0
 
     // MARK: - Keyboard Navigation Items
 
@@ -400,19 +402,24 @@ struct AgentPill: View {
             // built-in default agent gets its branded image (e.g. the
             // green dinosaur). Falls back to the generic person glyph
             // when the agent has no `avatar` id or the asset is missing.
-            if let mascot = builtInMascotImage(for: agent, size: size) {
-                Image(nsImage: mascot)
+            Group {
+                if let mascot = builtInMascotImage(for: agent, size: size) {
+                    Image(nsImage: mascot)
+                        .frame(width: size, height: size)
+                        .clipShape(Circle())
+                } else {
+                    ZStack {
+                        Circle()
+                            .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
+                        Image(systemName: "person.fill")
+                            .font(.system(size: size * 0.42, weight: .medium))
+                            .foregroundColor(theme.secondaryText.opacity(0.85))
+                    }
                     .frame(width: size, height: size)
-                    .clipShape(Circle())
-            } else {
-                ZStack {
-                    Circle()
-                        .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
-                    Image(systemName: "person.fill")
-                        .font(.system(size: size * 0.42, weight: .medium))
-                        .foregroundColor(theme.secondaryText.opacity(0.85))
                 }
-                .frame(width: size, height: size)
+            }
+            .task(id: "\(agent.avatar ?? "")|\(size)|\(displayScale)") {
+                await renderBuiltInMascot(avatar: agent.avatar, size: size)
             }
         } else {
             AgentAvatarView(
@@ -427,9 +434,21 @@ struct AgentPill: View {
         }
     }
 
+    /// Cache-only lookup so body evaluation never resamples on the main
+    /// thread; `renderBuiltInMascot` fills misses in the background.
     private func builtInMascotImage(for agent: Agent, size: CGFloat) -> NSImage? {
+        _ = mascotRenderTick  // re-evaluate once a background render lands
         guard let mascot = agent.avatar.flatMap(AgentMascot.init(rawValue:)) else { return nil }
-        return AvatarBitmapRenderer.shared.image(mascot: mascot, pointSize: size, scale: displayScale)
+        return AvatarBitmapRenderer.shared.cachedImage(mascot: mascot, pointSize: size, scale: displayScale)
+    }
+
+    private func renderBuiltInMascot(avatar: String?, size: CGFloat) async {
+        guard let mascot = avatar.flatMap(AgentMascot.init(rawValue:)) else { return }
+        let renderer = AvatarBitmapRenderer.shared
+        guard renderer.cachedImage(mascot: mascot, pointSize: size, scale: displayScale) == nil else { return }
+        _ = await renderer.renderImage(mascot: mascot, pointSize: size, scale: displayScale)
+        guard !Task.isCancelled else { return }
+        mascotRenderTick &+= 1
     }
 
     /// A remote agent's mascot (or name monogram) with a small transport badge
