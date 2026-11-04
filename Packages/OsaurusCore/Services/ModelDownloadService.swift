@@ -1179,7 +1179,8 @@ final class ModelDownloadService: ObservableObject {
         // revision-less entries) so re-opening the detail modal doesn't
         // re-hit the network. On a miss, fetch the tree-sum and write it
         // back so the value persists across launches.
-        if let cached = ModelSizeCache.bytes(forId: model.id) {
+        if let cached = ModelSizeCache.bytes(forId: model.id),
+            ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)) != nil {
             return cached
         }
         let fetched = await HuggingFaceService.shared.estimateTotalSize(

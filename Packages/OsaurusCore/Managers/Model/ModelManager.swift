@@ -301,6 +301,7 @@ public final class ModelManager: NSObject, ObservableObject {
         // a cached Hub measurement still replaces it here.
         let curated = Self.curatedSuggestedModels.map { model in
             model.withDownloadSize(ModelSizeCache.bytes(forId: model.id))
+                .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
                 .withSSDResidentBytes(ModelSSDResidency.cachedBytes(repoId: model.id))
         }
 
@@ -668,6 +669,7 @@ public final class ModelManager: NSObject, ObservableObject {
                 else { return model }
                 changed = true
                 return model.withDownloadSize(bytes)
+                    .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
             }
             return (updated, changed)
         }
@@ -1727,13 +1729,15 @@ extension ModelManager {
         repoId: String,
         revision: String?
     ) async -> Int64? {
-        if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision) {
+        if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision),
+            ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(repoId), matchingRevision: revision) != nil {
             return cached
         }
         let fetched = await HuggingFaceService.shared.estimateTotalSize(
             repoId: repoId,
             patterns: ModelDownloadService.downloadFilePatterns,
-            excludedFiles: ModelDownloadService.downloadExcludedFiles
+            excludedFiles: ModelDownloadService.downloadExcludedFiles,
+            revision: revision
         )
         if let fetched {
             ModelSizeCache.record(id: repoId, bytes: fetched, revision: revision)
@@ -2063,6 +2067,7 @@ extension ModelManager {
                 model
                 .withDownloads(statsById[key] ?? model.downloads)
                 .withDownloadSize(sizesById[key])
+                .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
                 .withSSDResidentBytes(ssdById[key])
         }
         let curated = Self.curatedSuggestedModels.map(enrich)
@@ -2558,13 +2563,16 @@ extension ModelManager {
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
                         downloadURL: "https://huggingface.co/\(id)",
-                        downloadSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        downloadSizeBytes: MLXModel.localBundleDownloadSizeBytes(at: resolved)
+                            ?? MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        weightSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
                         ssdResidentBytes: ModelSSDResidency.localSSDResidentBytes(at: resolved),
                         // The scan already runs off-main. Preserve the bundle's
                         // architecture tag here so hot UI paths can distinguish
                         // image-only from video-capable local VLMs without
                         // re-reading config.json during SwiftUI layout.
-                        modelType: VLMDetection.readModelType(at: resolved)
+                        modelType: VLMDetection.readModelType(at: resolved),
+                        bundleDirectory: resolved
                     )
                     models.append(model)
                 }

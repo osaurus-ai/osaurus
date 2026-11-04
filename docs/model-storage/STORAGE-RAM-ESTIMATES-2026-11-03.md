@@ -1,6 +1,6 @@
 # Model storage and RAM estimate hardening
 
-Status: implementation in progress; runtime/UI qualification and merge pending.
+Status: initial regression tests passed; nested-table correction and fresh UI qualification in progress. PR #3303 is draft.
 No release tagging is part of this work.
 
 ## Contract
@@ -11,7 +11,14 @@ root-level safetensors file sizes, following directory/shard symlinks. The index
 `metadata.total_size` is a fallback when no weight files are available; it must
 not override real files after conversion.
 
-Resident-weight estimates subtract only tensor spans matching the runtime's
+Resident-weight estimates start from target weight file bytes, independently of the
+full download. The target loader reads top-level safetensors: nested Engram tables
+and optional draft bundles are separate. This prevents DeepSeek's roughly 203 GB
+Engram directory from becoming target RAM, without guessing model families.
+The detail sheet shows both Download size and Target weight files. Optional
+drafters can add RAM beyond this target baseline.
+
+From target weights, estimates subtract only tensor spans matching the runtime's
 `.ple.ngram_embedding.` storage contract. Discovery inspects indexes/headers,
 not architecture tags, product names or JANG precision labels. Native MTP,
 vision and ordinary compute weights remain counted. This is not a promise that
@@ -56,11 +63,22 @@ Header/file inventory on erics-m5-max2 (decimal bytes):
 | GLM 5.3 Flash JANGHT2.4 | 98,320,846,968 | 0 | 98,320,846,968 |
 
 These are file/header measurements, not generation or physical-footprint proof.
-Public Hub index probes confirm the table inventory distinction for both
-Allosaurus bundles and no matching tables for DeepSeek/GLM. The private Qwen
+Public Hub index probes confirm the PLE table inventory distinction for both
+Allosaurus bundles and no matching PLE tables in DeepSeek/GLM target weights.
+This does NOT mean DeepSeek has no SSD tables. Its separate `engram/` directory
+contains 203,073,077,576 bytes. The complete local manifest is 304,833,350,999
+bytes, versus 98,965,578,032 bytes of target weight files. GLM's full local
+manifest is 100,683,781,608 bytes versus 98,320,846,968 bytes of target weights.
+`FULL-MANIFEST-VERSUS-TARGET-WEIGHTS.json` preserves all six per-file inventories. The private Qwen
 Hub probe returned HTTP 401; local Qwen file/header evidence remains available.
 
 ## Remaining proof and order
+
+Initial source edee1cf5c passed 78 tests in six suites. CI initially failed before
+build because the changed explanation was missing from the localization catalog;
+81f02a7c3 registers it and local localization checks pass. These results do not
+qualify the subsequent nested-table changes. The first Release build was stopped
+because it predated that correction. Original attempts are retained.
 
 1. Finish focused tests for malformed/overlapping/out-of-bounds metadata,
    revision/range behavior, single-file discovery, precision/grouping, local

@@ -608,6 +608,9 @@ struct ModelDetailView: View, Identifiable {
             ) {
                 MetaItem(label: L("Download size"), value: estimatedSizeString)
 
+                if let weights = model.weightSizeBytes {
+                    MetaItem(label: L("Target weight files"), value: ByteCountFormatter.string(fromByteCount: weights, countStyle: .file))
+                }
                 if let memory = model.formattedEstimatedMemory {
                     MetaItem(label: L("Estimated memory while running"), value: memory)
                 }
@@ -1525,7 +1528,10 @@ struct ModelDetailView: View, Identifiable {
                 // parameter/quantization fallback while Details shows the
                 // resolved download size. The SSD-resident n-gram table is
                 // excluded from the RAM verdict, never from the download size.
-                self.selectedModel = target.withDownloadSize(size).withSSDResidentBytes(ssd)
+                self.selectedModel = target.withDownloadSize(size)
+                    .withWeightSize(target.hasLocalInstallationEvidence ? target.weightSizeBytes
+                        : ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(target.id)))
+                    .withSSDResidentBytes(ssd)
                 self.modelManager.applyResolvedDownloadSize(size, for: target.id)
                 if let ssd { self.modelManager.applyResolvedSSDResidentBytes(ssd, for: target.id) }
             } else {

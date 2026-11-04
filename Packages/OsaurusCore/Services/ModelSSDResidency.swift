@@ -17,6 +17,19 @@ enum ModelSSDResidency {
     /// Tensor-name marker of the SSD-resident n-gram table. Must match vmlx-swift's loader rule.
     static let ngramTensorMarker = ".ple.ngram_embedding."
 
+    static func weightFilesCacheKey(_ repoId: String) -> String { repoId + "#target-weight-files-v1" }
+
+    static func targetWeightBytes(in files: [HuggingFaceService.MatchedFile]) -> Int64? {
+        var total: Int64 = 0
+        for file in files where !file.path.contains("/") && file.path.hasSuffix(".safetensors") {
+            guard file.size > 0 else { return nil }
+            let sum = total.addingReportingOverflow(file.size)
+            guard !sum.overflow else { return nil }
+            total = sum.partialValue
+        }
+        return total > 0 ? total : nil
+    }
+
     // MARK: Local bundles
 
     /// Sum of n-gram tensor payloads from the bundle's safetensors HEADERS (no weights read). `0` when there

@@ -238,14 +238,50 @@ struct ModelSSDResidencyTests {
     }
 
     @Test func localUnknownTableFactsClearUnrelatedHubTableMeasurement() {
-        let remote = MLXModel(id: "publisher/model", name: "model", description: "", downloadURL: "",
-            downloadSizeBytes: 1000, ssdResidentBytes: 900)
-        let installed = MLXModel(id: remote.id, name: "local", description: "", downloadURL: "",
-            downloadSizeBytes: 500, rootDirectory: URL(fileURLWithPath: "/fixture"))
+        let remote = MLXModel(
+            id: "publisher/model",
+            name: "model",
+            description: "",
+            downloadURL: "",
+            downloadSizeBytes: 1000,
+            ssdResidentBytes: 900
+        )
+        let installed = MLXModel(
+            id: remote.id,
+            name: "local",
+            description: "",
+            downloadURL: "",
+            downloadSizeBytes: 500,
+            rootDirectory: URL(fileURLWithPath: "/fixture")
+        )
         let merged = remote.mergingLocalInstallationMetadata(from: installed)
         #expect(merged.downloadSizeBytes == 500)
         #expect(merged.ssdResidentBytes == nil)
         #expect(merged.residentWeightEstimateBytes == 500)
+    }
+
+    @Test func nestedDiskTablesDoNotBecomeResidentTargetWeights() {
+        let files = [
+            HuggingFaceService.MatchedFile(path: "model.safetensors", size: 99_000_000_000),
+            HuggingFaceService.MatchedFile(path: "engram/table.safetensors", size: 203_000_000_000),
+            HuggingFaceService.MatchedFile(path: "dspark/model.safetensors", size: 1_000_000_000),
+            HuggingFaceService.MatchedFile(path: "config.json", size: 1024),
+        ]
+        #expect(ModelSSDResidency.targetWeightBytes(in: files) == 99_000_000_000)
+        let model = MLXModel(
+            id: "publisher/future-JANGHT1.4",
+            name: "model",
+            description: "",
+            downloadURL: "",
+            downloadSizeBytes: 303_000_001_024,
+            weightSizeBytes: 99_000_000_000,
+            ssdResidentBytes: 0
+        )
+        #expect(model.totalSizeEstimateBytes == 303_000_001_024)
+        #expect(model.residentWeightEstimateBytes == 99_000_000_000)
+        #expect(model.withDownloads(1).weightSizeBytes == model.weightSizeBytes)
+        #expect(model.withDownloadSize(1).weightSizeBytes == model.weightSizeBytes)
+        #expect(model.withSSDResidentBytes(0).weightSizeBytes == model.weightSizeBytes)
     }
 
 }

@@ -23,6 +23,10 @@ struct MLXModel: Identifiable, Codable {
     /// Approximate download size in bytes (optional, for display purposes)
     let downloadSizeBytes: Int64?
 
+    /// Files loaded as target weights (top-level safetensors), separate from the full download,
+    /// which can include disk-only Engram tables and optional drafter subdirectories.
+    let weightSizeBytes: Int64?
+
     /// Bytes of the download that stay on SSD and are read on demand, never resident in RAM (the Qwen4Exp
     /// n-gram table, `ModelSSDResidency`). `nil` = not known / none. Excluded from the RAM estimate only; the
     /// download-size figure keeps every byte.
@@ -70,6 +74,7 @@ struct MLXModel: Identifiable, Codable {
         downloadURL: String,
         isTopSuggestion: Bool = false,
         downloadSizeBytes: Int64? = nil,
+        weightSizeBytes: Int64? = nil,
         ssdResidentBytes: Int64? = nil,
         modelType: String? = nil,
         releasedAt: Date? = nil,
@@ -85,6 +90,7 @@ struct MLXModel: Identifiable, Codable {
         self.downloadURL = downloadURL
         self.isTopSuggestion = isTopSuggestion
         self.downloadSizeBytes = downloadSizeBytes
+        self.weightSizeBytes = weightSizeBytes
         self.ssdResidentBytes = ssdResidentBytes
         self.modelType = modelType
         self.releasedAt = releasedAt
@@ -108,6 +114,7 @@ struct MLXModel: Identifiable, Codable {
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
             downloadSizeBytes: bytes,
+            weightSizeBytes: weightSizeBytes,
             ssdResidentBytes: ssdResidentBytes,
             modelType: modelType,
             releasedAt: releasedAt,
@@ -157,7 +164,9 @@ struct MLXModel: Identifiable, Codable {
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
             downloadSizeBytes: localBytes ?? downloadSizeBytes,
-            ssdResidentBytes: local.hasLocalInstallationEvidence ? local.ssdResidentBytes : (local.ssdResidentBytes ?? ssdResidentBytes),
+            weightSizeBytes: local.weightSizeBytes ?? localBytes ?? weightSizeBytes,
+            ssdResidentBytes: local.hasLocalInstallationEvidence
+                ? local.ssdResidentBytes : (local.ssdResidentBytes ?? ssdResidentBytes),
             modelType: local.modelType ?? modelType,
             releasedAt: releasedAt,
             downloads: downloads,
@@ -175,14 +184,17 @@ struct MLXModel: Identifiable, Codable {
         let fm = FileManager.default
         let root = directory.resolvingSymlinksInPath()
         if let entries = try? fm.contentsOfDirectory(
-            at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-        {
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
             let shards = entries.filter { $0.pathExtension.lowercased() == "safetensors" }
             if !shards.isEmpty {
                 var total: Int64 = 0
                 for shard in shards {
-                    guard let values = try? shard.resolvingSymlinksInPath().resourceValues(
-                        forKeys: [.isRegularFileKey, .fileSizeKey]),
+                    guard
+                        let values = try? shard.resolvingSymlinksInPath().resourceValues(
+                            forKeys: [.isRegularFileKey, .fileSizeKey]),
                         values.isRegularFile == true, let size = values.fileSize, size > 0
                     else { return nil }
                     let sum = total.addingReportingOverflow(Int64(size))
@@ -201,11 +213,66 @@ struct MLXModel: Identifiable, Codable {
                 let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let metadata = object["metadata"] as? [String: Any]
             else { continue }
-            let total = (metadata["total_size"] as? NSNumber)?.int64Value
+            let total =
+                (metadata["total_size"] as? NSNumber)?.int64Value
                 ?? (metadata["total_size"] as? String).flatMap(Int64.init)
             if let total, total > 0 { return total }
         }
         return nil
+    }
+
+    func withWeightSize(_ bytes: Int64?) -> MLXModel {
+        guard let bytes, bytes > 0 else { return self }
+        return MLXModel(
+            id: id,
+            name: name,
+            description: description,
+            downloadURL: downloadURL,
+            isTopSuggestion: isTopSuggestion,
+            downloadSizeBytes: downloadSizeBytes,
+            weightSizeBytes: bytes,
+            ssdResidentBytes: ssdResidentBytes,
+            modelType: modelType,
+            releasedAt: releasedAt,
+            downloads: downloads,
+            useCase: useCase,
+            rootDirectory: rootDirectory,
+            bundleDirectory: bundleDirectory,
+            externalSource: externalSource
+        )
+    }
+
+    /// Match the download manifest's file types, including nested tables and drafters. Metadata only.
+    nonisolated static func localBundleDownloadSizeBytes(at directory: URL) -> Int64? {
+        let root = directory.resolvingSymlinksInPath()
+        let fm = FileManager.default
+        guard
+            let enumerator = fm.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        else { return nil }
+        var total: Int64 = 0
+        var hasTargetWeights = false
+        for case let url as URL in enumerator {
+            guard ["json", "jinja", "txt", "model", "safetensors"].contains(url.pathExtension.lowercased()) else {
+                continue
+            }
+            guard
+                let values = try? url.resolvingSymlinksInPath().resourceValues(forKeys: [
+                    .isRegularFileKey, .fileSizeKey,
+                ]),
+                values.isRegularFile == true, let size = values.fileSize
+            else { return nil }
+            if url.deletingLastPathComponent() == root, url.pathExtension == "safetensors", size > 0 {
+                hasTargetWeights = true
+            }
+            let sum = total.addingReportingOverflow(Int64(size))
+            guard !sum.overflow else { return nil }
+            total = sum.partialValue
+        }
+        return hasTargetWeights && total > 0 ? total : nil
     }
 
     /// Returns a copy carrying the bundle's SSD-resident (n-gram) byte count.
@@ -218,6 +285,7 @@ struct MLXModel: Identifiable, Codable {
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
             downloadSizeBytes: downloadSizeBytes,
+            weightSizeBytes: weightSizeBytes,
             ssdResidentBytes: bytes,
             modelType: modelType,
             releasedAt: releasedAt,
@@ -240,6 +308,7 @@ struct MLXModel: Identifiable, Codable {
             downloadURL: downloadURL,
             isTopSuggestion: isTopSuggestion,
             downloadSizeBytes: downloadSizeBytes,
+            weightSizeBytes: weightSizeBytes,
             ssdResidentBytes: ssdResidentBytes,
             modelType: modelType,
             releasedAt: releasedAt,
@@ -731,8 +800,10 @@ struct MLXModel: Identifiable, Codable {
     /// Complete fit calculation used by every model-selection surface.
     /// Weights that must be resident to run: the download minus SSD-resident tables.
     var residentWeightEstimateBytes: Int64? {
-        guard let total = totalSizeEstimateBytes else { return nil }
-        guard sizeEstimateSource == .measured, let ssd = ssdResidentBytes, ssd > 0, ssd < total else { return total }
+        guard let total = weightSizeBytes ?? totalSizeEstimateBytes else { return nil }
+        guard weightSizeBytes != nil || sizeEstimateSource == .measured, let ssd = ssdResidentBytes, ssd > 0,
+            ssd < total
+        else { return total }
         return total - ssd
     }
 
