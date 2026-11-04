@@ -12,6 +12,10 @@ Raw evidence is retained under `/Users/eric/vmlx-private-evidence/osaurus-cache-
 
 ## Native acceptance boundary
 
-A fresh isolated Release app must display the same persisted real E2B response without swallowing prose, then finish another real model/tool turn. Preserve before/after screenshots, unchanged response identity, app/source/runtime identity and the effective model request. Component tests alone do not close this boundary; native results and required CI belong in the PR receipt.
+Fresh isolated Release build 2026110418, source `164e1993160f764780bd6f8b084a912f47656e61`, pins runtime `ca5bdc98313aafd080475207cda4c29ec85392ee`. Its binary SHA256 is `cd63bb303effcd94a468f1418a9a96d64eb0322df63c3b925b0ac72d6f573fe3`. The native app displays the identical persisted E2B response with the complete prose intact. All seven original target request/response event dictionaries remain equal, including the separate wrong answer19227; all168 original profile file hashes remain unchanged after the candidate closes.
+
+Two new real calculator workflows execute83*17→1411 and1411*2→2822, four actual model requests. The latter emits the same formerly broken numeric-dollar sentence shape and now displays it completely. Native UI rates106.8/104.7tok/s are correctness observations, not a controlled benchmark. Explicit ThinkingOff is the only generation override; sampler settings inherit the active bundle. Both tool cards settle, Stop disappears and input unlocks. The app and resource collector exit normally0 before freezing23artifacts in `INLINE-MATH-NUMERIC-LITERALS-NATIVE-QUALIFICATION-RECEIPT.json`. Physical footprint4.76GB still exceeds4.00GB weights: RAM FAIL remains.
+
+Rebasing onto the normal parent consumer3313 merge changes ancestry only: the complete tree remains equal to the native-qualified implementation. The final documentation update does not change executable source or tests. Required hosted CI remains a separate merge gate, recorded in the PR receipt.
 
 This patch does not repair the separate E2B tool-result grounding failure, MXFP4 F32/cache-key mismatch, image-recognition failures or RAM gates. It does not establish broad model readiness. No release tags or publishing.
