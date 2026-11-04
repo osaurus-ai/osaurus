@@ -2793,9 +2793,9 @@ private struct SessionRow: View {
     private var metadataLine: String {
         var parts: [String] = [formatRelativeDate(session.updatedAt)]
         // A phone chat's key is the pairing key's nonce plus the phone's own
-        // id: noise to a reader, so it names the iPhone and stops there.
+        // id: noise to a reader, so it names the device kind and stops there.
         if isFromPairedPhone {
-            parts.append("via iPhone")
+            parts.append("via Mobile")
             return parts.joined(separator: " · ")
         }
         let pluginName = session.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))

@@ -7761,7 +7761,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         let query = Self.queryItems(from: head.uri)
         let agentFilter = query["agent_id"].flatMap { UUID(uuidString: $0) }
-        let includeArchived = query["archived"] == "true"
+        // Archived only, a lens as on the Mac (§14.1); without it, none.
+        let archivedOnly = query["archived"] == "true"
         let pinnedOnly = query["pinned"] == "true"
         // `mac`, `ios`, or a SessionSource raw value (http, channel, …).
         let originFilter = query["origin"].flatMap { $0.isEmpty ? nil : $0 }
@@ -7793,7 +7794,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // One predicate rather than a chain of `.filter`s: the chain grew
             // long enough that the type checker gave up on it.
             func matches(_ session: ChatSessionData) -> Bool {
-                if !includeArchived && session.archived { return false }
+                if session.archived != archivedOnly { return false }
                 if pinnedOnly && !session.pinned { return false }
                 if let agentFilter, session.agentId != agentFilter { return false }
                 if let originFilter {
@@ -11051,6 +11052,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // The loop invokes its hooks serially, so these plain vars are
             // race-free — same capture pattern as `responseContent` above.
             var loggedResponseText = ""
+            // Whether the step generating now (its text is `responseContent`)
+            // is still unrecorded: it isn't once it records the final answer
+            // or its tool calls, or is classified as a step to discard. A run
+            // that ends any other way (stopped, failed, out of length) keeps
+            // it as the reply, as the Mac's own Stop does: the phone already
+            // shows it, and a chat it continues must hold the same turns for
+            // its retry and edit to find the prompt. Its reasoning too, which
+            // the phone shows as the reply's thinking.
+            var stepUnsaved = false
+            var unsavedStepReasoning = ""
+            func keepUnsavedStepText() {
+                guard stepUnsaved else { return }
+                stepUnsaved = false
+                let text = StringCleaning.stoppedReplyText(responseContent)
+                let reasoning = unsavedStepReasoning
+                unsavedStepReasoning = ""
+                let blank = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                guard !blank(text) || !blank(reasoning) else { return }
+                messages.append(
+                    ChatMessage(
+                        role: "assistant",
+                        content: text,
+                        tool_calls: nil,
+                        tool_call_id: nil,
+                        reasoning_content: blank(reasoning) ? nil : reasoning
+                    )
+                )
+            }
             var loggedToolCalls: [ToolCallLog] = []
             var runUsage = AgentRunUsage()
             var batchHistory = ResponsesToolBatchHistory()
@@ -11143,6 +11172,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     iterationReq.context.idempotencyKey = "\(idempotencyBase)-s\(msgs.count)-"
                         + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
                     responseContent = ""
+                    stepUnsaved = true
+                    unsavedStepReasoning = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval)
                     if let inboundRun {
@@ -11186,6 +11217,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 hop { writerBound.value.writeRouterSummary(billing, context: ctx.value) }
                             }
                         case .reasoningDelta(let reasoning):
+                            unsavedStepReasoning += reasoning
                             if let inboundRun {
                                 await MainActor.run { InboundSharedRunBridge.shared.streamDelta(inboundRun.handle, reasoning: reasoning) }
                             }
@@ -11233,6 +11265,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let assistant = SecretArgumentScrubber.recordedAssistantMessage(try response.completedAssistantInput())
                     if !calls.isEmpty {
                         try batchHistory.begin(assistant)
+                        stepUnsaved = false
                         return .toolCalls(calls.map { ServiceToolInvocation(toolName: $0.name,
                             jsonArguments: $0.arguments, toolCallId: $0.callID, geminiThoughtSignature: $0.geminiThoughtSignature) })
                     }
@@ -11241,6 +11274,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         thinkingIsBlank: response.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                         stopReason: response.completion.stopReason, unclosedReasoning: response.completion.unclosedReasoning,
                         requiresVisibleFinalResponse: true, toolsWereOffered: !tools.isEmpty, content: response.text)
+                    // Recorded as the answer, or a step the loop discards
+                    // (blank, thinking only, retried): either way not a reply
+                    // to keep if the run ends before the next step.
+                    stepUnsaved = false
                     if case .finalResponse = step {
                         messages.append(assistant)
                         await mirrorNewMessages(messages)
@@ -11530,6 +11567,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     messages.append(contentsOf: commit.messages)
                     await mirrorNewMessages(messages)
                 }
+                keepUnsavedStepText()
                 inboundOutcome.record(error: error, cancelled: disconnected.value)
                 await releaseHostFolder()
                 // Stopped, or a send the user declined in a privacy review,
@@ -11566,6 +11604,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 messages.append(contentsOf: commit.messages)
                 await mirrorNewMessages(messages)
             }
+            // Stop can end the stream quietly, the loop then exiting cancelled;
+            // a reply cut off by its length limit ends here too.
+            keepUnsavedStepText()
             // Tools have finished executing (the loop is done); release the
             // host folder before streaming the tail so the gate isn't held
             // across the final prose write. Runs exactly once per request —
