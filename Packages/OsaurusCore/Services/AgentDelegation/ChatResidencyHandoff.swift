@@ -147,12 +147,9 @@ enum ChatResidencyHandoff {
         var errorDescription: String? { description }
     }
 
-    /// Physical memory macOS can reclaim without swapping non-purgeable
-    /// anonymous state. This deliberately matches ModelRuntime's normal-load
-    /// estimator: mmap-backed model/file-cache pages can sit on the ACTIVE
-    /// queue after a child run and are still reclaimable. Counting only
-    /// free+inactive+purgeable made the exact same resident model look as if it
-    /// had lost all child capacity after its first delegated turn.
+    /// Host capacity available without swapping non-purgeable anonymous state.
+    /// Includes file-backed pages on either active or inactive queues. This is
+    /// an estimate of reclaimable capacity, not a model's physical footprint.
     static func availableMemoryBytes() -> Int64 {
         sampledAvailableMemoryBytes() ?? 0
     }
@@ -177,36 +174,42 @@ enum ChatResidencyHandoff {
         return reclaimableMemoryBytes(
             physicalBytes: Int64(ProcessInfo.processInfo.physicalMemory),
             pageSize: Int64(rawPage),
-            wiredPages: Int64(vmInfo.wire_count),
-            compressorPages: Int64(vmInfo.compressor_page_count),
-            internalPages: Int64(vmInfo.internal_page_count),
-            purgeablePages: Int64(vmInfo.purgeable_count)
+            freePages: Int64(vmInfo.free_count),
+            fileBackedPages: Int64(vmInfo.external_page_count),
+            purgeablePages: Int64(vmInfo.purgeable_count),
+            speculativePages: Int64(vmInfo.speculative_count)
         )
     }
 
-    /// Pure arithmetic seam for the shared host estimator. Saturating math is
-    /// fail-closed: malformed/overflowing kernel counters produce zero
-    /// reclaimable bytes rather than an enormous wrapped capacity.
+    /// Count the reclaimable page classes directly. HOST_VM_INFO64's free
+    /// count includes speculative pages, which are also file-backed: subtract
+    /// that overlap once. Purgeable pages are unwired anonymous pages, separate
+    /// from file-backed pages. Inactive anonymous pages are not free capacity.
+    ///
+    /// Deriving this as physical - wired - compressed - internal can report
+    /// zero on hosts whose internal aggregate exceeds physical RAM. Neither
+    /// queue totals nor a guessed scale factor repair that aggregate.
+    /// Malformed/overflowing snapshots retain the existing zero-capacity result.
     static func reclaimableMemoryBytes(
         physicalBytes: Int64,
         pageSize: Int64,
-        wiredPages: Int64,
-        compressorPages: Int64,
-        internalPages: Int64,
-        purgeablePages: Int64
+        freePages: Int64,
+        fileBackedPages: Int64,
+        purgeablePages: Int64,
+        speculativePages: Int64
     ) -> Int64 {
-        guard physicalBytes > 0, pageSize > 0 else { return 0 }
-        let nonPurgeableInternal = max(0, internalPages - max(0, purgeablePages))
-        let (first, overflow1) = max(0, wiredPages).addingReportingOverflow(
-            max(0, compressorPages))
-        guard !overflow1 else { return 0 }
-        let (unreclaimablePages, overflow2) = first.addingReportingOverflow(
-            nonPurgeableInternal)
-        guard !overflow2 else { return 0 }
-        let (unreclaimableBytes, overflow3) = unreclaimablePages
-            .multipliedReportingOverflow(by: pageSize)
-        guard !overflow3 else { return 0 }
-        return max(0, physicalBytes - unreclaimableBytes)
+        guard physicalBytes > 0, pageSize > 0,
+            freePages >= 0, fileBackedPages >= 0, purgeablePages >= 0,
+            speculativePages >= 0,
+            speculativePages <= freePages,
+            speculativePages <= fileBackedPages
+        else { return 0 }
+        let (first, overflow1) = (freePages - speculativePages)
+            .addingReportingOverflow(fileBackedPages)
+        let (availablePages, overflow2) = first.addingReportingOverflow(purgeablePages)
+        let (availableBytes, overflow3) = availablePages.multipliedReportingOverflow(by: pageSize)
+        guard !overflow1, !overflow2, !overflow3, availableBytes <= physicalBytes else { return 0 }
+        return availableBytes
     }
 
     /// Refuse-before-evict preflight. With `requiredBytes` (the spawn model's
