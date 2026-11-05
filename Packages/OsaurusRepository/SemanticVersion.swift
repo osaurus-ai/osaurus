@@ -56,6 +56,30 @@ public struct SemanticVersion: Codable, Hashable, Comparable, CustomStringConver
         }
     }
 
+    /// Equality and hashing follow SemVer precedence rather than raw field
+    /// equality. Build metadata is ignored (SemVer §10), and two versions are
+    /// equal exactly when neither orders before the other. Deriving `==` from
+    /// `<` guarantees the `Comparable` total-order contract holds for every
+    /// pair — including build-metadata-only differences (`1.0.0+a` vs
+    /// `1.0.0+b`) and numerically-equal prerelease identifiers (`1.0.0-alpha.1`
+    /// vs `1.0.0-alpha.01`), which the synthesized member-wise `==` reported
+    /// as unequal even though `<` ranked neither below the other (so none of
+    /// `<`, `>`, `==` held).
+    public static func == (lhs: SemanticVersion, rhs: SemanticVersion) -> Bool {
+        !(lhs < rhs) && !(rhs < lhs)
+    }
+
+    /// Hashes only the precedence-significant core. Prerelease and build are
+    /// omitted so that values which `==` deems equal (e.g. build-only or
+    /// `1`/`01` prerelease differences) always share a hash, as `Hashable`
+    /// requires. Versions sharing a core but differing in precedence
+    /// (`1.0.0` vs `1.0.0-alpha`) hash-collide, which is permitted.
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(major)
+        hasher.combine(minor)
+        hasher.combine(patch)
+    }
+
     private static func comparePrerelease(_ l: String, _ r: String) -> Int {
         let lParts = l.split(separator: ".").map(String.init)
         let rParts = r.split(separator: ".").map(String.init)
@@ -91,6 +115,14 @@ public struct SemanticVersion: Codable, Hashable, Comparable, CustomStringConver
         let core = preSplit.first ?? withoutBuild
         let prerelease = preSplit.count == 2 ? preSplit[1] : nil
 
+        // SemVer §9: a prerelease or build section, once introduced by its
+        // separator, must be a series of non-empty dot-separated identifiers.
+        // The permissive split above keeps empty subsequences, so without this
+        // guard `1.0.0-`, `1.0.0+`, and `1.0.0-a..b` would parse into lossy
+        // values that render as `1.0.0` yet compare unequal to it.
+        if let prerelease, !isValidIdentifierSeries(prerelease) { return nil }
+        if let build, !isValidIdentifierSeries(build) { return nil }
+
         let nums = core.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         guard nums.count == 3,
             let maj = Int(nums[0]),
@@ -98,5 +130,13 @@ public struct SemanticVersion: Codable, Hashable, Comparable, CustomStringConver
             let pat = Int(nums[2])
         else { return nil }
         return SemanticVersion(major: maj, minor: min, patch: pat, prerelease: prerelease, build: build)
+    }
+
+    /// True when `s` is a non-empty series of non-empty dot-separated
+    /// identifiers — the structural rule SemVer §9 imposes on a prerelease or
+    /// build section.
+    private static func isValidIdentifierSeries(_ s: String) -> Bool {
+        !s.isEmpty
+            && s.split(separator: ".", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty }
     }
 }
