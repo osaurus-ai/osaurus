@@ -98,7 +98,7 @@ remains `LON`. The bundle-filtered first-token probability of `White` is
 0.01166 cold and 0.01256 restored. This does not establish cache corruption as
 the cause of the sampled answer. Original RNG state is unknown; full-answer
 fidelity and other model/cache paths are not certified by first-token evidence.
-Two source-bound numerical comparisons agree; the second process completed
+Two numerical comparisons agree; the second uses a frozen source/binary. It completed
 before its physical sampler began, so only the first has five resource samples.
 The diagnostic receipt preserves these limits and the failed executable-path
 attempt, rather than treating either as an inference pass.
@@ -114,4 +114,12 @@ Full Evals units pass 382 tests / 50 suites after adding regression coverage for
 recorded wrong words, missing turns and fixture opt-ins. A toolchain/cache-path
 compile failure and a missing actor annotation in the first helper attempt are
 retained in separate logs; the annotation is corrected and the complete suite
-passes. New real-model results under this stronger scorer are still pending.
+passes. With the stronger scorer, the real-model rerun has 7 passed / 2 failed
+trials out of 9: longest-prefix 1/3, partial restore 3/3, settings revision 3/3.
+Both failed trials have genuine disk restores but unrelated `Quartz`/`Yellow`
+answers, which now fail the explicit phrase checks. There are no capped/error
+trials in this rerun. This proves the grading correction detects real failures;
+it does not fix model quality. All raw output, rates, source and 76 cache payload
+snapshots are bound by `CACHE-ANSWER-FIDELITY-REAL-RECEIPT.json`. A missing
+capture destination initially stopped the observer; a new destination was
+attached to the same still-running model process, without restarting the run.
