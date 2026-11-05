@@ -397,7 +397,7 @@ public actor ImageGenerationService {
             quantizationBits: local.quantizationBits,
             defaultSteps: flux3?.stamp.defaults.steps ?? entry?.defaultSteps,
             defaultGuidance: entry?.defaultGuidance,
-            capabilities: capabilities(kind: kind, canonical: local.canonicalName, entry: entry),
+            capabilities: capabilities(kind: kind, canonical: local.canonicalName, entry: entry, limits: limits),
             blockedReasons: local.blockedReasons,
             totalBytes: local.totalBytes,
             requestLimits: limits.map {
@@ -416,11 +416,14 @@ public actor ImageGenerationService {
     static func capabilities(
         kind: ModelKind,
         canonical: String?,
-        entry: ModelEntry?
+        entry: ModelEntry?,
+        limits: FluxModelLimits? = nil
     ) -> ImageModelCapabilities {
-        ImageModelRequestPolicy.capabilities(
+        var result = ImageModelRequestPolicy.capabilities(
             kind: kind.rawValue, canonical: canonical, supportsLoRA: entry?.supportsLoRA ?? false
         )
+        if let limits { result.editStrength = limits.supportsStrength }
+        return result
     }
 
     // MARK: - Generate / edit / upscale
@@ -481,7 +484,7 @@ public actor ImageGenerationService {
         let mask = try params.maskImage.map(Self.stageInput)
         defer { if let mask { try? FileManager.default.removeItem(at: mask) } }
         let request = try Self.editRequest(params, info: target.info, sources: sources,
-            mask: mask, outputDir: OsaurusPaths.generatedImages())
+            mask: mask, outputDir: OsaurusPaths.generatedImages(), limits: limits)
         let query = engine ?? FluxEngine()
         return Int64(try await query.estimatedPeakBytes(for: request,
             modelURL: target.directory, name: target.engineName))
@@ -534,7 +537,7 @@ public actor ImageGenerationService {
                 try limits?.validate(Self.generationRequest(params, info: info, index: 0,
                     outputDir: OsaurusPaths.generatedImages(), nativeBatch: nativeBatch))
             }
-        ) { engine, outputDir, index, info, nativeBatch in
+        ) { engine, outputDir, index, info, nativeBatch, _ in
             var request = Self.generationRequest(params, info: info, index: index, outputDir: outputDir, nativeBatch: nativeBatch)
             request.interrupt = producerInterrupt
             return await engine.generate(request)
@@ -586,14 +589,14 @@ public actor ImageGenerationService {
             validate: { info, limits in
                 try Self.validateEdit(params, info: info, limits: limits)
             }
-        ) { engine, outputDir, _, info, _ in
+        ) { engine, outputDir, _, info, _, limits in
             let sources = try Self.stageInputs(params.sourceImages)
             guard !sources.isEmpty else {
                 throw ImageGenerationError.invalidRequest("edit requires at least one source image")
             }
             let mask = try params.maskImage.map { try Self.stageInput($0) }
             let request = try Self.editRequest(params, info: info, sources: sources, mask: mask,
-                outputDir: outputDir, interrupt: producerInterrupt)
+                outputDir: outputDir, limits: limits, interrupt: producerInterrupt)
             return await engine.edit(request)
         }
     }
@@ -626,13 +629,14 @@ public actor ImageGenerationService {
     }
 
     private static func editRequest(_ params: ImageEditParameters, info: ImageModelInfo,
-        sources: [URL], mask: URL?, outputDir: URL, interrupt: FluxInterrupt? = nil) throws -> ImageEditRequest {
+        sources: [URL], mask: URL?, outputDir: URL, limits: FluxModelLimits?,
+        interrupt: FluxInterrupt? = nil) throws -> ImageEditRequest {
         try ImageEditRequest(
             prompt: params.prompt,
                 sourceImages: sources,
                 mask: mask,
                 strength: ImageModelRequestPolicy(canonical: info.canonicalName)
-                    .editStrength(params.strength),
+                    .editStrength(params.strength, supportsPartialDenoising: limits?.supportsStrength),
                 width: params.width,
                 height: params.height,
                 steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
@@ -667,7 +671,7 @@ public actor ImageGenerationService {
                              try SeedVR2BundleMetadata.validateUpscale(sourceWidth: width, sourceHeight: height,
                                  scale: params.scale, format: Self.engineFormat(params.outputFormat))
                          }
-                     }) { engine, outputDir, _, _, _ in
+                     }) { engine, outputDir, _, _, _, _ in
             let source = try Self.stageInput(params.sourceImage)
             let request = UpscaleRequest(
                 sourceImage: source,
@@ -697,7 +701,7 @@ public actor ImageGenerationService {
         count: Int = 1,
         estimatePeak: (@Sendable () async throws -> Int64)? = nil,
         validate: @escaping @Sendable (ImageModelInfo, FluxModelLimits?) throws -> Void = { _, _ in },
-        _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo, Bool) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
+        _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo, Bool, FluxModelLimits?) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
             guard jobID.map({ producerJobs[$0] == nil }) ?? true else {
@@ -819,7 +823,7 @@ public actor ImageGenerationService {
                         // after a recovered GPU error. Do not start another one.
                         if self.recoveredErrorSince(mlxErrorEpoch) != nil { break }
                         guard let modelInfo else { break }
-                        let stream = try await build(engine, outputDir, index, modelInfo, nativeBatch)
+                        let stream = try await build(engine, outputDir, index, modelInfo, nativeBatch, modelLimits)
                         await self.testStreamCheckpoint?(.created(index))
                         await self.testStreamCheckpoint?(.willDrain(index))
                         for try await event in stream {

@@ -114,8 +114,11 @@ struct ImageModelRequestPolicy: Sendable {
         }
     }
 
-    func editStrength(_ explicit: Float?) -> Float {
-        explicit ?? (usesBundleParameters ? 1 : 0.75)
+    func editStrength(_ explicit: Float?, supportsPartialDenoising: Bool? = nil) -> Float {
+        // Reference-conditioning engines can accept an omitted strength but
+        // reject the legacy partial-denoising default. Honor their declared
+        // contract without rewriting an explicit caller value.
+        explicit ?? (supportsPartialDenoising == false || usesBundleParameters ? 1 : 0.75)
     }
 
     /// UI snapping uses declared runtime bounds; it never adds a pixel/RAM cap.
