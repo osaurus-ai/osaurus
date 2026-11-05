@@ -304,6 +304,29 @@ struct TemplateStoreTests {
         }
     }
 
+    /// The library loads in the background (APPLE-MACOS-3KB). A reader that
+    /// touches a brand-new store before that load lands must still see the
+    /// library, not built-ins only.
+    @Test
+    func freshStore_readsLibraryBeforeBackgroundLoadLands() async throws {
+        try await withTemporaryRoot { store in
+            let saved = try store.save(AgentTemplate(name: "Library Scout", agent: AgentEntry(name: "Library Scout")))
+            let fresh = TemplateStore()
+            #expect(fresh.template(named: "Library Scout", kind: .agent)?.id == saved.id)
+        }
+    }
+
+    @Test
+    func freshStore_libraryCopyShadowsBuiltInImmediately() async throws {
+        try await withTemporaryRoot { store in
+            let builtIn = try #require(store.builtIn.first)
+            let copy = try store.save(builtIn)
+            let fresh = TemplateStore()
+            #expect(!fresh.isBuiltIn(copy))
+            #expect(fresh.latest(id: builtIn.id)?.version == copy.version)
+        }
+    }
+
     @Test
     func nonTemplateEntriesInDirectory_areIgnored() async throws {
         try await withTemporaryRoot { store in
