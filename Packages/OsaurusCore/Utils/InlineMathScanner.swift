@@ -81,8 +81,8 @@ enum InlineMathScanner {
     /// Split text into alternating plain-text and math segments.
     ///
     /// Handles `$…$` (no whitespace padding) and `\(…\)`. A delimited span that fails the
-    /// rules above is emitted as literal text, and scanning resumes just past the opening
-    /// delimiter, so a real math span later on the same line can still match.
+    /// rules above is emitted as literal text. Paired numeric literals keep both
+    /// delimiters; other rejected spans resume past the opener so later math can match.
     static func split(_ text: String) -> [Segment] {
         var segments: [Segment] = []
         var current = ""
@@ -170,6 +170,17 @@ enum InlineMathScanner {
                     || looksLikeDollarMath(content, followedBy: peek(closeIdx - i + 1))
                 {
                     emitMath(content, fallback: slice(i, closeIdx + 1), advanceTo: closeIdx + 1)
+                    continue
+                }
+                // A numeric pair stays literal under the currency policy, but its
+                // closing dollar must not reopen a span that consumes following prose.
+                // Do not consume an arbitrary rejected span: `$5 to $10` can end at
+                // another price's opener, and real math may follow that price.
+                if let first = content.unicodeScalars.first, isASCIIDigit(first),
+                    content.unicodeScalars.allSatisfy({ isASCIIDigit($0) || $0 == "." || $0 == "," })
+                {
+                    current += slice(i, closeIdx + 1)
+                    i = closeIdx + 1
                     continue
                 }
                 // Currency/plain text: fall through, keeping the `$` literal.
