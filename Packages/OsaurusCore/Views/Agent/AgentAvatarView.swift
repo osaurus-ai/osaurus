@@ -85,7 +85,33 @@ struct AgentAvatarView: View {
 
     @Environment(\.displayScale) private var displayScale
 
+    /// Result of the last background render, tagged with the inputs it was
+    /// rendered for so a stale image is never shown after they change.
+    @State private var loaded: LoadedAvatar?
+
+    private struct LoadedAvatar {
+        let key: String
+        let custom: NSImage?
+        let mascot: NSImage?
+    }
+
     var body: some View {
+        let key = renderKey
+        let fallback = loaded?.key == key ? loaded : nil
+        let renderer = AvatarBitmapRenderer.shared
+        // Cache-only lookups: resampling happens off the main thread in
+        // `loadImages`, never during body evaluation.
+        let customImage =
+            customImageURL.flatMap {
+                renderer.cachedImage(customURL: $0, pointSize: diameter, scale: displayScale)
+            } ?? fallback?.custom
+        let mascotImage: NSImage? =
+            customImage != nil
+            ? nil
+            : mascotId.flatMap(AgentMascot.init(rawValue:)).flatMap {
+                renderer.cachedImage(mascot: $0, pointSize: mascotPointSize, scale: displayScale)
+            } ?? fallback?.mascot
+
         ZStack {
             Circle()
                 .fill(
@@ -96,21 +122,7 @@ struct AgentAvatarView: View {
                     )
                 )
 
-            if let url = customImageURL,
-                let nsImage = AvatarBitmapRenderer.shared.image(
-                    customURL: url,
-                    pointSize: diameter,
-                    scale: displayScale
-                )
-            {
-                Image(nsImage: nsImage)
-            } else if let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)),
-                let nsImage = AvatarBitmapRenderer.shared.image(
-                    mascot: mascot,
-                    pointSize: mascotPointSize,
-                    scale: displayScale
-                )
-            {
+            if let nsImage = customImage ?? mascotImage {
                 Image(nsImage: nsImage)
             } else {
                 Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
@@ -123,6 +135,39 @@ struct AgentAvatarView: View {
         }
         .frame(width: diameter, height: diameter)
         .clipShape(Circle())
+        .task(id: key) { await loadImages(key: key) }
+    }
+
+    /// Everything that changes which bitmap is shown. Includes the custom
+    /// file's mtime so an edited avatar re-renders.
+    private var renderKey: String {
+        let customPart = customImageURL.map {
+            "\($0.path)@\(AvatarBitmapRenderer.modificationDate(of: $0).timeIntervalSinceReferenceDate)"
+        }
+        return [
+            customPart ?? "",
+            mascotId ?? "",
+            "\(diameter)",
+            "\(mascotPointSize)",
+            "\(displayScale)",
+        ].joined(separator: "|")
+    }
+
+    /// Renders whatever is not cached yet on a background queue, then
+    /// publishes it so body re-evaluates. Cache hits return immediately.
+    private func loadImages(key: String) async {
+        let renderer = AvatarBitmapRenderer.shared
+        let scale = displayScale
+        var custom: NSImage?
+        if let url = customImageURL {
+            custom = await renderer.renderImage(customURL: url, pointSize: diameter, scale: scale)
+        }
+        var mascotImage: NSImage?
+        if custom == nil, let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)) {
+            mascotImage = await renderer.renderImage(mascot: mascot, pointSize: mascotPointSize, scale: scale)
+        }
+        guard !Task.isCancelled else { return }
+        loaded = LoadedAvatar(key: key, custom: custom, mascot: mascotImage)
     }
 
     /// Mascot edge length in points: full bleed, or inset 8% per side. The
@@ -160,8 +205,7 @@ final class AvatarImageCache: @unchecked Sendable {
 
     func entry(for url: URL) -> Entry? {
         let path = url.path
-        let mtime =
-            (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
+        let mtime = AvatarBitmapRenderer.modificationDate(of: url)
 
         lock.lock()
         if let hit = entries[path], hit.mtime == mtime {
@@ -203,22 +247,79 @@ final class AvatarBitmapRenderer: @unchecked Sendable {
     private let lock = NSLock()
     private var cache: [String: NSImage] = [:]
 
+    /// Resampling (PNG decode + high-quality vImage scale) is too slow for
+    /// the main thread when many avatars miss at once (display scale change,
+    /// memory-pressure cache wipe), so UI callers render here instead.
+    private let renderQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.avatar-render",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+    /// Waiters per cache key, so N avatars sharing a key render it once.
+    private var inFlight: [String: [CheckedContinuation<RenderedImage, Never>]] = [:]
+
+    private struct RenderedImage: @unchecked Sendable {
+        let image: NSImage?
+    }
+
     static func pixelSize(pointSize: CGFloat, scale: CGFloat) -> Int {
         max(1, Int((pointSize * max(scale, 1)).rounded()))
     }
 
+    /// Synchronous render-on-miss. Blocks the caller for the full resample,
+    /// so never call it from a SwiftUI body or main-thread layout; use
+    /// `cachedImage` + `renderImage` there instead.
     func image(mascot: AgentMascot, pointSize: CGFloat, scale: CGFloat) -> NSImage? {
         let pixels = Self.pixelSize(pointSize: pointSize, scale: scale)
-        return cached(key: "mascot|\(mascot.rawValue)|\(pixels)", pixels: pixels, scale: scale) {
+        return cached(key: Self.mascotKey(mascot, pixels: pixels), pixels: pixels, scale: scale) {
             Bundle.module.image(forResource: mascot.assetName)
         }
     }
 
+    /// Synchronous render-on-miss; see `image(mascot:pointSize:scale:)`.
     func image(customURL url: URL, pointSize: CGFloat, scale: CGFloat) -> NSImage? {
         guard let entry = AvatarImageCache.shared.entry(for: url) else { return nil }
         let pixels = Self.pixelSize(pointSize: pointSize, scale: scale)
-        let key = "\(Self.customPrefix(for: url))\(entry.mtime.timeIntervalSinceReferenceDate)|\(pixels)"
+        let key = Self.customKey(url: url, mtime: entry.mtime, pixels: pixels)
         return cached(key: key, pixels: pixels, scale: scale) { entry.image }
+    }
+
+    /// Cache-only lookup: never decodes or resamples, safe on the main thread.
+    func cachedImage(mascot: AgentMascot, pointSize: CGFloat, scale: CGFloat) -> NSImage? {
+        let pixels = Self.pixelSize(pointSize: pointSize, scale: scale)
+        return lookup(key: Self.mascotKey(mascot, pixels: pixels))
+    }
+
+    /// Cache-only lookup for a custom avatar (one file stat, no decode).
+    func cachedImage(customURL url: URL, pointSize: CGFloat, scale: CGFloat) -> NSImage? {
+        let pixels = Self.pixelSize(pointSize: pointSize, scale: scale)
+        return lookup(key: Self.customKey(url: url, mtime: Self.modificationDate(of: url), pixels: pixels))
+    }
+
+    /// Renders on a background queue (deduplicated per key), stores the
+    /// result in the cache and returns it. Returns immediately on a hit.
+    @MainActor
+    func renderImage(mascot: AgentMascot, pointSize: CGFloat, scale: CGFloat) async -> NSImage? {
+        let pixels = Self.pixelSize(pointSize: pointSize, scale: scale)
+        return await renderInBackground(key: Self.mascotKey(mascot, pixels: pixels)) { renderer in
+            renderer.image(mascot: mascot, pointSize: pointSize, scale: scale)
+        }
+    }
+
+    /// Background counterpart of `image(customURL:pointSize:scale:)`.
+    @MainActor
+    func renderImage(customURL url: URL, pointSize: CGFloat, scale: CGFloat) async -> NSImage? {
+        let pixels = Self.pixelSize(pointSize: pointSize, scale: scale)
+        let key = Self.customKey(url: url, mtime: Self.modificationDate(of: url), pixels: pixels)
+        return await renderInBackground(key: key) { renderer in
+            renderer.image(customURL: url, pointSize: pointSize, scale: scale)
+        }
+    }
+
+    /// Modification date used in custom-avatar cache keys; matches
+    /// `AvatarImageCache`'s own staleness check.
+    static func modificationDate(of url: URL) -> Date {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
     }
 
     func invalidate(url: URL) {
@@ -236,6 +337,64 @@ final class AvatarBitmapRenderer: @unchecked Sendable {
 
     private static func customPrefix(for url: URL) -> String {
         "custom|\(url.path)|"
+    }
+
+    private static func mascotKey(_ mascot: AgentMascot, pixels: Int) -> String {
+        "mascot|\(mascot.rawValue)|\(pixels)"
+    }
+
+    private static func customKey(url: URL, mtime: Date, pixels: Int) -> String {
+        "\(customPrefix(for: url))\(mtime.timeIntervalSinceReferenceDate)|\(pixels)"
+    }
+
+    private func lookup(key: String) -> NSImage? {
+        lock.lock()
+        defer { lock.unlock() }
+        return cache[key]
+    }
+
+    /// Main-actor isolated so the non-Sendable `NSImage` never crosses an
+    /// isolation boundary; only the continuation wait happens here.
+    @MainActor
+    private func renderInBackground(
+        key: String,
+        render: @escaping @Sendable (AvatarBitmapRenderer) -> NSImage?
+    ) async -> NSImage? {
+        if let hit = lookup(key: key) { return hit }
+        let result = await withCheckedContinuation { (continuation: CheckedContinuation<RenderedImage, Never>) in
+            enqueueRender(key: key, continuation: continuation, render: render)
+        }
+        return result.image
+    }
+
+    private func enqueueRender(
+        key: String,
+        continuation: CheckedContinuation<RenderedImage, Never>,
+        render: @escaping @Sendable (AvatarBitmapRenderer) -> NSImage?
+    ) {
+        lock.lock()
+        if let hit = cache[key] {
+            lock.unlock()
+            continuation.resume(returning: RenderedImage(image: hit))
+            return
+        }
+        if inFlight[key] != nil {
+            inFlight[key]?.append(continuation)
+            lock.unlock()
+            return
+        }
+        inFlight[key] = [continuation]
+        lock.unlock()
+
+        renderQueue.async { [self] in
+            let image = render(self)
+            lock.lock()
+            let waiters = inFlight.removeValue(forKey: key) ?? []
+            lock.unlock()
+            for waiter in waiters {
+                waiter.resume(returning: RenderedImage(image: image))
+            }
+        }
     }
 
     private func cached(
