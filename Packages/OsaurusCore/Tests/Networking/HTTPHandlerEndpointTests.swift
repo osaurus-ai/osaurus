@@ -142,6 +142,77 @@ struct HTTPHandlerEndpointTests {
         #expect((resp2 as? HTTPURLResponse)?.statusCode == 200)
     }
 
+    /// Issue #2629: Ollama clients take a name from /api/tags and pass it
+    /// straight to /api/show. External (HF cache) models are listed by bare
+    /// repo name, which /api/show used to 404 on.
+    @Test func apiShow_resolvesExternalModelNameListedByApiTags() async throws {
+        try await OsaurusTestGlobals.withPathsLock {
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent(
+                "osaurus-api-show-external-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousRoot = OsaurusPaths.overrideRoot
+            let previousExternal = ExternalModelLocator.testRootsOverride
+            let previousLocal = ModelManager.scanLocalModelsOverrideForTests
+            let previousWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.testRootsOverride = previousExternal
+                ModelManager.scanLocalModelsOverrideForTests = previousLocal
+                ModelManager.localModelsScanWaitLimitOverrideForTests = previousWait
+                ExternalModelLocator.invalidateInMemory()
+                ModelManager.invalidateLocalModelsCache()
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                try? fm.removeItem(at: root)
+            }
+            OsaurusPaths.overrideRoot = root.appendingPathComponent("state", isDirectory: true)
+            // Keep /api/tags off the developer's real models folder and bound
+            // its local-scan wait; external models come from the locator's
+            // own snapshot either way.
+            ModelManager.scanLocalModelsOverrideForTests = { _ in [] }
+            ModelManager.localModelsScanWaitLimitOverrideForTests = 1
+            ModelManager.invalidateLocalModelsCache()
+
+            let repo = "Show-E2E-\(UUID().uuidString.prefix(8).lowercased())"
+            let hfRoot = root.appendingPathComponent("hf", isDirectory: true)
+            let modelDir = hfRoot.appendingPathComponent("models--org--\(repo)", isDirectory: true)
+            let refsDir = modelDir.appendingPathComponent("refs", isDirectory: true)
+            let snapshot = modelDir.appendingPathComponent("snapshots/abc123", isDirectory: true)
+            try fm.createDirectory(at: refsDir, withIntermediateDirectories: true)
+            try fm.createDirectory(at: snapshot, withIntermediateDirectories: true)
+            try Data("abc123".utf8).write(to: refsDir.appendingPathComponent("main"))
+            try Data(#"{"model_type":"qwen3","max_position_embeddings":4096}"#.utf8)
+                .write(to: snapshot.appendingPathComponent("config.json"))
+            try Data("{}".utf8).write(to: snapshot.appendingPathComponent("tokenizer.json"))
+            try Data("w".utf8).write(to: snapshot.appendingPathComponent("model.safetensors"))
+            ExternalModelLocator.testRootsOverride = [(root: hfRoot, source: .huggingFaceCache)]
+            ExternalModelLocator.invalidateInMemory()
+            ExternalModelLocator.rescan()
+
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+            let base = "http://\(server.host):\(server.port)"
+
+            let (tagsData, tagsResp) = try await URLSession.shared.data(from: URL(string: "\(base)/api/tags")!)
+            #expect((tagsResp as? HTTPURLResponse)?.statusCode == 200)
+            let tags = try JSONSerialization.jsonObject(with: tagsData) as? [String: Any]
+            let names = (tags?["models"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
+            let listed = try #require(names.first { $0.caseInsensitiveCompare(repo) == .orderedSame })
+
+            var show = URLRequest(url: URL(string: "\(base)/api/show")!)
+            show.httpMethod = "POST"
+            show.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            show.httpBody = try JSONSerialization.data(withJSONObject: ["model": listed])
+            let (showData, showResp) = try await URLSession.shared.data(for: show)
+            #expect((showResp as? HTTPURLResponse)?.statusCode == 200)
+            let body = try JSONSerialization.jsonObject(with: showData) as? [String: Any]
+            let modelInfo = body?["model_info"] as? [String: Any]
+            #expect(modelInfo?["general.architecture"] as? String == "qwen3")
+            #expect(modelInfo?["qwen3.context_length"] as? Int == 4096)
+        }
+    }
+
     @Test func unknown_path_returns_404() async throws {
         let server = try await startServer()
         defer { Task { await server.shutdown() } }
