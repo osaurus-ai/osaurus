@@ -188,6 +188,12 @@ struct MoETransformer {
     /// Forward pass producing per-token logits over the BIOES label
     /// space. `inputIds` must already be tokenized and ≤ 4096 entries.
     func forward(inputIds: [Int]) throws -> [[Float]] {
+        try withError { error in
+            try forward(inputIds: inputIds, error: error)
+        }
+    }
+
+    private func forward(inputIds: [Int], error: ErrorBox) throws -> [[Float]] {
         let seqLen = inputIds.count
         guard seqLen > 0 else { return [] }
         precondition(
@@ -201,10 +207,12 @@ struct MoETransformer {
         }
         let ids = MLXArray(inputIds.map { Int32($0) }, [seqLen])
         var x = embedTable[ids]  // [seq, hidden]
+        try error.check()
 
         // 2. Transformer layers.
         for layer in 0 ..< config.numLayers {
             x = try transformerBlock(layer: layer, x: x)
+            try error.check()
         }
 
         // 3. Final RMSNorm.
@@ -212,6 +220,7 @@ struct MoETransformer {
             throw ModelLoaderError.missingFile("model.norm.weight")
         }
         let normed = MLXFast.rmsNorm(x, weight: finalNorm, eps: rmsEps)
+        try error.check()
 
         // 4. Classification head.
         guard
@@ -220,15 +229,15 @@ struct MoETransformer {
         else {
             throw ModelLoaderError.missingFile("score.weight or score.bias")
         }
-        let logits = matmul(normed, scoreW.transposed(axes: [1, 0])) + scoreB
-
-        // 5. Materialize to Swift. Cast to float32 first so the
-        // returned values are stable regardless of whether the model
-        // ran in BF16 or FP16.
-        let finalLogits = logits.asType(DType.float32)
-        finalLogits.eval()
-        let flat: [Float] = finalLogits.asArray(Float.self)
-        precondition(flat.count == seqLen * numLabels)
+        // Check each head operation before consuming its result. An MLX
+        // error may leave an invalid array even when the global handler returns.
+        let flat = try PrivacyFilterClassificationHead.evaluate(
+            hiddenStates: normed, weight: scoreW, bias: scoreB,
+            expectedShape: [seqLen, numLabels], error: error
+        )
+        guard flat.count == seqLen * numLabels else {
+            throw ModelLoaderError.manifestMismatch("classifier output count does not match token and label counts")
+        }
         var rows: [[Float]] = []
         rows.reserveCapacity(seqLen)
         for t in 0 ..< seqLen {
