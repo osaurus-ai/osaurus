@@ -245,8 +245,12 @@ public enum ThemeConfigurationStore {
         }
     }
 
+    /// Resolved so a symlinked `~/.osaurus/themes` (dotfiles setups, #1996)
+    /// can be listed; `contentsOfDirectory(at:)` fails on the link itself.
     nonisolated private static func themesDirectoryURL() -> URL {
-        OsaurusPaths.resolvePath(new: OsaurusPaths.themes(), legacy: "Themes")
+        OsaurusPaths.resolvingSymlinks(
+            OsaurusPaths.resolvePath(new: OsaurusPaths.themes(), legacy: "Themes")
+        )
     }
 
     private static func themeFileURL(for id: UUID) -> URL {
