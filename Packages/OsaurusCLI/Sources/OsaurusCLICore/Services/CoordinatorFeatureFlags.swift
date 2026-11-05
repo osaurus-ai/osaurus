@@ -38,7 +38,16 @@ public struct CoordinatorFeatureFlagsStore {
         }
         let data = try Data(contentsOf: paths.featureFlagsFile)
         let decoder = JSONDecoder()
-        return try decoder.decode(CoordinatorFeatureFlags.self, from: data)
+        do {
+            return try decoder.decode(CoordinatorFeatureFlags.self, from: data)
+        } catch is DecodingError {
+            // An undecodable (truncated / hand-edited / partially written) file
+            // degrades to defaults, mirroring the absent-file branch above, so the
+            // read-only `coord status` diagnostic keeps working and `feature-flags
+            // set` can repair the file. Genuine I/O errors from Data(contentsOf:)
+            // still propagate.
+            return CoordinatorFeatureFlags.defaults
+        }
     }
 
     @discardableResult
