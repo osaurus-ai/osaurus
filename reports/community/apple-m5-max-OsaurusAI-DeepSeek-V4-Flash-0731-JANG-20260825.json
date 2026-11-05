@@ -1,0 +1,155 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-08-26T00:23:05.067Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.940677966101695,
+      "chatModelPassed" : 255,
+      "chatModelScored" : 296,
+      "correctFileDeliveryRate" : 0.8727272727272727,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "cc19e77",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/DeepSeek-V4-Flash-0731-JANG",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 0,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.940677966101695,
+      "meanAgentLoopWallTimeMs" : 85514.4319372662,
+      "meanCpuPercent" : 107.69860119559891,
+      "meanDecodeTokensPerSecond" : 17.21217198276149,
+      "meanFirstActionMs" : 20589.406261572967,
+      "meanFirstStepContextTokens" : 2556.4786324786323,
+      "meanFrictionCalls" : 0.25,
+      "meanPromptTokensPerTask" : 13995.311764705883,
+      "meanTotalTokensPerTask" : 13260.053763440861,
+      "meanTtftMs" : 307.093790740021,
+      "medianModelSteps" : 4,
+      "modelId" : "OsaurusAI/DeepSeek-V4-Flash-0731-JANG",
+      "peakCpuPercent" : 336.5196402577681,
+      "peakPhysFootprintMb" : 110209.38404083252,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 99,
+          "scored" : 118,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3,
+            "vmnetContention: sandbox unavailable (vmnetOwnedByOtherProcess): Sandbox VM is already owned by PID 692 (osaurus) at /Applications/osaurus.app/Contents/MacOS/osaurus. Stop that Osaurus app or eval process before starting another vmnet sandbox." : 19
+          },
+          "skipped" : 22
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 25,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 22,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 34,
+          "scored" : 42,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 54866" : 1,
+            "other: scenario: multimodal_video · port 54866" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 1,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 2,
+          "passed" : 3,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 13,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 1,
+          "passed" : 35,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-08-25T20:06:57Z",
+      "subsystemPassed" : 11,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "§pluginCreator=714",
+        "tool:search_and_extract=371",
+        "§enabledManifest=362",
+        "tool:file_read=280",
+        "tool:render_chart=275",
+        "tool:share_artifact=266"
+      ],
+      "totalPassed" : 266,
+      "totalScored" : 312
+    }
+  ]
+}
