@@ -1,0 +1,154 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-08-27T00:49:57.442Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.9856115107913669,
+      "chatModelPassed" : 270,
+      "chatModelScored" : 319,
+      "correctFileDeliveryRate" : 0.8157894736842105,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "cc19e77",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/Laguna-XS-2.1-JANG_6M",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 1,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.8992805755395683,
+      "meanAgentLoopWallTimeMs" : 29362.72578788318,
+      "meanCpuPercent" : 104.4200982463365,
+      "meanDecodeTokensPerSecond" : 44.60083988620372,
+      "meanFirstActionMs" : 5097.677514500861,
+      "meanFirstStepContextTokens" : 2532.2246376811595,
+      "meanFrictionCalls" : 0.7183098591549296,
+      "meanPromptTokensPerTask" : 19213.340314136127,
+      "meanTotalTokensPerTask" : 18128.521739130436,
+      "meanTtftMs" : 115.30866059992049,
+      "medianModelSteps" : 4,
+      "modelId" : "OsaurusAI/Laguna-XS-2.1-JANG_6M",
+      "peakCpuPercent" : 290.0311524514365,
+      "peakPhysFootprintMb" : 26356.36248779297,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 117,
+          "scored" : 139,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3
+          },
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 26,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 21,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 31,
+          "scored" : 42,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 53839" : 1,
+            "other: scenario: multimodal_video · port 53839" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 1,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 12,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 1,
+          "passed" : 35,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-08-26T23:05:46Z",
+      "subsystemPassed" : 12,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "tool:search_and_extract=371",
+        "tool:file_read=279",
+        "tool:render_chart=275",
+        "tool:spawn_batch=266",
+        "tool:share_artifact=266",
+        "§pluginCreator=252"
+      ],
+      "totalPassed" : 282,
+      "totalScored" : 335
+    }
+  ]
+}
