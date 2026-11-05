@@ -55,7 +55,10 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration {
-        didSet { Self.refreshProviderNameCache(configuration.providers) }
+        didSet {
+            Self.refreshProviderNameCache(configuration.providers)
+            invalidateConnectedSpawnModelTargetIndex()
+        }
     }
 
     /// Lock-protected id → display-name mirror so nonisolated loggers
@@ -87,7 +90,9 @@ public final class RemoteProviderManager: ObservableObject {
     @Published public private(set) var isOsaurusRouterEnabled: Bool = OsaurusRouter.isEnabled
 
     /// Runtime state for each provider
-    @Published public private(set) var providerStates: [UUID: RemoteProviderState] = [:]
+    @Published public private(set) var providerStates: [UUID: RemoteProviderState] = [:] {
+        didSet { invalidateConnectedSpawnModelTargetIndex() }
+    }
 
     /// Connectivity-driven offline mode, fed by the network path monitor
     /// below. While true, the manager exposes no remote chat services or
@@ -96,10 +101,27 @@ public final class RemoteProviderManager: ObservableObject {
     /// catalogs — they come back as-is on the recovery edge. Starts false
     /// (the monitor's baseline reading arrives asynchronously) so launch
     /// never flickers through a spurious offline state.
-    @Published public private(set) var isOffline: Bool = false
+    @Published public private(set) var isOffline: Bool = false {
+        didSet { invalidateConnectedSpawnModelTargetIndex() }
+    }
 
     /// Active service instances keyed by provider ID
-    private var services: [UUID: RemoteProviderService] = [:]
+    private var services: [UUID: RemoteProviderService] = [:] {
+        didSet { invalidateConnectedSpawnModelTargetIndex() }
+    }
+
+    /// Memoized spawn catalog index. Rebuilding it walks every discovered
+    /// model of every connected provider, and the synchronous context-budget
+    /// preview asks for it several times per compose across every open chat
+    /// session on the main thread (APPLE-MACOS-1WN app hang). Cleared by the
+    /// `didSet` observers on every input it derives from; the workspace
+    /// address set (owned by `RemoteAgentManager`) is checked per read.
+    private var cachedConnectedSpawnModelTargetIndex:
+        (workspaceManagedAddresses: Set<String>, index: ConnectedSpawnModelTargetIndex)?
+
+    private func invalidateConnectedSpawnModelTargetIndex() {
+        cachedConnectedSpawnModelTargetIndex = nil
+    }
 
     /// Provider IDs created from Bonjour discovery — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
@@ -1391,17 +1413,28 @@ public final class RemoteProviderManager: ObservableObject {
     /// service is not dispatchable, so it is deliberately omitted.
     func connectedSpawnModelTargets() -> [ConnectedSpawnModelTarget] {
         guard !isOffline else { return [] }
-        // Providers minted by pairing a teammate's WORKSPACE agent are Mode 2
-        // endpoints (the host runs its own agent), not a bare-model
-        // catalog. They also connect/disconnect with the teammate's presence,
-        // and this index feeds the composed prompt + spawn schema — so
-        // including them would reset the prefix cache every time a teammate's
-        // Mac slept. Their `spawn_agent` path is `spawnableWorkspaceAgents`.
-        let workspaceManagedAddresses = Set(
+        return connectedSpawnModelTargets(
+            excludingWorkspaceManagedAddresses: Self.currentWorkspaceManagedAddresses()
+        )
+    }
+
+    /// Lowercased addresses of teammate WORKSPACE agents. Providers minted by
+    /// pairing one are Mode 2 endpoints (the host runs its own agent), not a
+    /// bare-model catalog. They also connect/disconnect with the teammate's
+    /// presence, and this index feeds the composed prompt + spawn schema — so
+    /// including them would reset the prefix cache every time a teammate's
+    /// Mac slept. Their `spawn_agent` path is `spawnableWorkspaceAgents`.
+    private static func currentWorkspaceManagedAddresses() -> Set<String> {
+        Set(
             RemoteAgentManager.shared.remoteAgents
                 .filter(\.isWorkspaceManaged)
                 .map { $0.agentAddress.lowercased() }
         )
+    }
+
+    private func connectedSpawnModelTargets(
+        excludingWorkspaceManagedAddresses workspaceManagedAddresses: Set<String>
+    ) -> [ConnectedSpawnModelTarget] {
         return configuration.providers.flatMap { provider -> [ConnectedSpawnModelTarget] in
             if let address = provider.remoteAgentAddress?.lowercased(),
                 workspaceManagedAddresses.contains(address)
@@ -1437,8 +1470,24 @@ public final class RemoteProviderManager: ObservableObject {
     }
 
     /// Capture one indexed view of the current connected spawn catalog.
+    ///
+    /// Memoized: rebuilt only after provider configuration, connection state,
+    /// services, offline mode, or the workspace-agent roster changes.
     func connectedSpawnModelTargetIndex() -> ConnectedSpawnModelTargetIndex {
-        ConnectedSpawnModelTargetIndex(targets: connectedSpawnModelTargets())
+        guard !isOffline else { return .empty }
+        let workspaceManagedAddresses = Self.currentWorkspaceManagedAddresses()
+        if let cached = cachedConnectedSpawnModelTargetIndex,
+            cached.workspaceManagedAddresses == workspaceManagedAddresses
+        {
+            return cached.index
+        }
+        let index = ConnectedSpawnModelTargetIndex(
+            targets: connectedSpawnModelTargets(
+                excludingWorkspaceManagedAddresses: workspaceManagedAddresses
+            )
+        )
+        cachedConnectedSpawnModelTargetIndex = (workspaceManagedAddresses, index)
+        return index
     }
 
     /// Resolve a canonical UUID-backed spawn id, or one unambiguous legacy
