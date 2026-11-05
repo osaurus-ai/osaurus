@@ -16,6 +16,22 @@ import Foundation
 /// Locates executables the way a login shell would, for child processes
 /// spawned out of a GUI app.
 public enum ExecutableLocator {
+    /// The current user's home directory, resolved once per process.
+    ///
+    /// `FileManager.homeDirectoryForCurrentUser` goes through `getpwuid_r`,
+    /// which can block on the libsystem_info cache lock / opendirectoryd for
+    /// seconds. `searchPath` is reached from UI paths (e.g. the Claude Code
+    /// availability probe), so it must not pay that lookup on every call —
+    /// that stalled the main thread (APPLE-MACOS-3D9). Prefer `$HOME`, which
+    /// needs no directory-services round trip, and fall back to the account
+    /// lookup only once.
+    public static let homePath: String = {
+        if let home = ProcessInfo.processInfo.environment["HOME"], !home.isEmpty {
+            return home
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.path
+    }()
+
     /// Resolve `command` to an absolute path the kernel can exec.
     ///
     /// Absolute / relative paths are trusted as-is; bare names are resolved by
@@ -53,7 +69,7 @@ public enum ExecutableLocator {
         for entry in loginShellEntries ?? [] where !entries.contains(entry) {
             entries.append(entry)
         }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = homePath
         for fallback in [
             "/opt/homebrew/bin",
             "/usr/local/bin",
@@ -113,7 +129,7 @@ public enum ExecutableLocator {
     /// `Process` does not do this for us — it execs the literal path.
     public static func expandUserPath(_ path: String) -> String {
         guard path == "~" || path.hasPrefix("~/") else { return path }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = homePath
         if path == "~" {
             return home
         }
