@@ -163,6 +163,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )
+        case .cheaperInference:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("Cheaper Inference"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Use a Cheaper Inference API key from the Cheaper Inference console."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
         case .google:
             return ProviderCredentialInstructions(
                 providerType: providerType,
