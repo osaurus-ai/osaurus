@@ -28,6 +28,7 @@
       "requireFinalDiskCacheRestore": true,
       "requirePrefillProgressAccounting": true,
       "requireNonEmptyVisibleTurns": true,
+      "requiredVisibleTextPerTurn": ["CURRENT SETTINGS RESTORED", "CURRENT SETTINGS RESTORED", "CURRENT SETTINGS RESTORED"],
       "requireClosedReasoning": true,
       "requireCompanionOnHybrid": true,
       "requireDiskL2EvidenceOnHybrid": true

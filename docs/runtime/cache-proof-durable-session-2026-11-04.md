@@ -86,3 +86,32 @@ samples are bound by `E4B-MXFP4-FOOTPRINT-CAUSAL-DIAGNOSTIC-RECEIPT.json` under
 `ProcessMemoryProbe` fields named MB divide by 1024 squared and represent
 MiB. The earlier commentary's GiB label was corrected; raw values are retained.
 No release or tag is authorized by this work.
+
+## Follow-up: score answer fidelity separately
+
+The exact 702-token prompt whose native restored answer was `White` now has
+a hash-gated logits diagnostic: prefix 699 matches its captured SSD payload.
+Cold repeat and fresh-file versus matching split restore are bit-identical
+across all 262,144 logits, including the production eager-CPU-read ordering.
+Captured native restore versus cold has total variation 0.018387; the top token
+remains `LON`. The bundle-filtered first-token probability of `White` is
+0.01166 cold and 0.01256 restored. This does not establish cache corruption as
+the cause of the sampled answer. Original RNG state is unknown; full-answer
+fidelity and other model/cache paths are not certified by first-token evidence.
+Two source-bound numerical comparisons agree; the second process completed
+before its physical sampler began, so only the first has five resource samples.
+The diagnostic receipt preserves these limits and the failed executable-path
+attempt, rather than treating either as an inference pass.
+
+`requiredVisibleTextPerTurn` now gives CacheProof fixtures an optional required
+phrase for each visible answer. Matching is case-insensitive substring matching,
+so punctuation/case changes are allowed; it is a lexical check, not a semantic
+judge or an exact whole-answer check. Invalid count or empty phrases fail before
+inference. The three completed-file SSD fixtures author checkpoint phrases; a
+response of `White` or `Chi` fails even when all cache counters pass. The check
+changes only evaluation, never model input, samplers, token budgets or runtime.
+Full Evals units pass 382 tests / 50 suites after adding regression coverage for
+recorded wrong words, missing turns and fixture opt-ins. A toolchain/cache-path
+compile failure and a missing actor annotation in the first helper attempt are
+retained in separate logs; the annotation is corrected and the complete suite
+passes. New real-model results under this stronger scorer are still pending.

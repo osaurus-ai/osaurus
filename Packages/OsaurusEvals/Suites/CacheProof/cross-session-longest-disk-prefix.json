@@ -26,6 +26,7 @@
       "minFinalRestoreGainTokens": 128,
       "requirePrefillProgressAccounting": true,
       "requireNonEmptyVisibleTurns": true,
+      "requiredVisibleTextPerTurn": ["SHORT CHECKPOINT", "LONGEST MATCH RESTORED", "LONGEST MATCH RESTORED"],
       "requireClosedReasoning": true,
       "requireCompanionOnHybrid": true,
       "requireDiskL2EvidenceOnHybrid": true

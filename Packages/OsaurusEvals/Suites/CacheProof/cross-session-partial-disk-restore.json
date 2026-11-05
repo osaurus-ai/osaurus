@@ -23,6 +23,7 @@
       "requireFinalDiskCacheRestore": true,
       "requirePrefillProgressAccounting": true,
       "requireNonEmptyVisibleTurns": true,
+      "requiredVisibleTextPerTurn": ["ALPHA REFERENCE STORED", "OMEGA PARTIAL RESTORE"],
       "requireClosedReasoning": true,
       "requireCompanionOnHybrid": true,
       "requireDiskL2EvidenceOnHybrid": true

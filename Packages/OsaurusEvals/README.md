@@ -1216,3 +1216,12 @@ workspace Ask + local Always Allow, pool-spend copy, Deny wins) and
 It does not stand in for the two-Mac release row (auto-join on roster load,
 the real Ask card, digest + artifact promotion through the relay, `continue`
 on a remote session, Received tab on the host); those stay live proof.
+
+## Cache answer fidelity
+
+CacheProof fixtures may set `requiredVisibleTextPerTurn` to one nonempty phrase
+per authored turn. Scoring requires each visible answer to contain its phrase
+(case-insensitive); this accepts punctuation/case variation but rejects unrelated
+reference words even when cache telemetry passes. The check never modifies model
+input, sampler or token budget. It is a lexical answer check, not a general
+semantic correctness judge. Completed-file SSD fixtures opt in explicitly.

@@ -387,4 +387,44 @@ struct AgentLoopCacheProofCampaignTests {
         }
         #expect(note.contains("EXCEEDS 1280 MB gate"))
     }
+    @Test func cacheAnswerFidelityRejectsTheRecordedReferenceWordFailure() {
+        let required = ["SHORT CHECKPOINT", "LONGEST MATCH RESTORED", "LONGEST MATCH RESTORED"]
+        #expect(EvalRunner.cacheProofVisibleTextProblem(
+            required: required,
+            visible: ["SHORT CHECKPOINT.", "LONGEST MATCH RESTORED", "White"]
+        ) == "required visible answer phrase missing on turn(s) 3")
+        #expect(EvalRunner.cacheProofVisibleTextProblem(
+            required: required,
+            visible: ["SHORT CHECKPOINT.", "Tamarack, Yellow, Zeta", "Chi"]
+        ) == "required visible answer phrase missing on turn(s) 2,3")
+    }
+
+    @Test func cacheAnswerFidelityAcceptsPunctuationAndCaseButNotMissingTurns() {
+        let required = ["SHORT CHECKPOINT", "LONGEST MATCH RESTORED"]
+        #expect(EvalRunner.cacheProofVisibleTextProblem(
+            required: required, visible: ["Short checkpoint.", "The longest match restored."]
+        ) == nil)
+        #expect(EvalRunner.cacheProofVisibleTextProblem(
+            required: required, visible: ["SHORT CHECKPOINT."]
+        ) != nil)
+        #expect(EvalRunner.cacheProofVisibleTextProblem(required: ["  "], visible: ["anything"]) != nil)
+        #expect(EvalRunner.cacheProofVisibleTextProblem(required: [], visible: []) != nil)
+    }
+
+    @Test func completedFileDiskCasesRequireTheAuthoredAnswerOnEveryTurn() throws {
+        let suite = try EvalSuite.load(from: Self.packageRoot.appendingPathComponent("Suites/CacheProof"))
+        let ids = ["cache_proof.cross-session-longest-disk-prefix",
+                   "cache_proof.cross-session-partial-disk-restore",
+                   "cache_proof.settings-prompt-revision"]
+        for id in ids {
+            let testCase = try #require(suite.cases.first { $0.id == id })
+            let exp = try #require(testCase.expect.cacheProof)
+            let phrases = try #require(exp.requiredVisibleTextPerTurn)
+            #expect(phrases.count == 1 + (exp.followUpTurns?.count ?? 0))
+            #expect(phrases.allSatisfy { !$0.isEmpty })
+        }
+        let ordinary = try #require(suite.cases.first { $0.id == "cache_proof.identical-query-replay" })
+        #expect(ordinary.expect.cacheProof?.requiredVisibleTextPerTurn == nil)
+    }
+
 }
