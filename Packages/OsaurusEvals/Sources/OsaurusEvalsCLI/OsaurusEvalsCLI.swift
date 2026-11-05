@@ -376,7 +376,7 @@ struct OsaurusEvalsCLI {
                 EvalTranscriptStore.writtenCount > 0
             {
                 print(
-                    "wrote \(EvalTranscriptStore.writtenCount) failed-case transcript(s) "
+                    "wrote \(EvalTranscriptStore.writtenCount) case transcript(s) "
                         + "to \(directory.path)"
                 )
             }

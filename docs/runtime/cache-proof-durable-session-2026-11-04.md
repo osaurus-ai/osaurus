@@ -123,3 +123,29 @@ it does not fix model quality. All raw output, rates, source and 76 cache payloa
 snapshots are bound by `CACHE-ANSWER-FIDELITY-REAL-RECEIPT.json`. A missing
 capture destination initially stopped the observer; a new destination was
 attached to the same still-running model process, without restarting the run.
+
+## Successful harness evidence opt-in
+
+`--transcripts-all` now explicitly retains successful LLM-case traces alongside
+failures, with a required output destination and a per-suite reset. The default
+`--transcripts` policy and existing rubric/caller opt-ins remain unchanged.
+This is evidence persistence only: no model request, sampler, output budget,
+scoring or dispatch change. Tool arguments are retained exactly; result and
+step previews remain previews, not a full token-stream capture.
+
+Full Evals units pass384tests/50suites. The actual CLI rejects a missing output
+anchor with exit2 before model startup. With the flag, the same six selected
+AgentLoop/Frontier cases on12B JANG score6/6 with17model steps and zero recovery
+retries, and all six successful traces are retained. These now expose the actual
+cancellation-after-file-write and multi-file-read arguments; the cancellation
+row still does not exercise cancellation during an in-flight parallel call.
+Native12B JANG remains2PASS/2FAIL like MXFP4: calculator2491/history7473 pass,
+actual image text/amount is wrong with no requested tool call, and restart uses
+that unexecuted729 prose as a tool result. These failures are retained.
+
+Runtime workflow source declares lint advisory (`continue-on-error: true`).
+The current runtime Mac job requests a self-hosted macos runner, while the
+repository runner API returns total_count0. The formatter failure is not what
+prevents the Mac job from starting. No runner was registered, unrelated job
+stopped, required check forged or hardware CI pass claimed. Further native
+variants, affected settings/cache/quality proof and normal landing remain open.
