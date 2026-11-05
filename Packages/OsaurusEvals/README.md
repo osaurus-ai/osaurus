@@ -1225,3 +1225,14 @@ per authored turn. Scoring requires each visible answer to contain its phrase
 reference words even when cache telemetry passes. The check never modifies model
 input, sampler or token budget. It is a lexical answer check, not a general
 semantic correctness judge. Completed-file SSD fixtures opt in explicitly.
+
+## Retaining successful qualification evidence
+
+Use `--transcripts-all` with `--out` or `--out-dir` to retain successful LLM
+transcripts as well as failures. The existing `--transcripts` policy stays
+unchanged. Each suite resets the retention mode; repeated rows keep their trial
+filenames. The explicit all mode preserves composed prompts, exact tool
+arguments, result previews and step diagnostics, so keep these local artifacts
+private. It does not change model requests, budgets, scores or execution.
+This is not a raw token-stream capture: result and diagnostic previews remain
+previews. A missing output destination is rejected before model startup.

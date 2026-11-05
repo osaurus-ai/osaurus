@@ -300,7 +300,8 @@ struct OsaurusEvalsCLI {
             if opts.transcripts {
                 if let outPath {
                     EvalTranscriptStore.configure(
-                        directory: EvalTranscriptStore.sidecarDirectory(forOut: outPath)
+                        directory: EvalTranscriptStore.sidecarDirectory(forOut: outPath),
+                        includeSuccessful: opts.transcriptsAll
                     )
                 } else {
                     EvalTranscriptStore.configure(directory: nil)
@@ -829,6 +830,8 @@ struct OsaurusEvalsCLI {
         /// repeated failures use `<caseId>.trial-N.json`.
         /// Off by default: transcripts carry the whole composed prompt.
         let transcripts: Bool
+        /// Also retain successful LLM rows for auditable qualification.
+        let transcriptsAll: Bool
         let verbose: Bool
         /// Capability-search **tools-lane** RRF cutoff sweep value.
         /// Forwarded to `EvalRunner.run(thresholdOverride:)`; no-op
@@ -893,6 +896,7 @@ struct OsaurusEvalsCLI {
             var repeatCount = 1
             var resume = false
             var transcripts = false
+            var transcriptsAll = false
             var verbose = false
             var threshold: Float?
             var embedCosineFloor: Float?
@@ -936,6 +940,10 @@ struct OsaurusEvalsCLI {
                     i += 2
                 case "--resume":
                     resume = true
+                    i += 1
+                case "--transcripts-all":
+                    transcripts = true
+                    transcriptsAll = true
                     i += 1
                 case "--transcripts":
                     transcripts = true
@@ -1007,6 +1015,9 @@ struct OsaurusEvalsCLI {
                     "single file with multiple --suite dirs; use --out-dir instead"
                 )
             }
+            if transcriptsAll && out == nil && outDir == nil {
+                throw CLIError.invalidValue("--transcripts-all", "requires --out or --out-dir")
+            }
             return Options(
                 suites: suites,
                 model: ModelSelection.parse(modelRaw),
@@ -1017,6 +1028,7 @@ struct OsaurusEvalsCLI {
                 repeatCount: repeatCount,
                 resume: resume,
                 transcripts: transcripts,
+                transcriptsAll: transcriptsAll,
                 verbose: verbose,
                 threshold: threshold,
                 embedCosineFloor: embedCosineFloor,
@@ -1050,7 +1062,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals vision-inventory --out <inventory.json>
                 osaurus-evals run --suite <dir> [--suite <dir> ...] [--model <id>] [--filter <substr[|substr...]>]
                                               [--out <path> | --out-dir <dir> [--out-prefix <p>]]
-                                              [--repeat <n>] [--resume] [--transcripts]
+                                              [--repeat <n>] [--resume] [--transcripts | --transcripts-all]
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
                                               [--experiment-profile <profile.json>]
@@ -1118,6 +1130,10 @@ struct OsaurusEvalsCLI {
                                       Needs --out/--out-dir. Off by default —
                                       transcripts carry the whole composed
                                       prompt, which shared reports shouldn't.
+                --transcripts-all     Also retain successful LLM-case transcripts.
+                                      Implies --transcripts; requires --out or
+                                      --out-dir. Explicit qualification option;
+                                      preserves prompts and tool arguments.
                 --verbose, -v         Print per-case diagnostics: the user query
                                       for each case.
                 --threshold <float>   Override the **tools-lane** RRF cutoff
