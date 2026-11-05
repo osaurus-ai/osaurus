@@ -207,6 +207,42 @@ struct PrefixHashTests {
         )
     }
 
+    // MARK: - Canonical payload memoization (APPLE-MACOS-1QA)
+
+    @Test func cachedCanonicalPayloadMatchesUncachedComputation() {
+        let tool = fixtureTool(
+            description: "Mutates context after validating the target path and replacement body.",
+            parameterDescription: "Repository-relative path to mutate."
+        )
+        let first = tool.canonicalHashPayload()
+        let second = tool.canonicalHashPayload()
+        #expect(first == tool.computeCanonicalHashPayload())
+        #expect(second == first)
+    }
+
+    @Test func canonicalPayloadCacheMissesOnSchemaChange() {
+        let compact = fixtureTool(description: "Mutates context.")
+        let full = fixtureTool(
+            description: "Mutates context.",
+            parameterDescription: "Repository-relative path to mutate."
+        )
+        _ = compact.canonicalHashPayload()
+        #expect(full.canonicalHashPayload() == full.computeCanonicalHashPayload())
+        #expect(full.canonicalHashPayload() != compact.canonicalHashPayload())
+    }
+
+    @Test func canonicalPayloadCacheIsBounded() {
+        let cache = ToolCanonicalPayloadCache()
+        for i in 0..<(ToolCanonicalPayloadCache.maxEntries + 10) {
+            let tool = Tool(
+                type: "function",
+                function: ToolFunction(name: "tool_\(i)", description: nil, parameters: nil)
+            )
+            cache.store(Data([UInt8(i % 256)]), for: tool)
+        }
+        #expect(cache.count <= ToolCanonicalPayloadCache.maxEntries)
+    }
+
     // MARK: - SSE writeRole prefix_hash
 
     @Test func sseWriteRoleIncludesPrefixHash() async throws {

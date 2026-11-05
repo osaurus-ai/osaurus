@@ -1379,12 +1379,12 @@ extension OpenAIModel {
 // MARK: - Tools: Request/Response Models
 
 /// Tool definition (currently only type=="function")
-struct Tool: Codable, Sendable {
+struct Tool: Codable, Sendable, Hashable {
     let type: String  // "function"
     let function: ToolFunction
 }
 
-struct ToolFunction: Codable, Sendable {
+struct ToolFunction: Codable, Sendable, Hashable {
     let name: String
     let description: String?
     let parameters: JSONValue?
@@ -1518,7 +1518,7 @@ struct DeltaToolCallFunction: Codable, Sendable {
 // MARK: - Generic JSON value for tool parameters
 
 /// Simple JSON value representation to carry arbitrary JSON schema/arguments
-public enum JSONValue: Codable, Sendable, Equatable {
+public enum JSONValue: Codable, Sendable, Hashable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -1679,8 +1679,28 @@ extension Tool {
     /// compact bootstrap schemas from full tool schemas. This mirrors the
     /// tokenizer-tool shape so prefix evidence tracks the bytes handed to the
     /// chat template, not just the callable names.
+    ///
+    /// Memoized per tool value: the computation round-trips the schema through
+    /// `JSONSerialization` several times, and the chat preview recomputes the
+    /// prefix hash for the whole toolset on the main actor on every
+    /// prompt-shape signal. Re-serializing large MCP/plugin schemas each time
+    /// blocked the main thread past the app-hang watchdog (APPLE-MACOS-1QA).
+    /// The cache key is the full `Tool` value, so any schema edit misses and
+    /// recomputes; returned bytes are identical to the uncached path.
     func canonicalHashPayload() -> Data {
+        if let cached = ToolCanonicalPayloadCache.shared.payload(for: self) {
+            return cached
+        }
+        let data = computeCanonicalHashPayload()
+        ToolCanonicalPayloadCache.shared.store(data, for: self)
+        return data
+    }
+
+    /// Uncached canonical payload computation. Internal for tests.
+    func computeCanonicalHashPayload() -> Data {
         let spec = toTokenizerToolSpec()
+        // Keep the `isValidJSONObject` guard: `data(withJSONObject:)` raises an
+        // Objective-C exception (not a Swift error) on invalid input.
         if JSONSerialization.isValidJSONObject(spec),
             let data = try? JSONSerialization.data(withJSONObject: spec, options: .osaurusCanonical)
         {
@@ -1707,6 +1727,44 @@ extension Tool {
             return reparsed
         }
         return JSONCanonicalization.normalizeObject(value)
+    }
+}
+
+/// Process-wide memo of `Tool.canonicalHashPayload()` keyed by tool value.
+/// Bounded: cleared wholesale once it exceeds `maxEntries`, which only costs a
+/// recompute on the next lookup.
+final class ToolCanonicalPayloadCache: @unchecked Sendable {
+    static let shared = ToolCanonicalPayloadCache()
+    static let maxEntries = 1024
+
+    private let lock = NSLock()
+    private var entries: [Tool: Data] = [:]
+
+    func payload(for tool: Tool) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries[tool]
+    }
+
+    func store(_ data: Data, for tool: Tool) {
+        lock.lock()
+        defer { lock.unlock() }
+        if entries.count >= Self.maxEntries {
+            entries.removeAll(keepingCapacity: true)
+        }
+        entries[tool] = data
+    }
+
+    func removeAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        entries.removeAll()
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.count
     }
 }
 
