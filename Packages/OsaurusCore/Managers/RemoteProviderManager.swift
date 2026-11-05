@@ -967,6 +967,15 @@ public final class RemoteProviderManager: ObservableObject {
     /// on repeated satisfied updates (interface changes, DNS churn, …).
     private var lastNetworkPathWasSatisfied: Bool?
     private var networkRecoveryTask: Task<Void, Never>?
+    /// Pending debounced application of the latest path reading. Replaced on
+    /// every monitor callback so only the most recent value is applied.
+    private var pendingNetworkPathUpdateTask: Task<Void, Never>?
+    /// Coalescing window for path readings. Flapping links (wifi ↔ none) and
+    /// sleep/wake transitions emit bursts of updates; publishing `isOffline`
+    /// for each one fires the whole Combine/SwiftUI/AppKit fan-out
+    /// synchronously and showed up as a main-thread hang blocked on AppKit's
+    /// display-cycle transaction lock (Sentry APPLE-MACOS-1DA).
+    nonisolated static let networkPathDebounceNanoseconds: UInt64 = 250_000_000
 
     private func startNetworkRecoveryMonitor() {
         let monitor = NWPathMonitor()
@@ -974,16 +983,32 @@ public final class RemoteProviderManager: ObservableObject {
         monitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
             Task { @MainActor [weak self] in
-                self?.handleNetworkPathUpdate(satisfied: satisfied)
+                self?.scheduleNetworkPathUpdate(satisfied: satisfied)
             }
         }
         monitor.start(queue: DispatchQueue(label: "ai.osaurus.provider.pathmonitor"))
+    }
+
+    /// Debounce path readings: never mutate `@Published` state directly from
+    /// the monitor hop. Each reading cancels the previous pending one, and the
+    /// surviving (latest) value is applied after the settle window on a fresh
+    /// main-actor turn, so a burst of edges produces at most one publish.
+    private func scheduleNetworkPathUpdate(satisfied: Bool) {
+        pendingNetworkPathUpdateTask?.cancel()
+        pendingNetworkPathUpdateTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.networkPathDebounceNanoseconds)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingNetworkPathUpdateTask = nil
+            self.handleNetworkPathUpdate(satisfied: satisfied)
+        }
     }
 
     /// Internal (not private) so offline-mode tests can drive connectivity
     /// edges without a real `NWPath`.
     func handleNetworkPathUpdate(satisfied: Bool) {
         defer { lastNetworkPathWasSatisfied = satisfied }
+        // Only publish on a real edge — assigning an unchanged `@Published`
+        // value would still fire the full SwiftUI invalidation fan-out.
         if isOffline == satisfied {
             isOffline = !satisfied
             // Remote models are gated on `isOffline` (see
@@ -1917,6 +1942,8 @@ public final class RemoteProviderManager: ObservableObject {
         // simulated path edges (or a pending recovery sweep) into later tests.
         networkRecoveryTask?.cancel()
         networkRecoveryTask = nil
+        pendingNetworkPathUpdateTask?.cancel()
+        pendingNetworkPathUpdateTask = nil
         lastNetworkPathWasSatisfied = nil
         isOffline = false
         // Restore the master switch to its default (on) so a test that toggled
