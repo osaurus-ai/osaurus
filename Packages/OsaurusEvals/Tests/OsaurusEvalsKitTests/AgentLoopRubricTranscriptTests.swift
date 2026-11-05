@@ -75,4 +75,55 @@ struct AgentLoopRubricTranscriptTests {
         _ = EvalRunner.persistAgentLoopTranscript(transcript, for: report, query: "task", expectations: expectations)
         #expect(EvalTranscriptStore.writtenCount == 0 && EvalTranscriptStore.directory == nil)
     }
+    @Test(arguments: ["passed", "failed", "errored", "skipped"])
+    func explicitAllModeRetainsOrdinaryRunnerEvidenceWithoutChangingReports(outcome: String) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let previous = EvalTranscriptStore.directory
+        let previousAll = EvalTranscriptStore.includeSuccessful
+        EvalTranscriptStore.configure(directory: directory, includeSuccessful: true)
+        defer {
+            EvalTranscriptStore.configure(directory: previous, includeSuccessful: previousAll)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let transcript = AgentLoopTranscript(toolCalls: [
+            .init(name: "file_write", arguments: #"{"path":"ledger.txt","content":"001\n"}"#,
+                resultPreview: "wrote original bytes", wasDeduped: false, wasError: false, step: 1),
+        ], finalText: "original answer", iterations: 2, exit: "finalResponse",
+            systemPrompt: "original system", toolSchemaNames: ["file_write"], error: nil)
+        let report = EvalCaseReport(id: "ordinary.retention", label: "fixture", domain: "agent_loop",
+            outcome: try #require(EvalCaseOutcome(rawValue: outcome)), notes: ["original verdict"],
+            modelId: "injected", latencyMs: 1)
+        let returned = EvalRunner.persistAgentLoopTranscript(transcript, for: report, query: "original task")
+        #expect(returned.outcome == report.outcome && returned.notes == report.notes)
+        let file = directory.appendingPathComponent("ordinary.retention.json")
+        #expect(FileManager.default.fileExists(atPath: file.path) == (outcome != "skipped"))
+        if outcome != "skipped" {
+            let stored = try JSONDecoder().decode(EvalCaseTranscript.self, from: Data(contentsOf: file))
+            #expect(stored.toolCalls.first?.arguments == transcript.toolCalls.first?.arguments)
+            #expect(stored.finalText == transcript.finalText && stored.systemPrompt == transcript.systemPrompt)
+        }
+    }
+
+    @Test func allModeDoesNotLeakIntoTheNextDefaultSuiteOrDisabledSink() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let previous = EvalTranscriptStore.directory
+        let previousAll = EvalTranscriptStore.includeSuccessful
+        defer {
+            EvalTranscriptStore.configure(directory: previous, includeSuccessful: previousAll)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        EvalTranscriptStore.configure(directory: directory, includeSuccessful: true)
+        #expect(EvalTranscriptStore.includeSuccessful)
+        EvalTranscriptStore.configure(directory: directory)
+        #expect(!EvalTranscriptStore.includeSuccessful && EvalTranscriptStore.writtenCount == 0)
+        let transcript = AgentLoopTranscript(toolCalls: [], finalText: "answer", iterations: 1,
+            exit: "finalResponse", systemPrompt: "system", toolSchemaNames: [], error: nil)
+        let report = EvalCaseReport(id: "default.success", label: "fixture", domain: "agent_loop",
+            outcome: .passed, notes: [], modelId: "injected", latencyMs: 1)
+        _ = EvalRunner.persistAgentLoopTranscript(transcript, for: report, query: "task")
+        #expect(EvalTranscriptStore.writtenCount == 0)
+        EvalTranscriptStore.configure(directory: nil, includeSuccessful: true)
+        #expect(EvalTranscriptStore.directory == nil && !EvalTranscriptStore.includeSuccessful)
+    }
+
 }

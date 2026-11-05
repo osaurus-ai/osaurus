@@ -5972,8 +5972,10 @@ public actor ModelRuntime {
             // keep every previous record outside this cache namespace.
             "warmup=recurrent-safe-seed-v2",
             // Optional tied embedding quantization changes both input embeddings
-            // and stored attention state. The source-dtype contract also excludes
-            // entries produced before the loader stopped forcing BF16 outputs.
+            // and stored attention state. Retain the legacy host contract tag
+            // for unrelated-model cache compatibility. Runtime topology now adds
+            // the actual loaded head's materialisation, codec and output dtype;
+            // that identity isolates state affected by the ordering correction.
             tiedHeadCacheIdentity(codec: tiedHeadCodec),
         ]
 

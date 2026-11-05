@@ -236,7 +236,11 @@ public enum CacheProofEvaluator {
     /// deltas across the whole exchange. By default turn 2+ shares turn 1's
     /// prefix in one conversation. `startNewSessionBeforeTurns` clears
     /// history and rotates the session id before the listed one-based turns,
-    /// proving disk-backed reuse across fresh chats.
+    /// measuring reuse across fresh chats. `reloadModelOnNewSession` also
+    /// drains/unloads the model at those boundaries, so disk-read proofs
+    /// cannot be satisfied by a still-pending writer's in-memory payload.
+    /// Ordinary conversations and scripted tool continuations do not wait
+    /// for disk writes or unload their model.
     ///
     /// `thinkingPerTurn`, when provided, sets the request's documented
     /// `enable_thinking` switch per turn (index-aligned with the turn
@@ -263,6 +267,7 @@ public enum CacheProofEvaluator {
         systemPrompt: String? = nil,
         systemPromptsPerSession: [String]? = nil,
         startNewSessionBeforeTurns: [Int] = [],
+        reloadModelOnNewSession: Bool = false,
         toolResultFollowUps: [String]? = nil
     ) async -> CacheProofTranscript {
         await runConversation(
@@ -274,8 +279,26 @@ public enum CacheProofEvaluator {
             systemPromptsPerSession: systemPromptsPerSession,
             startNewSessionBeforeTurns: startNewSessionBeforeTurns,
             toolResultFollowUps: toolResultFollowUps,
-            engine: ChatEngine()
+            engine: ChatEngine(),
+            prepareNewSession: reloadModelOnNewSession ? unloadForDiskSession : nil
         )
+    }
+
+    private static func unloadForDiskSession(model: String) async throws {
+        guard let installed = ModelManager.findInstalledModel(named: model) else {
+            throw NSError(domain: "CacheProofSession", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "No installed local model for disk-session reload: \(model)"
+            ])
+        }
+        let unloaded = await ModelRuntime.shared.unload(
+            name: installed.name, leaseDrainTimeoutSeconds: 30
+        )
+        let resident = await ModelRuntime.shared.cachedModelSummaries()
+        guard unloaded, !resident.contains(where: { $0.name == installed.name }) else {
+            throw NSError(domain: "CacheProofSession", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "Model did not drain/unload for disk-session reload: \(installed.name)"
+            ])
+        }
     }
 
     static func runConversation(
@@ -287,7 +310,8 @@ public enum CacheProofEvaluator {
         systemPromptsPerSession: [String]? = nil,
         startNewSessionBeforeTurns: [Int] = [],
         toolResultFollowUps: [String]? = nil,
-        engine: any ResponsesEngineProtocol
+        engine: any ResponsesEngineProtocol,
+        prepareNewSession: (@MainActor (String) async throws -> Void)? = nil
     ) async -> CacheProofTranscript {
         let resolvedModel =
             model
@@ -348,6 +372,12 @@ public enum CacheProofEvaluator {
         for (turnIndex, query) in effectiveQueries.enumerated() {
             let turnNumber = turnIndex + 1
             if turnNumber > 1, sessionBoundaryTurns.contains(turnNumber) {
+                do {
+                    try await prepareNewSession?(resolvedModel)
+                } catch {
+                    runError = "turn \(turnNumber) new-session preparation failed: \(error.localizedDescription)"
+                    break
+                }
                 sessionId = UUID().uuidString
                 sessionNumber += 1
                 history = freshHistory(for: sessionNumber)

@@ -176653,6 +176653,40 @@
         }
       }
     },
+    "Passthrough (model load dtype)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unverändert (Datentyp beim Laden des Modells)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "변환 없음 (모델 로드 데이터 형식)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без преобразования (тип данных при загрузке модели)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直通（模型加载时的数据类型）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直通（模型載入時的資料類型）"
+          }
+        }
+      }
+    },
     "Past chats and file changes" : {
       "localizations" : {
         "de" : {

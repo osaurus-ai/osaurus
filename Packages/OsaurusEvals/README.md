@@ -885,6 +885,16 @@ that explicitly target those tiers.
 
 - `systemPromptsPerSession` must contain one prompt per configured session and
   enables short-prefix → extended-prefix → longest-match three-chat proofs.
+- `reloadModelOnNewSession` explicitly drains and unloads the local model
+  before turns listed in `startNewSessionBeforeTurns`. The next request loads
+  it again and restores serialized files through a new cache coordinator.
+  Completed-file SSD proofs use this mode to exclude a previous coordinator's
+  `diskPending` RAM payload; `diskPending` still cannot satisfy a `disk` gate.
+  It defaults to false. Ordinary chats and tool continuations keep their
+  nonblocking write-behind behavior. TTFT in reload rows includes model load
+  and is not comparable to warm-chat TTFT; filesystem-cache state is not a
+  claim of cold physical-drive throughput. A failed drain stops the row with
+  its earlier turn evidence intact.
 - `minStructuredCacheRestoreTurns` counts post-first turns with a nonzero typed
   restore event; it does not infer reuse from aggregate counters or UI color.
 - `requirePrefillProgressAccounting` requires a stable prompt total, bounded and
@@ -1206,3 +1216,23 @@ workspace Ask + local Always Allow, pool-spend copy, Deny wins) and
 It does not stand in for the two-Mac release row (auto-join on roster load,
 the real Ask card, digest + artifact promotion through the relay, `continue`
 on a remote session, Received tab on the host); those stay live proof.
+
+## Cache answer fidelity
+
+CacheProof fixtures may set `requiredVisibleTextPerTurn` to one nonempty phrase
+per authored turn. Scoring requires each visible answer to contain its phrase
+(case-insensitive); this accepts punctuation/case variation but rejects unrelated
+reference words even when cache telemetry passes. The check never modifies model
+input, sampler or token budget. It is a lexical answer check, not a general
+semantic correctness judge. Completed-file SSD fixtures opt in explicitly.
+
+## Retaining successful qualification evidence
+
+Use `--transcripts-all` with `--out` or `--out-dir` to retain successful LLM
+transcripts as well as failures. The existing `--transcripts` policy stays
+unchanged. Each suite resets the retention mode; repeated rows keep their trial
+filenames. The explicit all mode preserves composed prompts, exact tool
+arguments, result previews and step diagnostics, so keep these local artifacts
+private. It does not change model requests, budgets, scores or execution.
+This is not a raw token-stream capture: result and diagnostic previews remain
+previews. A missing output destination is rejected before model startup.

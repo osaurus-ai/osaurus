@@ -1046,6 +1046,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// One-based turn numbers that begin a fresh chat/session. History is
         /// cleared and a new session id is used before each listed turn.
         public let startNewSessionBeforeTurns: [Int]?
+        /// Explicit disk-read diagnostic: drain and unload the local model
+        /// before the configured fresh-session turns. The next request loads
+        /// it again, excluding resident/pending RAM payloads from SSD proof.
+        public let reloadModelOnNewSession: Bool?
         /// Minimum structured cache-restore count on at least one turn after
         /// the first. The count comes from vMLX prefill progress, not logs.
         public let minCacheRestoredTokens: Int?
@@ -1082,6 +1086,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let requirePrefillProgressAccounting: Bool?
         /// Require every completed turn to produce non-empty visible content.
         public let requireNonEmptyVisibleTurns: Bool?
+        /// Optional case-insensitive required phrase for each authored turn.
+        /// Scores the visible answer only; it never changes model input or decoding.
+        /// When present, count must match all turns and every phrase must be nonempty.
+        public let requiredVisibleTextPerTurn: [String]?
         /// Require no turn to end with an unclosed reasoning channel.
         public let requireClosedReasoning: Bool?
         /// Optional per-turn TTFT ceiling, applied to every measured turn.
@@ -1127,6 +1135,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             gatePeakFootprintToResolvedBudget: Bool? = nil,
             maxFootprintGrowthMb: Double? = nil,
             startNewSessionBeforeTurns: [Int]? = nil,
+            reloadModelOnNewSession: Bool? = nil,
             minCacheRestoredTokens: Int? = nil,
             requirePartialCacheRestore: Bool? = nil,
             requireDiskCacheRestore: Bool? = nil,
@@ -1138,6 +1147,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             minFinalRestoreGainTokens: Int? = nil,
             requirePrefillProgressAccounting: Bool? = nil,
             requireNonEmptyVisibleTurns: Bool? = nil,
+            requiredVisibleTextPerTurn: [String]? = nil,
             requireClosedReasoning: Bool? = nil,
             maxTtftMs: Double? = nil,
             toolResultFollowUps: [String]? = nil,
@@ -1160,6 +1170,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.gatePeakFootprintToResolvedBudget = gatePeakFootprintToResolvedBudget
             self.maxFootprintGrowthMb = maxFootprintGrowthMb
             self.startNewSessionBeforeTurns = startNewSessionBeforeTurns
+            self.reloadModelOnNewSession = reloadModelOnNewSession
             self.minCacheRestoredTokens = minCacheRestoredTokens
             self.requirePartialCacheRestore = requirePartialCacheRestore
             self.requireDiskCacheRestore = requireDiskCacheRestore
@@ -1171,6 +1182,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.minFinalRestoreGainTokens = minFinalRestoreGainTokens
             self.requirePrefillProgressAccounting = requirePrefillProgressAccounting
             self.requireNonEmptyVisibleTurns = requireNonEmptyVisibleTurns
+            self.requiredVisibleTextPerTurn = requiredVisibleTextPerTurn
             self.requireClosedReasoning = requireClosedReasoning
             self.maxTtftMs = maxTtftMs
             self.toolResultFollowUps = toolResultFollowUps

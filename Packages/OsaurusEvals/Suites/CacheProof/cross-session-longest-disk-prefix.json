@@ -3,7 +3,7 @@
   "domain": "cache_proof",
   "label": "cache proof • three fresh chats choose the longest valid SSD prefix",
   "query": "Reply with exactly SHORT CHECKPOINT.",
-  "notes": "Three-session disk-only longest-match proof using processor-valid boundaries. All sessions share the same long system boundary. Session 1 persists that boundary. Session 2 uses a much longer user request, must restore the shared system boundary, and then persists the longer full prompt. Session 3 exactly replays session 2 and must restore at least 128 more tokens than session 2. The score consumes production typed progress frames, requires monotonic restore-to-prefill-to-complete accounting, and requires the final restore tier to be disk. Run with OSAURUS_EVALS_KV_REGIME=disk-l2 and OSAURUS_EVALS_PAGED_KV=off.",
+  "notes": "Explicit disk-read lifecycle: the model is drained and unloaded before each configured fresh session, then loaded by the next request. TTFT includes reload; ordinary chat/tool turns keep nonblocking write-behind. Three-session disk-only longest-match proof using processor-valid boundaries. All sessions share the same long system boundary. Session 1 persists that boundary. Session 2 uses a much longer user request, must restore the shared system boundary, and then persists the longer full prompt. Session 3 exactly replays session 2 and must restore at least 128 more tokens than session 2. The score consumes production typed progress frames, requires monotonic restore-to-prefill-to-complete accounting, and requires the final restore tier to be disk. Run with OSAURUS_EVALS_KV_REGIME=disk-l2 and OSAURUS_EVALS_PAGED_KV=off.",
   "fixtures": {},
   "expect": {
     "cacheProof": {
@@ -15,6 +15,7 @@
       "thinkingPerTurn": [false, false, false],
       "maxTokens": 256,
       "startNewSessionBeforeTurns": [2, 3],
+      "reloadModelOnNewSession": true,
       "minDiskL2HitsDelta": 2,
       "minDiskL2StoresDelta": 2,
       "minCacheRestoredTokens": 128,
@@ -25,6 +26,7 @@
       "minFinalRestoreGainTokens": 128,
       "requirePrefillProgressAccounting": true,
       "requireNonEmptyVisibleTurns": true,
+      "requiredVisibleTextPerTurn": ["SHORT CHECKPOINT", "LONGEST MATCH RESTORED", "LONGEST MATCH RESTORED"],
       "requireClosedReasoning": true,
       "requireCompanionOnHybrid": true,
       "requireDiskL2EvidenceOnHybrid": true
