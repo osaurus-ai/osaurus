@@ -471,17 +471,25 @@ struct ServerRuntimeSettingsStoreTests {
         #expect(plan.displaySummary.contains("load_cap=0.79"))
     }
 
-    @Test @MainActor func load_movesLegacyImplicitPrefixCapUnderMemorySafety() async throws {
+    @Test(arguments: [false, true])
+    @MainActor func load_movesLegacyImplicitPrefixCapUnderMemorySafety(snapshotFirst: Bool) async throws {
         let dir = try makeTempDirectory()
-        try await withOverriddenDirectory(dir) {
-            var oldDefault = VMLXServerRuntimeSettings()
-            oldDefault.cache.pagedKV.enabled = true
-            oldDefault.cache.liveKVCodec = .none
-            oldDefault.cache.enableSSMReDerive = false
-            oldDefault.cache.defaultMaxKVSize = 65_536
-            try writeSettings(oldDefault, to: dir)
+        var oldDefault = VMLXServerRuntimeSettings()
+        oldDefault.cache.pagedKV.enabled = true
+        oldDefault.cache.liveKVCodec = .none
+        oldDefault.cache.enableSSMReDerive = false
+        oldDefault.cache.defaultMaxKVSize = 65_536
+        // Publish the historical fixture before making its directory globally
+        // visible. A background snapshot of an empty directory legitimately
+        // writes fresh-install markers, which would make a later 15% value an
+        // explicit choice instead of this test's unmigrated legacy default.
+        try writeSettings(oldDefault, to: dir)
 
+        try await withOverriddenDirectory(dir) {
             ServerRuntimeSettingsStore.invalidateSnapshot()
+            if snapshotFirst {
+                #expect(ServerRuntimeSettingsStore.snapshot().cache.prefix.memoryPercent == nil)
+            }
             let loaded = try #require(ServerRuntimeSettingsStore.load())
 
             #expect(loaded.cache.prefix.memoryPercent == nil)
@@ -645,16 +653,19 @@ struct ServerRuntimeSettingsStoreTests {
         }
     }
 
-    @Test @MainActor func load_repairsLegacyCacheDefaultsWithoutEnablingTurboQuant() async throws {
+    @Test(arguments: [false, true])
+    @MainActor func load_repairsLegacyCacheDefaultsWithoutEnablingTurboQuant(snapshotFirst: Bool) async throws {
         let dir = try makeTempDirectory()
+        var oldDefault = VMLXServerRuntimeSettings()
+        oldDefault.cache.pagedKV.enabled = true
+        oldDefault.cache.liveKVCodec = .none
+        oldDefault.cache.enableSSMReDerive = false
+        oldDefault.cache.defaultMaxKVSize = 65536
+        oldDefault.cache.longPromptMultiplier = 2.0
+        try writeSettings(oldDefault, to: dir)
+
         try await withOverriddenDirectory(dir) {
-            var oldDefault = VMLXServerRuntimeSettings()
-            oldDefault.cache.pagedKV.enabled = true
-            oldDefault.cache.liveKVCodec = .none
-            oldDefault.cache.enableSSMReDerive = false
-            oldDefault.cache.defaultMaxKVSize = 65536
-            oldDefault.cache.longPromptMultiplier = 2.0
-            try writeSettings(oldDefault, to: dir)
+            if snapshotFirst { _ = ServerRuntimeSettingsStore.snapshot() }
 
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let loaded = try #require(ServerRuntimeSettingsStore.load())
@@ -751,26 +762,29 @@ struct ServerRuntimeSettingsStoreTests {
         }
     }
 
-    @Test @MainActor func load_repairsOldEngineSelectedPagedCacheDefaultToOff() async throws {
+    @Test(arguments: [false, true])
+    @MainActor func load_repairsOldEngineSelectedPagedCacheDefaultToOff(snapshotFirst: Bool) async throws {
         let dir = try makeTempDirectory()
+        var oldDefault = VMLXServerRuntimeSettings()
+        oldDefault.cache.pagedKV.enabled = true
+        oldDefault.cache.liveKVCodec = .engineSelected
+        oldDefault.cache.enableSSMReDerive = true
+        oldDefault.cache.defaultMaxKVSize = 65536
+        oldDefault.cache.longPromptMultiplier = 2.0
+        oldDefault.cache.legacyDisk = VMLXDiskCacheSettings(
+            enabled: false,
+            maxSizeGB: nil,
+            directory: nil
+        )
+        oldDefault.cache.blockDisk = VMLXBlockDiskCacheSettings(
+            enabled: true,
+            maxSizeGB: nil,
+            directory: nil
+        )
+        try writeSettings(oldDefault, to: dir)
+
         try await withOverriddenDirectory(dir) {
-            var oldDefault = VMLXServerRuntimeSettings()
-            oldDefault.cache.pagedKV.enabled = true
-            oldDefault.cache.liveKVCodec = .engineSelected
-            oldDefault.cache.enableSSMReDerive = true
-            oldDefault.cache.defaultMaxKVSize = 65536
-            oldDefault.cache.longPromptMultiplier = 2.0
-            oldDefault.cache.legacyDisk = VMLXDiskCacheSettings(
-                enabled: false,
-                maxSizeGB: nil,
-                directory: nil
-            )
-            oldDefault.cache.blockDisk = VMLXBlockDiskCacheSettings(
-                enabled: true,
-                maxSizeGB: nil,
-                directory: nil
-            )
-            try writeSettings(oldDefault, to: dir)
+            if snapshotFirst { _ = ServerRuntimeSettingsStore.snapshot() }
 
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let loaded = try #require(ServerRuntimeSettingsStore.load())
