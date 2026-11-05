@@ -1,0 +1,150 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-08-26T04:19:07.979Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 1,
+      "chatModelPassed" : 229,
+      "chatModelScored" : 255,
+      "correctFileDeliveryRate" : 0.7777777777777778,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "cc19e77",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/Qwen3.8-27B-JANG_6D",
+        "thermalState" : "fair",
+        "totalRamMb" : 131072
+      },
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.958904109589041,
+      "meanAgentLoopWallTimeMs" : 58891.398266570206,
+      "meanCpuPercent" : 85.60279725239575,
+      "meanDecodeTokensPerSecond" : 22.562085233371146,
+      "meanFirstActionMs" : 8243.110597950139,
+      "meanFirstStepContextTokens" : 2671.6301369863013,
+      "meanFrictionCalls" : 0.5164835164835165,
+      "meanPromptTokensPerTask" : 16119.952380952382,
+      "meanTotalTokensPerTask" : 14806.55633802817,
+      "meanTtftMs" : 246.4818999737124,
+      "medianModelSteps" : 4,
+      "modelId" : "OsaurusAI/Qwen3.8-27B-JANG_6D",
+      "peakCpuPercent" : 379.9976102730925,
+      "peakPhysFootprintMb" : 36067.583557128906,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 59,
+          "scored" : 73,
+          "skipReasons" : {
+            "vmnetContention: sandbox unavailable (vmnetOwnedByOtherProcess): Sandbox VM is already owned by PID 12990 (osaurus) at /Applications/osaurus.app/Contents/MacOS/osaurus. Stop that Osaurus app or eval process before starting another vmnet sandbox." : 1,
+            "vmnetContention: sandbox unavailable (vmnetOwnedByOtherProcess): Sandbox VM is already owned by PID 34363 (osaurus) at /Applications/osaurus.app/Contents/MacOS/osaurus. Stop that Osaurus app or eval process before starting another vmnet sandbox." : 17
+          },
+          "skipped" : 18
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 28,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 21,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 39,
+          "scored" : 42,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 15,
+          "scored" : 17,
+          "skipped" : 0
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errored" : 1,
+          "passed" : 35,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-08-26T01:39:22Z",
+      "subsystemPassed" : 14,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "tool:search_and_extract=371",
+        "tool:file_read=280",
+        "tool:render_chart=275",
+        "tool:share_artifact=266",
+        "tool:db_create_table=225",
+        "tool:clarify=196"
+      ],
+      "totalPassed" : 243,
+      "totalScored" : 271
+    }
+  ]
+}
