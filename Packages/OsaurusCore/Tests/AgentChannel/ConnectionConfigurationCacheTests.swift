@@ -89,4 +89,57 @@ struct ConnectionConfigurationCacheTests {
             #expect(fresh.defaultReadLimit == 50)
         }
     }
+    // MARK: - AgentChannelConfigurationStore (Sentry APPLE-MACOS-37Q)
+
+    @Test func agentChannelStoreServesCacheUntilFileChanges() async throws {
+        try await AgentChannelConfigurationTestLock.shared.run {
+            let previous = AgentChannelConfigurationStore.overrideDirectory
+            let first = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-agent-channels-cache-\(UUID().uuidString)", isDirectory: true)
+            let second = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-agent-channels-cache-\(UUID().uuidString)", isDirectory: true)
+            defer {
+                AgentChannelConfigurationStore.overrideDirectory = previous
+                try? FileManager.default.removeItem(at: first)
+                try? FileManager.default.removeItem(at: second)
+            }
+
+            AgentChannelConfigurationStore.overrideDirectory = first
+            #expect(AgentChannelConfigurationStore.load() == AgentChannelConfiguration())
+
+            // save() primes the cache with the persisted value.
+            try AgentChannelConfigurationStore.save(AgentChannelConfiguration(schemaVersion: 7))
+            #expect(AgentChannelConfigurationStore.load().schemaVersion == 7)
+
+            // Pin the file's mtime to a whole-second value so restoring it
+            // after a rewrite round-trips exactly (setAttributes/utimes does
+            // not preserve the filesystem's nanosecond precision).
+            let url = AgentChannelConfigurationStore.configurationFileURL()
+            let originalDate = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 60)
+            try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: url.path)
+            // New mtime -> one re-read of the (unchanged) saved file primes the cache.
+            #expect(AgentChannelConfigurationStore.load().schemaVersion == 7)
+
+            // Rewrite the file but keep its mtime: load() must not re-read it.
+            try #"{"schemaVersion": 9}"#.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: url.path)
+            #expect(AgentChannelConfigurationStore.load().schemaVersion == 7)
+
+            // A hand edit (new mtime) is picked up on the next load.
+            try FileManager.default.setAttributes(
+                [.modificationDate: originalDate.addingTimeInterval(5)],
+                ofItemAtPath: url.path
+            )
+            #expect(AgentChannelConfigurationStore.load().schemaVersion == 9)
+
+            // Deleting the file falls back to defaults.
+            try FileManager.default.removeItem(at: url)
+            #expect(AgentChannelConfigurationStore.load() == AgentChannelConfiguration())
+
+            // Switching directories never leaks the previous directory's value.
+            try AgentChannelConfigurationStore.save(AgentChannelConfiguration(schemaVersion: 7))
+            AgentChannelConfigurationStore.overrideDirectory = second
+            #expect(AgentChannelConfigurationStore.load() == AgentChannelConfiguration())
+        }
+    }
 }
