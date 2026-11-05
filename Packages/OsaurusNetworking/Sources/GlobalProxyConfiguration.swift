@@ -175,10 +175,7 @@ public struct GlobalProxyConfiguration: Equatable, Sendable {
         }
 
         if let address = IPv4Address(normalized) {
-            let octets = Array(address.rawValue)
-            return octets[0] == 0
-                || octets[0] == 127
-                || (octets[0] == 169 && octets[1] == 254)
+            return isLocalOnlyIPv4(Array(address.rawValue))
         }
 
         if let address = IPv6Address(normalized) {
@@ -186,10 +183,33 @@ public struct GlobalProxyConfiguration: Equatable, Sendable {
             let isUnspecified = octets.allSatisfy { $0 == 0 }
             let isLoopback = octets.dropLast().allSatisfy { $0 == 0 } && octets.last == 1
             let isLinkLocal = octets[0] == 0xfe && (octets[1] & 0xc0) == 0x80
-            return isUnspecified || isLoopback || isLinkLocal
+            if isUnspecified || isLoopback || isLinkLocal {
+                return true
+            }
+            // IPv4-mapped (`::ffff:a.b.c.d`) and IPv4-compatible (`::a.b.c.d`)
+            // addresses embed an IPv4 address in the low 32 bits. Apply the
+            // IPv4 local-host rules to it so a loopback / link-local /
+            // this-network endpoint written in IPv6 form (e.g.
+            // `::ffff:127.0.0.1`) isn't mistaken for a remote host.
+            let isV4Mapped =
+                octets[0 ..< 10].allSatisfy { $0 == 0 } && octets[10] == 0xff && octets[11] == 0xff
+            let isV4Compatible = octets[0 ..< 12].allSatisfy { $0 == 0 }
+            if isV4Mapped || isV4Compatible {
+                return isLocalOnlyIPv4(Array(octets[12 ..< 16]))
+            }
+            return false
         }
 
         return false
+    }
+
+    /// Loopback (`127.0.0.0/8`), link-local (`169.254.0.0/16`), and
+    /// "this network" (`0.0.0.0/8`) IPv4 ranges, given the four address octets.
+    private static func isLocalOnlyIPv4(_ octets: [UInt8]) -> Bool {
+        guard octets.count == 4 else { return false }
+        return octets[0] == 0
+            || octets[0] == 127
+            || (octets[0] == 169 && octets[1] == 254)
     }
 
     private func key(_ value: CFString) -> AnyHashable {
