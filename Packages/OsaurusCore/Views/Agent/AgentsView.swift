@@ -7417,36 +7417,14 @@ struct AgentDetailView: View {
     }
 
     private func performDeleteAllData(_ selection: AgentDataWipeSelection) async {
-        let wipeChats = selection.chats
-        let wipeFacts = selection.pinnedFacts
-        let wipeEpisodes = selection.episodes
-        guard wipeChats || wipeFacts || wipeEpisodes else { return }
+        let wipe = AgentDataWipe.Selection(
+            chats: selection.chats,
+            pinnedFacts: selection.pinnedFacts,
+            episodes: selection.episodes
+        )
+        guard !wipe.isEmpty else { return }
         let agentId = agent.id
-        let agentScope = agentId.uuidString
-        if wipeChats {
-            await ChatSessionsManager.shared.deleteAll(for: agentId)
-        }
-        // Memory DB deletes run off the main actor — same rationale as
-        // `loadMemoryData`: these calls dispatch-sync onto the DB's
-        // serial queue and can otherwise stall the appear path.
-        await Task.detached(priority: .userInitiated) {
-            let db = MemoryDatabase.shared
-            if !db.isOpen { try? db.open() }
-            if wipeFacts { try? db.deletePinnedFacts(forAgent: agentScope) }
-            if wipeEpisodes { try? db.deleteEpisodes(forAgent: agentScope) }
-            if wipeChats { try? db.deleteConversationMemory(forAgent: agentScope) }
-        }.value
-        if wipeFacts && wipeEpisodes && wipeChats {
-            // Full wipe: the on-disk vector index has nothing left to
-            // serve, so remove it rather than leaving deleted content
-            // in the encrypted store.
-            await MemorySearchService.shared.deleteAgentIndex(agentId: agentScope)
-        } else if wipeFacts || wipeEpisodes {
-            // Partial wipe: drop the in-memory instance; stale on-disk
-            // vectors resolve to missing SQL rows and are filtered on
-            // read, same as single-item deletes.
-            await MemorySearchService.shared.evictAgent(agentId: agentScope)
-        }
+        await AgentDataWipe.perform(agentId: agentId, wipe)
         guard agentId == agent.id else { return }
         refreshDetailCaches()
         loadMemoryData()

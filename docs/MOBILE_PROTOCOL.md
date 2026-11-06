@@ -1528,6 +1528,24 @@ when the model's window was too small for tools or memory.
 it lists `"context_usage"` in `features` (§14.5). Owner-only, and over the
 Secure Channel only (426 otherwise), though it is a read.
 
+### 14.14 `POST /agents/{id}/data/delete`
+
+Erases what an agent has gathered, as the agent page's Delete Data does
+on the Mac. The agent itself, its settings and tools stay.
+
+```json
+{"chats":true,"pinned_facts":true,"episodes":true}
+```
+
+`chats` deletes every chat of the agent and the memory built from them;
+`pinned_facts` and `episodes` its memory of each kind. An absent key is
+`false`. With all three the agent's search index goes too. Answers
+`{"deleted":true}`; `400 bad_request` when nothing is selected, `404
+agent_not_found` for an unknown agent. There is no undo.
+
+A Mac that serves it lists `"agent_data_delete"` in `features` (§14.5).
+Owner-only, and over the Secure Channel only (426 otherwise).
+
 ---
 
 ## 15. Workspace agents
