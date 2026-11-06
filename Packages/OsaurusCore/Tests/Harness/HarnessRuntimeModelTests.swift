@@ -91,6 +91,23 @@ struct HarnessRuntimeModelTests {
         }
     }
 
+    /// The Agent-instance overload reads the runtime straight from the value
+    /// (no `agent(for:)` lookup), so per-agent loops like
+    /// `SpawnDescriptors.liveAgentSources` stay cheap on the main thread.
+    @Test @MainActor func effectiveRuntimeForAgentValueReadsItsRuntime() {
+        let harnessId = UUID()
+        let manager = AgentManager.shared
+        #expect(manager.effectiveRuntime(for: Agent(name: "Plain")) == .builtIn)
+        #expect(
+            manager.effectiveRuntime(for: Agent(name: "Harnessed", runtime: .harness(harnessId)))
+                == .harness(harnessId)
+        )
+        // An agent the manager doesn't know still resolves from its own value.
+        let unregistered = Agent(name: "Detached", runtime: .harness(harnessId))
+        #expect(manager.effectiveRuntime(for: unregistered.id) == .builtIn)
+        #expect(manager.effectiveRuntime(for: unregistered).harnessId == harnessId)
+    }
+
     @Test func agentsWithoutARuntimeKeyStillDecode() throws {
         let agent = Agent(name: "Legacy")
         var object = try #require(

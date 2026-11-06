@@ -309,7 +309,7 @@ struct AgentRuntimesView: View {
 
     private func agentsUsing(_ runtime: HarnessRuntime) -> [String] {
         agentManager.agents
-            .filter { agentManager.effectiveRuntime(for: $0.id).harnessId == runtime.id }
+            .filter { agentManager.effectiveRuntime(for: $0).harnessId == runtime.id }
             .map(\.name)
     }
 
