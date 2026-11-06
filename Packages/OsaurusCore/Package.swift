@@ -358,7 +358,7 @@ let package = Package(
         // old image-conditioned KV under a versioned unified-only cache identity.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "7ed2e6a2ed9c1e006ad1876eb8c3d9110f345f93"
+            revision: "41fb564809898d48c94e222b0c2f4362be05738e"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
