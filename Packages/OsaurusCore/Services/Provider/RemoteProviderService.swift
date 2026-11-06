@@ -6520,15 +6520,37 @@ extension RemoteProviderService {
         /// Model id -> advertised context window in tokens. Only ids whose
         /// entry carried a positive window appear here.
         let contextLengths: [String: Int]
+        /// Model id -> reasoning-effort levels the server advertised for it
+        /// (OpenRouter's per-model `reasoning.supported_efforts`, with
+        /// `reasoning.default_effort` as the display default). Only ids whose
+        /// entry listed at least one effort appear here.
+        let reasoningCapabilities: [String: ModelReasoningCapabilities]
+
+        init(
+            models: [String],
+            contextLengths: [String: Int],
+            reasoningCapabilities: [String: ModelReasoningCapabilities] = [:]
+        ) {
+            self.models = models
+            self.contextLengths = contextLengths
+            self.reasoningCapabilities = reasoningCapabilities
+        }
     }
 
     /// Like `fetchModels(from:)` but also surfaces per-model context windows
-    /// when the provider's `/models` route is the OpenAI-compatible one.
-    /// Every other provider family keeps its existing discovery path and
-    /// returns an empty context map.
-    public static func fetchModelsDiscovery(
+    /// and advertised reasoning-effort levels when the provider's `/models`
+    /// route is the OpenAI-compatible one. Every other provider family keeps
+    /// its existing discovery path and returns empty maps.
+    ///
+    /// Internal (not `public`): `ModelReasoningCapabilities` is an internal
+    /// type and the only callers live in `RemoteProviderManager`.
+    static func fetchModelsDiscovery(
         from provider: RemoteProvider
-    ) async throws -> (models: [String], contextLengths: [String: Int]) {
+    ) async throws -> (
+        models: [String],
+        contextLengths: [String: Int],
+        reasoningCapabilities: [String: ModelReasoningCapabilities]
+    ) {
         // Mirror `fetchModels`' routing: only requests that would fall through
         // to the OpenAI-compatible endpoint take the discovery variant.
         if isOpenAICompatibleModelDiscoveryProvider(provider.providerType),
@@ -6537,7 +6559,7 @@ extension RemoteProviderService {
             !isVeniceProvider(provider)
         {
             let discovery = try await fetchOpenAICompatibleModelsDiscovery(from: provider)
-            return (discovery.models, discovery.contextLengths)
+            return (discovery.models, discovery.contextLengths, discovery.reasoningCapabilities)
         }
         // ChatGPT/Codex sign-in models expose their real per-model window via
         // the same catalog `fetchModels` already queries. `fetchModels` populates
@@ -6545,7 +6567,7 @@ extension RemoteProviderService {
         // there rather than fetching the catalog twice.
         if provider.providerType == .openAICodex {
             let models = try await fetchModels(from: provider)
-            return (models, OpenAICodexOAuthService.lastContextWindows)
+            return (models, OpenAICodexOAuthService.lastContextWindows, [:])
         }
         // Anthropic's Models API publishes per-model thinking/effort
         // capabilities and `max_input_tokens`; keep both for the picker and
@@ -6560,7 +6582,7 @@ extension RemoteProviderService {
                 timeout: min(provider.timeout, 30)
             )
             AnthropicModelCatalog.replace(providerId: provider.id, models: infos)
-            return (infos.map(\.id), AnthropicModelCatalog.contextLengths(of: infos))
+            return (infos.map(\.id), AnthropicModelCatalog.contextLengths(of: infos), [:])
         }
         // Grok/SuperGrok sign-in models have no live catalog to read windows
         // from (the OAuth token 403s on `/models`), so surface the
@@ -6571,9 +6593,9 @@ extension RemoteProviderService {
         if provider.authType == .xaiOAuth {
             let models = try await fetchModels(from: provider)
             let contextLengths = await xaiContextWindows(preferringLiveOver: provider)
-            return (models, contextLengths)
+            return (models, contextLengths, [:])
         }
-        return (try await fetchModels(from: provider), [:])
+        return (try await fetchModels(from: provider), [:], [:])
     }
 
     /// Merges `XAIOAuthService.contextWindows` with live-discovered windows
@@ -6695,8 +6717,8 @@ extension RemoteProviderService {
     }
 
     /// One entry of an OpenAI-compatible `/models` list, keeping the vendor
-    /// context-window keys the shared serving struct (`OpenAIModel`) has no
-    /// business encoding back out.
+    /// context-window and reasoning keys the shared serving struct
+    /// (`OpenAIModel`) has no business encoding back out.
     private struct OpenAICompatibleModelEntry: Decodable {
         let id: String
         let maxModelLen: Int?
@@ -6704,6 +6726,13 @@ extension RemoteProviderService {
         let maxContextLength: Int?
         let contextWindow: Int?
         let metadataContextLength: Int?
+        /// OpenRouter's per-model `reasoning.supported_efforts`, in catalog
+        /// order, lowercased and de-duplicated. Empty when the entry has no
+        /// `reasoning` object, the object lists no efforts, or the value is
+        /// off-spec.
+        let supportedReasoningEfforts: [String]
+        /// OpenRouter's `reasoning.default_effort`, lowercased; nil when absent.
+        let defaultReasoningEffort: String?
 
         private enum CodingKeys: String, CodingKey {
             case id
@@ -6712,10 +6741,16 @@ extension RemoteProviderService {
             case maxContextLength = "max_context_length"
             case contextWindow = "context_window"
             case metadata
+            case reasoning
         }
 
         private enum MetadataCodingKeys: String, CodingKey {
             case contextLength = "context_length"
+        }
+
+        private enum ReasoningCodingKeys: String, CodingKey {
+            case supportedEfforts = "supported_efforts"
+            case defaultEffort = "default_effort"
         }
 
         init(from decoder: Decoder) throws {
@@ -6739,6 +6774,43 @@ extension RemoteProviderService {
             } else {
                 metadataContextLength = nil
             }
+            // OpenRouter publishes `reasoning: { mandatory, default_enabled,
+            // supported_efforts, default_effort }` per model. Only the effort
+            // ladder is consumed here; a `reasoning` value of any other shape
+            // (string, bool, null) or an object without efforts means no
+            // advertised control rather than a decode failure.
+            if let reasoning = try? container.nestedContainer(
+                keyedBy: ReasoningCodingKeys.self,
+                forKey: .reasoning
+            ) {
+                let raw = (try? reasoning.decode([String].self, forKey: .supportedEfforts)) ?? []
+                var seen: Set<String> = []
+                supportedReasoningEfforts = raw.compactMap { effort in
+                    let normalized = effort.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    guard !normalized.isEmpty, seen.insert(normalized).inserted else { return nil }
+                    return normalized
+                }
+                defaultReasoningEffort = (try? reasoning.decode(String.self, forKey: .defaultEffort))?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            } else {
+                supportedReasoningEfforts = []
+                defaultReasoningEffort = nil
+            }
+        }
+
+        /// Picker/validation capabilities for the advertised effort ladder;
+        /// nil when the server listed none. The default is only kept when it
+        /// is one of the listed levels, so the picker never highlights a
+        /// value the model would reject.
+        var advertisedReasoningCapabilities: ModelReasoningCapabilities? {
+            guard !supportedReasoningEfforts.isEmpty else { return nil }
+            let defaultLevelId = defaultReasoningEffort.flatMap { candidate in
+                supportedReasoningEfforts.contains(candidate) ? candidate : nil
+            }
+            return ModelReasoningCapabilities(
+                levels: supportedReasoningEfforts.map { ModelReasoningCapabilities.Level(id: $0) },
+                defaultLevelId: defaultLevelId
+            )
         }
 
         private static func lenientInt<Key: CodingKey>(
@@ -6814,14 +6886,19 @@ extension RemoteProviderService {
             let modelsResponse = try JSONDecoder().decode(OpenAICompatibleModelList.self, from: data)
             let entries = modelsResponse.data
             var contextLengths: [String: Int] = [:]
+            var reasoningCapabilities: [String: ModelReasoningCapabilities] = [:]
             for entry in entries {
                 if let contextLength = entry.advertisedContextLength {
                     contextLengths[entry.id] = contextLength
                 }
+                if let capabilities = entry.advertisedReasoningCapabilities {
+                    reasoningCapabilities[entry.id] = capabilities
+                }
             }
             return OpenAICompatibleModelDiscovery(
                 models: entries.map { $0.id },
-                contextLengths: contextLengths
+                contextLengths: contextLengths,
+                reasoningCapabilities: reasoningCapabilities
             )
         } catch {
             if let fallbackModels = manualModelDiscoveryFallback(for: provider) {

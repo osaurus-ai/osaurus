@@ -266,6 +266,9 @@ final class ModelPickerItemCache: ObservableObject {
             routerMetadata: { manager.osaurusRouterMetadata(for: $0) },
             remoteContextLength: {
                 manager.customProviderContextLength(providerId: $0, unprefixedModelId: $1)
+            },
+            remoteReasoningCapabilities: {
+                manager.customProviderReasoningCapabilities(providerId: $0, unprefixedModelId: $1)
             }
         )
         options.append(contentsOf: remote.items)
@@ -311,6 +314,7 @@ final class ModelPickerItemCache: ObservableObject {
         osaurusRouterProviderId: UUID,
         routerMetadata: (String) -> OsaurusRouterModel?,
         remoteContextLength: (UUID, String) -> Int? = { _, _ in nil },
+        remoteReasoningCapabilities: (UUID, String) -> ModelReasoningCapabilities? = { _, _ in nil },
         anthropicModelInfo: (UUID, String) -> AnthropicModelInfo? = {
             AnthropicModelCatalog.info(providerId: $0, modelId: $1)
         }
@@ -368,20 +372,25 @@ final class ModelPickerItemCache: ObservableObject {
                         description: info?.isDeprecated == true ? "Deprecated" : nil
                     )
                 } else {
+                    let bareId = unprefixedRouterModelId(modelId)
+                    // The effort ladder the provider's own `/models` catalog
+                    // advertised for this id (OpenRouter's
+                    // `reasoning.supported_efforts`) is authoritative for
+                    // any model it covers (#3270). Gemini text models keep
+                    // their documented levels on routes that forward the
+                    // effort intact when the catalog said nothing.
+                    let advertised = remoteReasoningCapabilities(providerInfo.providerId, bareId)
+                    let documented =
+                        GeminiReasoningContract.routeHonorsContract(
+                            providerType: providerInfo.providerType,
+                            host: providerInfo.host
+                        ) ? GeminiReasoningContract.capabilities(forModelId: modelId) : nil
                     item = .fromRemoteModel(
                         modelId: modelId,
                         providerName: providerInfo.providerName,
                         providerId: providerInfo.providerId,
-                        contextLength: remoteContextLength(
-                            providerInfo.providerId,
-                            unprefixedRouterModelId(modelId)
-                        ),
-                        // Gemini text models get their documented thinking
-                        // levels on routes that forward the effort intact.
-                        reasoningCapabilities: GeminiReasoningContract.routeHonorsContract(
-                            providerType: providerInfo.providerType,
-                            host: providerInfo.host
-                        ) ? GeminiReasoningContract.capabilities(forModelId: modelId) : nil
+                        contextLength: remoteContextLength(providerInfo.providerId, bareId),
+                        reasoningCapabilities: advertised ?? documented
                     )
                 }
                 items.append(item)
