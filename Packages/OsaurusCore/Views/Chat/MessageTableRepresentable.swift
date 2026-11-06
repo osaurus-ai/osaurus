@@ -1042,16 +1042,10 @@ extension MessageTableRepresentable {
             let previousSearchCurrentOccurrence = ctx.searchCurrentOccurrence
             let previousStreaming = ctx.isStreaming
             let previousLastAssistantTurnId = ctx.lastAssistantTurnId
-            // NSView backed cells snapshot the theme
-            // imperatively in configure(...). wen the user edits the theme
-            // mid-conversation, blocks/IDs don't change and Path 1 would
-            // early return thus leaving on-screen cells with stale avatar size /
-            // fonts. capture the previous theme so we can force a reconfigure
-            // (and height-cache flush) like the width change path does
-            let previousThemeConfig = ctx.theme.customThemeConfig
-            // The global font zoom lives on the theme instance, not in the
-            // config, so compare it separately or zoom-only changes are missed.
-            let previousFontScale = (ctx.theme as? CustomizableTheme)?.fontScale
+            // AppKit cells snapshot their theme in configure(...). Compare a
+            // value signature so built-in Light/Dark themes are distinguished
+            // even when both are direct ThemeProtocol values with no custom config.
+            let previousThemeSignature = MessageThemeRenderSignature(theme: ctx.theme)
 
             // if width changed, invalidate the entire height cache
             if widthChanged { heightCache.removeAll() }
@@ -1059,10 +1053,12 @@ extension MessageTableRepresentable {
             ctx = context
             self.groupHeaderMap = groupHeaderMap
 
+            let themeSignature = MessageThemeRenderSignature(theme: context.theme)
             let themeChanged =
-                previousThemeConfig != context.theme.customThemeConfig
-                || previousFontScale != (context.theme as? CustomizableTheme)?.fontScale
-            if themeChanged || metricsDisplayChanged { heightCache.removeAll() }
+                previousThemeSignature.appearance != themeSignature.appearance
+                || previousThemeSignature.layout != themeSignature.layout
+            let themeLayoutChanged = previousThemeSignature.layout != themeSignature.layout
+            if themeLayoutChanged || metricsDisplayChanged { heightCache.removeAll() }
 
             // Editing state lives in the context, not in the blocks themselves.
             // Reconfigure affected cells immediately so the UI responds without
@@ -1153,17 +1149,21 @@ extension MessageTableRepresentable {
             // --- Path 1: No-change early return ---
             if !widthChanged, newIds == blockIds, !hasContentChanges(newLookup: newLookup) {
                 ChatPerfTrace.shared.count("applyBlocks.path1.noChange")
-                let contextAffectsCells =
+                let nonThemeContextAffectsCells =
                     previousStreaming != context.isStreaming
                     || previousLastAssistantTurnId != context.lastAssistantTurnId
                     || expandedIdsChanged
+                let contextAffectsCells =
+                    nonThemeContextAffectsCells
                     || themeChanged
                     || metricsDisplayChanged
                 if contextAffectsCells {
-                    reconfigureAllCellsFromLookup(newLookup)
-                    if themeChanged || metricsDisplayChanged {
-                        // theme changes can alter cell intrinsic size (avatar
-                        // diameter, name font size) so re-measure rows too
+                    reconfigureAllCellsFromLookup(
+                        newLookup,
+                        remeasureRows: nonThemeContextAffectsCells || themeLayoutChanged || metricsDisplayChanged
+                    )
+                    if themeLayoutChanged || metricsDisplayChanged {
+                        // Layout changes affect cached and unmaterialized rows too.
                         let allRows = IndexSet(integersIn: 0 ..< blockIds.count)
                         if !allRows.isEmpty { noteRowHeightsChanged(allRows) }
                     }
@@ -1190,10 +1190,18 @@ extension MessageTableRepresentable {
                 ChatPerfTrace.shared.count("applyBlocks.path2.inPlace")
                 if themeChanged || metricsDisplayChanged {
                     // theme edits affect every cell, not just content-changed
-                    // ones. reconfigure all and re-measure heights
-                    reconfigureAllCellsFromLookup(newLookup)
-                    let allRows = IndexSet(integersIn: 0 ..< blockIds.count)
-                    if !allRows.isEmpty { noteRowHeightsChanged(allRows) }
+                    // ones. Re-measure only when the layout signature changed.
+                    reconfigureAllCellsFromLookup(
+                        newLookup,
+                        remeasureRows:
+                            themeLayoutChanged
+                            || metricsDisplayChanged
+                            || hasContentChanges(newLookup: newLookup)
+                    )
+                    if themeLayoutChanged || metricsDisplayChanged {
+                        let allRows = IndexSet(integersIn: 0 ..< blockIds.count)
+                        if !allRows.isEmpty { noteRowHeightsChanged(allRows) }
+                    }
                 } else {
                     reconfigureChangedCells(newLookup: newLookup, streamId: newStreamingBlockId)
                 }
@@ -1217,7 +1225,12 @@ extension MessageTableRepresentable {
             // Snapshot only reconfigures cells whose ContentBlock changed.
             // cells reused for unchanged blocks would keep stale theme
             if themeChanged || metricsDisplayChanged {
-                reconfigureAllCellsFromLookup(newLookup)
+                reconfigureAllCellsFromLookup(
+                    newLookup,
+                    remeasureRows: themeLayoutChanged || metricsDisplayChanged
+                )
+            }
+            if themeLayoutChanged || metricsDisplayChanged {
                 let allRows = IndexSet(integersIn: 0 ..< blockIds.count)
                 if !allRows.isEmpty { noteRowHeightsChanged(allRows) }
             }
@@ -1523,7 +1536,10 @@ extension MessageTableRepresentable {
 
         /// Reconfigure every visible row when block data is unchanged but `CellRenderingContext` changed
         /// (e.g. `isStreaming`, `lastAssistantTurnId`).
-        private func reconfigureAllCellsFromLookup(_ newLookup: [String: ContentBlock]) {
+        private func reconfigureAllCellsFromLookup(
+            _ newLookup: [String: ContentBlock],
+            remeasureRows: Bool = true
+        ) {
             guard let tableView else { return }
             withHeightNoteBatch {
                 var affectedRows = IndexSet()
@@ -1532,14 +1548,14 @@ extension MessageTableRepresentable {
                         let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false)
                             as? NativeMessageCellView
                     else { continue }
-                    heightCache.removeValue(forKey: id)
+                    if remeasureRows { heightCache.removeValue(forKey: id) }
                     configureCell(cell, with: block)
                     affectedRows.insert(index)
                 }
                 guard !affectedRows.isEmpty else { return }
                 ChatPerfTrace.shared.count("reconfigureAllCells.rows", affectedRows.count)
-                noteRowHeightsChanged(affectedRows)
-                if scrollAnchor.isPinnedToBottom {
+                if remeasureRows { noteRowHeightsChanged(affectedRows) }
+                if remeasureRows, scrollAnchor.isPinnedToBottom {
                     ChatPerfTrace.shared.count("scrollToBottom.allCells")
                     scrollAnchor.scrollToBottomCoalesced()
                 }

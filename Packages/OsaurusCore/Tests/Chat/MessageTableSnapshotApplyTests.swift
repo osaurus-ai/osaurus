@@ -121,6 +121,26 @@ struct MessageTableSnapshotApplyTests {
             return out
         }
 
+        func markdownView(containing text: String) -> NativeMarkdownView? {
+            func find(in view: NSView) -> NativeMarkdownView? {
+                if let markdown = view as? NativeMarkdownView,
+                    markdown._testRenderedTextStorage?.string.contains(text) == true
+                {
+                    return markdown
+                }
+                for child in view.subviews {
+                    if let markdown = find(in: child) { return markdown }
+                }
+                return nil
+            }
+
+            for row in 0 ..< tableView.numberOfRows {
+                guard let rowView = tableView.view(atColumn: 0, row: row, makeIfNecessary: true) else { continue }
+                if let markdown = find(in: rowView) { return markdown }
+            }
+            return nil
+        }
+
         func addExchange(_ n: Int) {
             turns.append(ChatTurn(role: .user, content: "Question \(n): what is \(n) squared?"))
             let answer = ChatTurn(role: .assistant, content: "")
@@ -265,5 +285,38 @@ struct MessageTableSnapshotApplyTests {
         h.apply()
         h.layout()
         #expect(h.cellObjects() == before)
+    }
+
+    @Test func themeOnlyChangeRetintsExistingMessageCellsWithoutMovingTheScrollPosition() throws {
+        let h = Harness()
+        h.addExchange(1)
+        let lightBlocks = h.apply(theme: LightTheme())
+        h.layout()
+        let markdown = try #require(h.markdownView(containing: "Answer 1: 1."))
+        let storage = try #require(markdown._testRenderedTextStorage)
+        let lightTextRange = (storage.string as NSString).range(of: "Answer 1")
+        #expect(lightTextRange.location != NSNotFound)
+        #expect(
+            (storage.attribute(.foregroundColor, at: lightTextRange.location, effectiveRange: nil) as? NSColor)
+                .map { $0.isEqual(to: NSColor(LightTheme().primaryText)) } == true
+        )
+
+        let visibleCellsBefore = h.cellObjects()
+        let savedScrollOrigin = h.scrollView.contentView.bounds.origin
+        let darkBlocks = h.apply(theme: DarkTheme())
+        h.layout()
+
+        #expect(lightBlocks.map(\.id) == darkBlocks.map(\.id))
+        #expect(h.cellObjects() == visibleCellsBefore, "theme changes should reconfigure, not replace, existing cells")
+        #expect(h.scrollView.contentView.bounds.origin == savedScrollOrigin)
+        let updatedMarkdown = try #require(h.markdownView(containing: "Answer 1: 1."))
+        #expect(updatedMarkdown === markdown)
+        let updatedStorage = try #require(updatedMarkdown._testRenderedTextStorage)
+        let updatedRange = (updatedStorage.string as NSString).range(of: "Answer 1")
+        #expect(updatedRange.location != NSNotFound)
+        #expect(
+            (updatedStorage.attribute(.foregroundColor, at: updatedRange.location, effectiveRange: nil) as? NSColor)
+                .map { $0.isEqual(to: NSColor(DarkTheme().primaryText)) } == true
+        )
     }
 }

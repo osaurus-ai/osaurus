@@ -55,6 +55,8 @@ final class NativeMarkdownView: NSView {
 
     /// Primary text view — used when all segments are plain text.
     private var textView: SelectableNSTextView?
+    /// Exposes the live AppKit text storage to focused renderer regression tests.
+    var _testRenderedTextStorage: NSTextStorage? { textView?.textStorage }
     /// Per-segment views (code blocks, images, math blocks).
     private var segmentViews: [(view: NSView, key: String)] = []
     /// only used in mixed segment layout — needed for correct height (spacingBefore between segments).
@@ -97,7 +99,7 @@ final class NativeMarkdownView: NSView {
     private var lastText: String = ""
     private var lastBlocks: [SelectableTextBlock] = []
     private var lastWidth: CGFloat = 0
-    private var lastThemeFingerprint: String = ""
+    private var lastThemeFingerprint: MessageThemeRenderSignature?
     private var lastIsStreaming: Bool = false
     private var lastReflowParagraphs: Bool = false
     private var parseTask: Task<Void, Never>?
@@ -530,9 +532,12 @@ final class NativeMarkdownView: NSView {
     ) {
         ChatPerfTrace.shared.count("markdown.configure.called")
         let themeFingerprint = makeThemeFingerprint(theme)
+        let previousThemeFingerprint = lastThemeFingerprint
         let textChanged = text != lastText || reflowParagraphs != lastReflowParagraphs
         let widthChanged = abs(width - lastWidth) > 0.5
-        let themeChanged = themeFingerprint != lastThemeFingerprint
+        let textAppearanceChanged = previousThemeFingerprint?.textAppearance != themeFingerprint.textAppearance
+        let themeLayoutChanged = previousThemeFingerprint?.layout != themeFingerprint.layout
+        let themeChanged = textAppearanceChanged || themeLayoutChanged
         let streamingChanged = isStreaming != lastIsStreaming
 
         // must re-run layout when streaming ends even if text matches the last delta — otherwise
@@ -544,10 +549,28 @@ final class NativeMarkdownView: NSView {
         }
         ChatPerfTrace.shared.count("markdown.configure.applied")
 
+        // Most chat paragraphs are plain text with already-rendered semantic
+        // color roles. Retint those runs in place: no markdown parse, text
+        // storage replacement, height-cache invalidation, or scroll update.
+        if textAppearanceChanged, !themeLayoutChanged, !textChanged, !widthChanged, !streamingChanged,
+            segmentViews.isEmpty,
+            let tv = textView,
+            let storage = tv.textStorage,
+            SelectableTextView.rethemeColors(in: storage, theme: theme)
+        {
+            updateTextViewColors(tv, theme: theme)
+            applyRedactionHighlightsIfNeeded(theme: theme)
+            applySearchHighlightsIfNeeded(theme: theme)
+            lastThemeFingerprint = themeFingerprint
+            if isStreaming { enterStreamingMode(theme: theme) }
+            tv.needsDisplay = true
+            return
+        }
+
         // Fonts live in the attributed-string attributes, and the incremental
-        // text-storage path diffs blocks only — it would no-op on a theme-only
-        // change (e.g. font zoom). Drop the block memo so the apply path takes
-        // the full rebuild branch and re-derives every attribute.
+        // text-storage path diffs blocks only — it would no-op on a typography
+        // change. Drop the block memo so the apply path rebuilds the required
+        // attributes. Color-only changes took the in-place path above.
         if themeChanged { lastBlocks = [] }
 
         invalidateHeightMemo()
@@ -605,9 +628,12 @@ final class NativeMarkdownView: NSView {
         isStreaming: Bool = false
     ) {
         let themeFingerprint = makeThemeFingerprint(theme)
+        let previousThemeFingerprint = lastThemeFingerprint
         let textChanged = blocks != lastBlocks
         let widthChanged = abs(width - lastWidth) > 0.5
-        let themeChanged = themeFingerprint != lastThemeFingerprint
+        let textAppearanceChanged = previousThemeFingerprint?.textAppearance != themeFingerprint.textAppearance
+        let themeLayoutChanged = previousThemeFingerprint?.layout != themeFingerprint.layout
+        let themeChanged = textAppearanceChanged || themeLayoutChanged
         // A demoted text segment (was the last/streaming segment, now followed
         // by newer text after a code block) keeps the same blocks but flips to
         // `isStreaming: false`. Without tracking this we'd early-return and skip
@@ -616,6 +642,21 @@ final class NativeMarkdownView: NSView {
         let streamingChanged = isStreaming != lastIsStreaming
 
         guard textChanged || widthChanged || themeChanged || streamingChanged else { return }
+
+        if textAppearanceChanged, !themeLayoutChanged, !textChanged, !widthChanged, !streamingChanged,
+            segmentViews.isEmpty,
+            let tv = textView,
+            let storage = tv.textStorage,
+            SelectableTextView.rethemeColors(in: storage, theme: theme)
+        {
+            updateTextViewColors(tv, theme: theme)
+            applyRedactionHighlightsIfNeeded(theme: theme)
+            applySearchHighlightsIfNeeded(theme: theme)
+            lastThemeFingerprint = themeFingerprint
+            if isStreaming { enterStreamingMode(theme: theme) }
+            tv.needsDisplay = true
+            return
+        }
 
         // Same as configure(): a theme-only change must not take the
         // incremental path, whose block diff would no-op and keep stale fonts.
@@ -1416,8 +1457,8 @@ final class NativeMarkdownView: NSView {
 
     // MARK: - Theme Fingerprint
 
-    private func makeThemeFingerprint(_ theme: any ThemeProtocol) -> String {
-        "\(theme.primaryFontName)|\(theme.bodySize)|\(theme.codeSize)"
+    private func makeThemeFingerprint(_ theme: any ThemeProtocol) -> MessageThemeRenderSignature {
+        MessageThemeRenderSignature(theme: theme)
     }
 
     // MARK: - Streaming Cursor (interpunct)

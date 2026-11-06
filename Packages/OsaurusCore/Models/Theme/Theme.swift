@@ -165,6 +165,77 @@ protocol ThemeProtocol {
     var borderOpacity: Double { get }
 }
 
+/// Value snapshot used by the AppKit message renderers to distinguish visual
+/// theme changes from changes that can affect message-row geometry. Built-in
+/// `LightTheme`/`DarkTheme` values have no `customThemeConfig`, so `isDark`
+/// remains part of the signature; customized palettes use their typed,
+/// equatable model values rather than `Color` descriptions or object identity.
+struct MessageThemeRenderSignature: Equatable {
+    struct TextAppearance: Equatable {
+        let isDark: Bool
+        let colors: ThemeColors?
+        let codeHighlightTheme: String?
+    }
+
+    struct Appearance: Equatable {
+        let text: TextAppearance
+        let messages: ThemeMessages?
+        let borders: ThemeBorders?
+    }
+
+    struct Layout: Equatable {
+        let primaryFontName: String
+        let monoFontName: String
+        let titleSize: Double
+        let headingSize: Double
+        let bodySize: Double
+        let smallBodySize: Double
+        let captionSize: Double
+        let codeSize: Double
+        let fontScale: Double?
+        let agentNameSize: Double
+        let inlineAvatarSize: Double
+        let showInlineAvatar: Bool
+        let showAgentName: Bool
+        let messageBorderWidth: Double
+    }
+
+    let textAppearance: TextAppearance
+    let appearance: Appearance
+    let layout: Layout
+
+    init(theme: any ThemeProtocol) {
+        let config = theme.customThemeConfig
+        let text = TextAppearance(
+            isDark: theme.isDark,
+            colors: config?.colors,
+            codeHighlightTheme: theme.codeHighlightTheme
+        )
+        textAppearance = text
+        appearance = Appearance(
+            text: text,
+            messages: config?.messages,
+            borders: config?.borders
+        )
+        layout = Layout(
+            primaryFontName: theme.primaryFontName,
+            monoFontName: theme.monoFontName,
+            titleSize: theme.titleSize,
+            headingSize: theme.headingSize,
+            bodySize: theme.bodySize,
+            smallBodySize: theme.smallBodySize,
+            captionSize: theme.captionSize,
+            codeSize: theme.codeSize,
+            fontScale: (theme as? CustomizableTheme)?.fontScale,
+            agentNameSize: theme.agentNameSize,
+            inlineAvatarSize: theme.inlineAvatarSize,
+            showInlineAvatar: theme.showInlineAvatar,
+            showAgentName: theme.showAgentName,
+            messageBorderWidth: theme.messageBorderWidth
+        )
+    }
+}
+
 // MARK: - Default Protocol Extensions
 
 extension ThemeProtocol {
