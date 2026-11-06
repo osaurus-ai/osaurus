@@ -14,7 +14,19 @@ extension AgentManager {
         if agentId == Agent.defaultId {
             return DefaultAgentConfigurationStore.load().runtime ?? .builtIn
         }
-        return agent(for: agentId)?.runtime ?? .builtIn
+        guard let agent = agent(for: agentId) else { return .builtIn }
+        return effectiveRuntime(for: agent)
+    }
+
+    /// Agent-instance overload that avoids a second `agents` array access.
+    /// Pass a pre-fetched `Agent` value to skip the `agent(for:)` lookup (and
+    /// the associated `@Published` property read) when iterating over a
+    /// snapshot of the agents array.
+    func effectiveRuntime(for agent: Agent) -> AgentRuntime {
+        if agent.id == Agent.defaultId {
+            return DefaultAgentConfigurationStore.load().runtime ?? .builtIn
+        }
+        return agent.runtime ?? .builtIn
     }
 
     /// The harness this agent runs on, or nil for the built-in loop. A

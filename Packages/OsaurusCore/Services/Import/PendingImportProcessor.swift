@@ -845,8 +845,9 @@ public final class PendingImportProcessor {
             let id = receipts.first(where: { $0.matches(kind: .harnessRuntime, name: name) })?
                 .harnessRuntimeId.flatMap(UUID.init(uuidString:))
         {
-            for agent in AgentManager.shared.agents
-            where AgentManager.shared.effectiveRuntime(for: agent.id) == .harness(id) && !users.contains(agent.name) {
+            let manager = AgentManager.shared
+            for agent in manager.agents
+            where manager.effectiveRuntime(for: agent) == .harness(id) && !users.contains(agent.name) {
                 users.append(agent.name)
             }
         }
