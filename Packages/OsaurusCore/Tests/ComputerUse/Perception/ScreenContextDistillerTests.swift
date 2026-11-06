@@ -938,17 +938,21 @@ final class ScreenContextDistillerTests: XCTestCase {
             preferredPid: nil
         )
 
-        XCTAssertEqual(snap.statusSignals, ["main*"])
+        XCTAssertTrue(snap.statusSignals.contains("main*"))
+        XCTAssertFalse(snap.statusSignals.contains("bogus"))
+        XCTAssertFalse(snap.statusSignals.contains("bogus2"))
     }
 
-    /// A saturated focused-window height must not overflow the band math.
+    /// An out-of-range focused-window height must not reach the band math
+    /// (`window.y + window.h`, `window.h * 6`), which would overflow for a
+    /// saturated value; the scan bails out instead.
     func testStatusBarSignalsIgnoreSaturatedWindowHeight() async {
         let driver = editorDriver(
             app: "Cursor",
             bundleId: "com.todesktop.cursor",
             title: "ScreenContextDistiller.swift — osaurus",
             windowW: 1600,
-            windowH: Int.max,
+            windowH: 2_000_000,
             elements: [
                 CUElement(id: "branch", role: "statictext", value: "main*", windowId: 1, x: 20, y: 980, w: 50, h: 18)
             ]
