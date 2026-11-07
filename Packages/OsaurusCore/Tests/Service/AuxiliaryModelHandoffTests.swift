@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import os
 
 @testable import OsaurusCore
 
@@ -12,6 +13,38 @@ private enum AuxiliaryBodyFailure: Error { case expected }
 
 @Suite("Auxiliary model handoff")
 struct AuxiliaryModelHandoffTests {
+    @Test("phase observation preserves remote results, errors and the default caller", arguments: [false, true])
+    @MainActor
+    func optionalPhaseObservation(bodyFails: Bool) async throws {
+        try await ChatHistoryTestStorage.run {
+            try await Task.detached {
+                let phases = OSAllocatedUnfairLock(initialState: [String]())
+                let invoke: () async throws -> String = {
+                    try await AuxiliaryModelHandoff.run(
+                        targetModelName: "noninstalled-compaction-test-target",
+                        invocation: ModelJobInvocation(parentModelName: nil, source: .chat),
+                        sessionID: UUID(), agentID: UUID(), operationName: "phase_observation_test",
+                        onPhase: { phase, _ in phases.withLock { $0.append(String(describing: phase)) } }
+                    ) {
+                        if bodyFails { throw AuxiliaryBodyFailure.expected }
+                        return "unchanged result"
+                    }
+                }
+                do {
+                    #expect(try await invoke() == "unchanged result")
+                    #expect(!bodyFails)
+                } catch AuxiliaryBodyFailure.expected { #expect(bodyFails) }
+                #expect(phases.withLock { $0 } == ["waiting", "preparing", "running"])
+                let defaultResult = try await AuxiliaryModelHandoff.run(
+                    targetModelName: "noninstalled-compaction-test-target",
+                    invocation: ModelJobInvocation(parentModelName: nil, source: .chat),
+                    sessionID: UUID(), agentID: UUID(), operationName: "unchanged_default_test"
+                ) { "default caller" }
+                #expect(defaultResult == "default caller")
+            }.value
+        }
+    }
+
     @Test("binding invocation preserves the caller actor's isolation")
     @MainActor
     func invocationPreservesCallerIsolation() async {
@@ -126,7 +159,7 @@ struct AuxiliaryModelHandoffTests {
             contentsOf: root.appendingPathComponent("Services/Chat/ContextCompactionService.swift"),
             encoding: .utf8
         )
-        let deadline = try #require(service.range(of: "try await valueWithDeadline("))
+        let deadline = try #require(service.range(of: "try await CompactionDeadline.run("))
         let handoff = try #require(service.range(of: "try await AuxiliaryModelHandoff.run("))
         let generate = try #require(service.range(of: "try await service.generateOneShot("))
         #expect(deadline.lowerBound < handoff.lowerBound && handoff.lowerBound < generate.lowerBound)

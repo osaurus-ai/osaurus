@@ -1106,6 +1106,26 @@ struct FileReadTool: OsaurusTool {
             return pathReq.failureEnvelope ?? ""
         }
 
+        // Opaque, read-only recovery references are scoped to this exact
+        // session and agent. They never resolve to model-supplied host paths.
+        // Ordinary permission/exposure gates still run before this tool.
+        if relativePath.hasPrefix(RetainedToolResultStore.scheme) {
+            let owner = RetainedToolResultStore.Owner.current
+            let store = RetainedToolResultStore.current()
+            let work = Task.detached(priority: .utility) {
+                let arguments = (try? JSONSerialization.jsonObject(
+                    with: Data(argumentsJSON.utf8))) as? [String: Any] ?? [:]
+                return store.read(path: relativePath, owner: owner, arguments: arguments)
+            }
+            let result = await withTaskCancellationHandler {
+                await work.value
+            } onCancel: {
+                work.cancel()
+            }
+            try Task.checkCancellation()
+            return result
+        }
+
         // Combined mode: an absolute `/workspace/...` path is the Linux
         // sandbox — serve it from the sandbox bridge, translating the
         // host `start_line`/`end_line` range to the sandbox convention.
@@ -1247,7 +1267,9 @@ struct FileReadTool: OsaurusTool {
             if var payload = ToolEnvelope.successPayload(result) as? [String: Any] {
                 payload["ok"] = true
                 payload["path"] = payload["path"] ?? path
-                remaining -= min((payload["text"] as? String)?.count ?? 0, remaining)
+                let text = payload["text"] as? String
+                    ?? (payload["kind"] as? String == "tool_result_page" ? payload["content"] as? String : nil)
+                remaining -= min(text?.count ?? 0, remaining)
                 files.append(payload)
             } else {
                 failures += 1
