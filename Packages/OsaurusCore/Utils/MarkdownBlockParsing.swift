@@ -101,18 +101,18 @@ private struct LineIterator: IteratorProtocol {
     mutating func next() -> Substring? {
         guard currentIndex < endIndex else { return nil }
 
-        // Find the next newline or end of string
+        // Find the next newline or end of string by scanning UTF-8 bytes.
+        // Walking `Character`s here ran grapheme segmentation on every step,
+        // which made splitting large (e.g. reasoning) text slow enough to hang
+        // the main thread. LF (0x0A) never appears inside a multi-byte UTF-8
+        // sequence and is always its own grapheme (CRLF is normalized before
+        // we get here), so the byte position is a valid Character boundary.
         let lineStart = currentIndex
-        while currentIndex < endIndex && string[currentIndex] != "\n" {
-            currentIndex = string.index(after: currentIndex)
-        }
-
-        let lineEnd = currentIndex
+        let utf8 = string.utf8
+        let lineEnd = utf8[currentIndex ..< endIndex].firstIndex(of: UInt8(ascii: "\n")) ?? endIndex
 
         // Skip past the newline for next iteration
-        if currentIndex < endIndex {
-            currentIndex = string.index(after: currentIndex)
-        }
+        currentIndex = lineEnd < endIndex ? utf8.index(after: lineEnd) : endIndex
 
         return string[lineStart ..< lineEnd]
     }
