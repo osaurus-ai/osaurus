@@ -55,6 +55,28 @@ struct LocalizationCacheTests {
         #expect(LCached(key) == L(String.LocalizationValue(key)))
     }
 
+    /// Static labels rendered from `ModelRowView` body getters for every
+    /// model card (production hang APPLE-MACOS-3PV in `statStrip`).
+    private static let modelCardLabels = [
+        "Download",
+        "Est. Memory",
+        "Versions",
+        "Params",
+        "Top Pick",
+        "Downloading",
+        "Paused",
+        "Downloaded",
+        "Not MLX",
+        "LLM",
+        "VLM",
+        "Image",
+    ]
+
+    @Test("LCached matches L for model card labels", arguments: modelCardLabels)
+    func matchesUncachedLookupForModelCardLabels(key: String) {
+        #expect(LCached(key) == L(String.LocalizationValue(key)))
+    }
+
     @Test("LCached returns empty key unchanged")
     func emptyKey() {
         #expect(LCached("") == "")
