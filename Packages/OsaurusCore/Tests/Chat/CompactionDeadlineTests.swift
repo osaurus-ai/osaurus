@@ -13,11 +13,10 @@ struct CompactionDeadlineTests {
     }
 
     @Test func admissionTimeDoesNotConsumeGenerationBudget() async throws {
-        let value = try await CompactionDeadline.run(waitingSeconds: 3) { enter in
-            try await Task.sleep(for: .milliseconds(250))
-            enter(.preparing, 3)
-            enter(.generating, 0.2)
-            try await Task.sleep(for: .milliseconds(50))
+        let value = try await CompactionDeadline.run(waitingSeconds: 10) { enter in
+            try await Task.sleep(for: .milliseconds(1250))
+            enter(.preparing, 10)
+            enter(.generating, 1)
             return "summary"
         }
         #expect(value == "summary")
@@ -25,10 +24,13 @@ struct CompactionDeadlineTests {
 
     @Test func restorationHasItsOwnBudget() async throws {
         let value = try await CompactionDeadline.run(waitingSeconds: 3) { enter in
-            enter(.generating, 0.2)
-            try await Task.sleep(for: .milliseconds(120))
-            enter(.restoring, 1)
-            try await Task.sleep(for: .milliseconds(180))
+            enter(.generating, 1)
+            // Transition synchronously: a loaded CI runner can resume even a
+            // 120 ms sleep after a 200 ms generation budget has expired.
+            // Restoration itself exceeds that budget, but has its own ample
+            // deadline. This tests phase ownership, not scheduler precision.
+            enter(.restoring, 10)
+            try await Task.sleep(for: .milliseconds(1250))
             return "summary after parent restoration"
         }
         #expect(value == "summary after parent restoration")
