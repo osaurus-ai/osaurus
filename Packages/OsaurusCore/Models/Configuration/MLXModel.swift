@@ -865,10 +865,10 @@ enum ModelCompatibility {
     /// Shared plain-language verdict used anywhere a user chooses a model.
     var displayName: String {
         switch self {
-        case .compatible: return L("Runs well")
-        case .tight: return L("Memory may be tight")
-        case .tooLarge: return L("Not recommended")
-        case .unknown: return L("Not enough information")
+        case .compatible: return LCached("Runs well")
+        case .tight: return LCached("Memory may be tight")
+        case .tooLarge: return LCached("Not recommended")
+        case .unknown: return LCached("Not enough information")
         }
     }
 }

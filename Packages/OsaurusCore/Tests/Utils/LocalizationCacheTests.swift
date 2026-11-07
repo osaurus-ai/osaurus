@@ -55,6 +55,40 @@ struct LocalizationCacheTests {
         #expect(LCached(key) == L(String.LocalizationValue(key)))
     }
 
+    /// Fixed labels rendered by every model card in `ModelRowView` and
+    /// `ModelCompatibility.displayName` (production hang APPLE-MACOS-3Q6).
+    private static let modelCardLabels = [
+        "LLM",
+        "VLM",
+        "Image",
+        "Not MLX",
+        "Download",
+        "Est. Memory",
+        "Versions",
+        "Params",
+        "Runs well",
+        "Memory may be tight",
+        "Not recommended",
+        "Not enough information",
+        "Top Pick",
+        "Downloading",
+        "Paused",
+        "Downloaded",
+    ]
+
+    @Test("LCached matches L for model card labels", arguments: modelCardLabels)
+    func matchesUncachedLookupForModelCardLabels(key: String) {
+        #expect(LCached(key) == L(String.LocalizationValue(key)))
+    }
+
+    @Test("Model compatibility verdicts match uncached lookup")
+    func compatibilityDisplayNames() {
+        #expect(ModelCompatibility.compatible.displayName == L("Runs well"))
+        #expect(ModelCompatibility.tight.displayName == L("Memory may be tight"))
+        #expect(ModelCompatibility.tooLarge.displayName == L("Not recommended"))
+        #expect(ModelCompatibility.unknown.displayName == L("Not enough information"))
+    }
+
     @Test("LCached returns empty key unchanged")
     func emptyKey() {
         #expect(LCached("") == "")
