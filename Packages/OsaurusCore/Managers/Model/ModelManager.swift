@@ -268,12 +268,10 @@ public final class ModelManager: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Throttle the forwarded change signal: every `ModelManager`
-        // objectWillChange re-evaluates the full model grid, and download
-        // progress can publish many times per second (app-hang watchdog).
-        // `latest: true` guarantees a trailing emit so the final state renders.
+        // Download progress publishes are coalesced at the source
+        // (`ModelDownloadService.shouldPublishProgress`), so forward as-is.
         downloadService.objectWillChange
-            .throttle(for: .milliseconds(200), scheduler: DispatchQueue.main, latest: true)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
