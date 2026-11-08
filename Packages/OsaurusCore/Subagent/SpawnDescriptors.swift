@@ -519,8 +519,8 @@ public enum SpawnDescriptors {
     @MainActor
     private static func liveAgentSources() -> [AgentSource] {
         // Snapshot the @Published array once so the per-iteration calls to
-        // effectiveModel(for:) and workingFolder(for:) do not re-read the
-        // property (each read triggers swift_conformsToProtocol checks in the
+        // effectiveModel(for:), workingFolder(for:) and effectiveRuntime(for:)
+        // do not re-read the property (each read triggers swift_conformsToProtocol checks in the
         // Swift runtime; with many agents this accumulates into a main-thread
         // hang). The Agent-instance overloads accept the already-fetched value
         // directly and bypass the internal agent(for:) lookup entirely.
@@ -536,7 +536,7 @@ public enum SpawnDescriptors {
                 // (`BackgroundTaskManager.resolveDispatchFolder`), so the
                 // folder the prompt advertises is the folder the child runs in.
                 workingFolderPath: manager.workingFolder(for: agent)?.path,
-                runsOnHarness: manager.effectiveRuntime(for: agent.id).harnessId != nil
+                runsOnHarness: manager.effectiveRuntime(for: agent).harnessId != nil
             )
         }
     }
