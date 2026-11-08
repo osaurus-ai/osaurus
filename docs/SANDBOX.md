@@ -2,7 +2,7 @@
 
 Run agent code in an isolated Linux virtual machine — safely, locally, and with full dev environment capabilities.
 
-The Sandbox is a shared Linux container powered by Apple's [Containerization](https://developer.apple.com/documentation/containerization) framework. It gives every Osaurus agent access to a real Linux environment with shell, package managers, compilers, and file system access — all running natively on Apple Silicon inside a hardware virtual machine, keeping agent code off your macOS system. (See [Security Boundaries](#security) for what the VM does and does not isolate.)
+The Sandbox is a shared Linux container powered by Apple's [Containerization](https://apple.github.io/containerization/documentation/containerization/) framework. It gives every Osaurus agent access to a real Linux environment with shell, package managers, compilers, and file system access — all running natively on Apple Silicon inside a hardware virtual machine, keeping agent code off your macOS system. (See [Security Boundaries](#security) for what the VM does and does not isolate.)
 
 > **Sandbox Tools vs Native Plugins:** Osaurus has two distinct extensibility systems. **Sandbox tools** (this guide) are JSON recipes that run inside the Linux container — no compiler, no code signing, ideal for shell-based workflows. **Native plugins** are compiled `.dylib` files with full host API access (inference, storage, HTTP routes, web UIs); see [`docs/plugins/README.md`](plugins/README.md). The terms used to overlap; this doc uses **Sandbox Tools** consistently.
 
