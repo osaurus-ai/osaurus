@@ -59,4 +59,29 @@ struct LocalizationCacheTests {
     func emptyKey() {
         #expect(LCached("") == "")
     }
+
+    /// Section labels from `SystemPromptComposer`, resolved on the main actor
+    /// during every preview compose (production hang APPLE-MACOS-3K2).
+    private static let promptSectionLabels = [
+        "Platform",
+        "Persona",
+        "Working Directory",
+        "Agent Loop",
+        "Host Workspace",
+        "Host Workspace (read-only)",
+    ]
+
+    @Test("LCached matches L for prompt section labels", arguments: promptSectionLabels)
+    func matchesUncachedLookupForPromptLabels(key: String) {
+        #expect(LCached(key) == L(String.LocalizationValue(key)))
+    }
+
+    @Test("appendBasePrompt labels match uncached lookup")
+    func basePromptLabels() {
+        var composer = SystemPromptComposer()
+        composer.appendBasePrompt(systemPrompt: "You are a test persona.")
+        let labels = composer.manifest().sections.map(\.label)
+        #expect(labels.contains(L("Platform")))
+        #expect(labels.contains(L("Persona")))
+    }
 }
