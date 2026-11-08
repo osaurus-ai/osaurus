@@ -1311,6 +1311,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/data/delete") {
+                handleAgentDataDeleteEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/warm") {
                 handleAgentWarmEndpoint(
                     head: head,
@@ -4979,7 +4987,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// `context_usage`: `GET /sessions/{id}/context` prices a chat's next send.
     /// `voice_call_context`: `osaurus_voice_call` adds nothing to the messages (the phone sends
     /// its own call instructions), keeps call turns lean and the model warm between them.
-    static let connectFeatures = ["session_create", "context_usage", "voice_call_context"]
+    /// `agent_data_delete`: `POST /agents/{id}/data/delete` erases an agent's chats and memory.
+    static let connectFeatures = [
+        "session_create", "context_usage", "voice_call_context", "agent_data_delete",
+    ]
 
     /// The Action Bar a client shows for `agent`: its own, else for the
     /// Orchestrator the configure-oriented defaults its Mac chat shows (a
@@ -6313,6 +6324,85 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
                     .map { String(decoding: $0, as: UTF8.self) } ?? #"{"tools":[]}"#
                 return (.ok, json)
+            }
+            hop {
+                self.sendAgentEditResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /agents/{id}/data/delete with `{"chats":true,"pinned_facts":true,
+    /// "episodes":true}`: erases what the agent has gathered, as the agent
+    /// page's Delete Data does; the agent itself stays (MOBILE_PROTOCOL
+    /// §14.14). Answers `{"deleted":true}`. Owner-only and over the Secure
+    /// Channel only, as it destroys data for good.
+    private func handleAgentDataDeleteEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        struct DeleteRequest: Decodable {
+            let chats: Bool?
+            let pinned_facts: Bool?
+            let episodes: Bool?
+        }
+        let request = try? JSONDecoder().decode(DeleteRequest.self, from: body)
+        let selection = AgentDataWipe.Selection(
+            chats: request?.chats ?? false,
+            pinnedFacts: request?.pinned_facts ?? false,
+            episodes: request?.episodes ?? false
+        )
+        guard components.count == 4, let agentId = UUID(uuidString: String(components[1])), !selection.isEmpty
+        else {
+            sendAgentEditResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json:
+                    #"{"error":"bad_request","message":"Expected /agents/{id}/data/delete with something to delete"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let exists = await MainActor.run { AgentManager.shared.agent(for: agentId) != nil }
+            let outcome: (status: HTTPResponseStatus, json: String)
+            if exists {
+                await AgentDataWipe.perform(agentId: agentId, selection)
+                outcome = (.ok, #"{"deleted":true}"#)
+            } else {
+                outcome = (.notFound, #"{"error":"agent_not_found"}"#)
             }
             hop {
                 self.sendAgentEditResponse(
