@@ -164,4 +164,62 @@ struct AvatarBitmapRendererTests {
     @Test func missingCustomFileReturnsNil() {
         #expect(AvatarBitmapRenderer.shared.image(customURL: temporaryURL(), pointSize: 26, scale: 2) == nil)
     }
+
+    // MARK: - Off-main rendering (APPLE-MACOS-34G)
+
+    /// Views only do cache lookups during body evaluation; the resample runs
+    /// in the background and lands in the cache for the next lookup.
+    @MainActor
+    @Test func backgroundRenderFillsCacheForLookups() async throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writePNG(try solid(width: 256, height: 256, color: .purple), to: url)
+        let renderer = AvatarBitmapRenderer.shared
+
+        #expect(renderer.cachedImage(customURL: url, pointSize: 28, scale: 2) == nil)
+
+        let result = await renderer.renderImage(customURL: url, pointSize: 28, scale: 2)
+        let rendered = try #require(result)
+        let (width, height) = try #require(pixelDimensions(rendered))
+        #expect(width == 56)
+        #expect(height == 56)
+
+        let cached = try #require(renderer.cachedImage(customURL: url, pointSize: 28, scale: 2))
+        #expect(cached === rendered)
+    }
+
+    @MainActor
+    @Test func concurrentBackgroundRequestsShareOneRender() async throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writePNG(try solid(width: 512, height: 512, color: .orange), to: url)
+        let renderer = AvatarBitmapRenderer.shared
+
+        let tasks = (0 ..< 8).map { _ in
+            Task { @MainActor in
+                await renderer.renderImage(customURL: url, pointSize: 40, scale: 2).map(ObjectIdentifier.init)
+            }
+        }
+        var identities: Set<ObjectIdentifier> = []
+        for task in tasks {
+            identities.insert(try #require(await task.value))
+        }
+        #expect(identities.count == 1)
+    }
+
+    @MainActor
+    @Test func backgroundRenderOfMissingCustomFileReturnsNil() async {
+        let result = await AvatarBitmapRenderer.shared.renderImage(customURL: temporaryURL(), pointSize: 26, scale: 2)
+        #expect(result == nil)
+    }
+
+    @MainActor
+    @Test(.enabled(if: mascotAssetsAvailable))
+    func backgroundMascotRenderMatchesSyncCache() async throws {
+        let renderer = AvatarBitmapRenderer.shared
+        let result = await renderer.renderImage(mascot: .purple, pointSize: 22, scale: 2)
+        let rendered = try #require(result)
+        #expect(renderer.cachedImage(mascot: .purple, pointSize: 22, scale: 2) === rendered)
+        #expect(renderer.image(mascot: .purple, pointSize: 22, scale: 2) === rendered)
+    }
 }

@@ -1514,6 +1514,8 @@ struct ThemeChatPreview: View {
     let theme: CustomTheme
 
     @Environment(\.displayScale) private var displayScale
+    /// Bumped when a background mascot render completes.
+    @State private var mascotRenderTick = 0
 
     /// Decoded copy of the theme's background image, refreshed off the
     /// main actor whenever the base64 string changes.
@@ -1613,24 +1615,43 @@ struct ThemeChatPreview: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
     private func previewAvatar(size: CGFloat, name: String, tint: Color) -> some View {
-        if let mascot = AvatarBitmapRenderer.shared.image(mascot: .green, pointSize: size, scale: displayScale) {
-            Image(nsImage: mascot)
+        Group {
+            // Cache-only lookup; the `.task` below renders misses off the
+            // main thread so the preview never resamples during body.
+            if let mascot = previewMascotImage(size: size) {
+                Image(nsImage: mascot)
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(c(theme.colors.secondaryText).opacity(0.35), lineWidth: 1))
+            } else {
+                let initial = String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+                ZStack {
+                    Circle().fill(tint.opacity(0.18))
+                    Text(initial.isEmpty ? "A" : initial)
+                        .font(primaryFont(size: size * 0.45, weight: .semibold))
+                        .foregroundColor(tint)
+                }
                 .frame(width: size, height: size)
-                .clipShape(Circle())
                 .overlay(Circle().stroke(c(theme.colors.secondaryText).opacity(0.35), lineWidth: 1))
-        } else {
-            let initial = String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
-            ZStack {
-                Circle().fill(tint.opacity(0.18))
-                Text(initial.isEmpty ? "A" : initial)
-                    .font(primaryFont(size: size * 0.45, weight: .semibold))
-                    .foregroundColor(tint)
             }
-            .frame(width: size, height: size)
-            .overlay(Circle().stroke(c(theme.colors.secondaryText).opacity(0.35), lineWidth: 1))
         }
+        .task(id: "\(size)|\(displayScale)") {
+            await renderPreviewMascot(size: size)
+        }
+    }
+
+    private func previewMascotImage(size: CGFloat) -> NSImage? {
+        _ = mascotRenderTick  // re-evaluate once a background render lands
+        return AvatarBitmapRenderer.shared.cachedImage(mascot: .green, pointSize: size, scale: displayScale)
+    }
+
+    private func renderPreviewMascot(size: CGFloat) async {
+        let renderer = AvatarBitmapRenderer.shared
+        guard renderer.cachedImage(mascot: .green, pointSize: size, scale: displayScale) == nil else { return }
+        _ = await renderer.renderImage(mascot: .green, pointSize: size, scale: displayScale)
+        guard !Task.isCancelled else { return }
+        mascotRenderTick &+= 1
     }
 
     private func previewUserMessage(_ content: String) -> some View {
