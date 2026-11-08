@@ -55,12 +55,12 @@ public struct SystemPromptComposer: Sendable {
         append(
             .static(
                 id: PromptSectionID.platform,
-                label: L("Platform"),
+                label: LCached("Platform"),
                 content: SystemPromptTemplates.platformIdentity
             )
         )
         let effective = SystemPromptTemplates.effectivePersona(systemPrompt)
-        append(.static(id: PromptSectionID.persona, label: L("Persona"), content: effective))
+        append(.static(id: PromptSectionID.persona, label: LCached("Persona"), content: effective))
     }
 
     /// Replace the persona section in place (same position, same
@@ -70,11 +70,11 @@ public struct SystemPromptComposer: Sendable {
     mutating func replacePersona(systemPrompt: String) {
         let effective = SystemPromptTemplates.effectivePersona(systemPrompt)
         guard let index = sections.firstIndex(where: { $0.id == PromptSectionID.persona }) else {
-            append(.static(id: PromptSectionID.persona, label: L("Persona"), content: effective))
+            append(.static(id: PromptSectionID.persona, label: LCached("Persona"), content: effective))
             return
         }
         guard sections[index].content != effective else { return }
-        sections[index] = .static(id: PromptSectionID.persona, label: L("Persona"), content: effective)
+        sections[index] = .static(id: PromptSectionID.persona, label: LCached("Persona"), content: effective)
     }
 
     // MARK: - Memory Assembly
@@ -888,7 +888,7 @@ public struct SystemPromptComposer: Sendable {
         composer.append(
             .static(
                 id: "pluginCreator",
-                label: L("Plugin Creator"),
+                label: LCached("Plugin Creator"),
                 content: PluginCreatorGate.section(instructions: instructions)
             )
         )
@@ -1025,7 +1025,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .static(
                         id: "sandbox",
-                        label: L("Working Directory"),
+                        label: LCached("Working Directory"),
                         content:
                             "## Working directory\n**Path:** \(home)\n"
                             + "This run is isolated in the VM. Host folders are unavailable. "
@@ -1055,7 +1055,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .static(
                         id: "folderContext",
-                        label: L("Working Directory"),
+                        label: LCached("Working Directory"),
                         content: SystemPromptTemplates.leanFolderContext(
                             from: folder,
                             toolNames: resolvedNames
@@ -1092,7 +1092,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .static(
                         id: "enabledManifest",
-                        label: L("Enabled Capabilities"),
+                        label: LCached("Enabled Capabilities"),
                         content: manifestSection
                     )
                 )
@@ -1103,7 +1103,7 @@ public struct SystemPromptComposer: Sendable {
                     composer.append(
                         .static(
                             id: "skillsGovern",
-                            label: L("Skills that govern tool groups"),
+                            label: LCached("Skills that govern tool groups"),
                             content: SystemPromptTemplates.skillsGovernToolGroups(
                                 names: capabilityNames
                             )
@@ -1127,7 +1127,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .dynamic(
                         id: "agentDBSchema",
-                        label: L("Agent DB Schema"),
+                        label: LCached("Agent DB Schema"),
                         content: agentDBSchemaSection
                     )
                 )
@@ -1136,7 +1136,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .dynamic(
                         id: "sandboxState",
-                        label: L("Sandbox State"),
+                        label: LCached("Sandbox State"),
                         content: sandboxStateSection
                     )
                 )
@@ -1145,7 +1145,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .dynamic(
                         id: "channelDestinations",
-                        label: L("Channel Destinations"),
+                        label: LCached("Channel Destinations"),
                         content: channelDestinationsSection
                     )
                 )
@@ -1191,7 +1191,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "selfImprovement",
-                    label: L("Self-Improvement"),
+                    label: LCached("Self-Improvement"),
                     content: SystemPromptTemplates.selfImprovementGuidance(
                         canCreatePlugins: snapshot.canCreatePlugins,
                         compact: toolset.prefersCompactPrompt,
@@ -1218,7 +1218,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "agentDB",
-                    label: L("Agent DB"),
+                    label: LCached("Agent DB"),
                     content: OnboardingPrompt.block
                 )
             )
@@ -1250,7 +1250,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "modelFamilyGuidance",
-                    label: L("Model Family Guidance"),
+                    label: LCached("Model Family Guidance"),
                     content: familyGuidance
                 )
             )
@@ -1269,7 +1269,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "grounding",
-                    label: L("Grounding"),
+                    label: LCached("Grounding"),
                     content: SystemPromptTemplates.groundingDirective(
                         discoveryAvailable: resolvedNames.contains("capabilities_discover"),
                         compact: toolset.prefersCompactPrompt
@@ -1289,7 +1289,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "codeStyle",
-                    label: L("Code Style"),
+                    label: LCached("Code Style"),
                     content: toolset.prefersCompactPrompt
                         ? SystemPromptTemplates.codeStyleGuidanceCompact
                         : SystemPromptTemplates.codeStyleGuidance
@@ -1302,7 +1302,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "riskAware",
-                    label: L("Risk-Aware Actions"),
+                    label: LCached("Risk-Aware Actions"),
                     content: toolset.prefersCompactPrompt
                         ? SystemPromptTemplates.riskAwareGuidanceCompact
                         : SystemPromptTemplates.riskAwareGuidance
@@ -1320,7 +1320,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "secretHandling",
-                    label: L("Secret Handling"),
+                    label: LCached("Secret Handling"),
                     content: toolset.prefersCompactPrompt
                         ? SystemPromptTemplates.secretHandlingGuidanceCompact
                         : SystemPromptTemplates.secretHandlingGuidance
@@ -1406,7 +1406,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .static(
                         id: "spawn",
-                        label: L("Subagents"),
+                        label: LCached("Subagents"),
                         content: SystemPromptTemplates.spawnGuidance(
                             agents: toolset.spawnTargets.agents,
                             workspaceAgents: toolset.spawnTargets.workspaceAgents,
@@ -1440,7 +1440,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "knowledge",
-                    label: L("Knowledge"),
+                    label: LCached("Knowledge"),
                     content: SystemPromptTemplates.knowledgeGuidance(
                         collections: snapshot.knowledgeCollections
                     )
@@ -1460,7 +1460,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .static(
                         id: "appleApps",
-                        label: L("Apple Apps"),
+                        label: LCached("Apple Apps"),
                         content: SystemPromptTemplates.appleAppsGuidance(apps: resolvedApps)
                     )
                 )
@@ -1482,7 +1482,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "agentLoopGuidance",
-                    label: L("Agent Loop"),
+                    label: LCached("Agent Loop"),
                     // The `share_artifact` bullet rides only when the tool
                     // actually resolved — the orchestrator surface excludes
                     // it (workers deliver artifacts), and naming an
@@ -1515,7 +1515,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "sandbox",
-                    label: L("Chat Sandbox"),
+                    label: LCached("Chat Sandbox"),
                     content: SystemPromptTemplates.sandbox(
                         home: sandboxHome,
                         hostReadCombined: executionMode.hostReadContext != nil,
@@ -1553,7 +1553,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .static(
                         id: "combinedHostRead",
-                        label: writable ? L("Host Workspace") : L("Host Workspace (read-only)"),
+                        label: writable ? LCached("Host Workspace") : LCached("Host Workspace (read-only)"),
                         content: SystemPromptTemplates.combinedHostRead(
                             from: hostRead,
                             allowSecretReads: false,
@@ -1566,7 +1566,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "folderContext",
-                    label: L("Working Directory"),
+                    label: LCached("Working Directory"),
                     content: SystemPromptTemplates.folderContext(from: folder)
                 )
             )
@@ -1577,7 +1577,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "bulkEditGuidance",
-                    label: L("Bulk Edits"),
+                    label: LCached("Bulk Edits"),
                     content: SystemPromptTemplates.bulkEditGuidance()
                 )
             )
@@ -1616,7 +1616,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .static(
                         id: "capabilityNudge",
-                        label: L("Capability Discovery"),
+                        label: LCached("Capability Discovery"),
                         content: nudge
                     )
                 )
@@ -1646,7 +1646,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "enabledManifest",
-                    label: L("Enabled Capabilities"),
+                    label: LCached("Enabled Capabilities"),
                     content: manifestSection
                 )
             )
@@ -1657,7 +1657,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .static(
                         id: "skillsGovern",
-                        label: L("Skills that govern tool groups"),
+                        label: LCached("Skills that govern tool groups"),
                         content: SystemPromptTemplates.skillsGovernToolGroups(
                             names: Self.capabilityToolNames(inSchema: resolvedNames) ?? .legacy
                         )
@@ -1687,7 +1687,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .dynamic(
                     id: "agentDBSchema",
-                    label: L("Agent DB Schema"),
+                    label: LCached("Agent DB Schema"),
                     content: agentDBSchemaSection
                 )
             )
@@ -1696,7 +1696,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .dynamic(
                     id: "sandboxState",
-                    label: L("Sandbox State"),
+                    label: LCached("Sandbox State"),
                     content: sandboxStateSection
                 )
             )
@@ -1712,7 +1712,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .dynamic(
                     id: "sandboxUnavailable",
-                    label: L("Sandbox Unavailable"),
+                    label: LCached("Sandbox Unavailable"),
                     content: Self.sandboxUnavailableNotice(reason: reason)
                 )
             )
@@ -1730,7 +1730,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .dynamic(
                     id: "channelDestinations",
-                    label: L("Channel Destinations"),
+                    label: LCached("Channel Destinations"),
                     content: channelDestinationsSection
                 )
             )
