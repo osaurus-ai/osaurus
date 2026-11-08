@@ -15,6 +15,7 @@
 //
 
 import Foundation
+import SystemConfiguration
 import os
 
 @MainActor
@@ -58,11 +59,11 @@ final class MobileConnectAdvertiser: NSObject {
         hasProbed = true
         let service = NetService(domain: "", type: BonjourAdvertiser.serviceType, name: "osaurus-probe", port: Int32(port))
         service.delegate = self
-        service.publish()
+        BonjourRunLoop.shared.publish(service)
         probe = service
         MobileConnectLog.write("bonjour: probing \(BonjourAdvertiser.serviceType) as 'osaurus-probe'")
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.probe?.stop()
+            if let probe = self?.probe { BonjourRunLoop.shared.stop(probe) }
             self?.probe = nil
         }
     }
@@ -70,15 +71,19 @@ final class MobileConnectAdvertiser: NSObject {
     func stopAdvertising() {
         generation += 1
         if service != nil { MobileConnectLog.write("bonjour: stopped advertising") }
-        service?.stop()
+        if let service { BonjourRunLoop.shared.stop(service) }
         service = nil
     }
 
     private func publish() {
         // An mDNS instance name is at most 63 bytes; a long Mac name would be
-        // refused outright.
+        // refused outright. The Computer Name comes from configd rather than
+        // `Host.current().localizedName`, which can do blocking DNS lookups
+        // on the main thread.
+        let computerName = SCDynamicStoreCopyComputerName(nil, nil) as String?
         let name = BonjourAdvertiser.truncateUTF8(
-            Host.current().localizedName ?? "Osaurus", maxBytes: BonjourAdvertiser.maxInstanceNameBytes
+            computerName.flatMap { $0.isEmpty ? nil : $0 } ?? "Osaurus",
+            maxBytes: BonjourAdvertiser.maxInstanceNameBytes
         )
         let service = NetService(domain: "", type: Self.serviceType, name: name, port: Int32(port))
         service.setTXTRecord(
@@ -88,7 +93,9 @@ final class MobileConnectAdvertiser: NSObject {
             ])
         )
         service.delegate = self
-        service.publish()
+        // Publishing does a synchronous round-trip to mDNSResponder that can
+        // block for seconds, so it runs on the Bonjour thread, not here.
+        BonjourRunLoop.shared.publish(service)
         self.service = service
         MobileConnectLog.write("bonjour: publishing \(Self.serviceType) as '\(name)' on port \(port)")
         Self.logger.info("Publishing pairing service '\(name, privacy: .public)' on port \(self.port)")
@@ -105,8 +112,8 @@ final class MobileConnectAdvertiser: NSObject {
         try? await Task.sleep(nanoseconds: UInt64(retries) * 1_000_000_000)
         // Stopped meanwhile, or stopped and started again (a server
         // restart): that run has its own service and its own retries.
-        guard generation == started, service != nil else { return }
-        service?.stop()
+        guard generation == started, let service else { return }
+        BonjourRunLoop.shared.stop(service)
         publish()
     }
 }
