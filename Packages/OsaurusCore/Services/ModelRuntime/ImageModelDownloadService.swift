@@ -171,6 +171,7 @@ final class ImageModelDownloadService: ObservableObject {
                 NotificationCenter.default.post(name: .localModelsChanged, object: nil)
             }
             await ModelPickerItemCache.shared.buildModelPickerItems()
+            await ModelPickerItemCache.shared.refreshLocalMediaModelItems()
         }
     }
 
@@ -353,6 +354,7 @@ final class ImageModelDownloadService: ObservableObject {
             // bundle becomes selectable without a relaunch.
             NotificationCenter.default.post(name: .localModelsChanged, object: nil)
             await ModelPickerItemCache.shared.buildModelPickerItems()
+            await ModelPickerItemCache.shared.refreshLocalMediaModelItems()
         } catch is CancellationError {
             states[dirName] = .notStarted
             metrics[dirName] = nil
@@ -406,7 +408,9 @@ final class ImageModelDownloadService: ObservableObject {
             if complete { return (destination, true) }
             let recovered = try Self.recoverMisroutedFile(file, from: legacyRoot, to: destination)
             if recovered {
-                imageDownloadLog.info("Recovered verified image-model file from the managed model folder: \(expectedSize) bytes")
+                imageDownloadLog.info(
+                    "Recovered verified image-model file from the managed model folder: \(expectedSize) bytes"
+                )
             }
             return (destination, recovered)
         }
