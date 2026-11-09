@@ -63,7 +63,7 @@ On macOS 26+, the sandbox toggle on the input bar runs shell/code work inside an
 
 ## Agent generation defaults
 
-Set persistent generation overrides under Settings → Agents → the custom agent → General → Configure → Advanced Settings → Generation Overrides. The chat input bar has no Next turn control. These defaults stay specific to the agent; the model picker's shared per-model settings are unchanged.
+Set persistent generation overrides under Settings → Agents → the custom agent → General → Configure → Advanced Settings → Generation Overrides. The chat input bar has no Next turn control. These defaults stay specific to the agent. In the built-in runtime, changing Thinking, reasoning effort or speculative decoding in the chat model picker overrides the current conversation and model only. It does not edit the saved agent, shared Server settings or another chat. Reset to default removes that conversation's override and inherits its saved defaults again. Conversation choices survive reopening the chat.
 
 Inherit leaves a parameter unset. Explicit request or workflow overrides take priority over the saved agent default. A submitted message captures its defaults for its tool steps, queue and regeneration, including after reopening the chat. Editing the agent affects later submissions.
 

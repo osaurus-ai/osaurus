@@ -14,6 +14,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     public let createdAt: Date
     public var updatedAt: Date
     public var selectedModel: String?
+    /// Model-picker overrides owned by this conversation, keyed by full model ID.
+    public var modelControls: [String: ChatModelControls]?
     public var turns: [ChatTurnData]
     /// The agent this session belongs to. nil = Default agent
     public var agentId: UUID?
@@ -78,13 +80,15 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         folderPath: String? = nil,
         conversationSummary: ConversationSummary? = nil,
         projectId: UUID? = nil,
-        workspace: WorkspaceSessionContext? = nil
+        workspace: WorkspaceSessionContext? = nil,
+        modelControls: [String: ChatModelControls]? = nil
     ) {
         self.id = id
         self.title = title
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.selectedModel = selectedModel
+        self.modelControls = modelControls
         self.turns = turns
         self.agentId = agentId
         self.source = source
@@ -109,6 +113,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         selectedModel = try container.decodeIfPresent(String.self, forKey: .selectedModel)
+        modelControls = try container.decodeIfPresent([String: ChatModelControls].self, forKey: .modelControls)
         turns = try container.decode([ChatTurnData].self, forKey: .turns)
         agentId =
             try container.decodeIfPresent(UUID.self, forKey: .agentId)
@@ -135,6 +140,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(selectedModel, forKey: .selectedModel)
+        try container.encodeIfPresent(modelControls, forKey: .modelControls)
         try container.encode(turns, forKey: .turns)
         try container.encodeIfPresent(agentId, forKey: .agentId)
         try container.encode(source, forKey: .source)
@@ -153,6 +159,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, title, createdAt, updatedAt, selectedModel, turns, agentId
+        case modelControls
         case personaId  // legacy key for migration
         case source, sourcePluginId, externalSessionKey, dispatchTaskId
         case archived
