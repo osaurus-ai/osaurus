@@ -1,6 +1,8 @@
 # Retained Activity tab persistence wait investigation
 
-Status: Candidate. Narrow retained-tab lifecycle matrix complete; CI pending.
+Status: Merged in PR #3351 (`32f1dfd245640a93383660f3d09441f4d29a3fd0`).
+The narrow persistence/title change passed all10CI checks; actual merge tree
+matched its reviewed projection.
 Model quality/RAM qualification remains PARTIAL/FAIL as detailed below.
 Entries below retain the chronological failures and superseded pending states.
 Base source `a4b7e5ee69f7bf8824ee5e6c72aa3d474bb07b69`; runtime remains
