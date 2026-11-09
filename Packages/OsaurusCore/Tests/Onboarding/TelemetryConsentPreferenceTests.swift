@@ -143,7 +143,7 @@ struct TelemetryConsentPreferenceTests {
 
     @Test func workerOptOutIsEffectiveBeforeTheNextEvent() async throws {
         let suite = "TelemetryConsentPreferenceTests.worker.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let defaults = try #require(ObservedConsentDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         var emitted: [String] = []
         let service = TelemetryService(defaults: defaults, emit: { name, _ in emitted.append(name) })
