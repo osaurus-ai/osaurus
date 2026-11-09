@@ -25,7 +25,10 @@ struct ChatSessionDispatchModelTests {
 
     /// Agent with a configured default model. Callers must run `cleanup`.
     private func makeAgent(defaultModel: String) -> (agent: Agent, cleanup: () async -> Void) {
-        let agent = Agent(name: "Dispatch Model Test Agent \(UUID().uuidString)", autonomousExec: AutonomousExecConfig(enabled: false))
+        let agent = Agent(
+            name: "Dispatch Model Test Agent \(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: false)
+        )
         AgentManager.shared.add(agent)
         AgentManager.shared.updateDefaultModel(for: agent.id, model: defaultModel)
         return (agent, { _ = await AgentManager.shared.delete(id: agent.id) })
@@ -151,6 +154,24 @@ struct ChatSessionDispatchModelTests {
             localItem("mlx-test/default"), localItem("mlx-test/saved"), localItem("mlx-test/other"),
         ])
         #expect(session.selectedModel == "mlx-test/saved")
+        #expect(AgentManager.shared.effectiveModel(for: agent.id) == "mlx-test/default")
+        await cleanup()
+    }
+
+    @Test func restoredWindowMediaModelSurvivesLateMediaCatalog() async {
+        let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
+        let session = await makeSessionBeforeCatalog(agentId: agent.id)
+        session.applyPickerItems([localItem("mlx-test/default")])
+        #expect(session.selectedModel == "mlx-test/default")
+        let image = ModelPickerItem(
+            id: "mlx-test/saved",
+            displayName: "Saved Image Model",
+            source: .imageGeneration,
+            imageCapabilities: ImageModelCapabilities(textToImage: true),
+            imageReady: true
+        )
+        session.applyPickerItems([localItem("mlx-test/default"), image])
+        #expect(session.selectedModel == image.id)
         #expect(AgentManager.shared.effectiveModel(for: agent.id) == "mlx-test/default")
         await cleanup()
     }
