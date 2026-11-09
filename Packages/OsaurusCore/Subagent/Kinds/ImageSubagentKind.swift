@@ -217,9 +217,8 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         let config = SubagentConfigurationStore.snapshot()
         // Per-agent permission: Default / main chat → global permission map; a
         // custom agent → its own `subagentPermissions`, resolved from the
-        // launching agent (`scope`). The model is now chosen in the agent's
-        // Subagents tab, so the prompt is a plain allow / deny (the `.ask`
-        // policy); `.alwaysAllow` is set per-agent in that tab.
+        // launching agent (`scope`). A prompt's Always Allow must update that
+        // same policy source, just like an explicit edit in the Subagents tab.
         let isDefault = scope.agentId == Agent.defaultId
         let settings = await MainActor.run {
             AgentManager.shared.agent(for: scope.agentId)?.settings
@@ -265,28 +264,78 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                 ? .allow
                 : .userDenied("User denied billable remote image generation.")
         }
-        return params.isEdit
-            ? await editPermission(policy: policy, argumentsJSON: approvalJSON)
-            : await generatePermission(policy: policy, argumentsJSON: approvalJSON)
+        return await localPermission(scope, policy: policy, argumentsJSON: approvalJSON)
     }
 
-    private func generatePermission(
+    private func localPermission(
+        _ scope: SubagentScope,
         policy: SubagentPermissionPolicy,
         argumentsJSON: String
     ) async -> SubagentDecision {
+        let operation = params.isEdit ? "Image edit" : "Image generation"
+        let denied = SubagentDecision.userDenied("User denied \(operation.lowercased()).")
         switch policy {
         case .deny:
-            return .denied("Image generation is denied by this agent's permission settings.")
+            return .denied("\(operation) is denied by this agent's permission settings.")
         case .alwaysAllow:
             return .allow
         case .ask:
             if ChatExecutionContext.autoApproveToolPrompts { return .allow }
-            let approved = await ToolPermissionPromptService.requestApproval(
+            let outcome = await ToolPermissionPromptService.requestPolicyApproval(
                 toolName: "image",
                 description: ImageTool.toolDescription,
-                argumentsJSON: argumentsJSON
+                argumentsJSON: argumentsJSON,
+                revalidate: {
+                    let config = SubagentConfigurationStore.snapshot()
+                    let settings = await MainActor.run {
+                        AgentManager.shared.agent(for: scope.agentId)?.settings
+                    }
+                    switch SubagentToolVisibility.effectivePermission(
+                        capabilityId: SubagentCapabilityRegistry.image.id,
+                        isDefault: scope.agentId == Agent.defaultId,
+                        config: config,
+                        settings: settings
+                    ) {
+                    case .deny: return .denied
+                    case .alwaysAllow: return .allowOnce
+                    case .ask: return nil
+                    }
+                }
             )
-            return approved ? .allow : .userDenied("User denied image generation.")
+            guard !Task.isCancelled else { return denied }
+            switch outcome {
+            case .denied:
+                return denied
+            case .allowOnce:
+                return .allow
+            case .alwaysAllow:
+                // The image gate owns the image capability's policy, rather
+                // than ToolRegistry's unrelated generic tool permission.
+                await persistAlwaysAllow(launchingAgentId: scope.agentId)
+                return .allow
+            }
+        }
+    }
+
+    private func persistAlwaysAllow(launchingAgentId: UUID) async {
+        if launchingAgentId == Agent.defaultId {
+            SubagentConfigurationStore.mutate { config in
+                config.permissionDefaults.setPolicy(.alwaysAllow, for: capability.id)
+            }
+            return
+        }
+        let persisted = await MainActor.run {
+            guard var agent = AgentManager.shared.agent(for: launchingAgentId), !agent.isBuiltIn else {
+                return false
+            }
+            agent.settings.subagentPermissions.setPolicy(.alwaysAllow, for: capability.id)
+            AgentManager.shared.update(agent)
+            return true
+        }
+        if !persisted {
+            // This click still approves the current call; a missing launcher
+            // must never redirect persistence into the global/default policy.
+            print("[Osaurus] Could not persist image Always Allow for agent \(launchingAgentId)")
         }
     }
 
@@ -298,26 +347,6 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             return model.providerName
         case .osaurusCloud:
             return "Osaurus Cloud"
-        }
-    }
-
-    private func editPermission(
-        policy: SubagentPermissionPolicy,
-        argumentsJSON: String
-    ) async -> SubagentDecision {
-        switch policy {
-        case .deny:
-            return .denied("Image edit is denied by this agent's permission settings.")
-        case .alwaysAllow:
-            return .allow
-        case .ask:
-            if ChatExecutionContext.autoApproveToolPrompts { return .allow }
-            let approved = await ToolPermissionPromptService.requestApproval(
-                toolName: "image",
-                description: ImageTool.toolDescription,
-                argumentsJSON: argumentsJSON
-            )
-            return approved ? .allow : .userDenied("User denied image edit.")
         }
     }
 
