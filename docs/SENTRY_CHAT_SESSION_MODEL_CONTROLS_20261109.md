@@ -1,6 +1,8 @@
 # Conversation-owned reasoning and speculative decoding
 
-Status: draft; native ownership checks, the full model matrix and CI are pending.
+Status: draft. Native ownership checks are recorded below. The full model
+matrix is red, a Gemma Thinking-On protocol failure remains under investigation,
+and final-head CI is required before merge.
 
 The requested contract is that a saved agent can keep MTP Off while a user
 requests adaptive decoding in one chat. Changing that chat must not edit the
@@ -45,6 +47,7 @@ catalog destinations were added or renamed; the guides describe the new scope.
 
 Tested implementation:2ea466408bd67f467577ee5abd4a88f6cf654af0. Later commits
 11fa987e and318be9a7 change test observation/setup only; product bytes match.
+The later b886feed semantic source-policy correction is also test-only.
 The fresh Release and SwiftPM runner were built at
 318be9a7f63af2a04f40db73777b0071813e5a69. Both consume vMLX
 1bcd74ad182103a3b83941f61e57ee0bac23b330 and Aptabase
@@ -74,10 +77,59 @@ dependency differences remain disclosed in the evidence.
   emit100.2–104.4engine tok/s, distinct from request rates. Native cache counters
   reach three disk/L2 hits. Peak physical footprint5,320,610,376bytes exceeds
   4,002,479,278weight bytes: RAMFAIL, not a model-family qualification.
-- The unchanged119-case AgentLoop+Frontier inventory is running. No current
-  matrix score, native On/Off isolation, relaunch, queue, media or M2/M3
-  qualification is claimed yet. No release, normal-profile install, model
-  download, OS grant, sampler default or prompt/template change.
+- The unchanged119-case AgentLoop+Frontier inventory completed:45 passed,
+  70 failed and4 skipped. Compared with the earlier usage candidate,27 prior
+  passes fail and7 failures pass. All479 inference terminals are200;473 use
+  auto tool choice and6 omit it. The direct AgentLoopEvaluator does not
+  construct ChatSession or capture these controls. This red, unseeded,
+  same-model-judged run does not establish regression safety. All116 actual
+  workspaces and its PID-owned runtime root are retained and hashed, with
+  originals preserved. Peak footprint6,645,616,720bytes fails the same RAM gate.
+- Native Qwen/DFlash2: create-agent Light/Off, chat None/On, second-chat
+  Light/Off, return to the original chat, normal relaunch and independent
+  resets are observed. Agent/server bytes and model-option preferences stay
+  unchanged around chat-only actions. Actual requests, UI, history SQLite and
+  PID-matched logs are retained. A genuinely queued turn and its regeneration
+  retain Light while the picker shows None; the next fresh submission uses
+  None. Host-only speculation is checked through component request-context
+  assertions and actual runtime routes, rather than inferred from an HTTP
+  field that does not serialize that context.
+- Native explicit editor Save remains functional: an unsaved temperature
+  draft disappears without modifying saved bytes. Saving temperature0.6,
+  top-p0.9 and max output1024 survives relaunch and produces those exact
+  request values, with an ordinary stop. These are explicit test choices,
+  not changed defaults. The existing shared Server/Spawn fan-out mirror
+  normalizes to its already authoritative value1; the relevant source is
+  unchanged. This is not evidence of an independent budget being lost.
+- A real red/blue image is attached through the native file picker and
+  answered correctly, followed by a real London clock call and correct
+  image-history grounding. Runtime logs show the DFlash2 path and disk-backed
+  restore. This does not qualify every native head, direct DSpark bundle,
+  media format, cache-pressure condition or hardware family. Candidate native
+  phase peaks32.610/33.111/28.895GB exceed target weights22.679GB; RAMFAIL.
+  An auxiliary DFlash2 diagnostic emits a256-token length stop and60.5tok/s;
+  it is not an ordinary-answer pass. Other unmeasured warmups remain gaps.
+- Native Gemma boolean Thinking choices leave default-agent/server/model
+  stores unchanged. A fresh chat inherits Off, the original retains On, and
+  switching to Qwen exposes its distinct effort tiers before switching back
+  restores Gemma On. Actual On/Off requests contain true/false; the fresh
+  inherited request omits the value. Stop cancels a real generation and a
+  new chat completes afterward. However, the first On answer leaks reasoning
+  and a literal `<channel|>` into visible content. That row is a format
+  failure, not a quality pass. A later On row has a separate reasoning section.
+  Frozen pre-fix native On requests and an exact captured-input API replay
+  are being compared; no parser cause or correction is claimed. No forced
+  opener, output stripping, sampler change or prompt coercion is justified.
+- Initial final-head CI passed nine checks and failed an old source-policy
+  assertion requiring the global Thinking option store. The test-only
+  correction instead requires semantic conversation storage, a selected-model
+  guard and no agent/model/Server writes, retaining inversion/effective-state
+  checks. Fresh local RuntimePolicySourceTests plus ChatModelControlsTests
+  pass120 tests in2 suites,5.507s. Counts overlap prior component runs.
+  The original CI log and every failed analysis/test iteration remain.
+
+No release, normal-profile install, model download, OS grant, sampler default,
+prompt/template change or physical M2/M3 qualification is claimed.
 
 SOURCE EVIDENCE: ChatModelControls.swift, ChatSessionData.swift,
 ChatHistoryDatabase.swift, ChatView.swift and FloatingInputCard.swift; guides
@@ -87,5 +139,10 @@ LIVE EVIDENCE: private sentry-inference-20261108/chat-session-controls/:
 COMPONENT-QUALIFICATION1.json, CANDIDATE2-FAILURE-CAUSE-REVIEW1.json,
 CANDIDATE1-APP-ARTIFACT.json, native-candidate1/GEMMA-QAT-TOOL-GATE1.json,
 actual Activity payloads, UI captures, PID-matched logs and resource samples.
-These qualify only the named completed rows. Remaining native/model/CI gates
-must be recorded before merge.
+Additional receipts: native-ownership-candidate1/ captures00–48 and store
+snapshots; SAVED-GENERATION-REQUEST-AFTER-RELAUNCH1.json;
+GEMMA-THINKING-ON-PROTOCOL-FAILURE1.json; agent-matrix-candidate1/
+MATRIX-REVIEW2.json and retained-runtime1/MANIFEST.json;
+SEMANTIC-POLICY-COMPONENT-QUALIFICATION1.json; ci-watch1/
+actual-test-core-job.log. These qualify only the named completed rows.
+Remaining model/CI gates must be recorded before merge.
