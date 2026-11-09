@@ -10,6 +10,33 @@ private final class ObservedConsentDefaults: UserDefaults, @unchecked Sendable {
     private var reads = 0
     private var delayNextRead = false
     private var delayedOnMain: Bool?
+    private weak var consentObserver: NSObject?
+
+    override func addObserver(
+        _ observer: NSObject,
+        forKeyPath keyPath: String,
+        options: NSKeyValueObservingOptions = [],
+        context: UnsafeMutableRawPointer?
+    ) {
+        super.addObserver(observer, forKeyPath: keyPath, options: options, context: context)
+        if keyPath == "telemetryEnabled" {
+            lock.lock()
+            consentObserver = observer
+            lock.unlock()
+        }
+    }
+
+    func replayOlderGrantNotification() {
+        lock.lock()
+        let observer = consentObserver
+        lock.unlock()
+        observer?.observeValue(
+            forKeyPath: "telemetryEnabled",
+            of: self,
+            change: [.newKey: true],
+            context: nil
+        )
+    }
 
     func armReadDelay() {
         lock.lock()
@@ -99,19 +126,58 @@ struct TelemetryConsentPreferenceTests {
         if let directory = ProcessInfo.processInfo.environment["OSAURUS_TEST_EVIDENCE_DIR"] {
             let data = try JSONSerialization.data(
                 withJSONObject: [
+                    "pid": ProcessInfo.processInfo.processIdentifier,
+                    "process_environment": Dictionary(
+                        uniqueKeysWithValues: [
+                            "OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS", "OSAURUS_TEST_ROOT",
+                            "OSU_MODELS_DIR", "OSAURUS_IMAGE_MODELS_DIR", "OSAURUS_TEST_EVIDENCE_DIR",
+                        ].map { ($0, ProcessInfo.processInfo.environment[$0] ?? "<absent>") }
+                    ),
                     "elapsed_seconds": elapsed,
                     "main_pulse_seconds": pulse.latency ?? -1,
                     "consent_reads_before": before,
                     "consent_reads_after": defaults.observation.reads,
                     "delay_reached": defaults.observation.delayedOnMain != nil,
                     "scope": "Controlled isolated store; not original cfprefsd latency",
-                ], options: [.prettyPrinted, .sortedKeys]
+                ],
+                options: [.prettyPrinted, .sortedKeys]
             )
             try data.write(
                 to: URL(fileURLWithPath: directory).appendingPathComponent("telemetry-hot-read-\(UUID()).json"),
                 options: [.withoutOverwriting]
             )
         }
+    }
+
+    @Test func keylessEarlyReturnsDoNotReadPreferences() throws {
+        let suite = "TelemetryConsentPreferenceTests.keyless.\(UUID())"
+        let defaults = try #require(ObservedConsentDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var emitted: [String] = []
+        let service = TelemetryService(defaults: defaults, emit: { name, _ in emitted.append(name) })
+        service.track("not_started")
+        #expect(!service.needsConsentDecision)
+        #expect(service.prepareQuitFlush() == nil)
+        #expect(defaults.observation.reads == 0)
+        #expect(emitted.isEmpty)
+    }
+
+    @Test func olderGrantCallbackCannotReverseAnObservedOptOut() throws {
+        let suite = "TelemetryConsentPreferenceTests.stale-grant.\(UUID())"
+        let defaults = try #require(ObservedConsentDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var emitted: [String] = []
+        let service = TelemetryService(defaults: defaults, emit: { name, _ in emitted.append(name) })
+        service.markStartedForTesting()
+        service.setEnabled(true)
+        defaults.set(false, forKey: "telemetryEnabled")
+        #expect(!service.isEnabled)
+        // Independently reproduced with two real concurrent Foundation writes:
+        // an older grant callback may resume after a later decline completed.
+        defaults.replayOlderGrantNotification()
+        #expect(!service.isEnabled)
+        service.track("must_remain_declined")
+        #expect(emitted.isEmpty)
     }
 
     @Test func directPeerAndRemovalDecisionsKeepExistingEventPolicy() throws {
@@ -148,7 +214,7 @@ struct TelemetryConsentPreferenceTests {
         var emitted: [String] = []
         let service = TelemetryService(defaults: defaults, emit: { name, _ in emitted.append(name) })
         service.markStartedForTesting()
-        for _ in 0..<32 {
+        for _ in 0 ..< 32 {
             service.setEnabled(true)
             await Task.detached { @Sendable [defaults] in
                 defaults.set(false, forKey: "telemetryEnabled")
