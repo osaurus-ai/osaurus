@@ -1671,6 +1671,25 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 finishReason = .toolCalls
                 continuation.finish(throwing: inv)
             } catch {
+                if let usage = ResponsesToolChoiceContract.rejectedCompletionUsage(in: error) {
+                    // Validation withheld the successful completion event, not
+                    // the work already measured by the runtime/provider. Keep
+                    // the error and account for those counts using the same
+                    // monotonic budget rule as an accepted terminal above.
+                    lifecycle.observeTerminalStats()
+                    if let count = usage.inputTokens { recordInputTokens(count) }
+                    if let count = usage.outputTokens {
+                        authoritativeOutputTokens = count
+                        outputTokenCount = count
+                        if let bgId, count > reportedOutputTokens {
+                            let delta = count - reportedOutputTokens
+                            reportedOutputTokens = count
+                            Task { @MainActor in
+                                BackgroundTaskManager.shared.recordUsage(backgroundId: bgId, tokensOutDelta: delta)
+                            }
+                        }
+                    }
+                }
                 // Check if this is a CancellationError (expected when consumer stops)
                 if Task.isCancelled || error is CancellationError {
                     print("[Osaurus][Stream] Stream cancelled after \(deltaCount) deltas")
