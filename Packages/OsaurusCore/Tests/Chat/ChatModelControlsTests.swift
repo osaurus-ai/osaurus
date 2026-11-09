@@ -33,6 +33,9 @@ struct ChatModelControlsTests {
         try await ChatHistoryTestStorage.run {
             let agent = savedAgent()
             let before = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(AgentStore.load(id: agent.id))
+            let file = OsaurusPaths.resolvePath(new: OsaurusPaths.agents(), legacy: "Personas")
+                .appendingPathComponent("\(agent.id.uuidString).json")
+            let diskBefore = try Data(contentsOf: file)
             let first = session(for: agent)
             let second = session(for: agent)
             let server = ServerController.runtimeSettingsForConfigureTool().settings
@@ -44,7 +47,21 @@ struct ChatModelControlsTests {
             #expect(controls.reasoningEffort == "none")
             #expect(second.captureGenerationControls().agentSettings?.speculativeDecoding == false)
             #expect(second.captureGenerationControls().reasoningEffort == "low")
+            let after = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(AgentStore.load(id: agent.id))
             #expect(try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(AgentStore.load(id: agent.id)) == before)
+            // Flush the real writer before comparing persisted bytes, not only its memoized value.
+            _ = AgentStore.loadAll()
+            let diskAfter = try Data(contentsOf: file)
+            if let evidence = ProcessInfo.processInfo.environment["OSAURUS_TEST_EVIDENCE_DIR"] {
+                let directory = URL(fileURLWithPath: evidence)
+                    .appendingPathComponent("chat-agent-isolation-\(UUID().uuidString)")
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try before.write(to: directory.appendingPathComponent("encoded-before.json"))
+                try after.write(to: directory.appendingPathComponent("encoded-after.json"))
+                try diskBefore.write(to: directory.appendingPathComponent("disk-before.json"))
+                try diskAfter.write(to: directory.appendingPathComponent("disk-after.json"))
+            }
+            #expect(diskAfter == diskBefore)
             #expect(ServerController.runtimeSettingsForConfigureTool().settings == server)
             #expect(ModelOptionsStore.shared.storedExplicitOptions(for: model) == options)
 
