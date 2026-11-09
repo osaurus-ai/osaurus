@@ -73,12 +73,53 @@ private struct RetainedActivityTabRecord: Codable {
     }
 }
 
+/// Ordered off-main writes of immutable retained-tab snapshots. UserDefaults
+/// supports concurrent use; this wrapper serializes this manager's mutations so
+/// an older completion cannot overwrite a newer update or resurrect a clear.
+/// Actor-owned task/session state never crosses onto the writing queue.
+private final class RetainedActivityTabWriter: @unchecked Sendable {
+    private let defaults: UserDefaults
+    private let key: String
+    private let queue = DispatchQueue(label: "ai.osaurus.retained-activity-tabs", qos: .utility)
+
+    init(defaults: UserDefaults, key: String) {
+        self.defaults = defaults
+        self.key = key
+    }
+
+    func enqueue(_ data: Data?) {
+        queue.async { [self] in
+            if let data {
+                defaults.set(data, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+    }
+
+    /// Drain calls enqueued so far. Quit invokes this on a flush worker,
+    /// within the app's existing overall deadline; never wait on main here.
+    func flush(timeout: TimeInterval) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        queue.async { done.signal() }
+        return done.wait(timeout: .now() + timeout) == .success
+    }
+}
+
 // MARK: - Background Task Manager
 
 /// Single owner of all backgrounded chat tasks (dispatched).
 @MainActor
 public final class BackgroundTaskManager: ObservableObject {
-    public static let shared = BackgroundTaskManager()
+    public static let shared: BackgroundTaskManager = {
+        let manager = BackgroundTaskManager()
+        sharedIfInitialized = manager
+        return manager
+    }()
+
+    /// Canonical chat renames must synchronize a retained owner when one
+    /// exists, without paying this registry's initial defaults read otherwise.
+    private(set) static var sharedIfInitialized: BackgroundTaskManager?
 
     // MARK: - Published State
 
@@ -136,6 +177,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// user's retained-tab defaults.
     private let persistsRetainedTabs: Bool
     private let retainedTabsDefaults: UserDefaults
+    private let retainedTabsWriter: RetainedActivityTabWriter
     private static let retainedTabsDefaultsKey = "retainedNotchTabs.v1"
 
     /// Production managers hold an idle-sleep assertion while work is
@@ -185,6 +227,9 @@ public final class BackgroundTaskManager: ObservableObject {
     ) {
         self.persistsRetainedTabs = persistsRetainedTabs
         self.retainedTabsDefaults = retainedTabsDefaults
+        self.retainedTabsWriter = RetainedActivityTabWriter(
+            defaults: retainedTabsDefaults, key: Self.retainedTabsDefaultsKey
+        )
         self.powerManager = powerManager
         viewUpdateCancellable =
             viewUpdateSubject
@@ -318,6 +363,22 @@ public final class BackgroundTaskManager: ObservableObject {
         recomputeSortedToastTasks()
         objectWillChange.send()
         return true
+    }
+
+    /// Follow a canonical Chat rename without calling `renameTask` back into
+    /// ChatSessionsManager. The canonical store already owns that title write
+    /// and its updatedAt policy; only this registry's alias needs persistence.
+    func synchronizeCanonicalTitle(_ id: UUID, title: String) {
+        guard let state = backgroundTasks[id] else { return }
+        let changed = state.taskTitle != title
+        if changed { state.taskTitle = title }
+        if let session = state.chatSession, session.title != title {
+            session.title = title
+        }
+        guard changed else { return }
+        persistRetainedTabs()
+        recomputeSortedToastTasks()
+        objectWillChange.send()
     }
 
     /// Background-task id (if any) the given window is bound to. Returns
@@ -1999,6 +2060,12 @@ public final class BackgroundTaskManager: ObservableObject {
         recomputeSortedToastTasks()
     }
 
+    /// The existing quit fan-out drains queued tab snapshots before hard exit.
+    /// This does not synchronize cfprefsd's disk cache or extend the quit budget.
+    nonisolated func flushRetainedTabWrites(timeout: TimeInterval = 2.5) -> Bool {
+        retainedTabsWriter.flush(timeout: timeout)
+    }
+
     private func persistRetainedTabs() {
         guard persistsRetainedTabs else { return }
         let records =
@@ -2009,11 +2076,11 @@ public final class BackgroundTaskManager: ObservableObject {
             .compactMap(RetainedActivityTabRecord.init(state:))
             .sorted { $0.createdAt < $1.createdAt }
         guard !records.isEmpty else {
-            retainedTabsDefaults.removeObject(forKey: Self.retainedTabsDefaultsKey)
+            retainedTabsWriter.enqueue(nil)
             return
         }
         if let data = try? JSONEncoder().encode(records) {
-            retainedTabsDefaults.set(data, forKey: Self.retainedTabsDefaultsKey)
+            retainedTabsWriter.enqueue(data)
         }
     }
 
