@@ -1664,7 +1664,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // app-hang watchdog so a timed-out flush isn't filed as a hang. No-op unless telemetry is consented.
         let flushGroup = DispatchGroup()
         let flushWorkers = DispatchQueue.global(qos: .userInitiated)
+        let retainedTabs = BackgroundTaskManager.shared
         var flushes: [@Sendable () -> Void] = [
+            {
+                if !retainedTabs.flushRetainedTabWrites(timeout: 2.5) {
+                    NSLog("Osaurus retained Activity tab flush timed out; writes may still be pending")
+                }
+            },
             { ToolConfigurationStore.flushPendingWrites() },
             { ComputerUsePolicyStore.flushPendingWrites() },
             { SandboxConfigurationStore.flushPendingWrites() },
