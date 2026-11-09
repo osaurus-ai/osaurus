@@ -239,6 +239,12 @@ final class ChatSessionsManager: ObservableObject {
     /// discoverable there until the pre-stream first-turn save reaches
     /// `ChatSessionStore`; otherwise an early rename could be dropped.
     func rename(id: UUID, title: String) {
+        rename(id: id, title: title, retainedTaskManager: nil)
+    }
+
+    /// Dependency seam for an isolated retained-task registry in tests. The
+    /// ordinary UI entry point retains the shared implementation below.
+    func rename(id: UUID, title: String, retainedTaskManager: BackgroundTaskManager?) {
         guard
             var session = sessions.first(where: { $0.id == id })
                 ?? ChatSessionStore.load(id: id)
@@ -255,6 +261,8 @@ final class ChatSessionsManager: ObservableObject {
         // (The window-attached case is synced by the sidebar callback; this
         // covers a live session no window is viewing.)
         LiveChatSessionRegistry.shared.registeredSession(for: id)?.title = title
+        (retainedTaskManager ?? BackgroundTaskManager.sharedIfInitialized)?
+            .synchronizeCanonicalTitle(id, title: title)
         upsertInMemory(session)
     }
 
@@ -265,10 +273,19 @@ final class ChatSessionsManager: ObservableObject {
     /// transaction here could trip the app-hang watchdog. Same
     /// in-memory-first lookup as `rename`.
     func renameQuietly(id: UUID, title: String) {
+        renameQuietly(id: id, title: title, retainedTaskManager: nil)
+    }
+
+    func renameQuietly(id: UUID, title: String, retainedTaskManager: BackgroundTaskManager?) {
         guard
             var session = sessions.first(where: { $0.id == id })
                 ?? ChatSessionStore.load(id: id)
         else { return }
+        // The canonical row may already have this title while a terminal
+        // Activity record still has the old one. Reconcile before the no-op
+        // fast path; neither operation bumps the conversation timestamp.
+        (retainedTaskManager ?? BackgroundTaskManager.sharedIfInitialized)?
+            .synchronizeCanonicalTitle(id, title: title)
         guard session.title != title else { return }
         session.title = title
         // Title-only DB update: the in-memory copy may be metadata-only

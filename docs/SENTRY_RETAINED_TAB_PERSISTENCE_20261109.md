@@ -101,3 +101,58 @@ The next integration projection will include the separately-qualified picker
 change and repeat the affected matrix with actual test-process verification.
 Fresh isolated Release completion, retained-tab restore/clear/relaunch and quit
 proof remains required. No preference PR, release or merge-readiness claim yet.
+
+
+## Native integration1 and the retained-title correction
+
+Projection `57799c4ea37d9f4d90b0a54121e216fde3b1c331` passed **312/312**
+unique tests in 18 suites (7.422 seconds), with all four private flags verified
+in actual PID63900. Its fresh Release binary SHA-256 was
+`86d8230c360e56a8bd6145da47c0714dbe1b1bb8200166d64ae8fe201b854002`.
+No image-root override, telemetry key or Sentry DSN was used.
+
+Closing the active Chat tab while Stop was visible detached a real run; it
+continued with the agent showing Working and produced a completed retained tab.
+This shortcut left a blank Chat window, so it is not claimed as closing the
+whole window mid-run. Closing that blank window and reopening restored the
+complete answer. Actual clock/tool continuation and a further timezone follow-up
+settled, then normal quit/relaunch preserved their full history. Explicit Close
+Tab with another blank tab remaining removed the retained key; it stayed absent
+through another normal quit/relaunch, and the tab did not reappear. General >
+Local Models > General remained usable. One immediate AX snapshot error
+recovered on the next observation in 0.113 seconds; no app-crash claim.
+
+Strict answer quality was **2/3**: the rainbow explanation and timezone recall
+passed; the clock supplied the requested UTC+9 correctly but invented Sunday
+while the actual native result said Monday. This is a grounding failure, not a
+passing row merely because the requested offset was correct. Four model passes
+reported engine decode 104.3/102.2/100.7/99.1 tok/s, separately from Activity
+end-to-end 31.82/39.06/25.66/74.84 tok/s. Seven automatic Foundation generations
+are retained separately. Peak sampled phys_footprint was 5,317,841,360 bytes
+against 4,002,479,278 weight bytes: **RAM FAIL**. No model-family readiness.
+See NATIVE-INTEGRATION1-QUALIFICATION.json and raw activity/UI/resource artifacts.
+
+The UI rename saved the canonical chat title and normal Chat relaunch showed
+it correctly, but retained-task metadata still held the original title. The
+terminal preview is the original completed-run snapshot; no continuous-preview
+contract is invented and that field is unchanged. Source inspection found
+canonical rename/renameQuietly did not synchronize BackgroundTaskState.taskTitle,
+while headless hydrateRetainedTask treats the retained title as the latest
+explicit rename and can write it back into the canonical store.
+
+The same canonical rename implementation, with only an unused isolated-owner
+test seam added, reproduced actual headless title loss in **0/3** cases, with
+12 failed title assertions: manual rename, generated title, and an already-equal
+canonical title. Canonical rename first succeeded, then actual headless reveal
+reverted the DB title to the old retained title. Timestamp and transcript
+assertions passed. Exact binary, log, xcresult and uniquely named raw before/
+after receipts remain in retained-title-sync/BASELINE1-REVIEW.json.
+
+The candidate synchronizes a known retained owner after canonical rename and
+before the quiet-rename equality return. It does not call renameTask recursively,
+rewrite previews/transcripts, or change manual/automatic timestamp policy. A
+peek at the already-created shared registry avoids initializing it (and reading
+defaults) merely to rename an ordinary chat. Isolated dependency overloads keep
+tests off the shared registry; the existing two-argument UI API is preserved.
+The four title/ordinary-chat tests and full affected matrix are pending, followed
+by a fresh Release UI repeat. No preference PR or merge-readiness claim yet.

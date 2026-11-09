@@ -111,7 +111,15 @@ private final class RetainedActivityTabWriter: @unchecked Sendable {
 /// Single owner of all backgrounded chat tasks (dispatched).
 @MainActor
 public final class BackgroundTaskManager: ObservableObject {
-    public static let shared = BackgroundTaskManager()
+    public static let shared: BackgroundTaskManager = {
+        let manager = BackgroundTaskManager()
+        sharedIfInitialized = manager
+        return manager
+    }()
+
+    /// Canonical chat renames must synchronize a retained owner when one
+    /// exists, without paying this registry's initial defaults read otherwise.
+    private(set) static var sharedIfInitialized: BackgroundTaskManager?
 
     // MARK: - Published State
 
@@ -355,6 +363,22 @@ public final class BackgroundTaskManager: ObservableObject {
         recomputeSortedToastTasks()
         objectWillChange.send()
         return true
+    }
+
+    /// Follow a canonical Chat rename without calling `renameTask` back into
+    /// ChatSessionsManager. The canonical store already owns that title write
+    /// and its updatedAt policy; only this registry's alias needs persistence.
+    func synchronizeCanonicalTitle(_ id: UUID, title: String) {
+        guard let state = backgroundTasks[id] else { return }
+        let changed = state.taskTitle != title
+        if changed { state.taskTitle = title }
+        if let session = state.chatSession, session.title != title {
+            session.title = title
+        }
+        guard changed else { return }
+        persistRetainedTabs()
+        recomputeSortedToastTasks()
+        objectWillChange.send()
     }
 
     /// Background-task id (if any) the given window is bound to. Returns
