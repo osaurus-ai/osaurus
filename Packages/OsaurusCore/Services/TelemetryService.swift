@@ -150,6 +150,12 @@ public final class TelemetryService {
         )
         started = true
 
+        // Build the observed consent cache here, at launch, so its one
+        // synchronous cfprefsd read never lands on the main actor mid-session
+        // (APPLE-MACOS-3QJ: a per-event read hung main for >3s). Explicit so
+        // it doesn't depend on `app_launched` happening to read consent first.
+        _ = consentPreference
+
         // Baseline launch signal
         track("app_launched", launchProps)
     }
