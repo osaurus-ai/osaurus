@@ -32,12 +32,16 @@ struct ChatModelControlsTests {
     func twoChatsAndSavedDefaults() async throws {
         try await ChatHistoryTestStorage.run {
             let agent = savedAgent()
+            let first = session(for: agent)
+            let second = session(for: agent)
+            // Model selection deliberately saves the agent's preferred model. Complete
+            // that setup before measuring the separate chat-control action below.
+            _ = AgentStore.loadAll()
+            #expect(AgentStore.load(id: agent.id)?.generationSettings == agent.generationSettings)
             let before = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(AgentStore.load(id: agent.id))
             let file = OsaurusPaths.resolvePath(new: OsaurusPaths.agents(), legacy: "Personas")
                 .appendingPathComponent("\(agent.id.uuidString).json")
             let diskBefore = try Data(contentsOf: file)
-            let first = session(for: agent)
-            let second = session(for: agent)
             let server = ServerController.runtimeSettingsForConfigureTool().settings
             let options = ModelOptionsStore.shared.storedExplicitOptions(for: model)
             first.updateModelControls([key: .init(reasoningEffort: "none", speculativeDecoding: true)])
