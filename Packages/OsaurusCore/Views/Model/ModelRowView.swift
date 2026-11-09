@@ -286,7 +286,7 @@ struct ModelRowView: View {
     }
 
     private var topPickRibbon: some View {
-        headerChip(icon: "star.fill", text: L("Top Pick"))
+        headerChip(icon: "star.fill", text: LCached("Top Pick"))
     }
 
     /// Unified download-state indicator pinned to the header's top-left.
@@ -298,16 +298,16 @@ struct ModelRowView: View {
         case .downloading(let progress):
             headerChip(
                 icon: "arrow.down.circle.fill",
-                text: "\(L("Downloading")) \(Int(progress * 100))%"
+                text: "\(LCached("Downloading")) \(Int(progress * 100))%"
             )
         case .paused(let progress):
             headerChip(
                 icon: "pause.circle.fill",
-                text: "\(L("Paused")) \(Int(progress * 100))%"
+                text: "\(LCached("Paused")) \(Int(progress * 100))%"
             )
         default:
             if content.isDownloaded {
-                headerChip(icon: "checkmark.circle.fill", text: L("Downloaded"))
+                headerChip(icon: "checkmark.circle.fill", text: LCached("Downloaded"))
             }
         }
     }
@@ -343,7 +343,7 @@ struct ModelRowView: View {
             if content.isUnsupportedFormat {
                 TintedPill(
                     icon: "exclamationmark.octagon",
-                    label: Text(L("Not MLX")),
+                    label: Text(LCached("Not MLX")),
                     color: theme.errorColor
                 )
             } else if let useCase = content.useCase {
@@ -367,14 +367,14 @@ struct ModelRowView: View {
     /// the RAM requirement. The last column keeps a compact model spec.
     private var statStrip: some View {
         HStack(spacing: 0) {
-            StatSegment(label: L("Download"), value: content.size)
+            StatSegment(label: LCached("Download"), value: content.size)
             statDivider
-            StatSegment(label: L("Est. Memory"), value: content.memoryNeeded)
+            StatSegment(label: LCached("Est. Memory"), value: content.memoryNeeded)
             statDivider
             if content.variantCount > 1 {
-                StatSegment(label: L("Versions"), value: "\(content.variantCount)")
+                StatSegment(label: LCached("Versions"), value: "\(content.variantCount)")
             } else {
-                StatSegment(label: L("Params"), value: content.params)
+                StatSegment(label: LCached("Params"), value: content.params)
             }
         }
         .padding(.vertical, 8)
@@ -464,11 +464,11 @@ struct ModelRowView: View {
         case .decision:
             TintedPill(icon: "checklist", label: Text(verbatim: "D3"), color: theme.accentColor)
         case .llm:
-            TintedPill(icon: "text.bubble", label: Text(L("LLM")), color: theme.accentColor)
+            TintedPill(icon: "text.bubble", label: Text(LCached("LLM")), color: theme.accentColor)
         case .vlm:
-            TintedPill(icon: "eye", label: Text(L("VLM")), color: .purple)
+            TintedPill(icon: "eye", label: Text(LCached("VLM")), color: .purple)
         case .image:
-            TintedPill(icon: "photo", label: Text(L("Image")), color: theme.accentColor)
+            TintedPill(icon: "photo", label: Text(LCached("Image")), color: theme.accentColor)
         }
     }
 
