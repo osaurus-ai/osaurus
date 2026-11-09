@@ -148,3 +148,26 @@ actual media arrives through the existing reactive catalog after its scan.
 Media generation, the filesystem stall's OS cause, the failed Gemma quality/RAM
 rows, and incident-specific Sentry prevention remain unqualified. This change
 must not be presented as a model-runtime correctness or release-readiness fix.
+
+
+## Verified test-process environment
+
+A later process inspection found parent xcodebuild environment variables do not
+by themselves establish test-process isolation. Previous local test assertions,
+logs and xcresults remain; their parent-environment receipts are not proof that
+private flags reached xctest. Native LaunchServices app environment/root checks
+were separately performed and remain valid.
+
+The unchanged production source and same nine-suite selection were rerun with
+Apple's documented TEST_RUNNER_ forwarding. All four expected private flags
+were verified in actual xctest PID56147. The result was **267/267**, zero skips,
+in 5.586 seconds. See private FOCUSED-TESTS-FORWARDED-QUALIFICATION.json and
+focused-tests-attempt4-forwarded-RESULT.json. The prior test-without-building
+attempt could not load Sparkle from its incomplete saved build products; zero
+tests ran. That failure is retained. A normal build/test restored the official
+pinned dependency staging; no source/assertion/timeout change was used.
+
+These four flags isolate the named wrappers/roots, not all OS subsystem access.
+Contacts initialization still logs host AddressBook XPC failures in the unit
+runner; no permission was granted or Contacts result qualified. This does not
+broaden the isolated-cache fixture or native-app claims.
