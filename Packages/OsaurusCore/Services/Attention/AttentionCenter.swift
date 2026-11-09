@@ -90,7 +90,8 @@ final class AttentionCenter: ObservableObject {
         if !item.deliveredTo.isEmpty { item.deliveredAt = Date() }
         pending.append(item)
         AttentionLog.info(
-            "raised id=\(item.id) kind=\(item.kind.rawValue) channels=\(item.deliveredTo.joined(separator: ","))"
+            "raised id=\(item.id) kind=\(item.kind.rawValue) session=\(item.sessionId?.uuidString ?? "none") "
+                + "channels=\(item.deliveredTo.joined(separator: ","))"
         )
         if let expiresAt = item.expiresAt {
             let id = item.id
