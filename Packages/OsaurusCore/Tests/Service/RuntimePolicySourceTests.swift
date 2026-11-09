@@ -1673,13 +1673,21 @@ struct RuntimePolicySourceTests {
             floatingInput.contains("ModelProfileRegistry.thinkingEnabled("),
             "FloatingInputCard's picker Thinking control must derive the effective semantic thinking state from the registry so inverted options like disableThinking do not flip the wrong way"
         )
+        let setter = try Self.functionBody(
+            "private func persistThinkingOverride(", in: floatingInput
+        )
+        #expect(setter.contains("guard selectedModel == model else { return }"))
+        #expect(setter.contains("updateChatModelControls {"))
+        #expect(setter.contains("$0.enableThinking = enabled"))
+        #expect(setter.contains("$0.reasoningEffort = nil"))
         #expect(
-            floatingInput.contains("ModelProfileRegistry.thinkingStoredOption("),
-            "FloatingInputCard must persist thinking through the registry's single semantic-to-stored conversion point instead of re-deriving the inverted bool at the call site"
+            !setter.contains("saveOptions(") && !setter.contains("updateReasoning(")
+                && !setter.contains("ServerController."),
+            "The picker must store the semantic choice in its conversation, without rewriting model, agent, or Server defaults"
         )
         #expect(
             !floatingInput.contains("inverted == true ?"),
-            "The semantic-to-stored conversion lives in ModelProfileRegistry.thinkingStoredOption; call sites must not re-implement the inversion"
+            "Conversation controls store semantic enableThinking; call sites must not re-implement a legacy profile option's inversion"
         )
         #expect(
             !floatingInput.contains("let current = activeModelOptions[id]?.boolValue ?? false"),
@@ -1699,7 +1707,7 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             floatingInput.contains("persistThinkingOverride(enabled, for: model)"),
-            "The picker Thinking control must persist through the semantic registry path"
+            "The picker Thinking control must use the conversation's semantic setter"
         )
     }
 
