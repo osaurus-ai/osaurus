@@ -3,6 +3,34 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.33</title>
+            <pubDate>Mon, 09 Nov 2026 16:26:20 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.33</sparkle:version>
+            <sparkle:shortVersionString>0.25.33</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.33/Osaurus-0.25.33.dmg" length="98605489" type="application/octet-stream" sparkle:edSignature="lQtbUgFX/a5MFpNAWDm7664SaMFrQdGGTYvc4a5iPZE+t5ZRsEIm/IvJJ+8tvEb50bAHoAINmI56EUx8jikUBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- Upload release assets before publishing an existing draft (#3356) by @tpae
+- Preserve measured Activity and budget usage on tool-choice rejection (#3353) by @jjang-ai
+- Avoid per-event preferences IPC in the telemetry consent gate (#3352) by @jjang-ai
+- Persist retained Activity tabs off main and keep canonical titles synchronized (#3351) by @jjang-ai
+- Keep text picker readiness independent of local media discovery (#3350) by @jjang-ai
+- Synchronize watchdog attribution faults with persisted records (#3349) by @jjang-ai
+- Fix concurrent analytics queue corruption (#3346) by @jjang-ai
+- Pass proof app environment directly to LaunchServices (#3348) by @jjang-ai
+- Keep large tool results recoverable and separate compaction deadlines (#3336) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.32...0.25.33
+
+]]></description>
+        </item>
+        <item>
             <title>0.25.31</title>
             <pubDate>Mon, 02 Nov 2026 18:58:24 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
