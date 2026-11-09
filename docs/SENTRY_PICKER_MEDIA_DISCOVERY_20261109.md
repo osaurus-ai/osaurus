@@ -92,3 +92,56 @@ limitations. The app SHA-256 is
 Its Release production source is byte-identical outside DEBUG to the final
 candidate; only the test factory's DEBUG observer parameter changed afterward,
 as recorded in `RELEASE-SOURCE-EQUIVALENCE-after-test-fixture.json`.
+
+
+## Continued review after CI
+
+All ten CI checks passed for production source `16fefa121caa54cb64bb0d36af325000b936906f`
+(run `42552286698`). A subsequent documentation commit does not change that
+production source or the already-qualified Release binary.
+
+The isolated Release app was relaunched with the retained test profile and no
+image-directory override. Normal Chat restored the previous model, full
+conversation and clock card. A second real `get_current_time` call after that
+history supplied exactly `timezone: Asia/Tokyo`; native JSON returned `+09:00`,
+the visible continuation said UTC+9, and a further user turn correctly recalled
+Asia/Tokyo. Cards settled, Stop disappeared and input unlocked. Local Models
+remained usable after Chat. One immediate AX snapshot error recovered on the
+next observation; it is retained as an automation observation, not an app crash.
+An earlier stale automation index minimized the proof window before any prompt
+was submitted; that attempt is also retained separately.
+
+These two new user turns passed, making the complete native answer score **3/5**.
+The original arithmetic and fabricated-seconds failures are still failures.
+The three new model passes emitted engine decode rates of 100.7, 100.3 and
+98.9 tok/s. Activity separately reported end-to-end rates of 39.66, 62.60 and
+33.56 tok/s; these are different metrics and are not one speed series.
+Sampled physical footprint reached 5,288,579,656 bytes, again failing the
+4,002,479,278 weight-byte gate. There is no complete model-family qualification.
+See `NATIVE-RELAUNCH3-QUALIFICATION.json`, raw activity, prefill log, UI captures
+and resource JSONL in the private evidence directory.
+
+A private tokenizer/processor diagnostic matched all 4,086 token IDs between
+the app tokenizer, the pinned processor's `.messages` and `.chat` inputs, and
+Python with thinking explicitly off. Python's wrapper silently enables thinking
+when that argument is omitted; the earlier three thinking-on reference draws
+are retained and excluded from the native-off comparison. With the same captured
+messages/tools, exact off tokens and bundle sampler, a pre-registered three-draw
+text-only quant reference returned `31`, `34`, and `29`, all natural stops at
+108.48, 106.80 and 107.63 tok/s. Wrong arithmetic therefore also occurs outside
+this picker change. This is not deterministic logits parity or a root-cause
+attribution: the runtime differs and sampling is unseeded. That reference also
+fails the footprint gate at 5,543,120,568 bytes. No model download, source/BF16
+load, prompt rewrite or sampler rescue was used.
+
+The original native usage count of 4,089 versus 4,086 reconstructed captured
+request tokens remains unassigned; a logged request snapshot is not yet proven
+to be the actual prepared model input. Do not infer duplicated BOS/header tokens
+or a usage-accounting bug from those counts alone.
+
+The narrow acceptance result is the picker readiness dependency: completed
+chat/cloud items publish while optional local media I/O remains blocked, and
+actual media arrives through the existing reactive catalog after its scan.
+Media generation, the filesystem stall's OS cause, the failed Gemma quality/RAM
+rows, and incident-specific Sentry prevention remain unqualified. This change
+must not be presented as a model-runtime correctness or release-readiness fix.
