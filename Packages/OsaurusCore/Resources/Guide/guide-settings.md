@@ -146,11 +146,13 @@ without compatible draft support runs ordinary autoregressive decoding.
 
 The model picker shows **Off (AR)** or **On (Adaptive)** before weights load.
 The runtime chooses depth; there are no manual D1/D2/D3 buttons. Explicit Off
-turns speculation off, including external and bundled drafters. Saved explicit
-choices survive reload. Legacy manual depths migrate to Adaptive and are
-re-evaluated by runtime admission. **Reset to default** restores the selected
-bundle's policy, so a capable bundle can show Adaptive again. Included evaluations
-and benchmarks inherit that policy unless explicitly overridden.
+turns speculation off, including external and bundled drafters. A picker choice
+belongs to the current conversation and model and survives reopening that chat.
+It does not change saved agent or shared Server defaults. **Reset to default**
+removes only the conversation override, inheriting the saved agent preference,
+then Server/bundle policy. Legacy manual depths in Server settings migrate to
+Adaptive and are re-evaluated by runtime admission. Included evaluations and
+benchmarks inherit their configured policy unless explicitly overridden.
 
 On is a request, not proof that a particular request uses speculation. Unsupported
 media and schema-constrained requests run AR. Server → Settings → **Speculative
@@ -251,7 +253,7 @@ Memory estimates are advisory for this family. The license is **FLUX Kommunity (
 
 **Show Response Metrics** lives in a custom agent → General → Configure → Advanced Settings, and in Create Agent → Advanced Settings. It is off by default. Enable it to show existing measured token count, tokens per second and timings below responses. More → Inspect response keeps the same measurements either way. Missing measurements are not invented. This display preference is saved per custom agent and exported as `agents[].show_response_metrics`, separately from generation settings; it does not change tokenization, sampling or recorded usage.
 
-Settings → Agents → a custom agent → General → Configure → Advanced Settings → Generation Overrides groups Sampling, Length & reasoning, Repetition and Reproducibility. Create Agent has the same editor behind its Advanced Settings button. Inherit preserves existing defaults; Custom values save only for that agent. Known local defaults display their Model, Server, App or Runtime source. Unavailable provider defaults stay labeled as defaults. Thinking / Reasoning effort choices come from the selected model. Only the advertised effort IDs appear; boolean-only models show Thinking On/Off instead. Speculative Decoding appears for eligible local native-MTP or compatible drafter bundles, including DSpark, Uno and DFlash 2. Inherit follows Server settings; explicit Off (AR) disables drafting for this agent, and On (Adaptive) overrides the inherited mode without changing sampling or shared Server settings. Preparing a missing head waits for active requests and respects existing residency and RAM settings. It may require a model reload. When the agent has an explicit speculation override, the chat model picker shows and edits that saved agent value; reset removes it. Inheriting agents retain the existing Server-wide picker behavior. Request eligibility can still select ordinary decoding. External harnesses keep their own generation settings.
+Settings → Agents → a custom agent → General → Configure → Advanced Settings → Generation Overrides groups Sampling, Length & reasoning, Repetition and Reproducibility. Create Agent has the same editor behind its Advanced Settings button. Inherit preserves existing defaults; Custom values save only for that agent. Known local defaults display their Model, Server, App or Runtime source. Unavailable provider defaults stay labeled as defaults. Thinking / Reasoning effort choices come from the selected model. Only the advertised effort IDs appear; boolean-only models show Thinking On/Off instead. Speculative Decoding appears for eligible local native-MTP or compatible drafter bundles, including DSpark, Uno and DFlash 2. Inherit follows Server settings; explicit Off (AR) disables drafting for this agent, and On (Adaptive) overrides the inherited mode without changing sampling or shared Server settings. Preparing a missing head waits for active requests and respects existing residency and RAM settings. It may require a model reload. The chat model picker initially reflects these defaults. Changing Thinking, reasoning effort or speculation there affects only that conversation and model; it never edits the saved agent or Server settings. Reset removes the conversation override and inherits saved defaults again. Request eligibility can still select ordinary decoding. External harnesses keep their own generation settings.
 
 When a local bundle declares native DiffusionGemma, Temperature, Top P, Top K, Min P and the three repetition penalties remain visible but read-only because that model uses its native denoising schedule. Saved Custom values are marked as not used by this model and remain saved when you switch models. Selecting an applicable model restores those controls with their original values. Max Tokens, Seed, Stop sequences and the model's declared prompt controls remain available. This does not change generation defaults or the denoising schedule.
 

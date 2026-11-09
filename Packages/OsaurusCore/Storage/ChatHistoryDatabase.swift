@@ -174,7 +174,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// Highest schema version this build knows how to produce.
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 24
+    static let latestSchemaVersion = 25
 
     /// Forward-compatibility invariant. Every chat-history migration is
     /// **additive** — it only `ADD COLUMN`s, `CREATE INDEX`es, or `CREATE
@@ -224,6 +224,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             migrateToV7, migrateToV8, migrateToV9, migrateToV10, migrateToV11, migrateToV12,
             migrateToV13, migrateToV14, migrateToV15, migrateToV16, migrateToV17,
             migrateToV18, migrateToV19, migrateToV20, migrateToV21, migrateToV22, migrateToV23, migrateToV24,
+            migrateToV25,
         ]
     }
 
@@ -257,7 +258,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         "id", "title", "created_at", "updated_at", "selected_model", "agent_id",
         "source", "source_plugin_id", "external_session_key", "dispatch_task_id",
         "archived", "capabilities", "folder_bookmark", "folder_path", "pinned",
-        "project_id", "workspace_context", "remote_agent_address", "conversation_summary",
+        "project_id", "workspace_context", "remote_agent_address", "conversation_summary", "model_controls",
     ]
     private static let requiredTurnColumns = [
         "id", "session_id", "seq", "role", "content", "attachments", "shared_artifacts",
@@ -609,6 +610,12 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV24() throws {
         try addColumnIfMissing("sessions", "conversation_summary", "TEXT")
         try setSchemaVersion(24)
+    }
+
+    /// Conversation-owned model controls; older sessions inherit all defaults.
+    private func migrateToV25() throws {
+        try addColumnIfMissing("sessions", "model_controls", "TEXT")
+        try setSchemaVersion(25)
     }
 
     /// v20: git-like file history. One `file_change_sets` row per mutating
@@ -1838,6 +1845,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 17, value: session.workspace?.encodedJSON())
             Self.bindText(stmt, index: 18, value: session.workspace?.agentAddress)
             Self.bindText(stmt, index: 19, value: session.conversationSummary.flatMap(Self.encodeJSON))
+            Self.bindText(stmt, index: 20, value: session.modelControls.flatMap(Self.encodeJSON))
         }
     }
 
@@ -2097,7 +2105,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         SELECT id, title, created_at, updated_at, selected_model, agent_id,
                source, source_plugin_id, external_session_key, dispatch_task_id,
                archived, capabilities, folder_bookmark, folder_path, pinned,
-               project_id, workspace_context, conversation_summary
+               project_id, workspace_context, conversation_summary, model_controls
         FROM sessions
         """
 
@@ -2108,8 +2116,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             (id, title, created_at, updated_at, selected_model, agent_id,
              source, source_plugin_id, external_session_key, dispatch_task_id,
              archived, capabilities, folder_bookmark, folder_path, pinned,
-             project_id, workspace_context, remote_agent_address, conversation_summary)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+             project_id, workspace_context, remote_agent_address, conversation_summary, model_controls)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
         ON CONFLICT(id) DO UPDATE SET
             title                = excluded.title,
             updated_at           = excluded.updated_at,
@@ -2127,7 +2135,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             project_id           = excluded.project_id,
             workspace_context    = excluded.workspace_context,
             remote_agent_address = excluded.remote_agent_address,
-            conversation_summary = excluded.conversation_summary
+            conversation_summary = excluded.conversation_summary,
+            model_controls       = excluded.model_controls
         """
 
     private static let insertTurnSQL = """
@@ -2218,6 +2227,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             .flatMap(decodeJSON)
         let workspace = WorkspaceSessionContext.decode(
             json: sqlite3_column_text(stmt, 16).map { String(cString: $0) })
+        let modelControls: [String: ChatModelControls]? = sqlite3_column_text(stmt, 18)
+            .map { String(cString: $0) }.flatMap(decodeJSON)
         return ChatSessionData(
             id: UUID(uuidString: idStr) ?? UUID(),
             title: title,
@@ -2237,7 +2248,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             folderPath: folderPath,
             conversationSummary: summary,
             projectId: projectId,
-            workspace: workspace
+            workspace: workspace,
+            modelControls: modelControls
         )
     }
 

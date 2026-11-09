@@ -24,6 +24,7 @@ struct FloatingInputCard: View {
     @Binding var showVoiceOverlay: Bool
     let pickerItems: [ModelPickerItem]
     @Binding var activeModelOptions: [String: ModelOptionValue]
+    @Binding var modelControls: [String: ChatModelControls]
     var turnOverrides: Binding<ChatTurnOverrides>? = nil
     let isStreaming: Bool
     /// True while the Privacy Filter redaction review sheet is actually
@@ -191,6 +192,7 @@ struct FloatingInputCard: View {
         showVoiceOverlay: Binding<Bool>,
         pickerItems: [ModelPickerItem],
         activeModelOptions: Binding<[String: ModelOptionValue]>,
+        modelControls: Binding<[String: ChatModelControls]> = .constant([:]),
         turnOverrides: Binding<ChatTurnOverrides>? = nil,
         isStreaming: Bool,
         isPrivacyReviewSheetVisible: Bool = false,
@@ -246,6 +248,7 @@ struct FloatingInputCard: View {
         self._showVoiceOverlay = showVoiceOverlay
         self.pickerItems = pickerItems
         self._activeModelOptions = activeModelOptions
+        self._modelControls = modelControls
         self.turnOverrides = turnOverrides
         self.isStreaming = isStreaming
         self.isPrivacyReviewSheetVisible = isPrivacyReviewSheetVisible
@@ -2536,33 +2539,31 @@ extension FloatingInputCard {
         mtp.mode == .off ? "off" : "auto"
     }
 
-    /// Writes through the same path the Settings pane uses, so there is one
-    /// persistence route and one enforcement route.
-    ///
-    /// Depth-only changes apply to the next request; changes that require a
-    /// different loaded model graph follow the guarded reload lifecycle.
+    private var currentChatModelControls: ChatModelControls {
+        selectedModel.flatMap { modelControls[ChatModelControls.key(for: $0)] } ?? ChatModelControls()
+    }
+
+    private var effectiveGenerationSettings: AgentGenerationSettings? {
+        currentChatModelControls.applying(
+            to: agentManager.effectiveGenerationSettings(for: effectiveAgentId))
+    }
+
+    private func updateChatModelControls(_ update: (inout ChatModelControls) -> Void) {
+        guard let model = selectedModel, !isRemoteAgentRun else { return }
+        var controls = currentChatModelControls
+        update(&controls)
+        var values = modelControls
+        let key = ChatModelControls.key(for: model)
+        values[key] = controls.isEmpty ? nil : controls
+        modelControls = values
+    }
+
+    /// Per-request graph preparation already resolves this preference. The picker must
+    /// never save it to the agent or reconfigure the shared Server for another chat.
     private func applyNativeMTPSegment(_ segment: String?) {
-        let targetAgentID = effectiveAgentId
-        if agentManager.effectiveGenerationSettings(for: targetAgentID)?.speculativeDecoding != nil,
-            let mode = NativeMTPSelectionDefault.mode(for: segment)
-        {
-            agentManager.updateSpeculativeDecoding(
-                mode == .familyDefault ? nil : mode != .off, for: targetAgentID)
-            return
-        }
-        Task { @MainActor in
-            // Read the latest settings when the task executes; only an
-            // explicit control action writes MTP. Selection is read-only.
-            var settings = ServerController.runtimeSettingsForConfigureTool().settings
-            guard let mode = NativeMTPSelectionDefault.mode(for: segment) else { return }
-            settings.mtp.mode = mode
-            settings.mtp.draftTokenLimit = nil
-            settings.mtp.explicitDepth = nil
-            _ = await ServerController.applyRuntimeSettingsFromConfigureTool(
-                settings, mtpSelectionIsFamilyDefault: mode == .familyDefault)
-            // A rejected save must not leave an optimistic segment displayed.
-            nativeMTPSelection = Self.nativeMTPSegment(
-                ServerController.runtimeSettingsForConfigureTool().settings.mtp)
+        guard let mode = NativeMTPSelectionDefault.mode(for: segment) else { return }
+        updateChatModelControls {
+            $0.speculativeDecoding = mode == .familyDefault ? nil : mode != .off
         }
     }
 
@@ -2663,18 +2664,18 @@ extension FloatingInputCard {
     private var effectiveReasoningOptions: [String: ModelOptionValue] {
         guard let model = selectedModel else { return activeModelOptions }
         var controls = ChatTurnGenerationControls.capture(activeModelOptions: activeModelOptions)
-        controls.agentSettings = agentManager.effectiveGenerationSettings(for: effectiveAgentId)
+        controls.agentSettings = effectiveGenerationSettings
         return controls.reasoningOptions(for: model)
     }
 
-    private var hasAgentReasoningOverride: Bool {
-        agentManager.effectiveGenerationSettings(for: effectiveAgentId)?.hasReasoningOverride == true
+    private var hasEffectiveReasoningOverride: Bool {
+        effectiveGenerationSettings?.hasReasoningOverride == true
     }
 
     private var reasoningSelectionNeedsChoice: Bool {
         _ = reasoningCapabilityRevision
         guard let model = selectedModel, !isRemoteAgentRun,
-            let settings = agentManager.effectiveGenerationSettings(for: effectiveAgentId),
+            let settings = effectiveGenerationSettings,
             settings.hasReasoningOverride
         else { return false }
         let capability: LocalReasoningCapability.Capability
@@ -2692,7 +2693,7 @@ extension FloatingInputCard {
 
     private func refreshReasoningSelectionCapability() async {
         guard let model = selectedModel, isSelectedModelLocal, !isRemoteAgentRun,
-            hasAgentReasoningOverride else { return }
+            hasEffectiveReasoningOverride else { return }
         _ = await LocalReasoningCapability.resolveForDispatch(modelId: model)
         guard !Task.isCancelled, selectedModel == model else { return }
         // Known non-reasoning models also need a repaint after a cold cache miss.
@@ -3281,7 +3282,7 @@ extension FloatingInputCard {
                 builtInModelChipLabel
             }
         }
-        .task(id: "\(selectedModel ?? "")|\(hasAgentReasoningOverride)") {
+        .task(id: "\(selectedModel ?? "")|\(hasEffectiveReasoningOverride)") {
             await refreshReasoningSelectionCapability()
         }
         .accessibilityValue(Text(verbatim: modelSelectorDetails))
@@ -3440,9 +3441,9 @@ extension FloatingInputCard {
     /// Inline "Model Options" section for the model popover: the semantic
     /// Thinking row (when the model has a thinking toggle) plus every other
     /// option the selected model exposes (catalog-driven effort, static
-    /// profile segments, toggles). Selecting persists an explicit value;
-    /// resetting removes it so the default shows while the backend applies
-    /// it naturally (nothing is sent on the wire).
+    /// profile segments, toggles). Reasoning and speculation are conversation
+    /// choices; reset reveals saved defaults. Other profile options retain
+    /// their existing per-model ownership.
     private var modelPickerOptionsControl: ModelPickerOptionsControl? {
         guard let model = selectedModel else { return nil }
         let capabilities = inlineEffortCapabilities
@@ -3471,8 +3472,7 @@ extension FloatingInputCard {
             defaults = ModelProfileRegistry.defaults(for: model)
         }
 
-        // Agent overrides win over the inherited Server mode, just as on dispatch.
-        // Neither source belongs in the per-model option store.
+        // Chat overrides win over saved agent and inherited Server mode, as on dispatch.
         var values = ModelProfileRegistry.normalizedOptions(for: model, persisted: effectiveReasoningOptions)
         var displayDefaults = defaults
         if options.contains(where: { $0.id == Self.nativeMTPOptionID }) {
@@ -3480,15 +3480,14 @@ extension FloatingInputCard {
             let mode = ServerController.runtimeSettingsForConfigureTool().settings.mtp.mode
             let familyDefault = nativeMTPFamilyDefaultOnModels.contains(identity) ? "auto" : "off"
             let inherited = mode == .familyDefault ? familyDefault : nativeMTPSelection
-            let shown = agentManager.effectiveGenerationSettings(for: effectiveAgentId)?
+            let saved = agentManager.effectiveGenerationSettings(for: effectiveAgentId)?
                 .speculativeDecoding.map { $0 ? "auto" : "off" } ?? inherited
+            let shown = currentChatModelControls.speculativeDecoding.map { $0 ? "auto" : "off" } ?? saved
             values[Self.nativeMTPOptionID] = .string(
                 nativeMTPManuallyBlockedModels.contains(identity) ? "off" : shown
             )
-            // Reset removes an agent override; otherwise it restores the bundle policy.
-            let hasAgentOverride = agentManager.effectiveGenerationSettings(for: effectiveAgentId)?
-                .speculativeDecoding != nil
-            displayDefaults[Self.nativeMTPOptionID] = .string(hasAgentOverride ? inherited : familyDefault)
+            // Reset removes only this chat's override and reveals its saved defaults.
+            displayDefaults[Self.nativeMTPOptionID] = .string(saved)
         }
 
         return ModelPickerOptionsControl(
@@ -3498,10 +3497,10 @@ extension FloatingInputCard {
             values: values,
             defaults: displayDefaults,
             onChange: { optionId, newValue in
-                // Existing agent overrides stay agent-scoped; inheritance retains the Server path.
-                // Neither is persisted to ModelOptionsStore.
+                // Chat controls are captured with this conversation, never saved as defaults.
                 if optionId == Self.nativeMTPOptionID {
                     DispatchQueue.main.async {
+                        guard selectedModel == model else { return }
                         applyNativeMTPSegment(newValue?.stringValue)
                     }
                     return
@@ -3513,15 +3512,14 @@ extension FloatingInputCard {
                 // crashes NSPopover.
                 DispatchQueue.main.async {
                     guard selectedModel == model else { return }
-                    if optionId == "reasoningEffort", hasAgentReasoningOverride {
-                        agentManager.updateReasoning(
-                            enableThinking: nil, effort: newValue?.stringValue, for: effectiveAgentId)
+                    if optionId == "reasoningEffort" {
+                        updateChatModelControls {
+                            $0.enableThinking = nil
+                            $0.reasoningEffort = newValue?.stringValue
+                        }
                         return
                     }
                     var updated = activeModelOptions
-                    if optionId == "reasoningEffort" {
-                        updated.removeValue(forKey: "disableThinking")
-                    }
                     if let newValue {
                         updated[optionId] = newValue
                     } else {
@@ -3540,11 +3538,9 @@ extension FloatingInputCard {
     // MARK: - Thinking Control (model picker)
 
     /// Semantic Thinking control for the picker's Model Options section.
-    /// Shows the effective state (explicit persisted choice, else the
-    /// model's chat-template default so the row never lies for default-on
-    /// models) and writes the profile-specific stored value through
-    /// `ModelProfileRegistry.thinkingStoredOption`, so inverted options like
-    /// `disableThinking` cannot flip the wrong way. Hidden in Mode 2
+    /// Shows effective chat/agent/model state and captures a semantic Thinking
+    /// choice through the existing request policy, including inverted profiles.
+    /// Hidden in Mode 2
     /// remote-agent runs: the remote agent owns its generation config
     /// server-side, so a local toggle wouldn't reach it.
     private func modelPickerThinkingControl(for model: String) -> ModelPickerThinkingControl? {
@@ -3574,33 +3570,13 @@ extension FloatingInputCard {
         )
     }
 
-    /// Single semantic-to-stored write path shared by the footer button and
-    /// the picker row. Inverted profiles such as `disableThinking` must never
-    /// toggle their raw persisted boolean directly.
+    /// Shared semantic setter for the footer and picker; only this chat changes.
     private func persistThinkingOverride(_ enabled: Bool?, for model: String) {
         guard selectedModel == model else { return }
-        if hasAgentReasoningOverride {
-            agentManager.updateReasoning(enableThinking: enabled, effort: nil, for: effectiveAgentId)
-            return
+        updateChatModelControls {
+            $0.enableThinking = enabled
+            $0.reasoningEffort = nil
         }
-        guard let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption else {
-            return
-        }
-        var updated = activeModelOptions
-        if let enabled,
-            let stored = ModelProfileRegistry.thinkingStoredOption(
-                for: model,
-                enabled: enabled
-            )
-        {
-            updated[stored.id] = stored.value
-        } else {
-            // Reset: remove the override so the model's template default
-            // applies naturally (nothing on the wire).
-            updated.removeValue(forKey: thinkingOpt.id)
-        }
-        activeModelOptions = updated
-        ModelOptionsStore.shared.saveOptions(updated, for: model)
     }
 
     // MARK: - Thinking Toggle
