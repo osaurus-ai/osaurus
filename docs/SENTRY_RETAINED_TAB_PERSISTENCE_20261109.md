@@ -1,6 +1,8 @@
 # Retained Activity tab persistence wait investigation
 
-Status: CANDIDATE / PARTIAL. No PR or merge-readiness claim yet.
+Status: Candidate. Narrow retained-tab lifecycle matrix complete; CI pending.
+Model quality/RAM qualification remains PARTIAL/FAIL as detailed below.
+Entries below retain the chronological failures and superseded pending states.
 Base source `a4b7e5ee69f7bf8824ee5e6c72aa3d474bb07b69`; runtime remains
 `1bcd74ad182103a3b83941f61e57ee0bac23b330`, Aptabase remains
 `a55267506ca9e9413e242cff00309f91bda16679`. No generation configuration,
@@ -156,3 +158,88 @@ defaults) merely to rename an ordinary chat. Isolated dependency overloads keep
 tests off the shared registry; the existing two-argument UI API is preserved.
 The four title/ordinary-chat tests and full affected matrix are pending, followed
 by a fresh Release UI repeat. No preference PR or merge-readiness claim yet.
+
+
+## Current candidate qualification
+
+Frozen implementation `7ac0fef8b37147539145ebd273caa826d6ea40b5` passed
+**316/316** unique tests in 19 suites, zero skips, 6.073 seconds. The actual
+xctest PID40985 carried all four private flags plus the unique evidence root.
+After merging current main, only the picker evidence document conflicted; its
+exact current-main version was retained. All production/test/build-input hashes
+match the frozen candidate. Projection `f15ac0966c90b558e48983140774bbf52e7921bd`
+then passed the same **316/316**, zero skips, in 6.415 seconds with actual
+PID69893 environment verification. A preceding preflight exited64 because it
+reused the existing xcresult path; zero tests ran and the old result was not
+overwritten. The corrected invocation used a fresh result/observation path.
+
+The fresh private Release app binary SHA-256 is
+`4bf964711fc77fab625aafd8136fc3f42f3982cb419430295825be7d14890dd3`, bundle
+`com.dinoki.osaurus.sentrytitles20261109`; app/runtime pins remain those above.
+Local Gemma MXFP4 revision `da2cd74442e6f4f1a8d720a592b21c53c013093f` used its
+installed generation config: temperature1, top_p0.95, top_k64, do_sample=true,
+EOS [1,106,50], no repetition penalty or explicit output cap. The app omitted
+explicit reasoning options and the installed template selected Thinking off.
+No prompt/sampler/template/output/permission changes were made for this fix.
+The app has no analytics key or Sentry DSN. Actual process variables and 26
+private/zero normal Osaurus app-data handles were checked on first launch;
+this isolates named app roots, not every OS subsystem.
+
+Two complete native workflows passed the narrow lifecycle matrix: normal
+streaming tab close/adoption, terminal restore through a reopened window,
+automatic title, manual Rename/Save, normal quit/relaunch, full history, a
+second real clock call after restart, a further follow-up, and explicit Close
+Tab with another blank tab present. Both final restart/quit checks kept the
+retained key absent and did not resurrect the tab. Both canonical histories
+remain saved. Manual titles were observed in both canonical UI and retained
+metadata. General > Local Models > General was usable. The initial Local
+Models AX error recovered on the next snapshot; no app crash is inferred.
+
+Answer correctness remains **8/10 user turns**: both rainbow rows FAIL. The
+first leaked literal `<channel|>` markers and reasoning into visible content,
+called osaurus_help with invalid topic dispersion, and misstated entry and
+reflection order. The bounded repeat had no marker leak, but contradicted
+itself about red light bending least and being refracted most. Four real
+clock calls had exact requested timezone arguments/results before and after
+restart; all four clock answers and four timezone follow-ups passed. No
+quality cause is assigned to this persistence change, and neither failed row
+is replaced by the repeat. No forced closers, output stripping or prompt
+coercion was introduced. The protocol leak is an open separate investigation.
+
+The first workflow's eight content-bearing engine passes reported
+104.41/102.18/101.90/99.47/99.19/99.26/98.22/97.66 tok/s. Two additional
+intermediate passes emitted zero tokens with Activity rate0 and are failed
+empty-generation rows, not successful answers. The repeat's seven engine
+passes reported 103.99/100.63/99.33/100.17/98.73/97.51/96.19 tok/s. Activity
+end-to-end metrics differ and all 17 Gemma plus 22 automatic Foundation
+generation records are retained. Activity session_id is nil: grouping these
+rows by workflow uses the verified launch4 timestamp, not an invented ID join.
+The initial summarizer's zero-row join is retained and explicitly superseded
+by NATIVE-CANDIDATE1-QUALIFICATION-v2.json.
+
+Initial detached resource samplers each stopped after one startup sample,
+with no captured error or terminal row: those generation peaks are
+**UNMEASURED**, not a low-RAM pass. A bounded repeat used tracked sampler
+sessions, verified multiple increasing samples before generation, and
+recorded 237/121 samples over 118.92/60.46 seconds plus actual process-exit
+rows. Peak phys_footprint was **5,287,121,336 / 5,293,281,984 bytes**, exceeding
+4,002,479,278 weight bytes: **RAM FAIL**. The repeat does not retroactively
+qualify the earlier missing traces. All attempts and gaps remain documented.
+
+SOURCE EVIDENCE: BackgroundTaskManager ordered immutable snapshot writer,
+canonical-title synchronization, ChatSessionsManager canonical rename methods,
+and AppDelegate existing bounded quit fan-out. Tests cover actual delayed
+UserDefaults completion/main liveness, bounded drain, ordered rename/clear,
+restore, manual/quiet/equal-title headless reveal, timestamp/transcript
+invariants and ordinary chats without a retained owner. Request execution,
+tool dispatch, parser and generation logic are unchanged; AgentLoop evals are
+not claimed for this storage/title-only change.
+
+LIVE EVIDENCE: private preferences-waits/retained-title-sync/
+CANDIDATE1-APP-ARTIFACT.json, candidate1-focused-RESULT.json,
+projection3-focused-RESULT.json, NATIVE-CANDIDATE1-QUALIFICATION-v2.json,
+raw native1..6 AX/screenshots/preferences/history/activity, resources-native4/5,
+and baseline/candidate title and delayed-store receipts. These qualify the
+narrow persistence/title/normal-quit behavior; they do not establish cfprefsd's
+OS cause, forced-termination/fsync durability, telemetry hot-read prevention,
+protocol correctness, model-family readiness or low RAM. CI is still pending.
