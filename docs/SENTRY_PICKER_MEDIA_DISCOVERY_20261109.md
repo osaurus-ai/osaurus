@@ -134,10 +134,13 @@ attribution: the runtime differs and sampling is unseeded. That reference also
 fails the footprint gate at 5,543,120,568 bytes. No model download, source/BF16
 load, prompt rewrite or sampler rescue was used.
 
-The original native usage count of 4,089 versus 4,086 reconstructed captured
-request tokens remains unassigned; a logged request snapshot is not yet proven
-to be the actual prepared model input. Do not infer duplicated BOS/header tokens
-or a usage-accounting bug from those counts alone.
+The initial review misidentified a later cached-input count of 4,089 as the
+first request input count. The first native Activity payload actually reports
+4,086 input tokens, matching the reconstructed captured request. There is no
+demonstrated three-token usage discrepancy. Original mistaken notes are retained
+with `TOKEN-COUNT-CORRECTION-v3.json`; no BOS/header or usage fix is proposed.
+Exact raw prepared IDs for the first native generation were not recorded, so
+matching counts alone still do not establish native logits/input identity.
 
 The narrow acceptance result is the picker readiness dependency: completed
 chat/cloud items publish while optional local media I/O remains blocked, and
