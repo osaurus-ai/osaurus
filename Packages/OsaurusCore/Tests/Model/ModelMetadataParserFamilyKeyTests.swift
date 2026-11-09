@@ -84,6 +84,20 @@ struct ModelMetadataParserFamilyKeyTests {
         #expect(ModelMetadataParser.familyDisplayName(from: oneBit) == "Bonsai 27b")
     }
 
+    @Test func familyDerivationsAreStableAcrossRepeatedCalls() {
+        // Memoized: repeated calls (one per card per grid render) must agree.
+        let id = "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP"
+        let firstName = ModelMetadataParser.familyDisplayName(from: id)
+        let firstKey = ModelMetadataParser.familyKey(from: id)
+        let firstParams = ModelMetadataParser.parameterCount(from: id)
+        for _ in 0..<3 {
+            #expect(ModelMetadataParser.familyDisplayName(from: id) == firstName)
+            #expect(ModelMetadataParser.familyKey(from: id) == firstKey)
+            #expect(ModelMetadataParser.parameterCount(from: id) == firstParams)
+        }
+        #expect(ModelMetadataParser.familyKey(from: id) == "osaurusai/qwen3.6-35b-a3b")
+    }
+
     @Test func idWithoutVariantTokensIsItsOwnFamily() {
         #expect(
             ModelMetadataParser.familyKey(from: "OsaurusAI/rampart-mlx")

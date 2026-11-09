@@ -19,6 +19,10 @@ enum ModelMetadataParser {
     private static let cacheLock = NSLock()
     private nonisolated(unsafe) static var parameterCountCache: [String: String?] = [:]
     private nonisolated(unsafe) static var quantizationCache: [String: String?] = [:]
+    // `familySegments` / `familyDisplayName` run from `ModelCardContent.init` for every
+    // catalog card on every grid render (main thread), so they are memoized too.
+    private nonisolated(unsafe) static var familySegmentsCache: [String: [String]] = [:]
+    private nonisolated(unsafe) static var familyDisplayNameCache: [String: String] = [:]
 
     private static let parameterCountRegexes: [NSRegularExpression] = {
         let patterns = [
@@ -233,6 +237,22 @@ enum ModelMetadataParser {
     /// removed, run through the friendly-name capitalization and the
     /// developer-token stripper (drops "it"/"instruct"/active-param notation).
     static func familyDisplayName(from repoId: String) -> String {
+        cacheLock.lock()
+        if let cached = familyDisplayNameCache[repoId] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let result = computeFamilyDisplayName(from: repoId)
+
+        cacheLock.lock()
+        familyDisplayNameCache[repoId] = result
+        cacheLock.unlock()
+        return result
+    }
+
+    private static func computeFamilyDisplayName(from repoId: String) -> String {
         let kept = familySegments(from: repoId)
         guard !kept.isEmpty else { return simpleName(from: friendlyName(from: repoId)) }
         let joined = kept.joined(separator: "-")
@@ -243,6 +263,22 @@ enum ModelMetadataParser {
     /// Repo-tail segments with precision/quant/delivery tokens removed,
     /// original casing preserved.
     private static func familySegments(from repoId: String) -> [String] {
+        cacheLock.lock()
+        if let cached = familySegmentsCache[repoId] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let result = computeFamilySegments(from: repoId)
+
+        cacheLock.lock()
+        familySegmentsCache[repoId] = result
+        cacheLock.unlock()
+        return result
+    }
+
+    private static func computeFamilySegments(from repoId: String) -> [String] {
         let tail = repoId.split(separator: "/").last.map(String.init) ?? repoId
         return tail.split(separator: "-").map(String.init).filter { segment in
             let range = NSRange(segment.startIndex..., in: segment)
