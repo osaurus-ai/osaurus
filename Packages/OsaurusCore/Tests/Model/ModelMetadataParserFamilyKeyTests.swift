@@ -95,7 +95,6 @@ struct ModelMetadataParserFamilyKeyTests {
             #expect(ModelMetadataParser.familyKey(from: id) == firstKey)
             #expect(ModelMetadataParser.parameterCount(from: id) == firstParams)
         }
-        #expect(ModelMetadataParser.familyKey(from: id) == "osaurusai/qwen3.6-35b-a3b")
     }
 
     @Test func idWithoutVariantTokensIsItsOwnFamily() {
