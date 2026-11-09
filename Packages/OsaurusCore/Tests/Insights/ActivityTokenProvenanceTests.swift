@@ -196,6 +196,7 @@ struct ActivityTokenProvenanceTests {
     private struct RejectedCompletionService: ResponsesGenerationService {
         let id: String
         let outputTokens: Int?
+        var outputText = "A response without the required call."
         func isAvailable() -> Bool { true }
         func handles(requestedModel: String?) -> Bool { requestedModel == id }
         func generateOneShot(messages: [ChatMessage], parameters: GenerationParameters,
@@ -211,7 +212,7 @@ struct ActivityTokenProvenanceTests {
             requestedModel: String?) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
             AsyncThrowingStream { continuation in
                 continuation.yield(.inputTokenCount(257))
-                continuation.yield(.outputTextDelta("A response without the required call."))
+                continuation.yield(.outputTextDelta(outputText))
                 continuation.yield(.responseCompleted(.init(
                     responseID: "resp_rejected_usage", status: .completed, functionCalls: [],
                     tokenCount: outputTokens, tokensPerSecond: nil, unclosedReasoning: false,
@@ -255,16 +256,24 @@ struct ActivityTokenProvenanceTests {
         #expect((captured.tokensPerSecond == nil) == (outputTokens == nil))
     }
 
-    @Test func rejectedToolChoiceChargesMeasuredWorkOnceToBackgroundBudget() async throws {
+    @Test(arguments: [0, 1, 17], [false, true])
+    func rejectedToolChoiceChargesMeasuredWorkOnceToBackgroundBudget(outputTokens: Int, limited: Bool) async throws {
         let context = ExecutionContext(agentId: Agent.defaultId)
         context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
         let state = BackgroundTaskState(id: UUID(), taskTitle: "rejected completion accounting",
             agentId: Agent.defaultId, chatSession: context.chatSession, executionContext: context, showToast: false)
         let manager = BackgroundTaskManager.shared
+        let outputText = "a longer response for budget accounting"
+        #expect(TokenEstimator.estimate(outputText) > 1 && TokenEstimator.estimate(outputText) < 17,
+            "The fixture must exercise both smaller and larger terminal counts than its streamed estimate")
+        // Existing admission policy never refunds a streamed estimate. A
+        // higher terminal count charges only the newly known work.
+        let expectedOutputCharge = max(TokenEstimator.estimate(outputText), outputTokens)
+        state.runTokensLimit = limited ? 277 + expectedOutputCharge - 1 : nil
         manager.registerTaskForTesting(state)
         defer { manager.finalizeTask(state.id) }
         let model = "provenance-rejected-budget-\(UUID().uuidString)"
-        let service = RejectedCompletionService(id: model, outputTokens: 17)
+        let service = RejectedCompletionService(id: model, outputTokens: outputTokens, outputText: outputText)
         let engine = ChatEngine(services: [service], installedModelsProvider: { [] },
             remoteServicesProvider: { [] }, source: .chatUI)
         var request = ResponsesInferenceRequest(model: model, input: [.init(role: "user", content: "fixture request")])
@@ -279,14 +288,17 @@ struct ActivityTokenProvenanceTests {
                 #expect((error as NSError).domain == "OsaurusToolChoice")
             }
         }
-        for _ in 0..<100 where state.tokensIn < 277 || state.tokensOut < 17 {
+        for _ in 0..<100 where state.tokensIn < 277 || state.tokensOut < expectedOutputCharge {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(state.tokensIn == 277)
-        #expect(state.tokensOut == 17)
+        #expect(state.tokensOut == expectedOutputCharge)
+        #expect((state.budgetExhaustedReason != nil) == limited)
+        if limited { #expect(state.status == .cancelled) }
         let captured = try await row(for: model)
+        print("[rejected-usage-budget] model=\(model) reportedOutput=\(outputTokens) limited=\(limited) chargedInput=\(state.tokensIn) chargedOutput=\(state.tokensOut) conservativeOutput=\(expectedOutputCharge) exhausted=\(state.budgetExhaustedReason != nil) status=\(state.status) loggedInput=\(String(describing: captured.inputTokens)) loggedOutput=\(String(describing: captured.outputTokens))")
         #expect(captured.isError)
-        #expect(captured.inputTokens == 277 && captured.outputTokens == 17)
+        #expect(captured.inputTokens == 277 && captured.outputTokens == outputTokens)
     }
 
     @Test(arguments: [false, true])
