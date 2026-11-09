@@ -35,17 +35,26 @@ else
   echo "::warning::${DSYM_ZIP} not found — release will ship without dSYMs."
 fi
 
-if gh release view "${VERSION}" --repo "${PUBLIC_REPO}" >/dev/null 2>&1; then
-  echo "Release ${VERSION} already exists; refreshing notes and re-uploading assets."
+if EXISTING_IS_DRAFT="$(gh release view "${VERSION}" --repo "${PUBLIC_REPO}" --json isDraft --jq .isDraft 2>/dev/null)"; then
+  # Immutable releases reject asset uploads once published, so assets must be
+  # attached while the release is still a draft.
+  if [ "${EXISTING_IS_DRAFT}" != "true" ]; then
+    EXISTING_IS_IMMUTABLE="$(gh api "repos/${PUBLIC_REPO}/releases/tags/${VERSION}" --jq '.immutable // false')"
+    if [ "${EXISTING_IS_IMMUTABLE}" = "true" ]; then
+      echo "::error::Release ${VERSION} is already published and immutable; assets cannot be attached. Delete it and cut a new version."
+      exit 1
+    fi
+  fi
+  echo "Release ${VERSION} already exists; uploading assets before publishing."
+  gh release upload "${VERSION}" \
+    "${RELEASE_ASSETS[@]}" \
+    --repo "${PUBLIC_REPO}" \
+    --clobber
   gh release edit "${VERSION}" \
     --repo "${PUBLIC_REPO}" \
     --draft=false \
     --notes-file RELEASE_NOTES.md \
     "${RELEASE_FLAGS[@]}"
-  gh release upload "${VERSION}" \
-    "${RELEASE_ASSETS[@]}" \
-    --repo "${PUBLIC_REPO}" \
-    --clobber
 else
   gh release create "${VERSION}" \
     "${RELEASE_ASSETS[@]}" \
