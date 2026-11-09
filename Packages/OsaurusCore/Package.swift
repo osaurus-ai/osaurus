@@ -378,7 +378,12 @@ let package = Package(
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
         .package(url: "https://github.com/raspu/Highlightr", from: "2.3.0"),
         .package(url: "https://github.com/AAChartModel/AAChartKit-Swift.git", from: "9.5.0"),
-        .package(url: "https://github.com/aptabase/aptabase-swift.git", from: "0.3.11"),
+        // 0.3.11 dequeues mutate a concurrent queue without a barrier. Pin the
+        // upstream race fix until a release containing only this change is available.
+        .package(
+            url: "https://github.com/aptabase/aptabase-swift.git",
+            revision: "a55267506ca9e9413e242cff00309f91bda16679"
+        ),
         // Crash + app-hang reporting (Sentry). Consent-gated through the same
         // `TelemetryService` opt-in as Aptabase — see `CrashReportingService`.
         .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "9.15.0"),
