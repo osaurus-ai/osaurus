@@ -150,7 +150,9 @@ struct TelemetryConsentPreferenceTests {
         service.markStartedForTesting()
         for _ in 0..<32 {
             service.setEnabled(true)
-            await Task.detached { defaults.set(false, forKey: "telemetryEnabled") }.value
+            await Task.detached { @Sendable [defaults] in
+                defaults.set(false, forKey: "telemetryEnabled")
+            }.value
             #expect(!service.isEnabled)
             service.track("must_not_send")
         }
