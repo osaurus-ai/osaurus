@@ -193,6 +193,102 @@ struct ActivityTokenProvenanceTests {
         #expect(captured.isError)
     }
 
+    private struct RejectedCompletionService: ResponsesGenerationService {
+        let id: String
+        let outputTokens: Int?
+        func isAvailable() -> Bool { true }
+        func handles(requestedModel: String?) -> Bool { requestedModel == id }
+        func generateOneShot(messages: [ChatMessage], parameters: GenerationParameters,
+            requestedModel: String?) async throws -> String {
+            throw NSError(domain: "unexpected-legacy", code: 1)
+        }
+        func streamDeltas(messages: [ChatMessage], parameters: GenerationParameters,
+            requestedModel: String?, stopSequences: [String]) async throws -> AsyncThrowingStream<String, Error> {
+            throw NSError(domain: "unexpected-legacy", code: 2)
+        }
+        func streamResponses(messages: [ChatMessage], parameters: GenerationParameters,
+            stopSequences: [String], tools: [Tool], toolChoice: ToolChoiceOption?,
+            requestedModel: String?) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+            AsyncThrowingStream { continuation in
+                continuation.yield(.inputTokenCount(257))
+                continuation.yield(.outputTextDelta("A response without the required call."))
+                continuation.yield(.responseCompleted(.init(
+                    responseID: "resp_rejected_usage", status: .completed, functionCalls: [],
+                    tokenCount: outputTokens, tokensPerSecond: nil, unclosedReasoning: false,
+                    stopReason: "stop", promptTokensPerSecond: nil, mtp: nil, inputTokenCount: 277)))
+                continuation.finish()
+            }
+        }
+    }
+
+    @Test(arguments: [Int?.none, 0, 17])
+    func rejectedToolChoiceKeepsMeasuredUsageAndError(outputTokens: Int?) async throws {
+        let model = "provenance-rejected-\(UUID().uuidString)"
+        let service = RejectedCompletionService(id: model, outputTokens: outputTokens)
+        let engine = ChatEngine(services: [service], installedModelsProvider: { [] },
+            remoteServicesProvider: { [] }, source: .chatUI)
+        var request = ResponsesInferenceRequest(model: model, input: [.init(role: "user", content: "fixture request")])
+        request.tools = [Tool(type: "function", function: .init(name: "required_fixture", description: nil,
+            parameters: .object(["type": .string("object")])))]
+        request.toolChoice = .required
+        var successfulTerminals = 0
+        do {
+            for try await event in try await engine.streamResponses(request: request) {
+                if case .responseCompleted = event { successfulTerminals += 1 }
+            }
+            Issue.record("Missing required call became a success")
+        } catch {
+            let error = error as NSError
+            #expect(error.domain == "OsaurusToolChoice" && error.code == 422)
+            #expect(error.userInfo["response_id"] as? String == "resp_rejected_usage")
+            #expect(error.localizedDescription == "The model completed without the required tool call. No local tool was executed.")
+        }
+        #expect(successfulTerminals == 0)
+        let captured = try await row(for: model)
+        #expect(captured.isError)
+        #expect(captured.finishReason == .error)
+        #expect(captured.inputTokens == 277)
+        #expect(captured.inputTokenSource == .reported)
+        #expect(captured.outputTokens == outputTokens)
+        #expect(captured.outputTokenSource == (outputTokens == nil ? nil : .reported))
+        #expect(captured.toolCalls == nil)
+        #expect((captured.tokensPerSecond == nil) == (outputTokens == nil))
+    }
+
+    @Test func rejectedToolChoiceChargesMeasuredWorkOnceToBackgroundBudget() async throws {
+        let context = ExecutionContext(agentId: Agent.defaultId)
+        context.chatSession.chatEngineFactory = { _ in MockChatEngine() }
+        let state = BackgroundTaskState(id: UUID(), taskTitle: "rejected completion accounting",
+            agentId: Agent.defaultId, chatSession: context.chatSession, executionContext: context, showToast: false)
+        let manager = BackgroundTaskManager.shared
+        manager.registerTaskForTesting(state)
+        defer { manager.finalizeTask(state.id) }
+        let model = "provenance-rejected-budget-\(UUID().uuidString)"
+        let service = RejectedCompletionService(id: model, outputTokens: 17)
+        let engine = ChatEngine(services: [service], installedModelsProvider: { [] },
+            remoteServicesProvider: { [] }, source: .chatUI)
+        var request = ResponsesInferenceRequest(model: model, input: [.init(role: "user", content: "fixture request")])
+        request.tools = [Tool(type: "function", function: .init(name: "required_fixture", description: nil,
+            parameters: .object(["type": .string("object")])))]
+        request.toolChoice = .required
+        try await ChatExecutionContext.$currentBackgroundId.withValue(state.id) {
+            do {
+                for try await _ in try await engine.streamResponses(request: request) {}
+                Issue.record("Missing required call became a success")
+            } catch {
+                #expect((error as NSError).domain == "OsaurusToolChoice")
+            }
+        }
+        for _ in 0..<100 where state.tokensIn < 277 || state.tokensOut < 17 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(state.tokensIn == 277)
+        #expect(state.tokensOut == 17)
+        let captured = try await row(for: model)
+        #expect(captured.isError)
+        #expect(captured.inputTokens == 277 && captured.outputTokens == 17)
+    }
+
     @Test(arguments: [false, true])
     func internalOneShotEstimatesAndFailureRemainDistinct(fail: Bool) async throws {
         let probe = OneShotProbe(id: "provenance-internal-\(UUID().uuidString)", fail: fail)
