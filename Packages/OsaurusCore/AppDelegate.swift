@@ -63,6 +63,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     public func applicationWillFinishLaunching(_ notification: Notification) {
         // First, so the launch itself lands in tmp/osaurus.log (debug only).
         ConsoleLogFile.start()
+        // The sync core's own records (sessions, admission), into the same log.
+        SyncCoreLog.start()
         #if DEBUG
             // Per-token label trace for the OpenAI privacy model, into the same
             // log: shows whether the model predicts nothing or the decoder drops
