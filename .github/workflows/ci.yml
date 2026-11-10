@@ -3,7 +3,9 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # Tagging a commit requires green CI on that commit (build-and-release.yml
+    # verify_ci), so Classic patches need CI on classic pushes.
+    branches: [main, classic]
   workflow_dispatch:
     inputs:
       clear_cache:
