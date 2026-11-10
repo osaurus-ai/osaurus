@@ -37,6 +37,18 @@ struct BonjourRunLoopTests {
     }
 }
 
+/// The pairing instance name must fit DNS-SD's 63-byte limit without
+/// splitting a character.
+struct MobileConnectAdvertiserNameTests {
+    @Test func truncateUTF8_respectsByteLimitAndCharacterBoundaries() {
+        let limit = MobileConnectAdvertiser.maxInstanceNameBytes
+        let truncated = MobileConnectAdvertiser.truncateUTF8(String(repeating: "🦖", count: 40), maxBytes: limit)
+        #expect(truncated.utf8.count <= limit)
+        #expect(truncated.allSatisfy { $0 == "🦖" })
+        #expect(MobileConnectAdvertiser.truncateUTF8("Mac", maxBytes: limit) == "Mac")
+    }
+}
+
 // MARK: - Advertised TXT record + republish decision
 
 @MainActor

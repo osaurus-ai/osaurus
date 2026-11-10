@@ -23,6 +23,8 @@ final class MobileConnectAdvertiser: NSObject {
     static let shared = MobileConnectAdvertiser()
     static let serviceType = "_osaurus-mobile._tcp."
     private static let maxPublishRetries = 3
+    /// DNS-SD instance names are limited to 63 bytes.
+    static let maxInstanceNameBytes = 63
     private nonisolated static let logger = Logger(subsystem: "com.osaurus", category: "bonjour")
 
     private var service: NetService?
@@ -81,9 +83,9 @@ final class MobileConnectAdvertiser: NSObject {
         // `Host.current().localizedName`, which can do blocking DNS lookups
         // on the main thread.
         let computerName = SCDynamicStoreCopyComputerName(nil, nil) as String?
-        let name = BonjourAdvertiser.truncateUTF8(
+        let name = Self.truncateUTF8(
             computerName.flatMap { $0.isEmpty ? nil : $0 } ?? "Osaurus",
-            maxBytes: BonjourAdvertiser.maxInstanceNameBytes
+            maxBytes: Self.maxInstanceNameBytes
         )
         let service = NetService(domain: "", type: Self.serviceType, name: name, port: Int32(port))
         service.setTXTRecord(
@@ -99,6 +101,21 @@ final class MobileConnectAdvertiser: NSObject {
         self.service = service
         MobileConnectLog.write("bonjour: publishing \(Self.serviceType) as '\(name)' on port \(port)")
         Self.logger.info("Publishing pairing service '\(name, privacy: .public)' on port \(self.port)")
+    }
+
+    /// Truncate a string to at most `maxBytes` of UTF-8 without splitting a
+    /// character.
+    static func truncateUTF8(_ string: String, maxBytes: Int) -> String {
+        guard string.utf8.count > maxBytes else { return string }
+        var result = ""
+        var used = 0
+        for char in string {
+            let size = String(char).utf8.count
+            if used + size > maxBytes { break }
+            result.append(char)
+            used += size
+        }
+        return result
     }
 
     private func retryPublish() async {

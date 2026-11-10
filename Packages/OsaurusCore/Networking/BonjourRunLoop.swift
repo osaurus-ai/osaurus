@@ -77,10 +77,4 @@ final class BonjourRunLoop: NSObject, @unchecked Sendable {
         let box = Box(service)
         perform { box.value.stop() }
     }
-
-    /// Update a live service's TXT record on the Bonjour thread.
-    func setTXTRecord(_ txt: Data, on service: NetService) {
-        let box = Box(service)
-        perform { _ = box.value.setTXTRecord(txt) }
-    }
 }
