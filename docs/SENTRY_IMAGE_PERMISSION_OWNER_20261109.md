@@ -186,3 +186,131 @@ SHA25663c8d935e8ead7f5f65fc967236b527048e654b473b37e82ce1dc467c5a688e4.
 Only this documentation update follows the qualified integration source;
 the new-head binding verifies both the tested unit sources and original3c1
 product projection before push. Full refreshed PR CI remains required.
+
+## New-main combined qualification, 2026-11-10 UTC
+
+Local8186858d1eb2c3748f36737ff0142a0b86094ec4 cleanly integrates D3 main
+3bbf2ffd39edfe45c73ea50f69e17dc9af4847ec. The permission product/test files
+are byte-identical to public66ff; only the consumed main projection changed.
+Both original and new complete source/build/evidence trees remain retained.
+No teammate release/tag/publish/workflow/appcast file was edited.
+
+The new37suite selection passed400declarations, with4existing opt-in network
+skips and0failures of404; expanded463pass/4skip. Actual XCTest34970 loaded
+the expected binary with all6private flags; all3sandbox lifecycle receipts
+preserved runner ownership and unrelated entries. The new Release and eval
+builds both succeeded with clean official SDK1bcd74ad and Aptabasea552675.
+The eval build retains exactly the four private cleanup-only evidence guards.
+No fixture, score, prompt, runtime default or sampler was changed.
+
+A fresh private Release(binary SHA256f999d78f54d5e86e4f7832474667a9c373bc450ff632958244558a47f8552613)
+ran twice as actual PIDs69916/3818 with all5private flags verified. Both
+launches quit normally; closed profiles, full Activity payloads, original
+PNGs, scopes, rates and resources are frozen. Native Gemma QAT tool+followup
+passed the bounded real-tool gate before the full matrix: exact UTC call,
+returned time, visible continuation and correct history recall. Observed
+disk restore291/2045and2073/2206, pagedKVoff, exact prefix/L2 counters.
+No TurboQuant layer topology or architecture-wide cache claim. Native/eval
+MXFP4 bundles are the same physical files, including all4weight shards.
+
+Fresh C Always changed only C's image policy through the normal manager;
+two queued jobs completed and no later edit or normal-relaunch image call
+asked again. Its editor visibly retained Always Allow and both exact targets.
+B was reset to Ask through its editor only in the NEW cloned private profile;
+the old original profile remains unchanged. B asked despite C's grant. One
+Task grant covered2queued actual images without changing any stored bytes;
+the next task asked again and Deny produced the typed refusal/unlocked input.
+Quitting with an unanswered later card granted nothing; after restart B
+asked again. Actual agent/config policy bytes were unchanged through final
+quit. The sole additional JSON delta was setup-pending housekeeping C->empty,
+retained separately from the original failed whole-JSON equality check.
+
+The selected targets were Z-Image-Turbo-mflux-8bit and Qwen-Image-Edit-mflux-q8.
+Six fresh512x512files were generated across4image-producing user tasks,
+including the real source-path blue-to-red edit at its existing30steps.
+All6matched object/color;5/6strict whole-image visual rows matched. The cyan
+cube had a beige/graybackground rather than requestedwhite and remains failed.
+The parent identified the latest cyan cube correctly but also repeated the
+unsupported white-background description; no pixel-exact fidelity claim.
+The first two-image task also failed its save-to-working-folder subrequest:
+files stayed in profile generated-images, accurately named by the response.
+No file-move/prompt/image/sampler workaround was introduced.
+
+All16actual completed Chat UI inference requests recorded empty generation
+overrides. Qwen parent sampler defaults1.0/top-k20/top-p.95; UI inherited
+Extra High. Gemma MXFP4 sampler defaults1.0/top-k64/top-p.95; its tested
+model-default reasoning wasOff. Every completed text generation has a rate,
+with decode and Activity end-to-end rates kept distinct.36inference rows and
+6media rows are retained. One Foundation auxiliary attempt failed its first
+token deadline with no output/noTPS; its fallback returned an incomplete
+suggestion array and was not treated as a clean helper pass. Activity's20
+visible-token estimate is explicitly estimated; the SDK's256decoded tokens/
+length stop are a different measurement, not by themselves a new accounting
+bug. Existing source deliberately rejects truncated suggestion JSON.
+
+Physical-footprint peaks38,461,273,464and33,520,332,440bytes fail the RAM gate.
+No image speed/RAM/family readiness or physicalM2/M3 qualification is claimed.
+Initial image discovery again showed0entries until confirming the same
+external folder through the native chooser, then7entries. No speculative
+detection patch or underlying OS/bookmark cause was assigned.
+
+SOURCE EVIDENCE: main-integrated-20261110/SOURCE-AND-RETENTION-BINDING1.json;
+components1/QUALIFICATION1.json; native-build1/RESULT.json;
+eval-build1/EVAL-BINARY-METALLIB-IDENTITY1.json.
+
+LIVE EVIDENCE: main-integrated-20261110/native-combined1/
+NATIVE-COMBINED-QUALIFICATION1.json, captures00–24,
+FINAL-TWO-LAUNCH-RATE-LEDGER1.json,
+AUXILIARY-TOKEN-PROVENANCE-ADDENDUM1.json, all6original PNGs and both
+normal-exit/frozen-profile receipts.
+
+The full119matrix completed on the combined818source with exit1 and no
+source changes: AgentLoop39pass/33fail/4skipof76; Frontier17pass/26failof43;
+combined56pass/59fail/4skipof119. No rerun or regrade occurred. All481step
+diagnostics carry a decode rate;18zero-output/zero-rate steps are retained
+separately.495actual inference requests carry generation shapes463empty,
+3fixture4096limits,16fixture8192limits and13fixtureThinkingOn. The CLI
+added no sampler, thinking, output-cap or prompt override. All119fixture
+inventory bytes exactly match the preceding original image matrix.
+
+The new matrix exposed/called the image tool zero times. The image-only
+commit callback is not used by the existing generic/narrow APIs, whose nil
+default is preserved. These surrounding results do not assign the59failed
+cases to image permissions or establish their model/parser/runtime/cache
+causes. Every failed/skipped case retains raw checks, query, judge, telemetry
+and transcript links in agent-matrix-candidate1/MATRIX-REVIEW1.json. Source/
+workspaces/unseeded draws differ from historical58/57/4andothermatrices;
+outcome flips are descriptive, not causal improvement/regression evidence.
+
+The long ordering-rule case actively decoded for225.58seconds then ended
+with ordinary finalResponse,7337completiontokens/32.79decodeTps and failed
+its constraints. It was not a queue hang or a length-cap pass. Its complete
+observation and unchanged fixture remain in LONG-CASE-COMPLETED-OBSERVATION1.json.
+Sampled matrix physical footprint6,876,368,904bytes exceeds4,002,479,278weight
+bytes:RAMFAIL. No model-family readiness, physicalM2/M3 or cache-stack-wide
+qualification is claimed.
+
+After exit,116exact transcript-referenced workspaces plus the PID-owned
+runtime root were APFS-cloned and hashed:1618files,54,954,908,004logicalbytes.
+Original temporary paths, all preceding source/binaries/profiles/images and
+failed artifacts remain. The native/eval shared Gemma bundle's12files
+including4weight shards retain identity/size/mtime after the run. The
+manifest is agent-matrix-candidate1/retained-runtime1/MANIFEST.json; the exact
+actualPID10322 trace header and all10private launch flags are retained.
+
+Read-only release-path re-audit found no release workflow/script/appcast
+changes in our9merged Osaurus PRs or this candidate. PR3346 intentionally
+pinned only official Aptabase's minimal queue barrier fix in the manifest/
+three lockfiles; the current builds verify that exact clean a552checkout.
+That documented dependency change is not misreported as zero dependency
+changes. Teammate3366/3367/3368release work remains untouched.
+
+SOURCE EVIDENCE: main-integrated-20261110/SOURCE-AND-RETENTION-BINDING1.json,
+MERGED-PR-RELEASE-PATH-REAUDIT2.json, exact481step/report source inventory and
+agent-matrix-candidate1/PLAN.json/RESULT.json.
+
+LIVE EVIDENCE: NATIVE-COMBINED-QUALIFICATION1.json, all24nativecapturecheckpoints,
+MATRIX-REVIEW1.json, retained-runtime1/MANIFEST.json and actual current-PID
+prefill trace. All raw scores and limitations above remain red/partial where
+applicable. Exact final-head full CI and normal merge remain required for
+the narrow permission correction; no all-green/model-readiness claim.
