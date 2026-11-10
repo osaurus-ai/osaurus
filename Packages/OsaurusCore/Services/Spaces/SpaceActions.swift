@@ -119,6 +119,7 @@ enum SpaceActions {
             showError(error)
             return
         }
+        FeatureTelemetry.spaceCreated()
         relaunch()
     }
 
@@ -159,6 +160,7 @@ enum SpaceActions {
             showError(error)
             return
         }
+        FeatureTelemetry.spaceSwitched()
         relaunch()
     }
 
@@ -204,6 +206,7 @@ enum SpaceActions {
                 SpaceLauncher.removeSpace(id, from: &document)
             }
             try SpaceRegistry.save(document)
+            FeatureTelemetry.spaceDeleted(mode: mode == .immediate ? "immediate" : "after_relaunch")
             if mode == .afterRelaunch { relaunch() }
         } catch {
             showError(error)

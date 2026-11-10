@@ -577,7 +577,7 @@ public final class AgentManager: ObservableObject {
     }
 
     /// Save a pre-built agent, refresh the list, and assign a cryptographic address.
-    public func add(_ agent: Agent) {
+    public func add(_ agent: Agent, telemetryOrigin: String? = nil) {
         AgentStore.save(agent)
         refresh()
         registerInDefaultSpawnPool(agent)
@@ -586,7 +586,10 @@ public final class AgentManager: ObservableObject {
         // or configuration. Built-in agents are seeded by the app, not
         // created by the user.
         if !agent.isBuiltIn {
-            FeatureTelemetry.agentCreated(numberOfAgents: agents.count)
+            FeatureTelemetry.agentCreated(
+                numberOfAgents: agents.count,
+                origin: telemetryOrigin ?? TelemetryContext.agentCreationOrigin ?? "user"
+            )
         }
         assignAddressInBackground(to: agent)
         // Notify subscribers (e.g. PluginManager) so plugins get an
