@@ -22,6 +22,7 @@ actor HuggingFaceService {
         let tags: [String]?
         let siblings: [RepoFile]?
         let isPrivate: Bool?
+        let pipelineTag: String?
         /// The Hub reports `gated` as `false` or as the approval mode
         /// (`"auto"` / `"manual"`). Either non-false form means file
         /// downloads need a token whose account was granted access.
@@ -32,15 +33,20 @@ actor HuggingFaceService {
             case tags
             case siblings
             case isPrivate = "private"
+            case pipelineTag = "pipeline_tag"
             case gated
         }
 
-        init(id: String, tags: [String]?, siblings: [RepoFile]?, isPrivate: Bool?, isGated: Bool = false) {
+        init(
+            id: String, tags: [String]?, siblings: [RepoFile]?, isPrivate: Bool?,
+            isGated: Bool = false, pipelineTag: String? = nil
+        ) {
             self.id = id
             self.tags = tags
             self.siblings = siblings
             self.isPrivate = isPrivate
             self.isGated = isGated
+            self.pipelineTag = pipelineTag
         }
 
         init(from decoder: Decoder) throws {
@@ -49,6 +55,7 @@ actor HuggingFaceService {
             tags = try c.decodeIfPresent([String].self, forKey: .tags)
             siblings = try c.decodeIfPresent([RepoFile].self, forKey: .siblings)
             isPrivate = try c.decodeIfPresent(Bool.self, forKey: .isPrivate)
+            pipelineTag = try c.decodeIfPresent(String.self, forKey: .pipelineTag)
             if let flag = try? c.decodeIfPresent(Bool.self, forKey: .gated) {
                 isGated = flag
             } else if let mode = try? c.decodeIfPresent(String.self, forKey: .gated) {
@@ -84,12 +91,17 @@ actor HuggingFaceService {
         let isCompatible: Bool
         let isPrivate: Bool
         let isGated: Bool
+        let isDecision: Bool
         let failure: Failure?
 
-        init(isCompatible: Bool, isPrivate: Bool, isGated: Bool = false, failure: Failure? = nil) {
+        init(
+            isCompatible: Bool, isPrivate: Bool, isGated: Bool = false,
+            isDecision: Bool = false, failure: Failure? = nil
+        ) {
             self.isCompatible = isCompatible
             self.isPrivate = isPrivate
             self.isGated = isGated
+            self.isDecision = isDecision
             self.failure = failure
         }
 
@@ -735,7 +747,13 @@ actor HuggingFaceService {
     func evaluateMLXCompatibility(repoId: String, meta: ModelMeta) -> MLXCompatibility {
         let lower = repoId.lowercased()
         let isPrivate = meta.isPrivate == true
-        let compatible = MLXCompatibility(isCompatible: true, isPrivate: isPrivate, isGated: meta.isGated)
+        let compatible = MLXCompatibility(
+            isCompatible: true, isPrivate: isPrivate, isGated: meta.isGated,
+            isDecision: ModelManager.isDecisionCatalogEligible(
+                id: repoId, pipelineTag: meta.pipelineTag, tags: meta.tags,
+                files: meta.siblings?.map(\.rfilename)
+            )
+        )
 
         // Strong signal: tags explicitly indicate MLX
         if let tags = meta.tags?.map({ $0.lowercased() }) {
