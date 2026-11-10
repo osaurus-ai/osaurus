@@ -1,0 +1,102 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop"
+  ],
+  "generatedAt" : "2026-08-30T14:15:48.598Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.6086956521739131,
+      "chatModelPassed" : 36,
+      "chatModelScored" : 79,
+      "correctFileDeliveryRate" : 0.8,
+      "environment" : {
+        "caseCount" : 35,
+        "catalogHash" : "15d9db1a231a9d51",
+        "chip" : "Apple M5 Max",
+        "commit" : "49e2faa",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/ZAYA1-8B-MXFP4",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.5652173913043478,
+      "meanAgentLoopWallTimeMs" : 912909.9002281824,
+      "meanCpuPercent" : 148.70464197562816,
+      "meanDecodeTokensPerSecond" : 14.062660000000003,
+      "meanFirstActionMs" : 422051.4018535614,
+      "meanFirstStepContextTokens" : 4358.777777777777,
+      "meanFrictionCalls" : 0.028037383177570093,
+      "meanPromptTokensPerTask" : 14322.379310344828,
+      "meanTotalTokensPerTask" : 11458.977777777778,
+      "meanTtftMs" : 7360.132171048059,
+      "medianModelSteps" : 3,
+      "modelId" : "OsaurusAI/ZAYA1-8B-MXFP4",
+      "peakCpuPercent" : 185.1454040524634,
+      "peakPhysFootprintMb" : 9938.126670837402,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 5,
+          "passed" : 10,
+          "scored" : 18,
+          "skipReasons" : {
+            "priorCaseTimeout: blocked: not run — process hung on prior case 'agent_loop.append-preserve-existing' (watchdog timeout); suite terminated to free the matrix driver." : 45,
+            "priorCaseTimeout: blocked: not run — process hung on prior case 'agentdb.queryable-saved-view' (watchdog timeout); suite terminated to free the matrix driver." : 7,
+            "priorCaseTimeout: blocked: not run — process hung on prior case 'frontier.build-then-iterate' (watchdog timeout); suite terminated to free the matrix driver." : 32
+          },
+          "skipped" : 84
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 14,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 2,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 2,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 23,
+          "skipped" : 0
+        }
+      },
+      "startedAt" : "2026-08-30T03:27:24Z",
+      "subsystemPassed" : 0,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "tool:redact_file=491",
+        "tool:detect_pii=353",
+        "tool:file_read=280",
+        "tool:share_artifact=266",
+        "§pluginCreator=252",
+        "tool:db_create_table=225"
+      ],
+      "totalPassed" : 36,
+      "totalScored" : 95
+    }
+  ]
+}
