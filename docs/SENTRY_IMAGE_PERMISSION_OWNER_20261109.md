@@ -309,7 +309,7 @@ SOURCE EVIDENCE: main-integrated-20261110/SOURCE-AND-RETENTION-BINDING1.json,
 MERGED-PR-RELEASE-PATH-REAUDIT2.json, exact481step/report source inventory and
 agent-matrix-candidate1/PLAN.json/RESULT.json.
 
-LIVE EVIDENCE: NATIVE-COMBINED-QUALIFICATION1.json, all24nativecapturecheckpoints,
+LIVE EVIDENCE: NATIVE-COMBINED-QUALIFICATION1.json, all25nativecapturecheckpoints,
 MATRIX-REVIEW1.json, retained-runtime1/MANIFEST.json and actual current-PID
 prefill trace. All raw scores and limitations above remain red/partial where
 applicable. Exact final-head full CI and normal merge remain required for
