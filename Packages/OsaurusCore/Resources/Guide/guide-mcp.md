@@ -18,6 +18,7 @@ MCP connects Osaurus to external tool servers — issue trackers, docs, code hos
 - If a tool call is refused because you aren't signed in (some services list tools first and ask for sign-in only when one runs) or lack permissions, the service shows as needing sign-in; click Sign In, then ask again. Connection problems show a plain-language message with a Details disclosure for the raw error. Non-secret config lives in `~/.osaurus/providers/mcp.json`.
 - Custom Server options: Name, URL, auth (None / Bearer / OAuth), stdio command, Auto-connect, Streaming, Discovery Timeout (20s), Tool Call Timeout (45s; 120s when added from a Legal, Investing, or Healthcare template), and a Test button. The tool call timeout counts time without progress: each progress update from the server restarts it, up to 10 minutes per call, and the latest progress message shows on the running tool card.
 - In chat, the built-in assistant adds an MCP server itself by applying an `mcp_servers:` entry with `osaurus_config` (OAuth sign-in and tokens still happen through secure native UI; bearer tokens are declarable via `token_ref`).
+- Pasted MCP config JSON, Cursor or VS Code install links, and `claude mcp add` / `codex mcp add` commands install through a review card; see the Importing from Chat topic.
 
 ## Using MCP tools
 

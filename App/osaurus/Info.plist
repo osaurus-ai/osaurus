@@ -11,7 +11,7 @@
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://osaurus-ai.github.io/osaurus/appcast.xml</string>
+	<string>https://osaurus-ai.github.io/osaurus/appcast-next.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>HBRBQ8QQOhmvMKnSxQxqb3upTjyirdx0xkHSSRqn7aI=</string>
 	<key>NSAppleEventsUsageDescription</key>
@@ -35,11 +35,46 @@
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Osaurus can capture screenshots and system audio only when you grant Screen Recording access.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Osaurus uses the local network to discover and connect to agents running on other devices.</string>
+	<string>Osaurus uses the local network to sync your chats with your other devices and to connect to agents running on them.</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_osaurus._tcp</string>
 		<string>_osaurus-mobile._tcp</string>
+		<string>_osaurus-sync._udp</string>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Osaurus Template</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>ai.osaurus.template</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>ai.osaurus.template</string>
+			<key>UTTypeDescription</key>
+			<string>Osaurus Template</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>osaurustemplate</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>

@@ -1,0 +1,8 @@
+{
+  "agent-template-cloud-agent.json": "sha256:21338470d79b97298429a7ea61645a1b0e37362fcf608b2493114afba1d870c3",
+  "agent-template-inbox-desk.json": "sha256:8cea5a03b72ce1a46f1cd9b933d4871ee3215490a00ce46ba4fb094efa927abe",
+  "workflow-edge-cases.json": "sha256:487bbd9678e485ea5c72472b827defca22d736ab06de42b1bf551d08c8fad995",
+  "workflow-template-email-reply.json": "sha256:12fcb1398daa791013ece99ba60ab591b0c8c42009156de25d4611bad48bc5ed",
+  "workflow-template-meeting-actions.json": "sha256:73c78344e064cc1521772bef2b54773ddfc606cc90e1159a6943efb886728618",
+  "workflow-template-social-post.json": "sha256:7ba0784e24975521a01fdf7b723888bd6fc0c2345ccceb9c1b2dc52f945f834d"
+}

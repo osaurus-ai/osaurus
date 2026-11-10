@@ -4,7 +4,10 @@
 //
 //  Lets a paired phone continue one of the Mac's own chats: `/agents/{id}/run`
 //  with `osaurus_session_id` loads that session's turns as model context and
-//  appends the new turns back into it (docs/MOBILE_PROTOCOL.md §14.5).
+//  appends the new turns back into it (docs/MOBILE_PROTOCOL.md §14.5). Kept
+//  for one release beside Sync, for phones still on the 6-digit pairing; it
+//  also recognises the chats the phone made that way (they keep their
+//  "Mobile" caller label and render as the phone's).
 //
 //  Writes go through the open chat window when there is one, so a Mac window
 //  showing that chat updates live; otherwise straight to the store, followed
@@ -24,7 +27,7 @@ enum RemoteSessionContinuation {
         return session.turns.compactMap(message(from:))
     }
 
-    static func message(from turn: ChatTurnData) -> ChatMessage? {
+    nonisolated static func message(from turn: ChatTurnData) -> ChatMessage? {
         guard !turn.modelContextExcluded, turn.role != .system else { return nil }
         let hasContent = !turn.content.isEmpty
         let hasCalls = !(turn.toolCalls?.isEmpty ?? true)
@@ -205,21 +208,20 @@ enum RemoteSessionContinuation {
     }
 
     /// A hosted row created by this Mac's phone: no workspace, and the caller
-    /// is a pairing key — the current one, or an earlier one, which keeps its
-    /// "Mobile" (or pre-rename "Osaurus Connect") label on the row. Pairing again mints a new key, and
-    /// matching only the current one turned every older phone chat into a
-    /// teammate's read-only one (tagged "via workspace", titled "caller →
-    /// agent"). One phone per Mac, so an earlier key was the owner's too.
-    static func isFromPairedPhone(_ workspace: WorkspaceSessionContext) -> Bool {
-        guard workspace.workspaceId.isEmpty, let caller = workspace.callerWallet?.lowercased() else { return false }
-        if let name = workspace.callerName, MobilePairingService.allKeyLabels.contains(name) { return true }
-        guard let nonce = MobilePairingService.shared.pairedKeyNonce?.lowercased() else { return false }
-        return caller == nonce
+    /// is a pairing key. Every key the pairing mints keeps its "Mobile" (or
+    /// pre-rename "Osaurus Connect") label on the row, the current one and
+    /// earlier ones alike: one phone per Mac, so an earlier key was the
+    /// owner's too. Matching only the current key turned every older phone
+    /// chat into a teammate's read-only one.
+    nonisolated static func isFromPairedPhone(_ workspace: WorkspaceSessionContext) -> Bool {
+        guard workspace.workspaceId.isEmpty, workspace.callerWallet != nil, let name = workspace.callerName
+        else { return false }
+        return MobileConnectMigration.legacyKeyLabels.contains(name)
     }
 
     /// Whether `session` is one of the phone's chats: one it started (see
     /// `startPhoneChat`), or an older hosted row (see `isFromPairedPhone`).
-    static func isFromPairedPhone(_ session: ChatSessionData) -> Bool {
+    nonisolated static func isFromPairedPhone(_ session: ChatSessionData) -> Bool {
         isFromPairedPhone(
             source: session.source,
             externalSessionKey: session.externalSessionKey,
@@ -229,7 +231,7 @@ enum RemoteSessionContinuation {
 
     /// The same, from a chat's fields, for the open `ChatSession` the tab
     /// strip shows, so the two never disagree.
-    static func isFromPairedPhone(
+    nonisolated static func isFromPairedPhone(
         source: SessionSource,
         externalSessionKey: String?,
         workspace: WorkspaceSessionContext?
@@ -240,12 +242,12 @@ enum RemoteSessionContinuation {
 
     /// Marks a chat the phone started. It is otherwise an ordinary chat:
     /// no workspace stamp, so the Mac can open and continue it as its own.
-    static let phoneChatKey = "osaurus-connect-phone"
+    nonisolated static let phoneChatKey = "osaurus-connect-phone"
 
     /// Whether `key` marks a chat the phone started. Chats started while
     /// several phones could pair (reverted in 5b29a6bd9) carry
     /// `:<device id>` after it, and are still the owner's phone chats.
-    static func isPhoneChatKey(_ key: String?) -> Bool {
+    nonisolated static func isPhoneChatKey(_ key: String?) -> Bool {
         guard let key else { return false }
         return key == phoneChatKey || key.hasPrefix("\(phoneChatKey):")
     }

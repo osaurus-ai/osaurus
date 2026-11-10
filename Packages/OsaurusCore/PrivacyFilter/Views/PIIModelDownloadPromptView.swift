@@ -102,19 +102,19 @@ private struct RampartDownloadProgressContent: View {
                 // checker's interpolation matcher cannot derive from the
                 // interpolated form.
                 Text(String(format: L("Downloading, %lld%%"), Int(progress * 100)))
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
             case .failed(let message):
                 Text(L("Download failed: \(message)"))
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             case .idle, .ready:
                 ProgressView()
                     .controlSize(.small)
             }
         }
-        .padding(.top, 2)
+        .padding(.top, theme.space.s2)
         .frame(width: 300)
     }
 }

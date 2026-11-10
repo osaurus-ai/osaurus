@@ -1,0 +1,31 @@
+{
+  "id": "architect.svg-folder-to-png",
+  "domain": "architect",
+  "label": "architect \u2022 SVGs in a picked folder converted to PNGs in a subfolder",
+  "query": "Make a workflow that converts every SVG in a folder of mine to a PNG with the same name, in a png subfolder of that folder. Test it and offer to save it.",
+  "notes": "Hard case. The brief does not say whether the folder changes, so the Architect asks once whether to pick it each time or always use the same one, and the reply picks each time: a folder input, never a typed path. `workflow_test` asks for the folder in a picker, which the person answers with the fixture folder. The conversion runs in the workflow's Linux sandbox, so the draft has to copy the SVGs into the run workspace, convert them with a Linux program it declares (never `qlmanage` or `sips`), and copy the PNGs back; the case checks both PNGs landed in png/. Needs the sandbox to convert.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 40,
+      "replies": ["Pick it each time it runs."],
+      "fixtureFiles": {
+        "circle.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\"><circle cx=\"32\" cy=\"32\" r=\"28\" fill=\"#2a7\"/></svg>\n",
+        "square.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\"><rect x=\"8\" y=\"8\" width=\"48\" height=\"48\" fill=\"#27a\"/></svg>\n"
+      },
+      "fixtureFilesWritten": ["png/circle.png", "png/square.png"],
+      "nodeKinds": ["map", "tool"],
+      "structure": {
+        "folderInput": true,
+        "noAbsolutePaths": true
+      },
+      "requiredCalls": ["clarify"],
+      "maxClarifications": 1,
+      "maxQuestions": 3,
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "maxToolCalls": 30,
+      "maxPromptTokens": 600000
+    }
+  }
+}

@@ -268,6 +268,39 @@ struct ModelOptionsSnapshot: Encodable, Equatable {
     }
 }
 
+extension ModelOptionsSnapshot {
+    /// A model's options for a remote caller (`/models/options`, the iPhone's
+    /// `getModelOptions` / `setModelOption` over Sync), after storing
+    /// `write` when there is one. An image model has none, and no option to
+    /// write.
+    static func answer(
+        model: String,
+        write: (option: String, value: ModelOptionValue?)? = nil
+    ) async throws -> ModelOptionsSnapshot {
+        var pickerItems = await MainActor.run { ModelPickerItemCache.shared.items }
+        if pickerItems.isEmpty { pickerItems = await ModelPickerItemCache.shared.buildModelPickerItems() }
+        let isImageModel = pickerItems.contains { item in
+            item.id == model && (item.source.isImageGeneration || item.mediaModel?.kind == .image)
+        }
+        if isImageModel {
+            if write != nil { throw ApplyError.unknownOption }
+            return ModelOptionsSnapshot(model: model, thinking: nil, options: [])
+        }
+        // Off-main bundle read, so local models report their real thinking /
+        // effort contract instead of the cold-cache miss.
+        _ = await LocalReasoningCapability.resolveForDispatch(modelId: model)
+        let nativeMTP = NativeMTP.inspect(model: model)
+        if let write {
+            if write.option == nativeMTPOptionId {
+                try await applyNativeMTP(write.value, nativeMTP: nativeMTP)
+            } else {
+                try await MainActor.run { try apply(model: model, optionId: write.option, value: write.value) }
+            }
+        }
+        return await MainActor.run { make(for: model, nativeMTP: nativeMTP) }
+    }
+}
+
 extension Notification.Name {
     /// A model's stored options changed outside the composer (the paired
     /// phone). `object` is the model id.

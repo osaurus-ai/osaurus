@@ -28,7 +28,7 @@ struct AuthenticationSection: View {
             SettingsToggle(
                 title: L("Require Access Key for Local Admin Routes"),
                 description:
-                    "Callers on this Mac must send an access key to /sessions, /agents, /mcp/*, /admin/config/* and /admin/import/*. Browser pages are refused on these routes unless their origin is listed by name in Allowed Origins (CORS). Siri and Shortcuts keep working. Takes effect on the next request.",
+                    "Callers on this Mac must send an access key to /sessions, /agents, /attention, /conversations/*, /devices/*, /mcp/*, /admin/config/* and /admin/import/*. Browser pages are refused on these routes unless their origin is listed by name in Allowed Origins (CORS). Siri and Shortcuts keep working. Takes effect on the next request.",
                 isOn: $requireLocalKey
             )
             .settingsLandingAnchor("server.localAccessKey")
@@ -40,9 +40,7 @@ struct AuthenticationSection: View {
                 noAccessKeysWarning
             }
 
-            SettingsDivider()
-
-            SettingsSubsection(label: "Planned Controls") {
+            SettingsFieldRow(label: "Planned Controls") {
                 VStack(alignment: .leading, spacing: 12) {
                     ServerSettingsPlannedBanner(
                         blurb:
@@ -63,17 +61,15 @@ struct AuthenticationSection: View {
                         value: $draft.network.timeoutSeconds
                     )
 
-                    SettingsField(
-                        label: "Log Level",
-                        hint: "Verbosity of the server-side request log."
+                    SettingsRow(
+                        title: "Log Level",
+                        description: "Verbosity of the server-side request log."
                     ) {
-                        Picker("", selection: $draft.network.logLevel) {
+                        SettingsMenuPicker(selection: $draft.network.logLevel) {
                             ForEach(VMLXServerLogLevel.allCases, id: \.self) { level in
                                 Text(level.rawValue.capitalized).tag(level)
                             }
                         }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
                     }
                 }
             }
@@ -87,14 +83,14 @@ struct AuthenticationSection: View {
     private var noAccessKeysWarning: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(theme.warningColor)
+                .glyphSize(12)
+                .foregroundColor(theme.status.warning.foreground)
             Text(
                 "No access keys exist yet, so local tools calling these routes will get 401. Create a key in the Server → Overview tab.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -102,28 +98,25 @@ struct AuthenticationSection: View {
     private var accessKeyCallout: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "key.horizontal")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-                .padding(.top, 1)
+                .glyphSize(16, weight: .semibold)
+                .foregroundColor(theme.text.link)
+                .padding(.top, theme.space.s2)
             VStack(alignment: .leading, spacing: 4) {
                 Text("API access keys", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     "Manage keys in the Server → Overview tab. They are stored in the macOS Keychain and never leave this device.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             ServerSettingsStatusBadge(status: .hostOwned)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.inset)
     }
 }

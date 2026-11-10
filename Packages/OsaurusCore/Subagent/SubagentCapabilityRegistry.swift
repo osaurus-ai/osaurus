@@ -310,6 +310,44 @@ public enum SubagentCapabilityRegistry {
     /// The delegation-gated capabilities (spawn + image + applescript).
     public static let delegationFamily: [SubagentCapability] = [spawn, image, video, appleScript]
 
+    /// The Orchestrator's settings handoff. Labeled for the user ("Settings"),
+    /// never with the hidden agent's name. Not in `all`: it has no per-agent
+    /// toggle, guidance, or strip; only the feed and tool chip read it.
+    public static let configuratorHandoff = SubagentCapability(
+        id: "configurator_handoff",
+        toolNames: [ConfiguratorHandoffTool.toolName],
+        gate: .sandboxExec,
+        modelSource: .agent,
+        displayLabel: "Settings",
+        iconName: "gearshape"
+    )
+
+    /// The Architect run inline from chat.
+    public static let architectHandoff = SubagentCapability(
+        id: "architect_handoff",
+        toolNames: [ArchitectHandoffTool.toolName],
+        gate: .sandboxExec,
+        modelSource: .agent,
+        displayLabel: "Workflow",
+        iconName: "point.3.connected.trianglepath.dotted"
+    )
+
+    /// A built-in worker's run inside its wrapper workflow. Like the
+    /// handoffs: no per-agent toggle, guidance, or strip.
+    public static func worker(_ worker: BuiltInWorker) -> SubagentCapability {
+        SubagentCapability(
+            id: "worker_\(worker.rawValue)",
+            toolNames: [],
+            gate: .sandboxExec,
+            modelSource: .agent,
+            displayLabel: worker.displayName,
+            iconName: worker.iconName)
+    }
+
+    /// Hidden-agent handoffs and built-in workers, looked up by kind id only.
+    public static let handoffs: [SubagentCapability] =
+        [configuratorHandoff, architectHandoff] + BuiltInWorker.allCases.map(worker)
+
     /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
     /// image, applescript). One entry per *toggle* (deduped, so a future kind
     /// that shares a flag would collapse) — the AgentsView Subagents tab renders
@@ -327,7 +365,7 @@ public enum SubagentCapabilityRegistry {
 
     /// The descriptor for a kind id (`SubagentFeed.kindId` / `capability.id`).
     public static func capability(forKindId id: String) -> SubagentCapability? {
-        all.first { $0.id == id }
+        all.first { $0.id == id } ?? handoffs.first { $0.id == id }
     }
 
     /// The descriptor bound to a per-agent toggle flag — lets the AgentsView
@@ -344,6 +382,11 @@ public enum SubagentCapabilityRegistry {
         all.first { $0.toolNames.contains(name) }
     }
 
+    /// Feed lookup that also knows the hidden-agent handoffs.
+    public static func feedCapability(forToolName name: String) -> SubagentCapability? {
+        capability(forToolName: name) ?? handoffs.first { $0.toolNames.contains(name) }
+    }
+
     /// Feed-header / tool-chip label for a kind id.
     public static func displayLabel(forKindId id: String) -> String? {
         capability(forKindId: id)?.displayLabel
@@ -351,12 +394,12 @@ public enum SubagentCapabilityRegistry {
 
     /// Tool-chip label for a subagent tool name (`nil` for non-subagent tools).
     public static func displayLabel(forToolName name: String) -> String? {
-        capability(forToolName: name)?.displayLabel
+        feedCapability(forToolName: name)?.displayLabel
     }
 
     /// Tool-chip icon for a subagent tool name (`nil` for non-subagent tools).
     public static func iconName(forToolName name: String) -> String? {
-        capability(forToolName: name)?.iconName
+        feedCapability(forToolName: name)?.iconName
     }
 }
 

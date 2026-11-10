@@ -39,7 +39,7 @@ final class VideoSubagentKind: SubagentKind, @unchecked Sendable {
                 isDefault: isDefault,
                 config: config,
                 perAgentEnabled: settings?.videoEnabled ?? false
-            )
+            ) || scope.isGrantedByWorkflow(capability)
         else {
             throw SubagentError.denied("Video generation is not enabled for this agent.")
         }

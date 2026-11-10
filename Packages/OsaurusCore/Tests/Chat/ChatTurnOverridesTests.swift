@@ -148,31 +148,36 @@ struct ChatTurnOverridesTests {
         }
     }
 
-    @Test func sqliteRoundTripAndIncrementalUpdateRetainControlsWithoutChangingOldTurns() throws {
-        let db = ChatHistoryDatabase()
-        try db.openInMemory()
-        defer { db.close() }
-        let id = UUID()
-        var data = ChatTurnData(role: .user, content: "extract")
-        var controls = ChatTurnGenerationControls.capture(activeModelOptions: ["reasoningEffort": .string("high")])
-        controls.overrides = .init(temperature: 0, topK: 0, templateKwargs: ["template": .object(["a": .null])])
-        controls.hasResolvedReasoning = true
-        data.generationControls = controls
-        var session = ChatSessionData(id: id, turns: [data, .init(role: .assistant, content: "old")])
-        try db.saveSession(session)
-        var restored = try #require(db.loadSession(id: id))
-        #expect(restored.turns[0].generationControls == controls)
-        #expect(restored.turns[1].generationControls == nil)
-        controls.overrides.templateKwargs = ["template": .object(["b": .null])]
-        session.turns[0].generationControls = controls
-        try db.saveSession(session)
-        restored = try #require(db.loadSession(id: id))
-        #expect(restored.turns[0].generationControls == controls)
-        let legacyBytes = try JSONEncoder().encode(ChatTurnData(role: .user, content: "legacy"))
-        #expect(try JSONDecoder().decode(ChatTurnData.self, from: legacyBytes).generationControls == nil)
-        let turn = ChatTurn(role: .user, content: "saved controls")
-        turn.generationControls = controls
-        #expect(ChatTurn.fromPersisted(turn.toPersisted()).generationControls == controls)
+    @MainActor
+    @Test func storeRoundTripAndUpdateRetainControlsWithoutChangingOldTurns() async throws {
+        try await ChatHistoryTestStorage.run {
+            _ = try SyncService.shared.open()
+            let store = SyncConversationStore.shared
+            try store.open()
+            let id = UUID()
+            var data = ChatTurnData(role: .user, content: "extract")
+            var controls = ChatTurnGenerationControls.capture(activeModelOptions: ["reasoningEffort": .string("high")])
+            controls.overrides = .init(temperature: 0, topK: 0, templateKwargs: ["template": .object(["a": .null])])
+            controls.hasResolvedReasoning = true
+            data.generationControls = controls
+            var session = ChatSessionData(id: id, turns: [data, .init(role: .assistant, content: "old")])
+            try store.saveSession(session)
+            store.invalidate(sessionId: id)
+            var restored = try #require(store.loadSession(id: id))
+            #expect(restored.turns[0].generationControls == controls)
+            #expect(restored.turns[1].generationControls == nil)
+            controls.overrides.templateKwargs = ["template": .object(["b": .null])]
+            session.turns[0].generationControls = controls
+            try store.saveSession(session)
+            store.invalidate(sessionId: id)
+            restored = try #require(store.loadSession(id: id))
+            #expect(restored.turns[0].generationControls == controls)
+            let legacyBytes = try JSONEncoder().encode(ChatTurnData(role: .user, content: "legacy"))
+            #expect(try JSONDecoder().decode(ChatTurnData.self, from: legacyBytes).generationControls == nil)
+            let turn = ChatTurn(role: .user, content: "saved controls")
+            turn.generationControls = controls
+            #expect(ChatTurn.fromPersisted(turn.toPersisted()).generationControls == controls)
+        }
     }
 
     @Test func workflowRequestKeepsTypedControlsWithoutUsingStringSubstitutionParameters() {
@@ -229,24 +234,6 @@ struct ChatTurnOverridesTests {
             session.input = "newer text"
             session.restoreAbortedSendDraft(text: "old text", attachments: [], controls: controls)
             #expect(session.input == "newer text")
-        }
-    }
-
-    @Test func phoneHeldCapturedControlsDoNotConsumeALaterComposerDraft() async throws {
-        try await ChatHistoryTestStorage.run {
-            let session = ChatSession()
-            let id = UUID()
-            session.sessionId = id
-            RemoteSessionContinuation.beginPhoneRun(id)
-            defer { session.queuedSend = nil; RemoteSessionContinuation.endPhoneRun(id) }
-            var captured = ChatTurnGenerationControls.capture(activeModelOptions: [:])
-            captured.overrides = .init(temperature: 0, topK: 0)
-            session.nextTurnOverrides = .init(temperature: 1.2, topK: 5)
-            session.send("held", generationControls: captured)
-            #expect(session.queuedSend?.generationControls == captured)
-            #expect(session.nextTurnOverrides.temperature == 1.2)
-            #expect(session.nextTurnOverrides.topK == 5)
-            #expect(session.turns.isEmpty)
         }
     }
 

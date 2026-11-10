@@ -98,7 +98,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             config: config,
             perAgentEnabled: settings?.imageEnabled ?? false
         )
-        guard imageAllowed else {
+        guard imageAllowed || scope.isGrantedByWorkflow(capability) else {
             throw SubagentError.denied(
                 params.isEdit
                     ? "Image edit is not enabled for this agent."
@@ -264,13 +264,18 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                 ? .allow
                 : .userDenied("User denied billable remote image generation.")
         }
-        return await localPermission(scope, policy: policy, argumentsJSON: approvalJSON)
+        // A workflow step that lists `image` was approved with the workflow;
+        // local runs cost nothing, so its `.ask` prompt is already answered.
+        let grantedByWorkflow = scope.isGrantedByWorkflow(capability)
+        return await localPermission(
+            scope, policy: policy, argumentsJSON: approvalJSON, granted: grantedByWorkflow)
     }
 
     private func localPermission(
         _ scope: SubagentScope,
         policy: SubagentPermissionPolicy,
-        argumentsJSON: String
+        argumentsJSON: String,
+        granted: Bool
     ) async -> SubagentDecision {
         let operation = params.isEdit ? "Image edit" : "Image generation"
         let denied = SubagentDecision.userDenied("User denied \(operation.lowercased()).")
@@ -280,12 +285,13 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         case .alwaysAllow:
             return .allow
         case .ask:
-            if ChatExecutionContext.autoApproveToolPrompts { return .allow }
+            if ChatExecutionContext.autoApproveToolPrompts || granted { return .allow }
             let runScope = ChatExecutionContext.toolPermissionRunScope
             if runScope?.allows("image") == true { return .allow }
             let outcome = await ToolPermissionPromptService.requestPolicyApprovalOutcome(
                 toolName: "image",
                 description: ImageTool.toolDescription,
+                descriptionIsForModel: true,
                 argumentsJSON: argumentsJSON,
                 offersRunLease: runScope != nil,
                 commitApproval: { outcome in

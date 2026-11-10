@@ -61,46 +61,48 @@ struct MTPSection: View {
             blurb:
                 "Draft tokens with a fast helper model and verify with the main model in a single step. Engaged per request when the model supports it."
         ) {
-            SettingsField(
-                label: "Mode",
-                hint:
+            SettingsRow(
+                title: "Mode",
+                description:
                     "Default follows the model’s adaptive policy, including compatible bundled DFlash 2 or DSpark. Off disables speculation. On requests a compatible drafter or supported adaptive native MTP. Speed depends on the model and workload."
             ) {
-                Picker("", selection: Binding(
-                    get: {
-                        switch draft.mtp.mode {
-                        case .off: VMLXMTPServerMode.off
-                        case .familyDefault: VMLXMTPServerMode.familyDefault
-                        default: VMLXMTPServerMode.auto
+                AssignedBaseSegmentedPicker(
+                    selection: Binding(
+                        get: {
+                            switch draft.mtp.mode {
+                            case .off: VMLXMTPServerMode.off
+                            case .familyDefault: VMLXMTPServerMode.familyDefault
+                            default: VMLXMTPServerMode.auto
+                            }
+                        },
+                        set: { mode in
+                            var selection = draft.mtp
+                            selection.mode = mode
+                            draft.mtp = NativeMTPSelectionDefault.adaptiveSelection(selection)
                         }
-                    },
-                    set: { mode in
-                        var selection = draft.mtp
-                        selection.mode = mode
-                        draft.mtp = NativeMTPSelectionDefault.adaptiveSelection(selection)
-                    }
-                )) {
-                    Text(L("Off (AR)")).tag(VMLXMTPServerMode.off)
-                    Text(L("Default")).tag(VMLXMTPServerMode.familyDefault)
-                    Text(L("On (Adaptive)")).tag(VMLXMTPServerMode.auto)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                    ),
+                    options: [
+                        .init(VMLXMTPServerMode.off, "Off (AR)"), .init(VMLXMTPServerMode.familyDefault, "Default"),
+                        .init(VMLXMTPServerMode.auto, "On (Adaptive)"),
+                    ]
+                )
+                .fixedSize()
+                .accessibilityLabel(Text("Mode", bundle: .module))
             }
 
             SettingsToggle(
-                title: L("Keep Draft Cache Separate"),
+                title: "Keep Draft Cache Separate",
                 description: "Engine invariant. Disabling produces a validation error.",
                 isOn: $draft.mtp.keepDraftCacheSeparate
             )
 
             SettingsToggle(
-                title: L("Only Accepted Tokens Enter Base Cache"),
+                title: "Only Accepted Tokens Enter Base Cache",
                 description: "Engine invariant. Disabling produces a validation error.",
                 isOn: $draft.mtp.acceptedTokensOnlyEnterBaseCache
             )
 
-            SettingsField(
+            SettingsFieldRow(
                 label: "DFlash 2 Drafter",
                 hint:
                     "The drafter must match the target model. A compatible selected or bundled DFlash 2 or DSpark drafter takes priority over native MTP. Incompatible folders are ignored; the resolved model state is shown below."
@@ -110,14 +112,14 @@ struct MTPSection: View {
                         Button(drafterInfo == nil ? L("Choose Folder…") : L("Change…")) {
                             chooseDrafterFolder()
                         }
-                        .buttonStyle(.bordered)
+                        .assignedSettingsButtonStyle(.secondary)
 
                         if drafterInfo == nil {
                             Link(
                                 L("Qwen 27B drafter…"),
                                 destination: Self.drafterDownloadURL
                             )
-                            .font(.system(size: 11))
+                            .textStyle(.footnote)
                         }
 
                         if draft.mtp.dflash2DrafterPath?.isEmpty == false {
@@ -125,14 +127,14 @@ struct MTPSection: View {
                                 draft.mtp.dflash2DrafterPath = nil
                                 draft.mtp.dflash2BlockSize = nil
                             }
-                            .buttonStyle(.bordered)
+                            .assignedSettingsButtonStyle(.secondary)
                         }
                     }
 
                     if let path = draft.mtp.dflash2DrafterPath, !path.isEmpty {
                         Text(URL(fileURLWithPath: path).lastPathComponent)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.smallLabel)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -140,29 +142,28 @@ struct MTPSection: View {
                     if let problem = drafterProblem {
                         HStack(spacing: 4) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 10))
-                            Text(problem).font(.system(size: 11))
+                                .glyphSize(10)
+                            Text(problem).font(SettingsFont.rowDescription)
                         }
-                        .foregroundColor(theme.errorColor)
+                        .foregroundColor(theme.status.error.foreground)
                     } else if let info = drafterInfo {
                         Text(info.summary)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                     } else {
                         Text(
                             L(
                                 "No external folder selected. Compatible bundled drafters and the model’s native MTP policy still apply. Off (AR) disables speculation."
                             )
                         )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .textStyle(.footnote)
+                        .foregroundColor(theme.text.tertiary)
                     }
                 }
             }
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "Resolved Per Loaded Model") {
+            SettingsFieldRow(label: "Resolved Per Loaded Model") {
                 resolvedStateRows
             }
         }
@@ -261,26 +262,23 @@ struct MTPSection: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
                 Text(value)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(SettingsFont.monoSmall)
                     .textSelection(.enabled)
             }
             Text(detail)
-                .font(.system(size: 10))
+                .font(SettingsFont.footnote)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(0.04))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     /// AppKit `NSOpenPanel` rather than SwiftUI `.fileImporter`, matching

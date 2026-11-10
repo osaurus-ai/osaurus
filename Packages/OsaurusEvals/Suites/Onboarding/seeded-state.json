@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.seeded-state",
+  "domain": "onboarding",
+  "label": "onboarding • the handover holds facts, not the walkthrough",
+  "query": "seeded_state",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "seeded_state"
+    }
+  }
+}

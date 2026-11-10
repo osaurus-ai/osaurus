@@ -11,39 +11,41 @@
 import SwiftUI
 
 struct ProviderRowCard: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+
     /// The leading icon tile content.
     enum Leading {
         /// A catalog provider — renders its `ProviderIcon` and brand gradient.
         case preset(ProviderPreset)
-        /// An explicit SF Symbol (e.g. the "Use an API key" drill-in), tinted
-        /// with the accent gradient on hover.
+        /// An explicit SF Symbol (e.g. the "Use an API key" drill-in) on the
+        /// accent tile.
         case symbol(String)
         /// An SF Symbol carrying its own brand gradient. For rows that are a
         /// real vendor but have no `ProviderPreset` — Claude Code, which drives
         /// a local binary rather than an HTTP endpoint. Without this such a row
-        /// would share the accent gradient with the generic `.symbol` rows and
-        /// read as the same thing on hover.
+        /// would share the accent tile with the generic `.symbol` rows.
         case brandedSymbol(String, gradient: [Color])
     }
 
     private let leading: Leading
-    private let titleText: Text
+    /// Already localized.
+    private let title: String
+    /// Catalog key.
     private let subtitle: String
     private let badge: String?
     private let action: () -> Void
 
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
     private init(
         leading: Leading,
-        titleText: Text,
+        title: String,
         subtitle: String,
         badge: String?,
         action: @escaping () -> Void
     ) {
         self.leading = leading
-        self.titleText = titleText
+        self.title = title
         self.subtitle = subtitle
         self.badge = badge
         self.action = action
@@ -58,7 +60,7 @@ struct ProviderRowCard: View {
     ) {
         self.init(
             leading: .preset(entry.preset),
-            titleText: Text(entry.preset.name),
+            title: entry.preset.name,
             subtitle: entry.pickerSubtitle(preferAPIKey: preferAPIKey),
             badge: entry.preset.badge,
             action: action
@@ -69,7 +71,7 @@ struct ProviderRowCard: View {
     /// key"). `title`/`subtitle` are localization keys.
     ///
     /// Pass `gradient` for a row that represents a real vendor without a
-    /// `ProviderPreset`, so it hovers to its own brand color instead of the
+    /// `ProviderPreset`, so it shows its own brand color instead of the
     /// shared accent.
     init(
         icon: String,
@@ -80,7 +82,7 @@ struct ProviderRowCard: View {
     ) {
         self.init(
             leading: gradient.map { .brandedSymbol(icon, gradient: $0) } ?? .symbol(icon),
-            titleText: Text(LocalizedStringKey(title), bundle: .module),
+            title: LCached(title),
             subtitle: subtitle,
             badge: nil,
             action: action
@@ -88,88 +90,63 @@ struct ProviderRowCard: View {
     }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                iconTile
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        titleText
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-
-                        if let badge, case .preset(let preset) = leading {
-                            ProviderBadge(badge, gradient: preset.gradient)
-                        }
-                    }
-                    Text(LocalizedStringKey(subtitle), bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer(minLength: 8)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                isHovered ? theme.accentColor.opacity(0.4) : theme.cardBorder,
-                                lineWidth: 1
-                            )
-                    )
-            )
-            .scaleEffect(isHovered ? 1.01 : 1.0)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                isHovered = hovering
+        LibraryRow(title: title, subtitle: LCached(subtitle), showsChevron: true, action: action) {
+            leadingTile
+        } badges: {
+            if let badge, case .preset(let preset) = leading {
+                ProviderBadge(badge, gradient: preset.gradient)
             }
         }
     }
 
     @ViewBuilder
-    private var iconTile: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(
-                    LinearGradient(
-                        colors: isHovered
-                            ? hoverGradient : [theme.tertiaryBackground, theme.tertiaryBackground],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 42, height: 42)
-
-            switch leading {
-            case .preset(let preset):
-                ProviderIcon(preset: preset, size: 16, color: isHovered ? .white : theme.secondaryText)
-            case .symbol(let symbol):
-                Image(systemName: symbol)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(isHovered ? .white : theme.secondaryText)
-            case .brandedSymbol(let symbol, _):
-                Image(systemName: symbol)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(isHovered ? .white : theme.secondaryText)
-            }
+    private var leadingTile: some View {
+        switch leading {
+        case .preset(let preset):
+            ProviderIconTile(preset: preset)
+        case .symbol(let symbol):
+            SettingsIconTile(icon: symbol, size: 32)
+        case .brandedSymbol(let symbol, let gradient):
+            SettingsIconTile(icon: symbol, size: 32, gradient: gradient)
         }
     }
+}
 
-    private var hoverGradient: [Color] {
-        switch leading {
-        case .preset(let preset): return preset.gradient
-        case .symbol: return [theme.accentColor, theme.accentColor.opacity(0.7)]
-        case .brandedSymbol(_, let gradient): return gradient
+/// A provider's brand tile: its `ProviderIcon` on the preset gradient, or a
+/// muted cloud when there is no matching preset or the provider is inactive.
+struct ProviderIconTile: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+
+    let preset: ProviderPreset?
+    var size: CGFloat = 32
+    var isActive: Bool = true
+    /// Glyph and wash color when inactive.
+    var inactiveTint: Color?
+
+    var body: some View {
+        let lit = isActive && preset != nil
+        let tint = inactiveTint ?? theme.text.secondary
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+                .fill(
+                    lit
+                        ? AnyShapeStyle(
+                            LinearGradient(
+                                colors: preset?.gradient ?? [],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing))
+                        : AnyShapeStyle(tint.opacity(0.12))
+                )
+            if let preset {
+                ProviderIcon(preset: preset, size: size * 0.45, color: lit ? .white : tint)
+            } else {
+                Image(systemName: "cloud.fill")
+                    .glyphSize(size * 0.45)
+                    .foregroundColor(tint)
+            }
         }
+        .frame(width: size, height: size)
     }
 }

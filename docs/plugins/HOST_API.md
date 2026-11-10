@@ -100,7 +100,7 @@ You give up the early misalignment detection if you do this, so prefer to leave 
 
 ## Config
 
-Per-plugin secrets, scoped by `(plugin_id, agent_id)` and stored in the macOS Keychain.
+Per-plugin config, scoped by `(plugin_id, agent_id)`. Keys the manifest declares under `secrets` resolve through Keys ([CREDENTIALS.md](../CREDENTIALS.md)): the calling agent's own value, then the value shared by all agents. `config_set` / `config_delete` of a declared secret change the calling agent's own value. Any other key is plugin config or runtime state and is stored per plugin and agent in the macOS Keychain as before.
 
 ### `config_get(key) -> char*`
 

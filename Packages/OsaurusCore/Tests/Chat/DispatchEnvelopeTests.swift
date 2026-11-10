@@ -218,7 +218,7 @@ struct DispatchEnvelopeTests {
 
     @Test
     func selfScheduledRun_withoutPreviousRun() throws {
-        let raw = NextRunScheduler.composeDispatchPrompt(entry: entry("Check the inbox and triage."), previousRun: nil)
+        let raw = SelfScheduleAutomations.composeDispatchPrompt(entry: entry("Check the inbox and triage."), previousRun: nil)
         let env = try #require(DispatchEnvelope.parse(raw, sessionSource: .selfSchedule))
         #expect(env.displayText == "Check the inbox and triage.")
         guard case let .selfScheduledRun(scheduledBy, scheduledAt, previousRun) = env.kind else {
@@ -234,40 +234,27 @@ struct DispatchEnvelopeTests {
 
     @Test
     func selfScheduledRun_withPreviousRun_carriesSentenceInTooltip() throws {
-        let previous = AgentRunRecord(
-            id: UUID(),
-            agentId: UUID(),
-            triggerKind: .schedule,
-            triggerPayload: "{}",
-            instructions: "earlier",
-            startedAt: Date(timeIntervalSince1970: 1_799_990_000),
-            endedAt: Date(timeIntervalSince1970: 1_799_990_500),
-            status: .success
+        let previous = SelfScheduleAutomations.PreviousRun(
+            state: .succeeded,
+            finishedAt: Date(timeIntervalSince1970: 1_799_990_500)
         )
-        let raw = NextRunScheduler.composeDispatchPrompt(
+        let raw = SelfScheduleAutomations.composeDispatchPrompt(
             entry: entry("Follow up on the deploy.\nThen post a summary."),
             previousRun: previous
         )
         let env = try #require(DispatchEnvelope.parse(raw, sessionSource: .selfSchedule))
         #expect(env.displayText == "Follow up on the deploy.\nThen post a summary.")
         guard case let .selfScheduledRun(_, _, previousRun) = env.kind else { return }
-        #expect(previousRun?.hasPrefix(NextRunScheduler.previousRunLinePrefix) == true)
+        #expect(previousRun?.hasPrefix(SelfScheduleAutomations.previousRunLinePrefix) == true)
         #expect(env.badges.first?.tooltip?.contains("Your previous run") == true)
     }
 
     // MARK: - Watcher run
 
-    private func watcher(_ instructions: String) -> Watcher {
-        Watcher(
-            name: "Downloads tidy", instructions: instructions,
-            agentId: UUID(), watchPath: nil, watchBookmark: Data([0x01])
-        )
-    }
-
     @Test
     func watcherRun_firstIterationWithFolderAndPaths() throws {
-        let raw = WatcherManager.shared.buildDispatchPrompt(
-            for: watcher("Sort new files into folders by type."),
+        let raw = FolderEventSource.buildDispatchPrompt(
+            instructions: "Sort new files into folders by type.",
             iteration: 1,
             resolvedWatchPath: "/Users/me/Downloads",
             changedPaths: ["a.pdf", "b.png"]
@@ -289,9 +276,10 @@ struct DispatchEnvelopeTests {
 
     @Test
     func watcherRun_followUpWithoutFolderOrPaths() throws {
-        let raw = WatcherManager.shared.buildDispatchPrompt(
-            for: watcher("Keep this tidy."),
-            iteration: 2
+        let raw = FolderEventSource.buildDispatchPrompt(
+            instructions: "Keep this tidy.",
+            iteration: 2,
+            resolvedWatchPath: nil
         )
         let env = try #require(DispatchEnvelope.parse(raw, sessionSource: .watcher))
         #expect(env.displayText == "Keep this tidy.")
@@ -301,16 +289,16 @@ struct DispatchEnvelopeTests {
 
     @Test
     func watcherRun_overflowCountsAllChangedFiles() throws {
-        let many = (0..<(WatcherManager.dispatchPromptChangedPathCap + 5)).map { "file-\($0).txt" }
-        let raw = WatcherManager.shared.buildDispatchPrompt(
-            for: watcher("Organise."),
+        let many = (0..<(FolderEventSource.dispatchPromptChangedPathCap + 5)).map { "file-\($0).txt" }
+        let raw = FolderEventSource.buildDispatchPrompt(
+            instructions: "Organise.",
             iteration: 1,
             resolvedWatchPath: "/tmp/watched",
             changedPaths: many
         )
         let env = try #require(DispatchEnvelope.parse(raw, sessionSource: .watcher))
         guard case let .watcherRun(_, changedPaths, overflow, _) = env.kind else { return }
-        #expect(changedPaths.count == WatcherManager.dispatchPromptChangedPathCap)
+        #expect(changedPaths.count == FolderEventSource.dispatchPromptChangedPathCap)
         #expect(overflow == 5)
         #expect(env.badges.last?.label == "\(many.count) changed")
         #expect(env.badges.last?.tooltip?.hasSuffix("…and 5 more") == true)
@@ -318,8 +306,8 @@ struct DispatchEnvelopeTests {
 
     @Test
     func watcherTemplate_notParsedOutsideWatcherSessions() {
-        let raw = WatcherManager.shared.buildDispatchPrompt(
-            for: watcher("Sort files."),
+        let raw = FolderEventSource.buildDispatchPrompt(
+            instructions: "Sort files.",
             iteration: 1,
             resolvedWatchPath: "/tmp/watched",
             changedPaths: ["x"]
@@ -354,14 +342,14 @@ struct DispatchEnvelopeTests {
         #expect(d.kind == .delegatedTask(resuming: false))
         #expect(d.badges.map(\.label) == ["Folder unreadable", "Delegated task"])
 
-        let scheduled = preamble + NextRunScheduler.composeDispatchPrompt(entry: entry("Task B"), previousRun: nil)
+        let scheduled = preamble + SelfScheduleAutomations.composeDispatchPrompt(entry: entry("Task B"), previousRun: nil)
         let s = try #require(DispatchEnvelope.parse(scheduled, sessionSource: .selfSchedule))
         #expect(s.displayText == "Task B")
         #expect(s.folderUnreadablePath == "/gone")
 
         let watched =
             preamble
-            + WatcherManager.shared.buildDispatchPrompt(for: watcher("Task C"), iteration: 1, resolvedWatchPath: "/gone")
+            + FolderEventSource.buildDispatchPrompt(instructions: "Task C", iteration: 1, resolvedWatchPath: "/gone")
         let w = try #require(DispatchEnvelope.parse(watched, sessionSource: .watcher))
         #expect(w.displayText == "Task C")
         #expect(w.folderUnreadablePath == "/gone")
@@ -378,7 +366,7 @@ struct DispatchEnvelopeTests {
         #expect(DispatchEnvelope.parse(AgentDelegationDispatcher.delegatedPrompt(input: "  \n"), sessionSource: .delegation) == nil)
         #expect(
             DispatchEnvelope.parse(
-                NextRunScheduler.composeDispatchPrompt(entry: entry(""), previousRun: nil),
+                SelfScheduleAutomations.composeDispatchPrompt(entry: entry(""), previousRun: nil),
                 sessionSource: .selfSchedule
             ) == nil
         )
@@ -453,9 +441,36 @@ struct DispatchEnvelopeTests {
 
     @Test
     func chatTurnData_displayContentMirrorsTurnMemo() {
-        let raw = NextRunScheduler.composeDispatchPrompt(entry: entry("Water the plants"), previousRun: nil)
+        let raw = SelfScheduleAutomations.composeDispatchPrompt(entry: entry("Water the plants"), previousRun: nil)
         let data = ChatTurnData(role: .user, content: raw)
         #expect(data.displayContent(sessionSource: .selfSchedule) == "Water the plants")
         #expect(ChatTurnData(role: .user, content: "hello").displayContent(sessionSource: .selfSchedule) == "hello")
+    }
+
+    @Test
+    func badgeRow_keepsWarningsWhenItClips() {
+        typealias Badge = DispatchEnvelope.Badge
+        let badges = [
+            Badge(symbol: "person", label: "@alice"),
+            Badge(symbol: "number", label: "via slack"),
+            Badge(symbol: "bubble.left.and.text.bubble.right", label: "#ops"),
+            Badge(symbol: "paperclip", label: "2 attachments"),
+            Badge(symbol: "scissors", label: "Trimmed", tone: .warning),
+            Badge(symbol: "exclamationmark.shield.fill", label: "Flagged", tone: .warning),
+        ]
+        let visible = NativeDispatchBadgeRow.visibleBadges(badges)
+        #expect(visible.count == NativeDispatchBadgeRow.maxVisibleBadges)
+        #expect(visible.map(\.label) == ["@alice", "Trimmed", "Flagged", "+3"])
+        #expect(visible.last?.tooltip == "via slack\n#ops\n2 attachments")
+        #expect(visible.last?.tone == .neutral)
+
+        let short = Array(badges.prefix(3))
+        #expect(NativeDispatchBadgeRow.visibleBadges(short) == short)
+    }
+
+    @Test
+    func authorChip_usesPersonForTheOwner() {
+        #expect(DispatchEnvelope.authorSymbol(.owner) == "person")
+        #expect(DispatchEnvelope.authorSymbol(.teammate) == "person.2")
     }
 }

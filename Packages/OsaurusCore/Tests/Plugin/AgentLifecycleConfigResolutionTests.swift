@@ -233,42 +233,34 @@ struct ToolSecretsResolutionPolicyTests {
         ToolSecretsKeychain.saveSecret("global", id: "api_key", for: pluginId, agentId: Agent.defaultId)
 
         #expect(ToolSecretsKeychain.resolvedSecret(id: "api_key", for: pluginId, agentId: agent) == "global")
-        #expect(ToolSecretsKeychain.hasResolvedSecret(id: "api_key", for: pluginId, agentId: agent))
     }
 
     @Test func missingEverywhereResolvesNil() {
         let pluginId = "com.test.resolve.\(UUID().uuidString)"
         let agent = UUID()
         #expect(ToolSecretsKeychain.resolvedSecret(id: "api_key", for: pluginId, agentId: agent) == nil)
-        #expect(!ToolSecretsKeychain.hasResolvedSecret(id: "api_key", for: pluginId, agentId: agent))
     }
 
     /// Required-secret checks must agree with what tool payload injection
-    /// delivers: a key satisfied by a Plugins-tab (default-agent) write
-    /// counts as configured for every agent.
-    @Test func requiredSecretChecksHonorDefaultFallback() {
-        let pluginId = "com.test.resolve.required.\(UUID().uuidString)"
-        let agent = UUID()
-        defer {
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: Agent.defaultId)
+    /// delivers: a key shared by all agents counts as configured for every
+    /// agent.
+    @Test func requiredSecretChecksHonorSharedKeys() {
+        CredentialStore._withIsolatedStoreForTesting {
+            let pluginId = "com.test.resolve.required.\(UUID().uuidString)"
+            let agent = UUID()
+            let specs = [
+                PluginManifest.SecretSpec(id: "bot_token", label: "Bot Token"),
+                PluginManifest.SecretSpec(id: "optional_key", label: "Optional", required: false),
+            ]
+
+            #expect(
+                PluginCredentials.missingRequired(specs: specs, pluginId: pluginId, agentId: agent).map(\.id)
+                    == ["bot_token"])
+
+            PluginCredentials.save("tok", pluginId: pluginId, specId: "bot_token", agentId: nil)
+
+            #expect(PluginCredentials.missingRequired(specs: specs, pluginId: pluginId, agentId: agent).isEmpty)
         }
-        let specs = [
-            PluginManifest.SecretSpec(id: "bot_token", label: "Bot Token"),
-            PluginManifest.SecretSpec(id: "optional_key", label: "Optional", required: false),
-        ]
-
-        #expect(!ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: pluginId, agentId: agent))
-        #expect(
-            ToolSecretsKeychain.getMissingRequiredSecrets(specs: specs, for: pluginId, agentId: agent)
-                .map(\.id) == ["bot_token"]
-        )
-
-        ToolSecretsKeychain.saveSecret("tok", id: "bot_token", for: pluginId, agentId: Agent.defaultId)
-
-        #expect(ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: pluginId, agentId: agent))
-        #expect(
-            ToolSecretsKeychain.getMissingRequiredSecrets(specs: specs, for: pluginId, agentId: agent).isEmpty
-        )
     }
 
     /// `config_get` (via the host context, inside a TLS scope bound to a
@@ -299,5 +291,27 @@ struct ToolSecretsResolutionPolicyTests {
         // Anonymous context (no bound agent) still refuses to read anything.
         let anonymous = ctx.configGet(key: "bot_token")
         #expect(anonymous == nil, "no agent context must not leak the default namespace")
+    }
+
+    /// The Default agent reads a declared secret from the keys shared by
+    /// all agents, never from an agent's private value.
+    @Test func configGetForDefaultAgentUsesSharedKeys() throws {
+        try CredentialStore._withIsolatedStoreForTesting {
+            let pluginId = "com.test.resolve.default.\(UUID().uuidString)"
+            PluginCredentials.registerDeclaredSecrets(pluginId: pluginId, ids: ["api_key"])
+            defer { PluginCredentials.registerDeclaredSecrets(pluginId: pluginId, ids: []) }
+            PluginCredentials.save("shared-value", pluginId: pluginId, specId: "api_key", agentId: nil)
+            PluginCredentials.save("private-value", pluginId: pluginId, specId: "api_key", agentId: UUID())
+
+            let ctx = try PluginHostContext(pluginId: pluginId)
+            defer { ctx.teardown() }
+            let (declared, undeclared): (String?, String?) = PluginHostContext.withTLSScope(
+                pluginId: pluginId, agentId: Agent.defaultId
+            ) {
+                (ctx.configGet(key: "api_key"), ctx.configGet(key: "tunnel_url"))
+            }
+            #expect(declared == "shared-value")
+            #expect(undeclared == nil)
+        }
     }
 }

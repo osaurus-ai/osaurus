@@ -2,20 +2,16 @@
 //  ConfigureToolExposureTests.swift
 //  OsaurusCoreTests
 //
-//  Composer contract for the Default (configuration) agent's tool surface
-//  after the consolidation:
+//  Composer contract for the Orchestrator and the Configurator after the
+//  split:
 //
 //   * For the Default agent (`Agent.defaultId`), `resolveTools` returns
-//     EXACTLY `orchestratorAllowedToolNames` — the consolidated configure
-//     surface (the `osaurus_inspect` read
-//     + the single declarative `osaurus_config` write) plus the three
-//     agent-loop tools, `get_current_time`, and the native search pair
-//     (`web_search` / `search_and_extract`) for quick lookups. Worker-owned
-//     tools (`share_artifact`) are NEVER present — workers deliver their own
-//     artifacts. The writes load
-//     DIRECTLY (no `capabilities_load` step), and the
-//     capability-search gateway (`capabilities_discover` /
-//     `capabilities_load`) is NOT present for the Default agent.
+//     EXACTLY `orchestratorAllowedToolNames`: the routing surface (`status`,
+//     `state`, the two handoffs, `run_workflow`, `clarify`). No configure tool,
+//     no folder tool, and no worker-owned tool reaches it.
+//   * The Configurator's schema is the consolidated configure surface
+//     (`osaurus_help`, `osaurus_inspect`, `osaurus_config`) and nothing
+//     that acts outside Osaurus.
 //   * For every other agent, every configure tool (reads + writes) is
 //     stripped from the resolved schema, even when a registration path leaks
 //     one into the always-loaded surface.
@@ -53,7 +49,7 @@ struct ConfigureToolExposureTests {
     }
 
     @Test
-    func defaultAgent_seesExactlyConsolidatedConfigureSurface() async {
+    func defaultAgent_seesExactlyTheRoutingSurface() async {
         Self.ensureBootstrapped()
         // Isolate the global delegation snapshot: the default-agent schema
         // gates `spawn_*` on `SubagentConfigurationStore.snapshot()`, so a
@@ -67,12 +63,9 @@ struct ConfigureToolExposureTests {
             executionMode: .none
         )
         let names = Set(tools.map { $0.function.name })
-        #expect(names == ToolRegistry.orchestratorAllowedToolNames)
-        // Structural: the allowed set is the configure surface (reads +
-        // writes) plus exactly the three agent-loop tools,
-        // `get_current_time`, `calculate`, and the two native search tools,
-        // with no overlap.
-        #expect(names.count == ToolRegistry.configureToolNames.count + 7)
+        // `run_workflow` joins only when a workflow is visible to the Orchestrator.
+        #expect(names == ToolRegistry.orchestratorAllowedToolNames.subtracting([RunWorkflowTool.toolName]))
+        #expect(names.isDisjoint(with: ToolRegistry.configureToolNames))
     }
 
     /// Orchestrator invariant: the Default agent's schema never carries the
@@ -95,13 +88,10 @@ struct ConfigureToolExposureTests {
         }
     }
 
-    /// With a working folder bound, the Orchestrator's folder surface is
-    /// exactly the two reads its addendum promises (`file_read` /
-    /// `file_search`). Copy, undo, history, and redaction are folder WORK
-    /// and stay with the workers — before this pin `file_copy`, `file_undo`,
-    /// `file_operation_history`, and `detect_pii` leaked through.
+    /// A bound working folder adds nothing to the Orchestrator's schema:
+    /// folder work, reading included, belongs to workers.
     @Test
-    func defaultAgent_folderSurfaceIsReadOnly() async {
+    func defaultAgent_folderAddsNoTools() async {
         Self.ensureBootstrapped()
         let lease = await acquireSubagentStoreSandbox("configure-exposure-folder")
         defer { lease.release() }
@@ -123,50 +113,65 @@ struct ConfigureToolExposureTests {
         let folderTools = names.intersection(
             ToolRegistry.coreWorkspaceToolNames.union(ToolRegistry.hostFolderExtraToolNames)
         )
-        #expect(folderTools == ["file_read", "file_search"], "got \(folderTools.sorted())")
-        for leaked in ["file_copy", "file_undo", "file_operation_history", "detect_pii", "redact_file"] {
-            #expect(ToolRegistry.orchestratorExcludedToolNames.contains(leaked))
+        #expect(folderTools.isEmpty, "got \(folderTools.sorted())")
+    }
+
+    /// Osaurus itself is the Configurator's: the Orchestrator carries the
+    /// handoff, never a configure tool.
+    @Test
+    func defaultAgent_routesConfigurationThroughTheHandoff() async {
+        Self.ensureBootstrapped()
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: Self.makeSnapshot(agentId: Agent.defaultId),
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(names.contains(ConfiguratorHandoffTool.toolName))
+        for configure in ToolRegistry.configureToolNames {
+            #expect(!names.contains(configure), "\(configure) leaked into the Orchestrator schema")
         }
     }
 
     @Test
-    func defaultAgent_includesEveryConsolidatedWriteDirectly() async {
+    func configurator_carriesTheConsolidatedConfigureSurfaceOnly() {
         Self.ensureBootstrapped()
-        let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
-        let tools = SystemPromptComposer.resolveTools(
-            snapshot: snapshot,
-            executionMode: .none
-        )
-        let names = Set(tools.map { $0.function.name })
-        // The consolidated writes are now loaded DIRECTLY — no capability
-        // search round-trip. Each per-domain tool must be in the schema.
+        let names = ToolRegistry.configuratorAllowedToolNames
+        for name in ["osaurus_help", "osaurus_inspect", "osaurus_config"] {
+            #expect(names.contains(name), "Configurator schema misses \(name)")
+        }
         for write in ToolRegistry.configureWriteToolNames {
-            #expect(names.contains(write), "consolidated write \(write) missing from default-agent schema")
+            #expect(names.contains(write), "consolidated write \(write) missing from the Configurator")
         }
-        // And the consolidated generic read.
-        #expect(names.contains("osaurus_inspect"))
-    }
-
-    @Test
-    func defaultAgent_includesTheDeclarativeWrite() async {
-        Self.ensureBootstrapped()
-        let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
-        let tools = SystemPromptComposer.resolveTools(
-            snapshot: snapshot,
-            executionMode: .none
-        )
-        let names = Set(tools.map { $0.function.name })
-        #expect(
-            names.contains("osaurus_config"),
-            "expected the declarative write tool; got \(names.sorted())"
-        )
-        // The pre-consolidation per-domain write tools are gone.
         for legacy in [
             "osaurus_provider", "osaurus_model", "osaurus_mcp",
             "osaurus_search", "osaurus_plugin", "osaurus_schedule",
             "osaurus_watcher", "osaurus_agent", "osaurus_settings",
         ] {
-            #expect(!names.contains(legacy), "legacy write tool \(legacy) leaked into the schema")
+            #expect(!names.contains(legacy), "legacy write tool \(legacy) is back")
+        }
+        #expect(names.isDisjoint(with: ToolRegistry.orchestratorRoutingToolNames))
+        #expect(!names.contains("spawn_agent"))
+        #expect(!names.contains("file_read"))
+    }
+
+    @Test
+    func configuratorChat_getsExactlyTheAgentCreationSurface() async {
+        Self.ensureBootstrapped()
+        let snapshot = Self.makeSnapshot(agentId: Agent.configuratorId)
+        let tools = SystemPromptComposer.resolveTools(snapshot: snapshot, executionMode: .none)
+        let names = Set(tools.map { $0.function.name })
+        #expect(names.isSubset(of: ToolRegistry.configuratorCreationToolNames), "\(names.sorted())")
+        #expect(names.contains(AgentDraftTool.toolName))
+        #expect(!names.contains("osaurus_config"), "a New Agent chat must never write config directly")
+    }
+
+    @Test
+    func agentDraft_neverReachesAnyOtherAgent() async {
+        Self.ensureBootstrapped()
+        for agentId in [Agent.defaultId, Agent.architectId, UUID()] {
+            let tools = SystemPromptComposer.resolveTools(
+                snapshot: Self.makeSnapshot(agentId: agentId), executionMode: .none)
+            #expect(!tools.contains { $0.function.name == AgentDraftTool.toolName }, "\(agentId)")
         }
     }
 

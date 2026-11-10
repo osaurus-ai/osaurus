@@ -39,15 +39,15 @@ struct WorkspaceAuditCard: View {
     }
 
     var body: some View {
-        AgentDetailSection(
-            title: L("Audit trail"),
-            icon: "list.bullet.clipboard.fill",
-            subtitle: records.isEmpty ? nil : "\(records.count)",
-            trailing: { headerActions }
+        SettingsSection(
+            title: "Audit (this Mac)",
+            caption: records.isEmpty ? nil : "\(records.count)",
+            anchorId: "workspaces.audit",
+            accessory: { headerActions }
         ) {
             if records.isEmpty {
-                AgentSectionEmptyState(
-                    icon: "list.bullet.clipboard",
+                SettingsEmptyState(
+                    inline: "list.bullet.clipboard",
                     title: "No audit events recorded on this Mac yet",
                     hint: "Teammate access, runs on your shared agents, and your own workspace actions are recorded here."
                 )
@@ -60,8 +60,8 @@ struct WorkspaceAuditCard: View {
 
                 if let exportNote {
                     Text(exportNote)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                 }
 
                 VStack(alignment: .leading, spacing: 0) {
@@ -75,15 +75,15 @@ struct WorkspaceAuditCard: View {
 
                 if filtered.count > Self.collapsedLimit {
                     Button {
-                        withAnimation(.easeOut(duration: 0.15)) { showAll.toggle() }
+                        withAnimation(theme.motion.quick) { showAll.toggle() }
                     } label: {
                         Text(
                             showAll
                                 ? L("Show fewer")
                                 : String(format: L("Show all %d events"), filtered.count)
                         )
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .textStyle(.footnote, weight: 500)
+                        .foregroundColor(theme.text.link)
                     }
                     .buttonStyle(.plain)
                 }
@@ -93,8 +93,8 @@ struct WorkspaceAuditCard: View {
                 "Recorded by this Mac only. Actions other members take on osaurus.ai appear here once their effect reaches this host. The chain is tamper-evident: Verify recomputes every hash.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
         .task(id: workspaceId) {
@@ -121,11 +121,11 @@ struct WorkspaceAuditCard: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "checkmark.shield")
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .glyphSize(10.5, weight: .semibold)
                     Text("Verify", bundle: .module)
                 }
             }
-            .buttonStyle(SecondaryButtonStyle(isLoading: isVerifying, size: .compact))
+            .assignedSettingsButtonStyle(.secondary, isLoading: isVerifying, size: .compact)
             .disabled(records.isEmpty || isVerifying)
             .help(L("Recompute every hash in the chain and check the head marker"))
 
@@ -134,11 +134,11 @@ struct WorkspaceAuditCard: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .glyphSize(10.5, weight: .semibold)
                     Text("Export", bundle: .module)
                 }
             }
-            .buttonStyle(SecondaryButtonStyle(isLoading: isExporting, size: .compact))
+            .assignedSettingsButtonStyle(.secondary, isLoading: isExporting, size: .compact)
             .disabled(records.isEmpty || isExporting)
             .help(L("Reveal the audit log file (JSON Lines) in Finder"))
         }
@@ -155,42 +155,35 @@ struct WorkspaceAuditCard: View {
     }
 
     private func filterChip(_ category: WorkspaceAuditEventKind.Category?, label: String) -> some View {
-        let selected = filter == category
-        return Button {
-            withAnimation(.easeOut(duration: 0.12)) {
+        FilterChip(label, isSelected: filter == category) {
+            withAnimation(theme.motion.quick) {
                 filter = category
                 showAll = false
             }
-        } label: {
-            Text(label)
-                .font(.system(size: 10.5, weight: selected ? .semibold : .medium))
-                .foregroundColor(selected ? theme.accentColor : theme.secondaryText)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule().fill(
-                        selected ? theme.accentColor.opacity(0.14) : theme.tertiaryBackground.opacity(0.5)
-                    )
-                )
         }
-        .buttonStyle(.plain)
     }
 
     private func verificationRow(_ verification: WorkspaceAuditVerification) -> some View {
         HStack(spacing: 8) {
             Image(systemName: verification.isIntact ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(verification.isIntact ? theme.successColor : theme.errorColor)
+                .glyphSize(12, weight: .semibold)
+                .foregroundColor(
+                    verification.isIntact ? theme.status.success.foreground : theme.status.error.foreground
+                )
             Text(verificationText(verification))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill((verification.isIntact ? theme.successColor : theme.errorColor).opacity(0.08))
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(
+                    (verification.isIntact ? theme.status.success.foreground : theme.status.error.foreground).opacity(
+                        0.08
+                    )
+                )
         )
     }
 
@@ -243,6 +236,7 @@ struct WorkspaceAuditCard: View {
         switch category {
         case .access: return L("Access")
         case .runs: return L("Runs")
+        case .approvals: return L("Approvals")
         case .denials: return L("Denials")
         case .administration: return L("Admin")
         }
@@ -275,20 +269,20 @@ struct WorkspaceAuditRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
+                .glyphSize(11, weight: .semibold)
                 .foregroundColor(tint)
                 .frame(width: 16, alignment: .center)
-                .padding(.top, 2)
+                .padding(.top, theme.space.s2)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(2)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 10.5))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(2)
                 }
             }
@@ -296,11 +290,11 @@ struct WorkspaceAuditRow: View {
             Spacer(minLength: 8)
 
             Text(record.timestamp, format: .dateTime.month(.abbreviated).day().hour().minute())
-                .font(.system(size: 10.5))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .monospacedDigit()
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, theme.space.s8)
         .help(String(format: L("#%d · %@"), record.seq, record.event.rawValue))
     }
 
@@ -312,6 +306,18 @@ struct WorkspaceAuditRow: View {
             return OsaurusRouterWorkspacePerson.shortWallet(wallet)
         }
         return L("A teammate")
+    }
+
+    /// The teammate or remote agent an approval or owner message was about.
+    private var callerLabel: String {
+        if let name = record.details["caller_agent_name"] {
+            let address = record.details["caller_agent_address"].map(OsaurusRouterWorkspacePerson.shortWallet)
+            return [name, address].compactMap { $0 }.joined(separator: " · ")
+        }
+        if let handle = record.details["caller_handle"] { return handle }
+        if record.event == .approvalRequested { return actorLabel }
+        if let wallet = record.details["caller_wallet"] { return OsaurusRouterWorkspacePerson.shortWallet(wallet) }
+        return L("a teammate")
     }
 
     private var agentLabel: String {
@@ -358,6 +364,41 @@ struct WorkspaceAuditRow: View {
             )
         case .outboundRunRefused:
             return String(format: L("Your run on %@ was refused"), agentLabel)
+        case .approvalRequested:
+            return String(
+                format: L("%@ asked to use %@ on %@"), callerLabel, record.details["tool"] ?? L("a tool"), agentLabel
+            )
+        case .approvalGranted:
+            return String(
+                format: record.details["scope"] == "conversation"
+                    ? L("You allowed %@ on %@ for the conversation") : L("You allowed %@ on %@"),
+                record.details["tool"] ?? L("a tool"), agentLabel
+            )
+        case .approvalDenied:
+            return String(format: L("You denied %@ on %@"), record.details["tool"] ?? L("a tool"), agentLabel)
+        case .approvalTimedOut:
+            return String(
+                format: L("No answer to %@ on %@ in time"), record.details["tool"] ?? L("a tool"), agentLabel
+            )
+        case .participantMessage:
+            return String(format: L("You wrote in %@'s conversation with %@"), callerLabel, agentLabel)
+        case .workflowRunStarted:
+            return String(
+                format: L("%@ ran the workflow %@ through %@"), actorLabel, record.details["workflow"] ?? "",
+                agentLabel)
+        case .workflowRunFinished:
+            if record.details["status"] == WorkflowRunStatus.awaitingUser.rawValue {
+                return String(
+                    format: L("%@'s run of %@ is waiting for your answer"), actorLabel,
+                    record.details["workflow"] ?? "")
+            }
+            let ok = record.details["success"] == "true"
+            return String(
+                format: ok ? L("%@'s run of %@ finished") : L("%@'s run of %@ ended early"),
+                actorLabel, record.details["workflow"] ?? "")
+        case .workflowRunRefused:
+            return String(
+                format: L("%@ was refused the workflow %@"), actorLabel, record.details["workflow"] ?? "")
         case .workspaceCreated:
             return L("You created this workspace")
         case .workspaceRenamed:
@@ -386,16 +427,16 @@ struct WorkspaceAuditRow: View {
         case .joinRedeemed:
             return L("You joined this workspace")
         case .billingPreferenceChanged:
-            return String(format: L("You changed which pool %@ bills"), agentLabel)
+            return String(format: L("You changed who pays for %@"), agentLabel)
         case .poolTopUp:
             return String(
-                format: L("You added %@ to the pool"),
+                format: L("You added %@ to workspace credits"),
                 record.details["amount_micro"].map(OsaurusRouter.formatMicroAsCredits) ?? L("credits")
             )
         case .poolAutoReloadChanged:
             return record.details["enabled"] == "true"
-                ? L("You turned on pool auto-reload")
-                : L("You turned off pool auto-reload")
+                ? L("You turned on auto-reload for workspace credits")
+                : L("You turned off auto-reload for workspace credits")
         }
     }
 
@@ -420,6 +461,14 @@ struct WorkspaceAuditRow: View {
             if let detail = record.details["detail"] { parts.append(detail) }
         case .scopeDenied:
             parts.append(L("outside this key's allowed routes"))
+        case .approvalRequested, .approvalGranted, .approvalDenied, .approvalTimedOut:
+            if record.event != .approvalRequested { parts.append(String(format: L("for %@"), callerLabel)) }
+            if let surface = record.details["surface"].flatMap(AttentionSurface.init(rawValue:)) {
+                parts.append(surface.displayName)
+            }
+            if let wait = record.details["wait_ms"].flatMap(Int.init) {
+                parts.append(String(format: L("after %ds"), wait / 1000))
+            }
         case .outboundRunStarted, .outboundRunFinished, .outboundRunRefused:
             if let source = record.details["source"], !source.isEmpty {
                 parts.append(source.replacingOccurrences(of: "_", with: " "))
@@ -428,13 +477,17 @@ struct WorkspaceAuditRow: View {
             if record.event == .outboundRunFinished, let summary = record.details["summary"], !summary.isEmpty {
                 parts.append(summary)
             }
+        case .workflowRunFinished:
+            if let status = record.details["status"] { parts.append(status.replacingOccurrences(of: "_", with: " ")) }
+        case .workflowRunRefused:
+            if let reason = record.details["reason"] { parts.append(reason.replacingOccurrences(of: "_", with: " ")) }
         case .memberRoleChanged:
             if let previous = record.details["previous_role"] {
                 parts.append(String(format: L("was %@"), previous))
             }
         case .billingPreferenceChanged:
             if let bills = record.details["bills_workspace"] {
-                parts.append(bills == "none" ? L("now personal credits") : L("now the workspace pool"))
+                parts.append(bills == "none" ? L("now personal credits") : L("now workspace credits"))
             }
         case .poolAutoReloadChanged:
             if record.details["enabled"] == "true",
@@ -461,13 +514,21 @@ struct WorkspaceAuditRow: View {
         case .runs:
             switch record.event {
             case .runStoppedByOwner, .taskCancelled: return "stop.circle.fill"
-            case .runFinished, .outboundRunFinished:
+            case .runFinished, .outboundRunFinished, .workflowRunFinished:
                 return record.details["success"] == "true" ? "checkmark.circle.fill" : "xmark.circle"
             case .outboundRunStarted: return "arrow.up.right.circle.fill"
             default: return "play.circle.fill"
             }
         case .denials:
             return "hand.raised.fill"
+        case .approvals:
+            switch record.event {
+            case .approvalGranted: return "checkmark.shield.fill"
+            case .approvalDenied: return "xmark.shield.fill"
+            case .approvalTimedOut: return "clock.badge.xmark"
+            case .participantMessage: return "text.bubble.fill"
+            default: return "hand.raised.square.fill"
+            }
         case .administration:
             return "person.badge.key.fill"
         }
@@ -475,16 +536,24 @@ struct WorkspaceAuditRow: View {
 
     private var tint: Color {
         switch record.event.category {
-        case .denials: return theme.errorColor
+        case .denials: return theme.status.error.foreground
         case .runs:
-            if record.event == .runFinished || record.event == .outboundRunFinished,
+            if record.event == .runFinished || record.event == .outboundRunFinished
+                || record.event == .workflowRunFinished,
                 record.details["success"] != "true"
             {
-                return theme.warningColor
+                return theme.status.warning.foreground
             }
-            return theme.accentColor
-        case .access: return record.event == .keyRevoked ? theme.warningColor : theme.successColor
-        case .administration: return theme.secondaryText
+            return theme.action.primary.default.background
+        case .access:
+            return record.event == .keyRevoked ? theme.status.warning.foreground : theme.status.success.foreground
+        case .approvals:
+            switch record.event {
+            case .approvalGranted: return theme.status.success.foreground
+            case .approvalDenied, .approvalTimedOut: return theme.status.warning.foreground
+            default: return theme.action.primary.default.background
+            }
+        case .administration: return theme.text.secondary
         }
     }
 }

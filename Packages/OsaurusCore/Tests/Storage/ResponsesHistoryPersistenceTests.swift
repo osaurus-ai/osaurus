@@ -93,6 +93,14 @@ enum ResponsesHistoryFixture {
         }
         return dateDifferences + (try differingFields(actual, represented))
     }
+
+    /// The Sync store keeps every date as whole Unix milliseconds. Compare
+    /// against `expected` in that representation; every other field stays exact.
+    static func syncRoundTripDifferences(_ actual: ChatTurnData, _ expected: ChatTurnData) throws -> [String] {
+        let represented = try SyncConversationMapper.makeDecoder().decode(
+            ChatTurnData.self, from: SyncConversationMapper.makeEncoder().encode(expected))
+        return try differingFields(actual, represented)
+    }
 }
 
 @Suite(.serialized)
@@ -137,72 +145,58 @@ struct ResponsesHistoryPersistenceTests {
         }
     }
 
-    @Test(arguments: ["sync", "async", "append"])
-    func nativeStateSurvivesActualDiskCloseAndNewDatabaseInstance(writePath: String) async throws {
-        try await withPlaintextRoot {
-            let db = ChatHistoryDatabase()
-            try db.open()
-            defer { db.close() }
+    @MainActor
+    @Test(arguments: ["sync", "async"])
+    func nativeStateSurvivesSyncStoreSaveAndReload(writePath: String) async throws {
+        try await ChatHistoryTestStorage.run {
+            _ = try SyncService.shared.open()
+            let store = SyncConversationStore.shared
+            try store.open()
             let native = try ResponsesHistoryFixture.turn()
-            var signed = ChatTurnData(role: .assistant, content: "Signed answer", thinking: "actual signed reasoning")
+            var signed = ChatTurnData(
+                role: .assistant, content: "Signed answer", thinking: "actual signed reasoning",
+                createdAt: Date(timeIntervalSince1970: 120))
             signed.anthropicThinkingBlocks = try ResponsesHistoryFixture.signedBlocks()
-            let user = ChatTurnData(role: .user, content: "Read both files")
+            let user = ChatTurnData(role: .user, content: "Read both files", createdAt: Date(timeIntervalSince1970: 90))
             let session = ChatSessionData(turns: [user, native, signed])
-            switch writePath {
-            case "async":
+            if writePath == "async" {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    db.saveSessionAsync(session, onSaved: { continuation.resume() }, onDropped: { _ in
+                    store.saveSessionAsync(session, onSaved: { continuation.resume() }, onDropped: { _ in
                         continuation.resume(throwing: NSError(domain: "ResponsesHistoryPersistenceTests", code: 1))
                     })
                 }
-            case "append":
-                var initial = session
-                initial.turns = [user]
-                try db.saveSession(initial)
-                try db.appendTurn(sessionId: session.id, turn: native)
-                try db.appendTurn(sessionId: session.id, turn: signed)
-            default: try db.saveSession(session)
+            } else {
+                try store.saveSession(session)
             }
-            db.close()
-            let reopened = ChatHistoryDatabase()
-            try reopened.open()
-            defer { reopened.close() }
-            let loaded = try #require(reopened.loadSession(id: session.id))
+            store.invalidate(sessionId: session.id)
+            let loaded = try #require(store.loadSession(id: session.id))
             #expect(loaded.turns.map(\.id) == session.turns.map(\.id))
             for (actual, expected) in zip(loaded.turns, session.turns) {
-                #expect(try ResponsesHistoryFixture.encoded(actual) == ResponsesHistoryFixture.encoded(expected))
+                let differences = try ResponsesHistoryFixture.differingFields(actual, expected)
+                #expect(differences.isEmpty, "\(differences)")
             }
         }
     }
 
-    @Test func nativeOnlyChangesAndClearsAreNotSkippedByIncrementalHash() async throws {
+    /// An older build's history row keeps its provider state through the
+    /// read-only legacy reader that feeds the Sync import.
+    @Test func legacyRowWithNativeStateReadsBack() async throws {
         try await withPlaintextRoot {
             let db = ChatHistoryDatabase()
             try db.open()
             defer { db.close() }
-            let baseline = ChatTurnData(role: .assistant, content: "Unchanged answer", thinking: "Unchanged reasoning")
-            var session = ChatSessionData(turns: [baseline])
-            try db.saveSession(session)
-            var variants: [ChatTurnData] = []
-            var changed = baseline; changed.reasoningItemId = "rs_late"; variants.append(changed)
-            changed = baseline; changed.reasoningEncrypted = "encrypted-late+/=="; variants.append(changed)
-            changed = baseline; changed.responsesOutputItems = try ResponsesHistoryFixture.items(); variants.append(changed)
-            changed = baseline; changed.anthropicThinkingBlocks = try ResponsesHistoryFixture.signedBlocks(); variants.append(changed)
-            changed = baseline; changed.inputTokenCount = 0; variants.append(changed)
-            changed = baseline; changed.cachedInputTokenCount = 0; variants.append(changed)
-            for variant in variants {
-                #expect(ChatHistoryDatabase.contentHash(for: variant) != ChatHistoryDatabase.contentHash(for: baseline))
-                for expected in [variant, baseline] {
-                    session.turns = [expected]
-                    try db.saveSession(session)
-                    let loaded = try #require(db.loadSession(id: session.id)?.turns.first)
-                    #expect(try ResponsesHistoryFixture.encoded(loaded) == ResponsesHistoryFixture.encoded(expected))
-                }
-            }
+            var signed = ChatTurnData(role: .assistant, content: "Signed answer", thinking: "actual signed reasoning")
+            signed.anthropicThinkingBlocks = try ResponsesHistoryFixture.signedBlocks()
+            let session = ChatSessionData(turns: [try ResponsesHistoryFixture.turn(), signed])
+            try db.seedForTesting(session)
             db.close()
             try db.open()
-            let loaded = try #require(db.loadSession(id: session.id)?.turns.first)
-            #expect(loaded.inputTokenCount == nil && loaded.cachedInputTokenCount == nil)
+            let loaded = try #require(db.loadSession(id: session.id))
+            #expect(loaded.turns.map(\.id) == session.turns.map(\.id))
+            for (actual, expected) in zip(loaded.turns, session.turns) {
+                let differences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(actual, expected)
+                #expect(differences.isEmpty, "\(differences)")
+            }
         }
     }
 
@@ -210,14 +204,16 @@ struct ResponsesHistoryPersistenceTests {
         try await withPlaintextRoot {
             let db = ChatHistoryDatabase()
             try db.open()
-            let legacy = ChatTurnData(role: .assistant, content: "Before upgrade", thinking: "Original reasoning")
+            let legacy = ChatTurnData(
+                role: .assistant, content: "Before upgrade", thinking: "Original reasoning",
+                createdAt: Date(timeIntervalSince1970: 100))
             let session = ChatSessionData(turns: [legacy])
-            try db.saveSession(session)
+            try db.seedForTesting(session)
             db.close()
             let conn = try EncryptedSQLiteOpener.open(path: OsaurusPaths.chatHistoryDatabaseFile().path, key: nil)
             defer { sqlite3_close(conn) }
-            // Remove only v22 columns to produce the actual prior production
-            // schema, retaining all v21 indexes, rows and migration state.
+            // Remove only the native-state columns to produce the prior
+            // production schema, retaining every other index, row and table.
             let columns = ["reasoning_item_id", "reasoning_encrypted", "responses_output_items",
                            "anthropic_thinking_blocks", "input_token_count", "cached_input_token_count"]
             for column in columns { try Self.exec(conn, "ALTER TABLE turns DROP COLUMN \(column)") }
@@ -225,14 +221,8 @@ struct ResponsesHistoryPersistenceTests {
             try db.open()
             defer { db.close() }
             let loaded = try #require(db.loadSession(id: session.id)?.turns.first)
-            #expect(try ResponsesHistoryFixture.encoded(loaded) == ResponsesHistoryFixture.encoded(legacy))
-            var updated = session
-            updated.turns.append(try ResponsesHistoryFixture.turn())
-            try db.saveSession(updated)
-            db.close()
-            try db.open()
-            let after = try #require(db.loadSession(id: session.id))
-            #expect(try ResponsesHistoryFixture.encoded(after.turns[1]) == ResponsesHistoryFixture.encoded(updated.turns[1]))
+            let differences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(loaded, legacy)
+            #expect(differences.isEmpty, "\(differences)")
             var statement: OpaquePointer?
             #expect(sqlite3_prepare_v2(conn, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
             defer { sqlite3_finalize(statement) }
@@ -273,6 +263,7 @@ struct ResponsesHistoryPersistenceTests {
     @Test(arguments: [SessionSource.http, .plugin, .workspace])
     func realHTTPPluginAndWorkspaceWriterPreservesNativeHistory(source: SessionSource) async throws {
         try await ChatHistoryTestStorage.run {
+            try ConversationStores.current.open()
             let externalKey = "native-writer-\(UUID().uuidString)"
             let assistant = ChatMessage(
                 role: "assistant", content: "Checking.", tool_calls: ResponsesHistoryFixture.calls, tool_call_id: nil,
@@ -297,10 +288,8 @@ struct ResponsesHistoryPersistenceTests {
                     sourcePluginId: source == .workspace ? ChatHistoryWriter.workspacePseudoPluginId : nil,
                     agentId: nil, externalKey: externalKey, finalMessages: messages, model: "fixture-native")
             }
-            let db = ChatHistoryDatabase.shared
+            let db = ConversationStores.current
             let metadata = try #require(db.loadAllMetadata().first { $0.externalSessionKey == externalKey })
-            db.close()
-            try db.open()
             let loaded = try #require(db.loadSession(id: metadata.id))
             #expect(loaded.source == source)
             #expect(loaded.turns.map(\.role) == [.user, .assistant, .tool, .tool, .assistant])

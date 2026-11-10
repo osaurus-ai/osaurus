@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.prompt-budget",
+  "domain": "onboarding",
+  "label": "onboarding • the walkthrough prompt stays within its budget over 20 turns",
+  "query": "prompt_budget",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "prompt_budget"
+    }
+  }
+}

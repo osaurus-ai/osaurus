@@ -9,8 +9,6 @@
 import SwiftUI
 
 struct FileHistoryRetentionSection: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var retention: FileHistoryRetention = ChatConfigurationStore.load().fileHistoryRetention
     @State private var storedBytes: Int64?
@@ -22,44 +20,33 @@ struct FileHistoryRetentionSection: View {
     static let sizeChoices: [Int64?] = [nil, 20 * gigabyte, 5 * gigabyte, 1 * gigabyte]
 
     var body: some View {
-        SettingsSection(title: "File History", icon: "clock.arrow.circlepath") {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(
-                    "Every file an agent creates, edits, or deletes is snapshotted so it can be reverted from the chat's File Changes panel. Older history can be cleared automatically; history you remove can no longer be reverted.",
-                    bundle: .module
-                )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
-                SettingsField(
-                    label: "Keep File History",
-                    hint: "Deleting a chat always deletes its file history.",
-                    anchorId: "storage.fileHistory.retention"
-                ) {
-                    Picker("", selection: ageBinding) {
-                        ForEach(Self.ageChoices, id: \.self) { days in
-                            Text(Self.ageLabel(days)).tag(days)
-                        }
+        SettingsSection(
+            title: "File History",
+            subtitle:
+                "Every file an agent creates, edits, or deletes is snapshotted so it can be reverted from the chat's File Changes panel. Older history can be cleared automatically; history you remove can no longer be reverted."
+        ) {
+            SettingsRow(
+                title: "Keep File History",
+                description: "Deleting a chat always deletes its file history.",
+                anchorId: "storage.fileHistory.retention"
+            ) {
+                SettingsMenuPicker(selection: ageBinding) {
+                    ForEach(Self.ageChoices, id: \.self) { days in
+                        Text(Self.ageLabel(days)).tag(days)
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: 260, alignment: .leading)
                 }
+            }
 
-                SettingsField(
-                    label: "File History Size Limit",
-                    hint: usageHint,
-                    anchorId: "storage.fileHistory.sizeLimit"
-                ) {
-                    Picker("", selection: sizeBinding) {
-                        ForEach(Self.sizeChoices, id: \.self) { bytes in
-                            Text(Self.sizeLabel(bytes)).tag(bytes)
-                        }
+            SettingsRow(
+                title: "File History Size Limit",
+                description: usageHint,
+                anchorId: "storage.fileHistory.sizeLimit",
+                verbatimDescription: true
+            ) {
+                SettingsMenuPicker(selection: sizeBinding) {
+                    ForEach(Self.sizeChoices, id: \.self) { bytes in
+                        Text(Self.sizeLabel(bytes)).tag(bytes)
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: 260, alignment: .leading)
                 }
             }
         }
@@ -72,6 +59,7 @@ struct FileHistoryRetentionSection: View {
     private var usageHint: String {
         let base = L("Past the limit, the oldest changes are cleared first; the most recent change is always kept.")
         guard let storedBytes else { return base }
+        guard storedBytes > 0 else { return base + " " + L("Nothing is stored yet.") }
         let used = ByteCountFormatter.string(fromByteCount: storedBytes, countStyle: .file)
         return base + " " + L("Currently using \(used).")
     }

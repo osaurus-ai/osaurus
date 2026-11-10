@@ -21,7 +21,9 @@
 import SwiftUI
 
 struct DatabaseWorkspaceView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let agentId: UUID
     let isEnabled: Bool
@@ -67,7 +69,7 @@ struct DatabaseWorkspaceView: View {
             if isEnabled {
                 VStack(spacing: 0) {
                     sectionBar
-                    Divider().foregroundColor(theme.primaryBorder)
+                    Divider().foregroundColor(theme.border.subtle)
                     sectionContent
                 }
             } else {
@@ -75,7 +77,7 @@ struct DatabaseWorkspaceView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Warm-mounted deep-link routing: flip section + focus when a
             // notification targets this agent's database surfaces. Cold
@@ -142,7 +144,7 @@ struct DatabaseWorkspaceView: View {
 
     @ViewBuilder
     private var sectionBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             ForEach(sectionDescriptors, id: \.section) { descriptor in
                 sectionButton(descriptor)
             }
@@ -153,45 +155,21 @@ struct DatabaseWorkspaceView: View {
             StorageQuotaBadge(agentId: agentId, theme: theme)
             MutationsInFlightIndicator(agentId: agentId, theme: theme)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        .background(theme.secondaryBackground.opacity(0.4))
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s8)
+        .background(theme.surface.hover)
     }
 
     @ViewBuilder
     private func sectionButton(_ descriptor: SectionDescriptor) -> some View {
-        let isSelected = section == descriptor.section
-        Button {
+        FilterChip(
+            descriptor.label,
+            icon: descriptor.icon,
+            isSelected: section == descriptor.section,
+            help: descriptor.help
+        ) {
             section = descriptor.section
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: descriptor.icon)
-                    .font(.system(size: 10, weight: .medium))
-                // Constant weight so pills don't change width (and shift
-                // their neighbors) when the selection moves.
-                Text(verbatim: descriptor.label)
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(isSelected ? theme.accentColor.opacity(0.14) : Color.clear)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(
-                        isSelected ? theme.accentColor.opacity(0.25) : Color.clear,
-                        lineWidth: 1
-                    )
-            )
-            .contentShape(Capsule(style: .continuous))
         }
-        .buttonStyle(.plain)
-        .help(descriptor.help)
-        .accessibilityLabel(descriptor.label)
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     // MARK: - Content
@@ -222,16 +200,13 @@ struct DatabaseWorkspaceView: View {
     @ViewBuilder
     private var disabledState: some View {
         VStack(spacing: 0) {
-            DatabaseEmptyState(
-                systemImage: "cylinder.split.1x2",
+            SettingsEmptyState(
+                inline: "cylinder.split.1x2",
                 title: "Give this agent its own database",
-                subtitle:
-                    "With a database, the agent can keep notes, lists, and records between conversations — stored encrypted on this Mac. You can browse and edit everything it saves right here.",
-                actionTitle: "Enable Database",
-                actionSystemImage: "power",
-                action: onEnable,
-                theme: theme
+                hint: "With a database, the agent can keep notes, lists, and records between conversations — stored encrypted on this Mac. You can browse and edit everything it saves right here.",
+                action: SettingsEmptyState.Action(title: L("Enable Database"), icon: "power", handler: onEnable)
             )
+            .frame(maxHeight: .infinity)
             if isRemoteProvider {
                 // Same schema-leak disclaimer the Configure toggle shows
                 // (spec §5.5.5): with a remote model, table/column names
@@ -240,11 +215,11 @@ struct DatabaseWorkspaceView: View {
                     "Note: this agent uses a remote model, so its schema (table names and column types) is sent with each request. Row data is not.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-                .padding(.bottom, 32)
+                .padding(.horizontal, theme.space.s40)
+                .padding(.bottom, theme.space.s32)
             }
         }
     }

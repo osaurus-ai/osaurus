@@ -6,9 +6,8 @@
 //  network leg of the agent-as-bridge exfiltration path, so it must be a
 //  user-controlled, boot-time decision that defaults ON (current
 //  behavior) and is honored when turned OFF. The control surface is the
-//  per-agent `AutonomousExecConfig.sandboxNetworkEnabled`, mirrored onto
-//  the shared `SandboxConfiguration.network` and resolved at boot by
-//  `SandboxManager.networkEnabled(from:)`.
+//  per-agent `AutonomousExecConfig.sandboxNetworkEnabled`; each boot
+//  composes the VM's network from the pod members' own policies.
 //
 
 #if os(macOS)
@@ -21,20 +20,30 @@
     @Suite
     struct SandboxNetworkPolicyTests {
 
-        // MARK: - Boot-time resolver
+        // MARK: - Pod network composition
 
-        @Test func defaultConfigKeepsEgressOn() {
-            #expect(SandboxManager.networkEnabled(from: .default))
+        @Test func everyMemberOpenKeepsNAT() {
+            #expect(SandboxEgressPolicy.podNetwork(for: [.open, .open]) == .nat)
+            // Setup and diagnostics only: nothing to restrict.
+            #expect(SandboxEgressPolicy.podNetwork(for: []) == .nat)
         }
 
-        @Test func outboundKeepsEgressOn() {
-            let config = SandboxConfiguration(network: "outbound")
-            #expect(SandboxManager.networkEnabled(from: config))
+        @Test func everyMemberOffCutsTheNetwork() {
+            #expect(SandboxEgressPolicy.podNetwork(for: [.none, .none]) == .none)
         }
 
-        @Test func noneCutsEgress() {
-            let config = SandboxConfiguration(network: "none")
-            #expect(!SandboxManager.networkEnabled(from: config))
+        /// The bug this replaces: the VM took the booting agent's policy, so
+        /// an open agent's boot gave an agent with network off full egress.
+        @Test func mixedMembersFilterPerAgent() {
+            #expect(SandboxEgressPolicy.podNetwork(for: [.open, .none]) == .filtered)
+            #expect(SandboxEgressPolicy.podNetwork(for: [.open, .allowlist(["a.com"])]) == .filtered)
+            #expect(SandboxEgressPolicy.podNetwork(for: [.allowlist(["a.com"])]) == .filtered)
+            #expect(SandboxEgressPolicy.podNetwork(for: [.none, .allowlist(["a.com"])]) == .filtered)
+        }
+
+        @Test @MainActor func agentlessMembersAreOpen() {
+            #expect(SandboxManager.egressMode(forMember: "diag") == .open)
+            #expect(SandboxManager.egressMode(forMember: "wf-template") == .open)
         }
 
         // MARK: - Per-agent config defaults + back-compat
@@ -68,39 +77,6 @@
             let data = try JSONEncoder().encode(original)
             let decoded = try JSONDecoder().decode(AutonomousExecConfig.self, from: data)
             #expect(decoded.sandboxNetworkEnabled == false)
-        }
-
-        // MARK: - Boot-time reconcile (self-heal desynced installs)
-
-        @Test func agentNetworkOnMapsToOutbound() {
-            #expect(SandboxManager.reconciledNetwork(agentNetworkEnabled: true) == "outbound")
-        }
-
-        @Test func agentNetworkOffMapsToNone() {
-            #expect(SandboxManager.reconciledNetwork(agentNetworkEnabled: false) == "none")
-        }
-
-        /// The regression that motivated the reconcile: the per-agent toggle
-        /// says egress-on, but `sandbox.json` was left at "none" (early-build
-        /// provisioning, the container-level toggle, or another agent's flip).
-        /// Reconciling the active agent's preference at boot must override the
-        /// stale value so the VM comes up with network.
-        @Test func agentNetworkOnHealsStaleNoneConfig() {
-            var stale = SandboxConfiguration(network: "none")
-            #expect(!SandboxManager.networkEnabled(from: stale))  // pre-heal: egress cut
-
-            stale.network = SandboxManager.reconciledNetwork(agentNetworkEnabled: true)
-            #expect(SandboxManager.networkEnabled(from: stale))  // post-heal: egress on
-        }
-
-        /// Symmetric guarantee: a user who turned the agent toggle OFF still
-        /// gets egress cut even if `sandbox.json` is stale at "outbound".
-        @Test func agentNetworkOffHealsStaleOutboundConfig() {
-            var stale = SandboxConfiguration(network: "outbound")
-            #expect(SandboxManager.networkEnabled(from: stale))
-
-            stale.network = SandboxManager.reconciledNetwork(agentNetworkEnabled: false)
-            #expect(!SandboxManager.networkEnabled(from: stale))
         }
     }
 

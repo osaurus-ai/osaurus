@@ -224,7 +224,7 @@ public final class RouterBillingDatabase: @unchecked Sendable {
     private func openConnection() throws {
         let path = OsaurusPaths.billingLedgerDatabaseFile().path
         do {
-            db = try OsaurusStorageOpener.open(path: path)
+            db = try OsaurusStorageOpener.open(path: path, cacheTier: .cold)
         } catch let error as EncryptedSQLiteError {
             throw RouterBillingDatabaseError.failedToOpen(error.localizedDescription)
         }

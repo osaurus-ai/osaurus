@@ -19,6 +19,7 @@ This document covers the theory behind the design, the address hierarchy, key de
 - [Identity Health and Drift](#identity-health-and-drift)
 - [Per-Agent Key Management](#per-agent-key-management)
 - [Internal vs External Communication](#internal-vs-external-communication)
+- [Log in with Osaurus](#log-in-with-osaurus)
 - [Security Properties](#security-properties)
 - [File Reference](#file-reference)
 
@@ -299,16 +300,16 @@ Fields are sorted alphabetically for canonical JSON encoding (ensuring consisten
 - **Master-scoped:** Signed by the master key. `iss` and `aud` are both the master address. Grants access to all agents.
 - **Agent-scoped:** Signed by a derived agent key. `iss` and `aud` are both the agent address. Grants access only to that specific agent.
 
-The `/pair` Bonjour flow always issues **agent-scoped** keys (`agentIndex` taken from the approved agent). Keys generated manually from the Settings UI may be either, depending on what the user selects.
+Relay invites (`/pair-invite`) always issue **agent-scoped** keys. Keys generated manually from the Settings UI may be either, depending on what the user selects.
 
 ### Expiration Options
 
 | Option | Duration |
 |--------|----------|
 | `30d` | 30 days |
-| `90d` | 90 days (default for `/pair`) |
+| `90d` | 90 days (default for pairing and invites) |
 | `1y` | 1 year |
-| `never` | No expiration (only when the user explicitly opts in via the pairing dialog's "Remember this device permanently" toggle) |
+| `never` | No expiration (only when the user explicitly chooses it) |
 
 ### Validation
 
@@ -511,16 +512,9 @@ External tools, MCP clients, and remote agents authenticate using `osk-v1` acces
 
 Access keys bridge the gap between the hardware-bound internal identity and the need for third-party integrations that can't access the Secure Enclave.
 
-### Bonjour Pairing
+### LAN pairing (retired)
 
-The LAN pairing flow is a challenge-response protocol between an in-app connector and a Bonjour-discovered agent. It is unauthenticated (no pre-existing key) but signature-verified in both directions and end-to-end sealed.
-
-1. **Challenge.** Connector calls `GET /pair/challenge`; the host issues a single-use nonce (~2 minute TTL, tracked in `PairingChallengeStore`). Connector-chosen nonces are not accepted, so a captured `/pair` request cannot be replayed.
-2. **Request.** Connector generates an ephemeral X25519 keypair and signs `nonce` + ephemeral public key (`encPub`) with its `connectorAddress` private key (domain prefix `Osaurus Signed Pairing`), then `POST`s to `/pair`.
-3. **Verification and approval.** The host verifies the signature, atomically consumes the nonce, resolves the target agent, and shows an approval dialog naming both the connector and the agent. Prompts are serialized (a concurrent request gets `429 busy`), auto-deny after a 2-minute timeout, and only accept Return when the prompt window is key — keystrokes in other apps cannot approve a pairing. `/pair` and `/pair/challenge` are rate-limited per source IP, with a cooldown after a denial.
-4. **Sealed key delivery.** On approval, the host mints an **agent-scoped** `osk-v1` key for the approved agent (signed along `agent.agentKeyPath`) with a **90-day expiration** by default ("Remember this device permanently" opts into a non-expiring key). The key is HPKE-sealed (X25519 + HKDF-SHA256 + ChaCha20-Poly1305, via `PairingKeyEnvelope`) to the connector's ephemeral `encPub`, with the agent address and nonce bound into the HPKE `info` — a passive observer on the LAN never sees the plaintext key, and an envelope cannot be transplanted to a different exchange.
-5. **Server identity verification.** The response carries a server signature (agent key) over the challenge and key fingerprint. The connector recovers the signer address and requires it to match the `address` it discovered in the agent's Bonjour TXT record, defeating spoofed advertisements.
-6. The response body containing the new key is sent on the wire but **never persisted to the request log** — `InsightsService` redacts both `apiKey` JSON values and `Bearer osk-…` headers as defense-in-depth across all logged bodies.
+Osaurus no longer advertises agents over Bonjour (`_osaurus._tcp`), and the LAN `GET /pair/challenge` + `POST /pair` flow is gone: both routes now return `404` (or `401` from the auth gate for a non-loopback caller). The user's own Macs reach each other's agents through Sync (`docs/SYNC.md`), other people through relay invites and Workspaces, and the iPhone through Sync as well (`SYNC_MOBILE_CONTRACT.md`; the old `/pair/code` flow is removed). Keys the old flow minted stay valid until they expire (90 days) or are revoked under access keys; the `.osaurus` providers it created on connectors stay as ordinary model providers.
 
 Pairings approved before the agent-scoping fix are master-scoped, never-expiring keys. The Settings → Server pane labels them as **Legacy** and explains: *"Pre-upgrade pairing — grants access to all agents and never expires."* Users can revoke and re-pair to scope them tighter.
 
@@ -529,14 +523,14 @@ Pairings approved before the agent-scoping fix are master-scoped, never-expiring
 Agents can be exposed through the Osaurus Relay (`agent.osaurus.ai`), which proxies public HTTPS traffic over a WebSocket tunnel into the local server at `127.0.0.1`.
 
 - **No loopback trust for relayed traffic.** `RelayTunnelManager` stamps every proxied request with an internal marker header (set *after* copying the external caller's headers, so a remote caller cannot suppress or forge a trusted state). The HTTP handler treats marked requests as non-loopback: they always pass through the full auth gate, CORS origin rules, and the built-in-agent remote block, even when `Expose to network` is off.
-- **Relay pairing (`/pair-invite`)** consumes a signed, single-use `AgentInvite` and supports the same HPKE sealed-key delivery as LAN pairing: the connector supplies an ephemeral `encPub`, and the minted key is returned only inside a sealed envelope. The relay operator (a TLS-terminating MITM by construction) never observes plaintext credentials in transit.
+- **Relay pairing (`/pair-invite`)** consumes a signed, single-use `AgentInvite` and supports HPKE sealed-key delivery: the connector supplies an ephemeral `encPub`, and the minted key is returned only inside a sealed envelope. The relay operator (a TLS-terminating MITM by construction) never observes plaintext credentials in transit.
 - **Tunnel auth** uses a server-issued nonce challenge. Each agent on the tunnel signs `osaurus-tunnel:<agentAddress>:<nonce>:<timestamp>` with its **own derived child key** (`AgentKey.sign(payload:masterKey:path:)` along the agent's `agentKeyPath`), not the master; the relay recovers the signer and requires it to equal the claimed address. The master key material is zeroed immediately after derivation, and transient auth failures retry with bounded exponential backoff.
 - **Owner redeem (`/pair-invite`, `{"owner_redeem": …}`).** A device holding the *same* master (a phone signed into the user's iCloud Keychain, a second Mac restored from the phrase) obtains an agent-scoped osk-v1 key for an agent hosted here without a Workspace, a router attestation, or an invite. Step one issues a 120 s single-use nonce bound to `(agent_address, device_id)` — one outstanding per pair (a repeat replaces it) under a hard table cap, so unauthenticated step-one traffic cannot grow the table; step two must carry a fresh X25519 `encPub` (required, validated before the nonce is consumed; `400` without it) and an EIP-191 **master** signature over `osaurus-owner:redeem:<agent_address_lower>:<nonce>` that recovers to this host's own master address (derived non-interactively, as the validator does). Then: agent must be hosted here (`404`), must not be built-in (`403`, `Agent.rejectBuiltInForExternalSurface`), key is minted with label `Owner device – <device_name>` and a 90-day expiry, HPKE-sealed to `encPub` (never returned in plaintext — the relay terminates TLS and is untrusted by design), and recorded in `~/.osaurus/identity/owner-devices.json` (one live key per device + agent; a re-redeem replaces the previous key). Implementation: [`Services/Auth/OwnerDeviceAccessHost.swift`](../Packages/OsaurusCore/Services/Auth/OwnerDeviceAccessHost.swift); full wire contract in [`MOBILE_PROTOCOL.md`](MOBILE_PROTOCOL.md).
 - **One tunnel per address.** The relay maps each agent address to exactly one tunnel; a newer authenticated tunnel for the same address evicts the older one with `agent_removed reason:"superseded"`. `RelayTunnelManager` honors this: the evicted agent is marked `AgentRelayStatus.servedElsewhere` (surfaced as "Served From Another Device" / "On another device" in the relay status UI), its address is dropped from the auth frame on subsequent reconnects, and if no agents remain the tunnel stops reconnecting instead of ping-ponging with the other device. The superseded set is cleared on a user-initiated relay toggle/reconnect ("Serve From This Mac") and on relaunch. With v2 device-scoped addresses, supersession only happens for genuinely duplicated agent state (e.g. a restored backup running on two machines) — two devices minting independently never collide.
 
 ### Secure Channel (Agent-to-Agent E2E Encryption)
 
-All Osaurus-to-Osaurus agent traffic — LAN peers discovered over Bonjour and remote peers behind the relay — runs inside the **Osaurus Secure Channel v1**, a forward-secret, mutually authenticated encrypted layer above HTTP. (Full feature document: [`SECURE_CHANNEL.md`](SECURE_CHANNEL.md).)
+All Osaurus-to-Osaurus agent traffic — on the LAN and behind the relay — runs inside the **Osaurus Secure Channel v1**, a forward-secret, mutually authenticated encrypted layer above HTTP. (Full feature document: [`SECURE_CHANNEL.md`](SECURE_CHANNEL.md).)
 
 **Handshake (`POST /secure/session`).** A SIGMA-style signed-ephemeral exchange:
 
@@ -566,7 +560,7 @@ Both Osaurus HTTP servers reject oversized request bodies before the auth gate r
 
 | Endpoint | Limit | Configurable via |
 |----------|-------|------------------|
-| `POST /pair` | 64 KiB | `ServerConfiguration.maxPairingBodyBytes` |
+| `/pair/code`, `/pair/confirm`, `/pair-invite`, `/secure/session` | 64 KiB | `ServerConfiguration.maxPairingBodyBytes` |
 | Other public HTTP routes | 32 MiB | `ServerConfiguration.maxRequestBodyBytes` |
 | Sandbox host bridge | 8 MiB | hard-coded in `HostAPIBridgeHandler` |
 
@@ -575,6 +569,12 @@ Both servers enforce the cap with a `Content-Length` pre-check at request head a
 ### Future: Cross-Instance Communication
 
 The address-based design naturally extends to agent-to-agent communication across different Osaurus instances. Since every agent has a globally unique address and can sign messages, agents can verify each other's identity without a shared authority — only knowledge of the other agent's address is needed.
+
+---
+
+## Log in with Osaurus
+
+First-party websites (store.osaurus.ai and other allowlisted origins) can sign a user in with their master address. The site opens `osaurus://auth/authorize`, the user approves a consent panel and confirms with Touch ID, and the master key signs a 5-minute, single-use `osl-v1` assertion bound to the site's origin, callback URL, and nonce. The signature is EIP-191 `personal_sign` over `osaurus-login-v1.<payload>`, so websites verify it with any Ethereum library and no Osaurus server is involved. Full protocol, security model, and client integration guide: [LOGIN_WITH_OSAURUS.md](LOGIN_WITH_OSAURUS.md).
 
 ---
 
@@ -591,15 +591,14 @@ The address-based design naturally extends to agent-to-agent communication acros
 | Agent indices are never reused | `AgentManager.nextUnusedAgentIndex()` always picks a fresh slot so old derived addresses cannot be regenerated by the rotate path |
 | Device keys hardware-bound | Secure Enclave P-256 via App Attest (`DCAppAttestService`) |
 | Anti-replay | Per-device monotonic counter (`cnt`) persisted in `UserDefaults`; server rejects seen values |
-| Domain separation | `Osaurus Signed Message`, `Osaurus Signed Access`, `Osaurus Signed Pairing`, and `Osaurus Secure Channel` prefixes prevent cross-protocol signature reuse |
+| Domain separation | `Osaurus Signed Message`, `Osaurus Signed Access`, `Osaurus Signed Invite`, and `Osaurus Secure Channel` prefixes prevent cross-protocol signature reuse; EIP-191 messages carry unique leading tags (`osaurus-login-v1.`, `osaurus-workflow:`, `osaurus-credits:`) |
+| Website logins need user presence | `LoginWithOsaurusService` shows a consent panel, then a fresh `LAContext.evaluatePolicy` (no reuse window) before the master key signs an origin-bound, single-use `osl-v1` assertion |
 | Recovery code single-use | Generated from `SecRandomCopyBytes`, shown once, never stored on device |
 | Canonical encoding | Access key payloads use sorted-key JSON for deterministic signature verification |
 | Memory safety | Master key bytes and seed bytes are zeroed after use via `Data.zeroOut()` extension (calls `memset` over the underlying buffer) |
-| Pairings scoped to one agent | `/pair` mints agent-scoped keys (`agentIndex` from approved agent), 90-day default expiry |
-| Pairing is replay-proof | `/pair` only accepts signatures over a server-issued, single-use nonce from `GET /pair/challenge` (~2 min TTL, atomically consumed by `PairingChallengeStore`) |
-| Pairing server is verified | `/pair` response carries a server signature over challenge + key fingerprint; the connector requires the recovered address to match the Bonjour TXT `address` |
-| Minted keys sealed in transit | `/pair` and `/pair-invite` HPKE-seal the fresh `osk-v1` key (X25519 + HKDF-SHA256 + ChaCha20-Poly1305) to the connector's ephemeral public key, with agent address + nonce bound into the HPKE `info` |
-| Pairing endpoints rate-limited | `PairingRateLimiter` caps `/pair` and `/pair/challenge` per source IP, with a cooldown after a denial; the approval prompt is serialized, times out after 2 minutes, and only accepts Return when its window is key |
+| Invites scoped to one agent | `/pair-invite` mints agent-scoped keys, 90-day default expiry |
+| Minted keys sealed in transit | `/pair-invite` and `/pair/code` HPKE-seal the fresh `osk-v1` key (X25519 + HKDF-SHA256 + ChaCha20-Poly1305) to the connector's ephemeral public key, with agent address + nonce bound into the HPKE `info` |
+| Pairing endpoints rate-limited | `PairingRateLimiter.shared` caps `/pair/code`, `/pair/confirm` and `/pair-invite` per source IP, with a cooldown after a wrong code or denial; `/secure/session` has its own instance |
 | Relayed traffic never loopback-trusted | `RelayTunnelManager` marks proxied requests with an internal header; the auth gate, CORS rules, and remote blocks treat them as remote even though they arrive over `127.0.0.1` |
 | Agent traffic end-to-end encrypted | Secure Channel v1: signed-ephemeral X25519 handshake (forward secrecy), ChaCha20-Poly1305 framing, Bearer + body inside the ciphertext; relay carries only ciphertext |
 | Peer identity verified per session | The server signs the handshake transcript with its agent key; the client requires the recovered address to match the address pinned at pairing — MITM servers cannot complete a handshake |
@@ -608,8 +607,8 @@ The address-based design naturally extends to agent-to-agent communication acros
 | No plaintext downgrade for agent routes | Non-loopback `/agents/{id}/run` and `/dispatch` requests outside the channel get `426 Upgrade Required` (`secure_channel_required`) |
 | Cross-agent key use rejected | Agent-scoped keys hitting another agent's `/agents/{id}/...` routes get `403 agent_scope_denied` (audience checked against `AgentIdentityRegistry`) |
 | Revocations apply immediately | `APIKeyValidatorEpoch` invalidates the cached validator on key/revocation/whitelist/agent changes; no server restart needed |
-| Issued credentials never logged | `/pair` success path logs a redacted body; `InsightsService.redactCredentials` scrubs `osk-v1` values and `Bearer` headers everywhere as a backstop |
-| Pre-auth body-size limits | `/pair` capped at 64 KiB, other public routes at 32 MiB; rejected with `413` before the auth gate |
+| Issued credentials never logged | `/pair/code` and `/pair-invite` log redacted bodies; `InsightsService.redactCredentials` scrubs `osk-v1` values and `Bearer` headers everywhere as a backstop |
+| Pre-auth body-size limits | Pairing routes capped at 64 KiB, other public routes at 32 MiB; rejected with `413` before the auth gate |
 | Drift between master and derivatives is surfaced | `IdentityHealthCheck.diagnose(...)` runs once per Identity view load; mismatched agents and stale osk-v1 keys are rendered in an `IdentityDriftBanner` with explicit Recover / Repair / Reset actions instead of failing silently at request time |
 
 ---
@@ -632,7 +631,6 @@ The address-based design naturally extends to agent-to-agent communication acros
 | `APIKeyManager.swift` | Generate, persist, and revoke `osk-v1` access keys (metadata in Keychain). Includes `listKeys(forAudience:)` for per-agent scoping |
 | `APIKeyValidator.swift` | Immutable, lock-free access key validation via ecrecover + whitelist + revocation; accepts master- and any agent-scoped audience |
 | `AgentIdentityRegistry.swift` | Thread-safe snapshot of all agents' derived addresses/indices, maintained by `AgentManager`, read by the validator builder and the route-level scope check |
-| `PairingChallengeStore.swift` | Single-use, TTL-bound nonces for the LAN `/pair` challenge-response flow |
 | `PairingRateLimiter.swift` | Per-source-IP rate limiting and denial cooldown for the unauthenticated pairing endpoints |
 | `PairingKeyEnvelope.swift` | HPKE (X25519 + HKDF-SHA256 + ChaCha20-Poly1305) sealing of freshly minted keys to the connector's ephemeral public key |
 | `SecureChannel.swift` | Secure Channel v1 protocol core: signed-ephemeral X25519 handshake, transcript hashing, HKDF key schedule, AEAD framing with anti-replay window and `fin` markers |
@@ -652,6 +650,17 @@ The address-based design naturally extends to agent-to-agent communication acros
 | `MasterMnemonicCard.swift` | Numbered 4×6 grid of the 24-word BIP39 phrase with copy / save / print actions. Shared between onboarding and the recovery prompt |
 | `AgentKeyManagement.swift` | Expandable per-agent row: rotate / revoke address + scoped osk-v1 list + scoped generate/revoke |
 | `RecoverFromMnemonicSheet.swift` | Phrase-entry sheet with live word count, BIP39 validation, prior-master matching, and "Restore Anyway" override |
+
+### Log in with Osaurus (`Packages/OsaurusCore/Services/Auth/LoginWithOsaurus/`)
+
+| File | Responsibility |
+|------|---------------|
+| `LoginWithOsaurusRequest.swift` | Parse/validate `osaurus://auth/authorize`; first-party origin allowlist (`LoginWithOsaurusClients`) with a DEBUG-only override; OAuth error codes |
+| `LoginAssertion.swift` | `osl-v1` payload, EIP-191 signing, the reference `verify`, and the success/error redirect URLs |
+| `LocalAuthenticationGate.swift` | Touch ID (password fallback) via `LAContext.evaluatePolicy`, fresh context per login |
+| `LoginConsentPromptService.swift` | The "Sign in to <site>?" `NSPanel` (body in `Views/Identity/LoginConsentView.swift`) |
+| `LoginWithOsaurusService.swift` | End-to-end orchestration and the redirect back to the browser |
+| `LoginWithOsaurusHistory.swift` | Recent sign-ins for the Identity tab (`Views/Identity/SignInWithOsaurusSection.swift`) |
 
 ### Shared key generator
 

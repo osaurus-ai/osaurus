@@ -12,61 +12,50 @@ import SwiftUI
 struct HotkeyRecorder: View {
     @Binding var value: Hotkey?
     @State private var isRecording: Bool = false
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var baseComponentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(9, enabled: baseComponentEnabled) }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             if isRecording {
                 Text("Recording… Press new shortcut", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                Button {
+                    .assignedTypography("component.library.9.caption", fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
+                    #if OSAURUS_DESIGN_SYSTEM
+                    .padding(.horizontal, 0).padding(.vertical, 0)
+                    .frame(minHeight: theme.catalogMetric("height", fallback: 0))
+                    .assignedBaseChrome(9, fallback: nil, selected: true)
+                    .assignedBaseFocusRing(9, visible: baseComponentEnabled, radius: theme.catalogMetric("radius", fallback: 8), keyboardOnly: false)
+                    #endif
+                SettingsButton(.secondary, "Cancel", size: .compact) {
                     isRecording = false
-                } label: {
-                    Text("Cancel", bundle: .module)
                 }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .buttonStyle(.plain)
             } else {
                 Text(display(for: value))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                Button {
+                    .lineLimit(1)
+                    .assignedTypography("component.library.9.label", fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
+                    .padding(.vertical, theme.space.s4)
+                    .padding(.horizontal, theme.space.s8)
+                    .frame(minHeight: theme.controlSize.compactHeight)
+                    .settingsChrome(.inset)
+                SettingsButton(.secondary, "Change…", size: .compact) {
                     isRecording = true
-                } label: {
-                    Text("Change…", bundle: .module)
                 }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .buttonStyle(.plain)
                 if value != nil {
-                    Button {
+                    SettingsButton(.tertiary, "Clear", size: .compact) {
                         value = nil
-                    } label: {
-                        Text("Clear", bundle: .module)
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .buttonStyle(.plain)
                 }
             }
         }
+        .fixedSize()
         .background(
             RecordingCatcher(
                 isRecording: $isRecording,
                 onCapture: { event in
-                    guard isRecording else { return }
+                    guard isRecording && baseComponentEnabled else { return }
                     if event.keyCode == kVK_Escape {
                         isRecording = false
                         return
@@ -88,6 +77,10 @@ struct HotkeyRecorder: View {
                 }
             )
         )
+        .onChange(of: baseComponentEnabled) { _, enabled in
+            if !enabled { isRecording = false }
+        }
+        .onDisappear { isRecording = false }
     }
 
     private func display(for hotkey: Hotkey?) -> String {
@@ -165,88 +158,7 @@ struct HotkeyRecorder: View {
     }
 
     private func keyGlyph(for keyCode: UInt16) -> String? {
-        let code = Int(keyCode)
-        switch code {
-        // Letters (ANSI - explicit mapping; key codes are non-contiguous)
-        case kVK_ANSI_A: return "A"
-        case kVK_ANSI_B: return "B"
-        case kVK_ANSI_C: return "C"
-        case kVK_ANSI_D: return "D"
-        case kVK_ANSI_E: return "E"
-        case kVK_ANSI_F: return "F"
-        case kVK_ANSI_G: return "G"
-        case kVK_ANSI_H: return "H"
-        case kVK_ANSI_I: return "I"
-        case kVK_ANSI_J: return "J"
-        case kVK_ANSI_K: return "K"
-        case kVK_ANSI_L: return "L"
-        case kVK_ANSI_M: return "M"
-        case kVK_ANSI_N: return "N"
-        case kVK_ANSI_O: return "O"
-        case kVK_ANSI_P: return "P"
-        case kVK_ANSI_Q: return "Q"
-        case kVK_ANSI_R: return "R"
-        case kVK_ANSI_S: return "S"
-        case kVK_ANSI_T: return "T"
-        case kVK_ANSI_U: return "U"
-        case kVK_ANSI_V: return "V"
-        case kVK_ANSI_W: return "W"
-        case kVK_ANSI_X: return "X"
-        case kVK_ANSI_Y: return "Y"
-        case kVK_ANSI_Z: return "Z"
-
-        // Number row
-        case kVK_ANSI_0: return "0"
-        case kVK_ANSI_1: return "1"
-        case kVK_ANSI_2: return "2"
-        case kVK_ANSI_3: return "3"
-        case kVK_ANSI_4: return "4"
-        case kVK_ANSI_5: return "5"
-        case kVK_ANSI_6: return "6"
-        case kVK_ANSI_7: return "7"
-        case kVK_ANSI_8: return "8"
-        case kVK_ANSI_9: return "9"
-
-        // Punctuation
-        case kVK_ANSI_Grave: return "`"
-        case kVK_ANSI_Minus: return "-"
-        case kVK_ANSI_Equal: return "="
-        case kVK_ANSI_LeftBracket: return "["
-        case kVK_ANSI_RightBracket: return "]"
-        case kVK_ANSI_Backslash: return "\\"
-        case kVK_ANSI_Semicolon: return ";"
-        case kVK_ANSI_Quote: return "'"
-        case kVK_ANSI_Comma: return ","
-        case kVK_ANSI_Period: return "."
-        case kVK_ANSI_Slash: return "/"
-
-        // Navigation / control
-        case kVK_UpArrow: return "↑"
-        case kVK_DownArrow: return "↓"
-        case kVK_LeftArrow: return "←"
-        case kVK_RightArrow: return "→"
-        case kVK_Escape: return "⎋"
-        case kVK_Return: return "⏎"
-        case kVK_Tab: return "⇥"
-        case kVK_Delete: return "⌫"
-        case kVK_Space: return "Space"
-
-        // Function keys (explicit common ones)
-        case kVK_F1: return "F1"
-        case kVK_F2: return "F2"
-        case kVK_F3: return "F3"
-        case kVK_F4: return "F4"
-        case kVK_F5: return "F5"
-        case kVK_F6: return "F6"
-        case kVK_F7: return "F7"
-        case kVK_F8: return "F8"
-        case kVK_F9: return "F9"
-        case kVK_F10: return "F10"
-        case kVK_F11: return "F11"
-        case kVK_F12: return "F12"
-        default:
-            return nil
-        }
+        HotkeyText.label(forKeyCode: Int(keyCode))
     }
 }
 
@@ -269,6 +181,11 @@ private struct RecordingCatcher: NSViewRepresentable {
             nsView.isRecording = isRecording
             nsView.updateMonitor()
         }
+    }
+
+    static func dismantleNSView(_ nsView: EventCatcherView, coordinator: ()) {
+        nsView.isRecording = false
+        nsView.updateMonitor()
     }
 
     final class EventCatcherView: NSView {

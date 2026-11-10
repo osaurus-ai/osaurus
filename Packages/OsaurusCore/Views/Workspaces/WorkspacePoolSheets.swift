@@ -22,9 +22,14 @@ import SwiftUI
 // MARK: - Top-up
 
 struct WorkspacePoolTopUpSheet: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
 
     let workspaceId: String
     let workspaceName: String
@@ -44,9 +49,9 @@ struct WorkspacePoolTopUpSheet: View {
     var body: some View {
         WorkspaceSheetShell(
             icon: "creditcard.fill",
-            title: checkoutOpened ? "Finish in your browser" : "Add pool credits",
+            title: checkoutOpened ? "Finish in your browser" : "Add Workspace Credits",
             subtitle: subtitle,
-            confirmTitle: checkoutOpened ? "Done" : "Continue to checkout",
+            confirmTitle: checkoutOpened ? "Done" : "Continue to Checkout",
             isBusy: service.isBusy("pool.topup"),
             isValid: checkoutOpened || isValid,
             onConfirm: { submit() },
@@ -69,14 +74,14 @@ struct WorkspacePoolTopUpSheet: View {
 
     private var subtitle: String {
         if checkoutOpened {
-            return L("Finish the payment in your browser. The pool updates in Osaurus as soon as Stripe confirms it.")
+            return L("Finish the payment in your browser. Workspace credits update in Osaurus as soon as Stripe confirms it.")
         }
-        return String(format: L("Purchased credits go to “%@”'s shared pool and never expire."), workspaceName)
+        return String(format: L("Purchased credits go to “%@”'s workspace credits and never expire."), workspaceName)
     }
 
     @ViewBuilder
     private var composeBody: some View {
-        AgentSheetSectionLabel("Amount")
+        SettingsFieldLabel("Amount")
         PoolAmountPicker(
             presetsMicro: OsaurusRouterWorkspacePoolCredits.topUpPresetsMicro,
             amount: $amount,
@@ -91,7 +96,7 @@ struct WorkspacePoolTopUpSheet: View {
             SheetHintRow(
                 kind: .ok,
                 message: String(
-                    format: L("Adds %@ to the pool for %@ — no fee. Unlike the monthly grant, these credits don't expire."),
+                    format: L("Adds %@ to workspace credits for %@ — no fee. Unlike the monthly grant, these credits don't expire."),
                     OsaurusRouter.formatMicroAsCredits(String(micro)),
                     OsaurusRouter.formatMicroUSD(String(micro))
                 )
@@ -109,9 +114,9 @@ struct WorkspacePoolTopUpSheet: View {
 
         MarkdownLinkText(
             markdown: OsaurusWebLinks.acceptanceMarkdown,
-            font: .system(size: 11),
-            textColor: theme.tertiaryText,
-            linkColor: theme.accentColor,
+            style: .caption,
+            textColor: theme.text.tertiary,
+            linkColor: theme.text.link,
             alignment: .leading
         )
         .fixedSize(horizontal: false, vertical: true)
@@ -119,17 +124,26 @@ struct WorkspacePoolTopUpSheet: View {
 
     @ViewBuilder
     private var waitingBody: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             ProgressView()
                 .controlSize(.small)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(String(format: L("Waiting for Stripe to confirm %@"), currentMicro.map { OsaurusRouter.formatMicroUSD(String($0)) } ?? ""))
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(L("Nothing is charged until you complete the checkout. Osaurus checks the pool each time you come back to it."))
-                    .font(.system(size: 11.5))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                Text(
+                    String(
+                        format: L("Waiting for Stripe to confirm %@"),
+                        currentMicro.map { OsaurusRouter.formatMicroUSD(String($0)) } ?? ""
+                    )
+                )
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
+                Text(
+                    L(
+                        "Nothing is charged until you complete the checkout. Osaurus checks the balance each time you come back to it."
+                    )
+                )
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
         SheetHintRow(
@@ -139,6 +153,9 @@ struct WorkspacePoolTopUpSheet: View {
     }
 
     private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
         guard !checkoutOpened, isValid, let micro = currentMicro else { return }
         errorMessage = nil
         Task {
@@ -154,9 +171,14 @@ struct WorkspacePoolTopUpSheet: View {
 // MARK: - Auto-reload
 
 struct WorkspaceAutoReloadSheet: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
 
     let workspaceId: String
     let workspaceName: String
@@ -200,7 +222,7 @@ struct WorkspaceAutoReloadSheet: View {
             icon: "arrow.triangle.2.circlepath.circle.fill",
             title: "Auto-reload",
             subtitle: String(
-                format: L("When “%@”'s pool runs low, charge your saved card so shared agents keep working."),
+                format: L("When “%@”'s workspace credits run low, charge your saved card so shared agents keep working."),
                 workspaceName
             ),
             confirmTitle: "Save",
@@ -212,25 +234,25 @@ struct WorkspaceAutoReloadSheet: View {
             statusRow
 
             SettingsToggle(
-                title: "Reload automatically",
-                description: "Charges the card on your workspace subscription when the pool drops below the threshold.",
+                title: "Reload Automatically",
+                description: "Charges the card on your workspace subscription when workspace credits drop below the threshold.",
                 isOn: $enabled
             )
 
             if enabled {
-                AgentSheetSectionLabel("When the pool falls below")
+                SettingsFieldLabel("When credits fall below")
                 PoolAmountPicker(
                     presetsMicro: OsaurusRouterWorkspacePoolCredits.thresholdPresetsMicro,
                     amount: $threshold
                 )
 
-                AgentSheetSectionLabel("Reload")
+                SettingsFieldLabel("Reload")
                 PoolAmountPicker(
                     presetsMicro: OsaurusRouterWorkspacePoolCredits.reloadPresetsMicro,
                     amount: $reload
                 )
 
-                AgentSheetSectionLabel("Monthly cap")
+                SettingsFieldLabel("Monthly cap")
                 capRow
             }
 
@@ -266,18 +288,18 @@ struct WorkspaceAutoReloadSheet: View {
                 )
             }
         } else if !loaded {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 ProgressView().controlSize(.small)
                 Text("Loading auto-reload settings…", bundle: .module)
-                    .font(.system(size: 11.5))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
             }
         }
     }
 
     private func pausedMessage(_ settings: OsaurusRouterWorkspaceAutoReload) -> String {
         if settings.isChargebackPaused {
-            return L("Paused after a chargeback on a pool purchase. Saving re-arms it.")
+            return L("Paused after a chargeback on a credit purchase. Saving re-arms it.")
         }
         if let code = settings.lastError, !code.isEmpty {
             return String(
@@ -290,20 +312,20 @@ struct WorkspaceAutoReloadSheet: View {
 
     @ViewBuilder
     private var capRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s8) {
             Toggle(isOn: $capEnabled) {
                 Text("Cap reloads per month", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.primary)
             }
-            .toggleStyle(.checkbox)
+            .settingsCheckbox()
             Spacer()
             if capEnabled {
                 DollarField(amount: $cap, width: 110)
             } else {
                 Text("No cap", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
             }
         }
     }
@@ -319,7 +341,7 @@ struct WorkspaceAutoReloadSheet: View {
         } else if enabled, let thresholdMicro, let reloadMicro {
             SheetHintRow(kind: .ok, message: summary(thresholdMicro: thresholdMicro, reloadMicro: reloadMicro))
         } else if !enabled, settings?.enabled == true {
-            SheetHintRow(kind: .info, message: L("Saving turns auto-reload off. Purchased credits stay on the pool."))
+            SheetHintRow(kind: .info, message: L("Saving turns auto-reload off. Purchased credits stay in the workspace."))
         } else {
             SheetHintRow(
                 kind: .info,
@@ -342,6 +364,9 @@ struct WorkspaceAutoReloadSheet: View {
     }
 
     private func load() async {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { loaded = true; return }
+        #endif
         let fetched = await service.loadAutoReload(workspaceId: workspaceId)
         if let fetched {
             enabled = fetched.enabled
@@ -360,6 +385,9 @@ struct WorkspaceAutoReloadSheet: View {
     }
 
     private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
         guard loaded, isValid, let thresholdMicro, let reloadMicro else { return }
         errorMessage = nil
         let capValue = capEnabled ? capMicro : nil
@@ -382,7 +410,9 @@ struct WorkspaceAutoReloadSheet: View {
 /// Preset chips over a single dollar field (the field is the source of
 /// truth; a chip highlights only while the field equals it).
 private struct PoolAmountPicker: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let presetsMicro: [Int64]
     @Binding var amount: String
@@ -391,7 +421,7 @@ private struct PoolAmountPicker: View {
     private var currentMicro: Int64? { OsaurusRouterWorkspacePoolCredits.micro(fromDollars: amount) }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             ForEach(presetsMicro, id: \.self) { micro in
                 chip(micro)
             }
@@ -405,20 +435,11 @@ private struct PoolAmountPicker: View {
             amount = OsaurusRouterWorkspacePoolCredits.dollarsText(micro: micro)
         } label: {
             Text(verbatim: "$\(OsaurusRouterWorkspacePoolCredits.dollarsText(micro: micro))")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(
-                    isSelected ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText
-                )
+                .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                .foregroundColor(isSelected ? theme.text.link : theme.text.primary)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(isSelected ? theme.accentColor : theme.inputBackground.opacity(0.6))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(isSelected ? Color.clear : theme.inputBorder, lineWidth: 1)
-                )
+                .padding(.vertical, theme.space.s8)
+                .settingsChrome(isSelected ? .selected : .control)
         }
         .buttonStyle(.plain)
     }
@@ -426,34 +447,29 @@ private struct PoolAmountPicker: View {
 
 /// `$ [   ]` dollar entry.
 private struct DollarField: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Binding var amount: String
     var width: CGFloat = 96
     var autofocus: Bool = false
-    @FocusState private var focused: Bool
-
     var body: some View {
-        HStack(spacing: 4) {
-            Text(verbatim: "$")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.secondaryText)
-            TextField("0", text: $amount)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.primaryText)
-                .focused($focused)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(width: width)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(focused ? theme.accentColor.opacity(0.6) : theme.inputBorder, lineWidth: 1)
-                )
-        )
-        .onAppear { if autofocus { focused = true } }
+        SettingsTextField(placeholder: "0", text: $amount, icon: "dollarsign", autofocus: autofocus)
+            .frame(width: width)
     }
 }
+
+#if OSAURUS_DESIGN_SYSTEM
+extension WorkspacePoolTopUpSheet {
+    static func inspectionSample(waiting: Bool) -> Self {
+        var view = Self(workspaceId: "local-display", workspaceName: "Local workspace")
+        view._checkoutOpened = State(initialValue: waiting); return view
+    }
+}
+extension WorkspaceAutoReloadSheet {
+    static func inspectionSample() -> Self {
+        var view = Self(workspaceId: "local-display", workspaceName: "Local workspace")
+        view._loaded = State(initialValue: true); view._enabled = State(initialValue: true); return view
+    }
+}
+#endif

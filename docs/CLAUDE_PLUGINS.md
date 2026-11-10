@@ -223,7 +223,7 @@ Tapping a card opens **Claude Plugin Detail** with the full hero (icon, displayN
 - An **Import needs attention** banner persisted from the last install report, including skipped MCP names, OAuth sign-in needs, placeholder-token/env-var setup, install errors, and declared-but-not-imported component counts.
 - A "components declared but not yet honored" notice for unsupported manifest sections (hooks, output styles, monitors, themes, channels, LSP servers).
 
-Uninstalling a plugin removes the corresponding skills, schedules, slash commands, and MCP providers in one shot, including any Keychain-stored MCP tokens, the persisted manifest snapshot, the per-plugin userConfig file, the cache directory, and the per-plugin `${CLAUDE_PLUGIN_DATA}` directory.
+Uninstalling a plugin removes the corresponding skills, schedules, slash commands, and MCP providers in one shot, including the persisted manifest snapshot, the per-plugin userConfig file, the cache directory, and the per-plugin `${CLAUDE_PLUGIN_DATA}` directory. MCP tokens and env values it saved stay in General → Keys.
 
 Osaurus's own internal plugins (`PluginManager`, Wasm-based tool plugins) appear as the existing `PluginCard` style in the same grid — the only difference is the `Imported` badge that marks GitHub-sourced Claude plugins.
 
@@ -286,7 +286,7 @@ The installer reads `.mcp.json` and classifies each server entry:
 
 For OAuth providers, the declared `clientId` and a `http://127.0.0.1:<callbackPort>/callback` `redirectURI` are stashed on the provider so the existing MCP OAuth service can complete the discovery + Dynamic Client Registration + PKCE handshake when the user clicks "Sign in". The provider stays disabled until that completes.
 
-Providers are tagged with the plugin id, so uninstalling the plugin removes them and clears their Keychain secrets.
+Providers are tagged with the plugin id, so uninstalling the plugin removes them. Their env and token values are saved in General → Keys and stay there after uninstall (another server or agent may share them); delete them in Keys.
 
 ---
 
@@ -317,9 +317,9 @@ The installer keeps going if any single file fails to download or parse. Failure
 | Skills              | `~/.osaurus/skills/<skill-name>/SKILL.md`                                 |
 | Skill references    | `~/.osaurus/skills/<skill-name>/references/<basename>`                    |
 | Skill assets        | `~/.osaurus/skills/<skill-name>/assets/<basename>`                        |
-| Schedules           | Persisted by `ScheduleManager`                                            |
+| Schedules           | Schedule automations persisted by `EventManager`                          |
 | Slash commands      | Persisted by `SlashCommandRegistry`                                       |
-| MCP providers       | `MCPProviderConfiguration` + secrets in macOS Keychain                    |
+| MCP providers       | `MCPProviderConfiguration` + secrets in Keys (`MCPCredentials`)           |
 | `CLAUDE.md` / `CONNECTORS.md` / `README.md` | Attached as references inside each owning skill directory |
 | Per-plugin manifest snapshot | `~/.osaurus/claude-plugins/manifests/<safe-id>.json`              |
 | Per-plugin userConfig (non-sensitive) | `~/.osaurus/claude-plugins/userconfig/<safe-id>.json`    |

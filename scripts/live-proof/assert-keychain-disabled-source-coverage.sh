@@ -43,11 +43,14 @@ require_text "$ROOT/Packages/OsaurusCore/Services/Keychain/ToolSecretsKeychain.s
   "tool secret enumeration bypasses Keychain"
 
 require_text "$ROOT/Packages/OsaurusCore/Services/Provider/RemoteProviderKeychain.swift" \
-  "if KeychainQueryHelpers.disablesKeychainForProcess { return nil }" \
+  "if KeychainQueryHelpers.disablesKeychain(for: service) { return nil }" \
   "remote provider reads bypass Keychain"
 require_text "$ROOT/Packages/OsaurusCore/Services/Provider/RemoteProviderKeychain.swift" \
-  "if KeychainQueryHelpers.disablesKeychainForProcess { return false }" \
+  "if KeychainQueryHelpers.disablesKeychain(for: service) { return false }" \
   "remote provider writes bypass Keychain"
+require_text "$ROOT/Packages/OsaurusCore/Services/Keychain/KeychainQueryHelpers.swift" \
+  "processDisabled && !(connectedDesignProviders && service == designProviderService)" \
+  "service-scoped gate only exempts the design inspector's own provider service"
 
 require_text "$ROOT/Packages/OsaurusCore/Services/MCP/MCPProviderKeychain.swift" \
   "if KeychainQueryHelpers.disablesKeychainForProcess { return nil }" \

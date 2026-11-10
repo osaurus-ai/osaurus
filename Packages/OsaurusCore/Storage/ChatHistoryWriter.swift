@@ -2,7 +2,7 @@
 //  ChatHistoryWriter.swift
 //  osaurus
 //
-//  Writer-side facade over `ChatHistoryDatabase` shared by every entry point
+//  Writer-side facade over the conversation store shared by every entry point
 //  that runs raw `ChatEngine` inference (plugin `complete`/`complete_stream`,
 //  HTTP `/v1/chat/completions`, etc.). Handles find-or-create-by-external-key
 //  grouping and converts `ChatMessage` arrays to persistable turns.
@@ -69,34 +69,11 @@ enum ChatHistoryWriter {
     ) {
         let conversational = finalMessages.filter { $0.role != "system" }
         guard !conversational.isEmpty else { return }
-        // Close the launch prewarm race: an early write (first request after
-        // launch) can arrive before the detached key prewarm warms the cache.
-        // This runs on a background request executor — not the launch-critical
-        // path — so loading the key now is safe, and it prevents silently
-        // dropping the write. Only the genuine "key can't be unlocked" case
-        // falls through to the skip below. Plaintext mode needs no key, so
-        // the prewarm is skipped and readiness is always true.
-        if StorageEncryptionPolicy.shared.isEncryptionEnabled,
-            !StorageKeyManager.shared.hasCachedKey
-        {
-            try? StorageKeyManager.shared.prewarmCurrentKey()
-        }
-        guard StorageKeyManager.shared.isStorageReadyForWrites else {
-            print("[ChatHistoryWriter] Skipping chat history persistence: storage key is not already unlocked")
-            return
-        }
-
-        // Park if a key rotation is re-encrypting databases before
-        // opening SQLCipher. No-op fast path otherwise; here so a
-        // background HTTP / plugin path that hits `persist` during a
-        // rotation can't open a half-rekeyed file.
-        StorageMutationGate.blockingAwaitNotMutating()
-
-        let db = ChatHistoryDatabase.shared
+        let db = ConversationStores.current
         do {
             try db.open()
         } catch {
-            print("[ChatHistoryWriter] Failed to open chat history db: \(error)")
+            print("[ChatHistoryWriter] Failed to open chat history: \(error)")
             return
         }
 
@@ -117,7 +94,7 @@ enum ChatHistoryWriter {
 
         let session: ChatSessionData
         if var hit = existing {
-            hit.turns = turns
+            hit.turns = reusingStoredTurns(turns, from: db.loadSession(id: hit.id)?.turns ?? [])
             hit.updatedAt = now
             hit.selectedModel = model
             if hit.title == "New Chat" {
@@ -164,6 +141,23 @@ enum ChatHistoryWriter {
         } catch {
             print("[ChatHistoryWriter] Failed to persist session: \(error)")
         }
+    }
+
+    /// `turns` rebuilt from the caller's full transcript, with the turns
+    /// already stored kept as they are while the transcript still matches
+    /// them, so a repeat call only appends what's new.
+    static func reusingStoredTurns(_ turns: [ChatTurnData], from stored: [ChatTurnData]) -> [ChatTurnData] {
+        var result = turns
+        for index in 0..<min(turns.count, stored.count) {
+            let fresh = turns[index]
+            var previous = stored[index]
+            guard previous.role == fresh.role, previous.content == fresh.content,
+                previous.toolCallId == fresh.toolCallId
+            else { break }
+            previous.toolResults.merge(fresh.toolResults) { _, new in new }
+            result[index] = previous
+        }
+        return result
     }
 
     /// Canonical `ChatMessage` → persisted-turn mapping shared by every raw

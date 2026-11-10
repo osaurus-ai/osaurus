@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Tests for the n8n setup sheet's draft model: connection <-> draft round
-//  trip, the fields the sheet forces (kind, space, requireMention) and the
+//  trip, the fields the sheet forces (kind, space) and the
 //  Connection Center badge derived from a stored row.
 //
 
@@ -14,6 +14,9 @@ import Testing
 
 struct N8nConnectionDraftTests {
     private static let agentId = UUID()
+    /// One event answering on `n8n-local`; who answers lives in Events, not the draft.
+    private static let listening = EventTestFixtures.listeners(
+        agents: [(agentId, [])], kind: .n8n, connectionId: "n8n-local")
 
     private static func connection() -> AgentChannelConnection {
         AgentChannelConnection(
@@ -34,14 +37,6 @@ struct N8nConnectionDraftTests {
                     headerName: "X-Custom-Secret"
                 ),
                 secretName: "webhook",
-                inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                    enabled: true,
-                    targetAgentId: agentId,
-                    routes: [],
-                    requireMention: true,
-                    continueThreads: true,
-                    autoReplyEnabled: true
-                ),
                 remoteTransportPolicy: .plaintextAllowed,
                 outbound: AgentChannelN8nOutboundConfiguration(
                     webhookURL: "https://n8n.example.com/webhook/reply",
@@ -66,9 +61,6 @@ struct N8nConnectionDraftTests {
         #expect(draft.conversationAllowlistText == "n8n-test")
         #expect(draft.senderAllowlistText == "tpae\nworkflow")
         #expect(draft.allowBotMessages)
-        #expect(draft.inboundDispatchEnabled)
-        #expect(draft.inboundTarget == .local(Self.agentId))
-        #expect(draft.inboundAutoReplyEnabled)
         #expect(draft.outboundWebhookURL == "https://n8n.example.com/webhook/reply")
         #expect(!draft.outboundSignBodies)
         #expect(draft.keychainPluginId == "osaurus.agent-channel.n8n-local")
@@ -86,10 +78,6 @@ struct N8nConnectionDraftTests {
         // The inferred location is persisted on the next save.
         #expect(rebuilt.n8n?.callerLocation == .lan)
         #expect(rebuilt.n8n?.outbound == original.n8n?.outbound)
-        #expect(rebuilt.n8n?.inboundDispatch.target == .local(Self.agentId))
-        #expect(rebuilt.n8n?.inboundDispatch.autoReplyEnabled == true)
-        // The sheet never lets n8n require a mention; the model forces it off.
-        #expect(rebuilt.n8n?.inboundDispatch.requireMention == false)
     }
 
     @Test func newDraftBuildsAPollOnlyConnectionWithSafeDefaults() {
@@ -115,7 +103,6 @@ struct N8nConnectionDraftTests {
         #expect(built.n8n?.callerLocation == .thisMac)
         #expect(built.n8n?.outbound.isConfigured == false)
         #expect(built.n8n?.outbound.signBodies == true)
-        #expect(built.n8n?.inboundDispatch.enabled == false)
     }
 
     @Test func callerLocationRoundTripsAndOwnsThePlaintextDecision() throws {
@@ -197,38 +184,37 @@ struct N8nConnectionDraftTests {
     @Test func connectionCenterBadgeReflectsAuthorizationDispatchAndPush() {
         var connection = Self.connection()
         #expect(
-            AgentChannelConnectionCenterView.customBadge(for: connection).label
+            AgentChannelConnectionCenterView.customBadge(for: connection, listeners: Self.listening).label
                 == "\(L("Header")) · \(L("Enabled (push + poll)"))"
         )
 
         connection.n8n?.outbound = AgentChannelN8nOutboundConfiguration()
         #expect(
-            AgentChannelConnectionCenterView.customBadge(for: connection).label
+            AgentChannelConnectionCenterView.customBadge(for: connection, listeners: Self.listening).label
                 == "\(L("Header")) · \(L("Enabled (poll replies)"))"
         )
 
         // Empty allowlists are the expected state before the first workflow
         // is approved, so they read as waiting rather than as a warning.
         connection.inboundAuthorization.senderAllowlist = []
-        let noSenders = AgentChannelConnectionCenterView.customBadge(for: connection)
+        let noSenders = AgentChannelConnectionCenterView.customBadge(for: connection, listeners: Self.listening)
         #expect(noSenders.label == L("Waiting for first workflow"))
         #expect(noSenders.tone == .neutral)
 
         // A pending first-contact request outranks everything but Disabled.
-        let pending = AgentChannelConnectionCenterView.customBadge(for: connection, pendingApprovals: 2)
+        let pending = AgentChannelConnectionCenterView.customBadge(for: connection, pendingApprovals: 2, listeners: Self.listening)
         // The view formats `L("\(n) waiting for approval")`; the English render is pinned here.
         #expect(pending.label == "2 waiting for approval")
         #expect(pending.tone == .warning)
 
-        connection.n8n?.inboundDispatch = AgentChannelInboundDispatchConfiguration()
-        let noAgent = AgentChannelConnectionCenterView.customBadge(for: connection)
-        #expect(noAgent.label == L("No agent assigned"))
+        let noAgent = AgentChannelConnectionCenterView.customBadge(for: connection, listeners: ChannelEventListeners())
+        #expect(noAgent.label == L("No automation yet"))
         #expect(noAgent.tone == .warning)
 
         connection.enabled = false
-        #expect(AgentChannelConnectionCenterView.customBadge(for: connection).label == L("Disabled"))
+        #expect(AgentChannelConnectionCenterView.customBadge(for: connection, listeners: Self.listening).label == L("Disabled"))
         #expect(
-            AgentChannelConnectionCenterView.customBadge(for: connection, pendingApprovals: 1).label == L("Disabled")
+            AgentChannelConnectionCenterView.customBadge(for: connection, pendingApprovals: 1, listeners: Self.listening).label == L("Disabled")
         )
     }
 
@@ -236,18 +222,18 @@ struct N8nConnectionDraftTests {
         var hmac = Self.connection()
         hmac.n8n?.inboundVerification = AgentChannelN8nInboundVerification(method: .hmacSHA256)
         #expect(
-            AgentChannelConnectionCenterView.n8nBadge(for: hmac, writesEnabled: true).label
+            AgentChannelConnectionCenterView.n8nBadge(for: hmac, writesEnabled: true, listeners: Self.listening).label
                 == "\(L("HMAC")) · \(L("Enabled (push + poll)"))"
         )
 
-        let blocked = AgentChannelConnectionCenterView.n8nBadge(for: hmac, writesEnabled: false)
+        let blocked = AgentChannelConnectionCenterView.n8nBadge(for: hmac, writesEnabled: false, listeners: Self.listening)
         #expect(blocked.label == "\(L("HMAC")) · \(L("Push blocked"))")
         #expect(blocked.tone == .warning)
 
         hmac.n8n?.outbound = AgentChannelN8nOutboundConfiguration()
         hmac.writeEnabled = false
         #expect(
-            AgentChannelConnectionCenterView.n8nBadge(for: hmac, writesEnabled: false).label
+            AgentChannelConnectionCenterView.n8nBadge(for: hmac, writesEnabled: false, listeners: Self.listening).label
                 == "\(L("HMAC")) · \(L("Enabled (poll replies)"))"
         )
     }
@@ -269,7 +255,7 @@ struct N8nConnectionDraftTests {
         #expect(N8nSetupSection.liveCheck.caption == L("Approve workflows, verify"))
         // Discord/Telegram captions must not appear on the n8n rail.
         for section in N8nSetupSection.sections {
-            #expect(section.caption != L("Bot and tokens"))
+            #expect(section.caption != L("Account and access"))
             #expect(section.caption != L("Rooms and people"))
         }
     }

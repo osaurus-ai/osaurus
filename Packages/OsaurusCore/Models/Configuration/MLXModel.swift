@@ -902,14 +902,14 @@ enum ModelUseCase: String, Codable, CaseIterable {
     case bestQuality
 
     /// Localized label rendered inside the badge chip.
-    var displayName: LocalizedStringKey {
+    var displayName: String {
         switch self {
-        case .general: return "General"
-        case .vision: return "Vision"
-        case .reasoning: return "Reasoning"
-        case .coding: return "Coding"
-        case .smallest: return "Runs Anywhere"
-        case .bestQuality: return "Best Quality"
+        case .general: return L("General")
+        case .vision: return L("Vision")
+        case .reasoning: return L("Reasoning")
+        case .coding: return L("Coding")
+        case .smallest: return L("Runs Anywhere")
+        case .bestQuality: return L("Best Quality")
         }
     }
 
@@ -926,8 +926,8 @@ enum ModelUseCase: String, Codable, CaseIterable {
     }
 
     /// Tint for the badge chrome. Vision reuses the existing VLM purple
-    /// so the visual language stays consistent with
-    /// `ModelRowView.modelTypeBadge`.
+    /// so the visual language stays consistent with the model detail
+    /// type badge.
     var tintColor: Color {
         switch self {
         case .general: return Color(hex: "3B82F6")  // blue

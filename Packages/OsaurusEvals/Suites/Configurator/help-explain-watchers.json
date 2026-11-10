@@ -1,0 +1,32 @@
+{
+  "id": "configurator.help-explain-watchers",
+  "domain": "configurator",
+  "label": "configurator • explain folder automations from the automations guide topic",
+  "query": "What are watchers in Osaurus and when should I use one instead of a schedule?",
+  "notes": "Feature-explanation path: watchers are now folder automations, documented in the `automations` topic (the retired `watchers`/`watcher` ids alias to it). osaurus_help read of the automations topic, then an answer grounded in that text (folder-change automations vs schedule automations).",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Explains that a folder automation (formerly a watcher) runs an agent or workflow when files in a folder change (event-driven), contrasted with a schedule automation which runs on a timed cadence, grounded in the guide content rather than invented details or a refusal."
+      ],
+      "mustCallTools": [
+        "osaurus_help"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "skill_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_help",
+          "args": {
+            "action": "read",
+            "topic": "automations"
+          }
+        }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

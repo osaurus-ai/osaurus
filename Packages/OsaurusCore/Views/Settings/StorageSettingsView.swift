@@ -9,10 +9,9 @@
 //  (which runs a live migration), and keeps the plaintext-backup /
 //  key-rotation admin actions.
 //
-//  The standalone Storage sidebar tab is gone: the models-directory and
-//  external-model sections moved to the General tab, and this panel is
-//  embedded in the Privacy tab's Storage sub-tab (`embedded: true`), which
-//  is also where the WhatsNew `openStorageSettings` action lands.
+//  Renders only its sections: the host page, Privacy & Security → Data &
+//  Storage, owns the header and scroll. That is also where legacy
+//  `storage` links land.
 //
 
 import AppKit
@@ -40,18 +39,8 @@ public struct StorageSettingsView: View {
     @State private var showEnableConfirm: Bool = false
     @State private var showRotateConfirm: Bool = false
     @State private var hasExportedBackupThisSession: Bool = false
-    @State private var showTechnicalDetails: Bool = false
 
-    @State private var hasAppeared = false
-
-    /// When true, renders only the section cards (no header / scroll /
-    /// background) so a host tab — the Privacy tab's Storage sub-tab — can
-    /// place them inside its own scroll region.
-    private let embedded: Bool
-
-    public init(embedded: Bool = false) {
-        self.embedded = embedded
-    }
+    public init() {}
 
     private var sectionsContent: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -62,39 +51,13 @@ public struct StorageSettingsView: View {
             }
             tradeoffsCard
             actionsCard
-            footnote
             FileHistoryRetentionSection()
         }
     }
 
     public var body: some View {
-        Group {
-            if embedded {
-                sectionsContent
-            } else {
-                VStack(spacing: 0) {
-                    headerView
-                        .managerHeaderEntrance(hasAppeared: hasAppeared)
-
-                    ScrollView {
-                        sectionsContent
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 24)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .opacity(hasAppeared ? 1 : 0)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(theme.primaryBackground)
-                .environment(\.theme, themeManager.currentTheme)
-            }
-        }
+        sectionsContent
         .task { await refresh() }
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
         .alert("Encrypt local data at rest?", isPresented: $showEnableConfirm) {
             Button(localized: "Cancel", role: .cancel) {}
             Button(localized: "Enable encryption") { applyEncryption(true) }
@@ -121,80 +84,59 @@ public struct StorageSettingsView: View {
             Button(localized: "Cancel", role: .cancel) {}
             Button(localized: "Reset", role: .destructive) { resetStore(store) }
         } message: { store in
-            Text(
-                "\(store.displayName) is moved to ~/.osaurus/quarantine/ (never deleted) and recreated empty so the feature works again. Data in the old file stays in quarantine — keep a plaintext backup if you might recover the key.",
-                bundle: .module
-            )
+            if store == .sync {
+                Text(
+                    "This Mac's synced conversations and sync keys are removed, and it starts over as a new device. Your conversations stay on your other devices; pair this Mac again to get them back. Conversations that only existed on this Mac are lost.",
+                    bundle: .module
+                )
+            } else {
+                Text(
+                    "\(store.displayName) is moved to ~/.osaurus/quarantine/ (never deleted) and recreated empty so the feature works again. Data in the old file stays in quarantine — keep a plaintext backup if you might recover the key.",
+                    bundle: .module
+                )
+            }
         }
-    }
-
-    // MARK: - Header
-
-    private var headerView: some View {
-        ManagerHeader(
-            title: L("Storage"),
-            subtitle: L("Where Osaurus stores data on disk — and how it's protected")
-        )
     }
 
     // MARK: - Posture + toggle
 
     private var postureCard: some View {
-        SettingsSection(title: "Encryption", icon: "lock.shield") {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Image(systemName: postureIcon)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(postureColor)
+        SettingsSection(title: "Encryption") {
+            SettingsRow(
+                title: postureTitle, description: postureSubtitle, verbatimTitle: true, verbatimDescription: true
+            ) {
+                Image(systemName: postureIcon)
+                    .glyphSize(16, weight: .medium)
+                    .foregroundColor(postureColor)
+            } trailing: {
+                EmptyView()
+            }
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(LocalizedStringKey(postureTitle), bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text(LocalizedStringKey(postureSubtitle), bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                }
-
-                Divider().background(theme.primaryBorder.opacity(0.2))
-
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Encrypt local data at rest (SQLCipher)", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text(
-                            "Turning this on or off migrates every database and attachment to the new format.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    if isWorking {
-                        HStack(spacing: 6) {
-                            ProgressView().scaleEffect(0.6)
-                            Text(LocalizedStringKey(workingLabel), bundle: .module)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
-                        }
-                    } else {
-                        Toggle("", isOn: encryptionBinding)
-                            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                            .labelsHidden()
+            if isWorking {
+                SettingsRow(
+                    title: "Encrypt Local Data at Rest (SQLCipher)",
+                    description: "Turning this on or off migrates every database and attachment to the new format."
+                ) {
+                    HStack(spacing: 6) {
+                        ProgressView().scaleEffect(0.6)
+                        Text(LocalizedStringKey(workingLabel), bundle: .module)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
                     }
                 }
+            } else {
+                SettingsToggle(
+                    title: "Encrypt Local Data at Rest (SQLCipher)",
+                    description: "Turning this on or off migrates every database and attachment to the new format.",
+                    isOn: encryptionBinding
+                )
+            }
 
-                if let err = errorMessage {
-                    statusLine(text: err, color: theme.errorColor, icon: "exclamationmark.triangle")
-                }
-                if !lastSummary.isEmpty {
-                    statusLine(text: lastSummary, color: theme.successColor, icon: "checkmark.circle")
-                }
+            if let err = errorMessage {
+                statusLine(text: err, color: theme.status.error.foreground, icon: "exclamationmark.triangle")
+            }
+            if !lastSummary.isEmpty {
+                statusLine(text: lastSummary, color: theme.status.success.foreground, icon: "checkmark.circle")
             }
         }
     }
@@ -202,7 +144,7 @@ public struct StorageSettingsView: View {
     // MARK: - Trade-offs
 
     private var tradeoffsCard: some View {
-        SettingsSection(title: "Why Encryption Is Opt-In", icon: "scalemass") {
+        SettingsSection(title: "Why Encryption Is Opt-In") {
             VStack(alignment: .leading, spacing: 8) {
                 fileVaultRow
                 aboutRow(
@@ -236,10 +178,10 @@ public struct StorageSettingsView: View {
     private var fileVaultRow: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: fileVaultOn ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(fileVaultOn ? theme.successColor : theme.warningColor)
+                .glyphSize(11, weight: .semibold)
+                .foregroundColor(fileVaultOn ? theme.status.success.foreground : theme.status.warning.foreground)
                 .frame(width: 16, alignment: .center)
-                .padding(.top, 2)
+                .padding(.top, theme.space.s2)
             Text(
                 LocalizedStringKey(
                     fileVaultOn
@@ -248,8 +190,8 @@ public struct StorageSettingsView: View {
                 ),
                 bundle: .module
             )
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(fileVaultOn ? theme.successColor : theme.warningColor)
+            .textStyle(.caption, weight: 500)
+            .foregroundColor(fileVaultOn ? theme.status.success.foreground : theme.status.warning.foreground)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -261,12 +203,12 @@ public struct StorageSettingsView: View {
     /// key (or corruption) never leaves the user with a silently dead
     /// subsystem and no way forward.
     private var recoveryCard: some View {
-        SettingsSection(title: "Stores Needing Attention", icon: "exclamationmark.triangle.fill") {
+        SettingsSection(title: "Stores Needing Attention") {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(sortedStoreIssues, id: \.store) { issue in
                     storeIssueRow(issue)
                     if issue.store != sortedStoreIssues.last?.store {
-                        Divider().background(theme.primaryBorder.opacity(0.2))
+                        Divider().background(theme.border.subtle)
                     }
                 }
             }
@@ -284,14 +226,9 @@ public struct StorageSettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(LocalizedStringKey(issueKindBadge(issue.kind)), bundle: .module)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(issueKindColor(issue.kind)))
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
+                StatusChip(LCached(issueKindBadge(issue.kind)), tint: issueKindColor(issue.kind))
                 Spacer(minLength: 8)
                 if recoveringStore == issue.store {
                     ProgressView().scaleEffect(0.55)
@@ -303,43 +240,53 @@ public struct StorageSettingsView: View {
                             isPrimary: false,
                             isDisabled: recoveringStore != nil
                         ) { retryStore(store!) }
-                        actionButton(
-                            icon: "trash",
-                            label: "Reset…",
-                            isPrimary: false,
-                            isDisabled: recoveringStore != nil
-                        ) {
-                            pendingResetStore = store
-                            showStoreResetConfirm = true
+                        if !(store == .sync && issue.kind == .forwardVersion) {
+                            actionButton(
+                                icon: "trash",
+                                label: "Reset…",
+                                isPrimary: false,
+                                isDisabled: recoveringStore != nil
+                            ) {
+                                pendingResetStore = store
+                                showStoreResetConfirm = true
+                            }
                         }
                     }
                 }
             }
-            Text(LocalizedStringKey(issueKindCause(issue.kind)), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+            if store == .sync {
+                // Already localized by `SyncError.userMessage`.
+                Text(verbatim: issue.message)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(LocalizedStringKey(issueKindCause(issue.kind)), bundle: .module)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
     private func issueKindBadge(_ kind: StorageOpenIssueKind) -> String {
         switch kind {
-        case .locked: return "LOCKED"
-        case .corrupt: return "CORRUPT"
-        case .migration: return "MIGRATION"
-        case .forwardVersion: return "NEWER VERSION"
-        case .unknown: return "ERROR"
+        case .locked: return "Locked"
+        case .corrupt: return "Corrupt"
+        case .migration: return "Migration failed"
+        case .forwardVersion: return "Newer version"
+        case .unknown: return "Error"
         }
     }
 
     private func issueKindColor(_ kind: StorageOpenIssueKind) -> Color {
         switch kind {
-        case .locked: return theme.warningColor
-        case .corrupt: return theme.errorColor
-        case .migration: return theme.errorColor
+        case .locked: return theme.status.warning.foreground
+        case .corrupt: return theme.status.error.foreground
+        case .migration: return theme.status.error.foreground
         // Warning, not error: nothing is broken, this build is just older.
-        case .forwardVersion: return theme.warningColor
-        case .unknown: return theme.secondaryText
+        case .forwardVersion: return theme.status.warning.foreground
+        case .unknown: return theme.text.secondary
         }
     }
 
@@ -367,13 +314,13 @@ public struct StorageSettingsView: View {
     private func aboutRow(icon: String, text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(11, weight: .medium)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: 16, alignment: .center)
-                .padding(.top, 2)
+                .padding(.top, theme.space.s2)
             Text(LocalizedStringKey(text), bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -381,77 +328,57 @@ public struct StorageSettingsView: View {
     // MARK: - Actions
 
     private var actionsCard: some View {
-        SettingsSection(title: "Backup & Key", icon: "archivebox") {
-            VStack(alignment: .leading, spacing: 12) {
+        SettingsSection(
+            title: "Backup & Key",
+            footer:
+                "When encryption is on, wiping the macOS Keychain or migrating to a new Mac without iCloud Keychain sync makes encrypted storage unrecoverable. Export a plaintext backup before migrating."
+        ) {
+            actionRow(
+                icon: "square.and.arrow.up",
+                title: "Export Plaintext Backup",
+                buttonLabel: "Export…",
+                subtitle:
+                    "Writes a plaintext copy of every database, attachment, and config under ~/.osaurus to a folder you choose. Recommended before reinstalling macOS or moving Macs.",
+                isPrimary: true,
+                isDisabled: isWorking
+            ) {
+                runExport(reason: .userInitiated)
+            }
+
+            if desiredEncrypted {
                 actionRow(
-                    icon: "square.and.arrow.up",
-                    title: "Export plaintext backup…",
-                    buttonLabel: "Export…",
+                    icon: "key.fill",
+                    title: "Rotate Storage Key",
+                    buttonLabel: "Rotate",
                     subtitle:
-                        "Writes a plaintext copy of every database, attachment, and config under ~/.osaurus to a folder you choose. Recommended before reinstalling macOS or moving Macs.",
-                    isPrimary: true,
+                        "Generate a new 256-bit key and re-encrypt every artifact. The old key is destroyed. Only available while encryption is on.",
+                    isPrimary: false,
                     isDisabled: isWorking
                 ) {
-                    runExport(reason: .userInitiated)
+                    showRotateConfirm = true
                 }
-
-                if desiredEncrypted {
-                    Divider().background(theme.primaryBorder.opacity(0.2))
-
-                    actionRow(
-                        icon: "key.fill",
-                        title: "Rotate storage key",
-                        buttonLabel: "Rotate",
-                        subtitle:
-                            "Generate a new 256-bit key and re-encrypt every artifact. The old key is destroyed. Only available while encryption is on.",
-                        isPrimary: false,
-                        isDisabled: isWorking
-                    ) {
-                        showRotateConfirm = true
-                    }
-                }
-
-                if desiredEncrypted {
-                    Divider().background(theme.primaryBorder.opacity(0.2))
-                    technicalDetails
-                }
+                technicalDetails
             }
         }
     }
 
     private var technicalDetails: some View {
-        DisclosureGroup(isExpanded: $showTechnicalDetails) {
+        SettingsAdvancedDisclosure(title: "Technical Details") {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Service: com.osaurus.storage", bundle: .module)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .textSelection(.enabled)
                 Text("Account: data-encryption-key", bundle: .module)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .textSelection(.enabled)
                 Text("Cipher: AES-256-CBC + HMAC-SHA512, page size 4096, kdf_iter 256000", bundle: .module)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .textSelection(.enabled)
                 Text(
                     keyPresent ? "Keychain key: present" : "Keychain key: not found",
                     bundle: .module
                 )
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
-                .textSelection(.enabled)
             }
-            .padding(.top, 6)
-        } label: {
-            Text("Show technical details", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.monoSmall)
+            .foregroundColor(theme.text.tertiary)
+            .textSelection(.enabled)
         }
-        .accentColor(theme.tertiaryText)
     }
 
-    @ViewBuilder
     private func actionRow(
         icon: String,
         title: String,
@@ -461,17 +388,7 @@ public struct StorageSettingsView: View {
         isDisabled: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(LocalizedStringKey(subtitle), bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 12)
+        SettingsRow(title: title, description: subtitle) {
             actionButton(
                 icon: icon,
                 label: buttonLabel,
@@ -490,60 +407,21 @@ public struct StorageSettingsView: View {
         isDisabled: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundColor(isPrimary ? .white : theme.primaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(actionButtonBackground(isPrimary: isPrimary, isDisabled: isDisabled))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .disabled(isDisabled)
-    }
-
-    @ViewBuilder
-    private func actionButtonBackground(isPrimary: Bool, isDisabled: Bool) -> some View {
-        if isPrimary {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.accentColor.opacity(isDisabled ? 0.4 : 1.0))
-        } else {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.tertiaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        }
+        SettingsButton(isPrimary ? .primary : .secondary, label, icon: icon, size: .compact, action: action)
+            .disabled(isDisabled)
     }
 
     private func statusLine(text: String, color: Color, icon: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
+                .glyphSize(11, weight: .semibold)
                 .foregroundColor(color)
-                .padding(.top, 1)
+                .padding(.top, theme.space.s2)
             Text(text)
-                .font(.system(size: 12))
+                .font(SettingsFont.caption)
                 .foregroundColor(color)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    // MARK: - Footnote
-
-    private var footnote: some View {
-        Text(
-            "When encryption is on, wiping the macOS Keychain or migrating to a new Mac without iCloud Keychain sync makes encrypted storage unrecoverable. Export a plaintext backup before migrating.",
-            bundle: .module
-        )
-        .font(.system(size: 11))
-        .foregroundColor(theme.secondaryText.opacity(0.85))
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Derived state
@@ -596,10 +474,10 @@ public struct StorageSettingsView: View {
 
     private var postureColor: Color {
         switch posture {
-        case .empty: return theme.secondaryText
-        case .plaintext: return theme.accentColor
-        case .encrypted: return theme.successColor
-        case .mixed: return theme.warningColor
+        case .empty: return theme.text.secondary
+        case .plaintext: return theme.action.primary.default.background
+        case .encrypted: return theme.status.success.foreground
+        case .mixed: return theme.status.warning.foreground
         }
     }
 
@@ -763,7 +641,7 @@ public struct StorageSettingsView: View {
                 switch reason {
                 case .userInitiated:
                     self.lastSummary =
-                        "Wrote \(summary.databasesExported) databases, \(summary.jsonFilesDecrypted) config files, and \(summary.blobsDecrypted) attachments to \(summary.destination.lastPathComponent)."
+                        "Wrote \(summary.conversationsExported) chats, \(summary.databasesExported) databases, \(summary.jsonFilesDecrypted) config files, and \(summary.blobsDecrypted) attachments to \(summary.destination.lastPathComponent)."
                     NSWorkspace.shared.activateFileViewerSelecting([backupDir])
                 case .beforeRotate:
                     self.lastSummary =

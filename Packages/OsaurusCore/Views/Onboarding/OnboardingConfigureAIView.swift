@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Onboarding step 3 — Figma screen 3 ("A private brain that runs on your
-//  Mac"). Left column: brain dino, title, subtitle, and the step CTA ("Set
+//  Mac"). Left column: title, subtitle, and the step CTA ("Set
 //  up later" until a brain is committed, then "Continue to Osaurus"). Right
 //  panel: the recommended-model card ("Picked for your Mac" badge, meta
 //  chips, Download + Change model) with an in-card downloading state, then
@@ -30,11 +30,14 @@ import SwiftUI
 
 // MARK: - Screen / substates
 
-/// The top-level screen within the Configure AI step. `home` recommends a
-/// local model with the provider chips below; `byok` is the per-provider
-/// connect drill-in.
-enum ConfigureScreen: Equatable {
+/// The top-level screen within the Configure AI step. `home` offers the
+/// three peer paths (Raptor on this Mac, your own key, Osaurus Cloud);
+/// `local` is the recommended-model card; `keys` is the provider chips;
+/// `byok` is the per-provider connect drill-in under `keys`.
+enum ConfigureScreen: Hashable {
     case home
+    case local
+    case keys
     case byok
     case claudeCode
 }
@@ -543,6 +546,13 @@ final class ConfigureAIState: ObservableObject {
 
     // MARK: Resource stat formatting
 
+    /// Why a chooser row is disabled: "Needs about 24 GB; this Mac has 16 GB."
+    /// Nil when either number is unknown.
+    nonisolated static func tooLargeReason(estimatedMemoryGB: Double?, totalMemoryGB: Double) -> String? {
+        guard let needed = estimatedMemoryGB, needed > 0, totalMemoryGB > 0 else { return nil }
+        return L("Needs about \(Int(needed.rounded(.up))) GB; this Mac has \(Int(totalMemoryGB.rounded())) GB.")
+    }
+
     /// Chooser-row stat line ("Download: 7.5 GB · Est. memory while running:
     /// 9.4 GB"). Explicit labels keep disk space and RAM from reading as one
     /// interchangeable size. `nil` when neither stat is known.
@@ -573,6 +583,58 @@ final class ConfigureAIState: ObservableObject {
         case .smallest: return L("Light and fast — runs on any Mac.")
         case .bestQuality: return L("The most capable pick — for powerful Macs.")
         }
+    }
+
+    /// What a model means for this Mac, in plain words. `nil` when the fit
+    /// is unknown.
+    static func fitLabel(_ compatibility: ModelCompatibility) -> String? {
+        switch compatibility {
+        case .compatible: return L("Runs smoothly here")
+        case .tight: return L("May slow your other apps")
+        case .tooLarge: return L("Too big for this Mac")
+        case .unknown: return nil
+        }
+    }
+
+    /// Why the app picked `model`, in terms of this Mac. `nil` when the
+    /// person chose it themselves or the Mac's memory is unknown.
+    static func pickReason(for model: MLXModel, recommendedId: String?, totalMemoryGB: Double) -> String? {
+        if model.isDownloaded { return L("It's already on this Mac, so there's nothing to download.") }
+        guard model.id == recommendedId, totalMemoryGB > 0 else { return nil }
+        let memoryGB = Int(totalMemoryGB.rounded())
+        if model.compatibility(totalMemoryGB: totalMemoryGB) == .compatible {
+            return L("It runs smoothly with your Mac's \(memoryGB) GB of memory and leaves room for your other apps.")
+        }
+        return L("It's the lightest option, the best fit for your Mac's \(memoryGB) GB of memory.")
+    }
+
+    /// The chooser's two signposts among the models that run smoothly here:
+    /// the lightest one, and the largest (the smartest that fits). `nil`s
+    /// when fewer than two run smoothly, since one model is both.
+    static func standouts(
+        in models: [MLXModel],
+        totalMemoryGB: Double
+    ) -> (lightestId: String?, smartestId: String?) {
+        let smooth = models.filter { $0.compatibility(totalMemoryGB: totalMemoryGB) == .compatible }
+        guard smooth.count > 1 else { return (nil, nil) }
+        let lightest = smooth.min {
+            ($0.estimatedMemoryGB ?? .greatestFiniteMagnitude) < ($1.estimatedMemoryGB ?? .greatestFiniteMagnitude)
+        }
+        let smartest = smooth.max { lhs, rhs in
+            let (lp, rp) = (lhs.parameterCountBillions ?? 0, rhs.parameterCountBillions ?? 0)
+            if lp != rp { return lp < rp }
+            return (lhs.estimatedMemoryGB ?? 0) < (rhs.estimatedMemoryGB ?? 0)
+        }
+        guard lightest?.id != smartest?.id else { return (nil, nil) }
+        return (lightest?.id, smartest?.id)
+    }
+
+    /// The model onboarding would pick for this Mac from the live Top Picks.
+    func recommendedModelId(totalMemoryGB: Double) -> String? {
+        Self.recommendedLocalPick(
+            from: ModelManager.shared.suggestedModels.filter(\.isTopSuggestion),
+            totalMemoryGB: totalMemoryGB
+        )?.id
     }
 
     // MARK: Disk-space preflight
@@ -633,7 +695,8 @@ final class ConfigureAIState: ObservableObject {
         isChoosingModel = false
     }
 
-    /// "Set up later": start on Osaurus Cloud (with the free welcome credit)
+    /// The Osaurus Cloud card (and Skip setup with nothing chosen): start on
+    /// Osaurus Cloud (with the free welcome credit)
     /// instead of downloading anything. There is nothing to download or
     /// connect here — identity + router connect are prepared in the
     /// background by `OnboardingView` and finalized at finish.
@@ -691,6 +754,25 @@ final class ConfigureAIState: ObservableObject {
     }
 
     // MARK: Navigation
+
+    /// Home → the recommended local model (forward slide).
+    func showLocal() {
+        substateDirection = .forward
+        screen = .local
+    }
+
+    /// Home → the provider chips (forward slide).
+    func showKeys() {
+        substateDirection = .forward
+        screen = .keys
+    }
+
+    /// Back to the three paths. Clears any entered credentials so a stale
+    /// secret never leaks across selections.
+    func popToHome() {
+        resetAPIState(direction: .backward)
+        screen = .home
+    }
 
     /// Home → bring-your-own-provider flow (forward slide).
     func showBYOK() {
@@ -753,10 +835,10 @@ final class ConfigureAIState: ObservableObject {
         if !isAPISuccess {
             testResult = nil
             apiKey = ""
-            // The custom dialog opens straight over the home grid with no
-            // drill-in behind it; an abandoned attempt pops the substate too
-            // so no half-filled form lingers under the next chip tap.
-            if screen == .home, apiSubstate == .customForm {
+            // The custom dialog opens straight over the provider chips with
+            // no drill-in behind it; an abandoned attempt pops the substate
+            // too so no half-filled form lingers under the next chip tap.
+            if screen == .keys, apiSubstate == .customForm {
                 apiSubstate = .picker
                 customEndpointURL = ""
                 customForm.reset()
@@ -764,12 +846,11 @@ final class ConfigureAIState: ObservableObject {
         }
     }
 
-    /// Provider drill-in → the recommended local setup (backward slide).
-    /// Clears any entered credentials so a stale secret never leaks across
-    /// selections.
-    func popBYOKToHome() {
+    /// Provider drill-in → the provider chips (backward slide). Clears any
+    /// entered credentials so a stale secret never leaks across selections.
+    func popBYOKToProviders() {
         resetAPIState(direction: .backward)
-        screen = .home
+        screen = .keys
     }
 
     // MARK: API
@@ -955,7 +1036,13 @@ final class ConfigureAIState: ObservableObject {
 
 // MARK: - Step view
 
+/// The Brain chapter: a text column on the left (the stage dino stands
+/// below it, outside this view) and the setup surface on glass at the right.
 struct ConfigureAIStepView: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
 
@@ -973,16 +1060,26 @@ struct ConfigureAIStepView: View {
     private let systemMonitor = SystemMonitorService.shared
 
     var body: some View {
-        OnboardingStepLayout {
+        Group {
+
+        HStack(alignment: .top, spacing: OnboardingLayout.columnGap) {
             ConfigureAILeftColumn(state: state, onComplete: onComplete)
-        } right: {
+                .frame(width: OnboardingLayout.brainColumnWidth, alignment: .topLeading)
             rightPanel
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onboardingEntrance(1, scaleFrom: 0.98)
         }
+        .padding(.horizontal, OnboardingLayout.contentPadding)
+        .padding(.top, OnboardingLayout.stageTopInset)
+        .padding(.bottom, OnboardingLayout.contentPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             state.ensureLocalSelection(totalMemoryGB: systemMonitor.totalMemoryGB)
             state.refreshFreeDiskSpace()
         }
-    }
+
+        }.environment(\.theme, theme)
+}
 
     // MARK: Right panel
 
@@ -995,7 +1092,7 @@ struct ConfigureAIStepView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(
-                RoundedRectangle(cornerRadius: OnboardingLayout.panelRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.panelRadius, theme), style: .continuous)
             )
             .animation(OnboardingMotion.gentle, value: substateID)
         }
@@ -1004,6 +1101,8 @@ struct ConfigureAIStepView: View {
     private var substateID: String {
         switch state.screen {
         case .home: return "home"
+        case .local: return "local"
+        case .keys: return "keys"
         case .byok: return "provider-\(state.currentAPIProvider?.rawValue ?? "none")"
         case .claudeCode: return "claude-code"
         }
@@ -1022,14 +1121,18 @@ struct ConfigureAIStepView: View {
     private var screenContainer: some View {
         switch state.screen {
         case .home:
-            ConfigureAIHomePanel(state: state, onComplete: onComplete)
+            ConfigureAIPathsPanel(state: state, onComplete: onComplete)
+        case .local:
+            ConfigureAILocalPanel(state: state, onComplete: onComplete)
+        case .keys:
+            ConfigureAIKeysPanel(state: state)
         case .byok:
             ConfigureAIProviderPanel(state: state)
         case .claudeCode:
             ClaudeCodeSetupStep(
                 onBack: {
                     state.substateDirection = .backward
-                    state.screen = .home
+                    state.screen = .keys
                 },
                 onDone: {
                     state.chooseClaudeCodeAndContinue(onComplete: onComplete)
@@ -1043,106 +1146,79 @@ struct ConfigureAIStepView: View {
 
 // MARK: - Left column
 
-/// Brain dino + title + subtitle + the step CTA. The CTA swaps from "Set up
-/// later" (nothing committed) to "Continue to Osaurus" once a download is
-/// running or a provider is verified. While a download is in flight a comic
-/// speech bubble floats above the dino reassuring the user that it continues
-/// in the background (Figma node 42:4533).
+/// Title, subtitle, and, once a download is running or a provider is
+/// verified, the "Continue to Osaurus" CTA.
 private struct ConfigureAILeftColumn: View {
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
 
-    @ObservedObject private var modelManager = ModelManager.shared
-
-    /// Whether the featured model's download is currently in flight.
-    private var isDownloading: Bool {
-        guard let id = state.selectedModel?.id else { return false }
-        if case .downloading = modelManager.downloadStates[id] { return true }
-        return false
-    }
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
 
     var body: some View {
+        Group {
+
         VStack(alignment: .leading, spacing: 0) {
-            Image("osaurus-brain", bundle: .module)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(height: 106)
-                // The bubble is a free-floating overlay (matching the design's
-                // absolute placement) so its appearance never reflows the
-                // column: anchored to the dino's top-right, tail pointing back
-                // down at its head.
-                .overlay(alignment: .topLeading) {
-                    if isDownloading {
-                        downloadBubble
-                            .offset(x: 90, y: -100)
-                            .transition(
-                                .scale(scale: 0.8, anchor: .bottomLeading)
-                                    .combined(with: .opacity)
-                            )
-                    }
-                }
-                .animation(OnboardingMotion.bouncy, value: isDownloading)
-                .onboardingEntrance(0, scaleFrom: 0.96)
-
-            Spacer().frame(height: 24)
-
             Text(title, bundle: .module)
-                .font(OnboardingTypography.heroTitle)
-                .tracking(0.4)
-                .foregroundColor(OnboardingPalette.labelPrimary)
+                .catalogTypography(.heading, theme: theme, fallback: OnboardingTypography.heroTitle)
+                .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                 .fixedSize(horizontal: false, vertical: true)
-                .onboardingEntrance(1)
+                .id(state.screen)
+                .transition(.opacity)
 
-            Spacer().frame(height: 16)
+            Spacer().frame(height: theme.space.s16)
 
-            Text(subtitle, bundle: .module)
-            .font(OnboardingTypography.subtitle)
-            .foregroundColor(OnboardingPalette.labelSecondary)
+            Text(subtitle)
+            .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.subtitle)
+            .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
+            #if !OSAURUS_DESIGN_SYSTEM
             .lineSpacing(1.5)
+            #endif
             .fixedSize(horizontal: false, vertical: true)
-            .onboardingEntrance(2)
+            .id(state.screen)
+            .transition(.opacity)
 
-            Spacer().frame(height: 40)
+            if hasCTA {
+                Spacer().frame(height: theme.space.s32)
+                cta
+            }
+        }
+        .animation(theme.motion.standard, value: state.screen)
+        .onboardingEntrance(0)
 
-            cta
-                .onboardingEntrance(3)
+        }.environment(\.theme, theme)
+}
+
+    private var title: LocalizedStringKey {
+        switch state.screen {
+        case .home: return "What matters most to you?"
+        case .local: return "A private model that runs on your Mac"
+        case .keys, .byok: return "Use an AI account you already have"
+        case .claudeCode: return "Use your Claude Code account"
         }
     }
 
-    private var title: LocalizedStringKey {
-        state.screen == .claudeCode
-            ? "Use your Claude Code account"
-            : "A private brain that runs on your Mac"
-    }
-
-    private var subtitle: LocalizedStringKey {
-        state.screen == .claudeCode
-            ? "Osaurus delegates sign-in and requests to Anthropic's Claude Code CLI. Credentials stay with the CLI; model requests run in the cloud."
-            : "We've picked the best fit for your Mac and the specialty you chose, so your Dino can work locally — even offline."
-    }
-
-    /// The design's white comic speech bubble: 196×64 text box, 12pt
-    /// semibold black copy, thin black outline, tail sweeping down-left
-    /// toward the dino. The tail hangs 13pt below the text box via the
-    /// top-aligned background shape, so it never affects the text layout.
-    private var downloadBubble: some View {
-        Text("You can continue while the model downloads in the background!", bundle: .module)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.black)
-            .lineSpacing(1)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .frame(width: 196, height: 64)
-            .background(alignment: .top) {
-                SpeechBubbleShape()
-                    .fill(Color.white)
-                    .overlay(SpeechBubbleShape().stroke(Color.black, lineWidth: 1))
-                    .frame(width: 196, height: 77)
-                    .shadow(color: Color.black.opacity(0.25), radius: 10, y: 5)
+    private var subtitle: String {
+        switch state.screen {
+        case .home:
+            return L("Pick one to get started. You can change it any time in Settings.")
+        case .local:
+            let memoryGB = Int(SystemMonitorService.shared.totalMemoryGB.rounded())
+            guard memoryGB > 0 else {
+                return L("Picked to run smoothly on your Mac, so Osaurus can work privately, even offline.")
             }
+            return L("Picked for your Mac's \(memoryGB) GB of memory, so Osaurus can work privately, even offline.")
+        case .keys, .byok:
+            return L("Connect the AI provider you already use. Your key is stored on this Mac.")
+        case .claudeCode:
+            return L("Osaurus delegates sign-in and requests to Anthropic's Claude Code CLI. Credentials stay with the CLI; model requests run in the cloud.")
+        }
     }
+
+    /// The left column only carries a CTA once there is something to
+    /// continue with; each path's own card holds the way in.
+    private var hasCTA: Bool { state.isAPISuccess || state.hasCommittedLocal }
 
     @ViewBuilder
     private var cta: some View {
@@ -1151,6 +1227,7 @@ private struct ConfigureAILeftColumn: View {
                 title: "Continue to Osaurus",
                 style: .primary,
                 size: .large,
+                trailingSymbol: "arrow.right",
                 isEnabled: !state.isSaving,
                 action: { state.saveProviderAndContinue(onComplete: onComplete) }
             )
@@ -1159,90 +1236,292 @@ private struct ConfigureAILeftColumn: View {
                 title: "Continue to Osaurus",
                 style: .primary,
                 size: .large,
+                trailingSymbol: "arrow.right",
                 action: onComplete
             )
-        } else {
-            OnboardingPillButton(
-                title: "Set up later",
-                style: .secondary,
-                size: .large,
-                action: { state.chooseOsaurusAndContinue(onComplete: onComplete) }
-            )
         }
     }
 }
 
-/// The speech-bubble outline traced from the Figma vector (node 42:4534):
-/// a 16pt-radius rounded rectangle over the top 64pt with a curved comic
-/// tail sweeping down-left off the bottom edge. Reference canvas 196×77;
-/// the path scales to whatever rect it's given.
-private struct SpeechBubbleShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        let sx = rect.width / 196
-        let sy = rect.height / 77
-        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + x * sx, y: rect.minY + y * sy)
+// MARK: - Paths panel
+
+/// The right panel's home screen: three peer places for Osaurus to run.
+private struct ConfigureAIPathsPanel: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject var state: ConfigureAIState
+    let onComplete: () -> Void
+
+    @ObservedObject private var modelManager = ModelManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            OnboardingPathCard(
+                symbol: "lock.laptopcomputer",
+                title: "Keep it private, on this Mac",
+                caption: "Free, works offline, and nothing you type leaves your Mac.",
+                detail: localDetail,
+                badge: "Recommended",
+                isRecommended: true,
+                status: localStatus
+            ) {
+                state.showLocal()
+            }
+            .onboardingEntrance(2)
+
+            OnboardingPathCard(
+                symbol: "bolt.fill",
+                title: "Start chatting right away",
+                caption: "Osaurus Cloud. Nothing to download, with free credit to start.",
+                status: nil
+            ) {
+                state.chooseOsaurusAndContinue(onComplete: onComplete)
+            }
+            .onboardingEntrance(3)
+
+            OnboardingPathCard(
+                symbol: "person.crop.circle.badge.checkmark",
+                title: "Use an AI account you already have",
+                caption: "Sign in with ChatGPT, Grok, or OpenRouter, or use Claude Code or a key from OpenAI, Anthropic, Gemini, and more.",
+                status: state.isAPISuccess ? L("Connected") : nil
+            ) {
+                state.showKeys()
+            }
+            .onboardingEntrance(4)
+
+            Spacer(minLength: 0)
         }
-        var path = Path()
-        // Tail root on the bottom edge, up into the rounded rectangle…
-        path.move(to: p(21.97, 67.95))
-        path.addCurve(to: p(18.5, 64), control1: p(22.55, 65.82), control2: p(20.71, 64))
-        path.addLine(to: p(16, 64))
-        path.addCurve(to: p(0, 48), control1: p(7.16, 64), control2: p(0, 56.84))
-        path.addLine(to: p(0, 16))
-        path.addCurve(to: p(16, 0), control1: p(0, 7.16), control2: p(7.16, 0))
-        path.addLine(to: p(180, 0))
-        path.addCurve(to: p(196, 16), control1: p(188.84, 0), control2: p(196, 7.16))
-        path.addLine(to: p(196, 48))
-        path.addCurve(to: p(180, 64), control1: p(196, 56.84), control2: p(188.84, 64))
-        path.addLine(to: p(38, 64))
-        // …then the tail: bows out of the bottom edge and curls to a point.
-        path.addCurve(to: p(33.39, 67.94), control1: p(35.79, 64), control2: p(34.06, 65.83))
-        path.addCurve(to: p(21, 77), control1: p(31.72, 73.19), control2: p(26.81, 77))
-        path.addLine(to: p(16.01, 77))
-        path.addCurve(to: p(15.84, 76.44), control1: p(15.71, 77), control2: p(15.59, 76.61))
-        path.addCurve(to: p(21.97, 67.95), control1: p(18.88, 74.42), control2: p(21.03, 71.38))
-        path.closeSubpath()
-        return path
+        .padding(theme.space.s24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The pick and why, in terms of this Mac: "Picked for your 32 GB Mac:
+    /// Gemma 4 12B, a one-time 8 GB download."
+    private var localDetail: String? {
+        guard let model = state.selectedModel else { return nil }
+        let memoryGB = Int(SystemMonitorService.shared.totalMemoryGB.rounded())
+        let name = model.simplifiedName
+        if model.isDownloaded {
+            return L("\(name) is already on this Mac, ready to go.")
+        }
+        switch (memoryGB > 0, model.formattedDownloadSize) {
+        case (true, let size?):
+            return L("Picked for your \(memoryGB) GB Mac: \(name), a one-time \(size) download.")
+        case (true, nil):
+            return L("Picked for your \(memoryGB) GB Mac: \(name).")
+        case (false, let size?):
+            return L("Picked for your Mac: \(name), a one-time \(size) download.")
+        case (false, nil):
+            return L("Picked for your Mac: \(name).")
+        }
+    }
+
+    private var localStatus: String? {
+        guard let model = state.selectedModel else { return nil }
+        if model.isDownloaded { return state.hasCommittedLocal ? L("Ready") : nil }
+        switch modelManager.downloadStates[model.id] {
+        case .downloading(let progress):
+            return String(format: L("Downloading %lld%%"), Int((progress * 100).rounded()))
+        case .paused: return L("Paused")
+        case .completed: return L("Ready")
+        default: return nil
+        }
     }
 }
 
-// MARK: - Home panel
+/// One of the three paths: icon, title, caption, an optional detail line,
+/// badge, and live status, and a chevron. The recommended path wears the
+/// dino-green glow so the default needs no deliberation.
+private struct OnboardingPathCard: View {
+    @Environment(\.theme) private var theme
+    let symbol: String
+    let title: LocalizedStringKey
+    let caption: LocalizedStringKey
+    var detail: String? = nil
+    var badge: LocalizedStringKey? = nil
+    var isRecommended = false
+    let status: String?
+    let action: () -> Void
 
-/// The right panel's home screen: recommended model card + provider chips.
-private struct ConfigureAIHomePanel: View {
+    @State private var isHovered = false
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: theme.space.s16) {
+                ZStack {
+                    Circle().fill(iconFill)
+                    Image(systemName: symbol)
+                        .glyphSize(17, weight: .semibold)
+                        .foregroundColor(
+                            isHovered || isRecommended ? OnboardingPalette.dinoGreen : OnboardingPalette.labelPrimary)
+                }
+                .frame(width: theme.space.s48, height: theme.space.s48)
+
+                VStack(alignment: .leading, spacing: theme.space.s4) {
+                    HStack(spacing: theme.space.s8) {
+                        Text(title, bundle: .module)
+                            .font(OnboardingTypography.cardTitle)
+                            .foregroundColor(OnboardingPalette.labelPrimary)
+                        if let badge {
+                            OnboardingPickedBadge(text: badge, tint: isRecommended ? OnboardingPalette.dinoGreen : nil)
+                        }
+                    }
+                    Text(caption, bundle: .module)
+                        .font(OnboardingTypography.cardCaption)
+                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail {
+                        Text(detail)
+                            .font(OnboardingTypography.cardCaption)
+                            .foregroundColor(OnboardingPalette.labelPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let status {
+                        Text(status)
+                            .font(OnboardingTypography.badge)
+                            .foregroundColor(OnboardingPalette.dinoGreen)
+                            .contentTransition(.numericText())
+                            .animation(theme.motion.standard, value: status)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundColor(OnboardingPalette.labelSecondary)
+                    .offset(x: isHovered ? theme.space.s2 : 0)
+            }
+            .padding(theme.space.s16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                ZStack {
+                    shape.fill(isHovered ? OnboardingPalette.fill8 : OnboardingPalette.fill3)
+                    if isRecommended {
+                        shape.fill(
+                            LinearGradient(
+                                colors: [OnboardingPalette.createGradientGreen, .clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                    }
+                }
+            }
+            .overlay {
+                if isRecommended {
+                    ZStack {
+                        shape.strokeBorder(OnboardingPalette.dinoGreen, lineWidth: theme.stroke.focus)
+                            .blur(radius: theme.space.s8)
+                            .opacity(isHovered ? 0.9 : 0.6)
+                        shape.strokeBorder(OnboardingPalette.dinoGreen, lineWidth: theme.stroke.focus)
+                    }
+                } else {
+                    shape.strokeBorder(
+                        isHovered ? OnboardingPalette.fill10 : OnboardingPalette.fill5, lineWidth: theme.stroke.default)
+                }
+            }
+            .contentShape(shape)
+        }
+        .buttonStyle(OnboardingPressableButtonStyle())
+        .onHover { hovering in
+            withAnimation(theme.motion.quick) { isHovered = hovering }
+        }
+    }
+
+    private var iconFill: Color {
+        if isRecommended { return OnboardingPalette.dinoGreen.opacity(isHovered ? 0.24 : 0.16) }
+        return isHovered ? OnboardingPalette.fill10 : OnboardingPalette.fill5
+    }
+}
+
+// MARK: - Shared back row
+
+private struct ConfigureAIBackRow: View {
+    @Environment(\.theme) private var theme
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: theme.space.s4) {
+                Image(systemName: "arrow.left")
+                    .glyphSize(10, weight: .semibold)
+                Text("Back", bundle: .module)
+                    .font(OnboardingTypography.cardCaption)
+            }
+            .foregroundColor(OnboardingPalette.labelSecondary)
+            .padding(.vertical, theme.space.s4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .localizedHelp("Back")
+    }
+}
+
+// MARK: - Local panel
+
+/// Raptor on this Mac: the recommended-model card and its download.
+private struct ConfigureAILocalPanel: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            ConfigureAIBackRow { state.popToHome() }
+
+            Spacer().frame(height: theme.space.s16)
+
             RecommendedModelCard(state: state, onComplete: onComplete)
-                .onboardingEntrance(0, scaleFrom: 0.98)
 
             if let warning = state.diskSpaceWarning {
-                Spacer().frame(height: 12)
+                Spacer().frame(height: theme.space.s12)
                 Text(warning)
                     .font(OnboardingTypography.cardCaption)
-                    .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.4))
+                    .foregroundColor(OnboardingPalette.warningLabel)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Spacer().frame(height: 28)
+            Spacer(minLength: 0)
+        }
+        .padding(theme.space.s24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
 
-            Text("Prefer to connect your AI Provider?", bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(OnboardingPalette.labelPrimary)
-                .onboardingEntrance(2)
+// MARK: - Keys panel
 
-            Spacer().frame(height: 12)
+/// Your own key: the provider chips, Claude Code, and a custom endpoint.
+private struct ConfigureAIKeysPanel: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+
+    @ObservedObject var state: ConfigureAIState
+
+    var body: some View {
+        Group {
+
+        VStack(alignment: .leading, spacing: 0) {
+            ConfigureAIBackRow { state.popToHome() }
+
+            Spacer().frame(height: theme.space.s16)
+
+            Text("Choose your provider", bundle: .module)
+                .componentInspectionText(55, role: .caption, fallback: .caption, weight: 600, theme: theme)
+                .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
+
+            Spacer().frame(height: theme.space.s12)
 
             providerChips
 
             Spacer(minLength: 0)
         }
-        .padding(32)
+        .padding(theme.space.s24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
+
+        }.environment(\.theme, theme)
+}
 
     /// The five Figma-featured providers, in frame order.
     private static let featuredPresets: [ProviderPreset] = [
@@ -1264,9 +1543,8 @@ private struct ConfigureAIHomePanel: View {
             : Self.featuredPresets
     }
 
-    /// Featured chips cascade in with a tight stagger after the card and
-    /// header; the chips revealed by "+ More" instead pop in with the
-    /// expansion animation itself.
+    /// Featured chips cascade in; the chips revealed by "+ More" instead
+    /// pop in with the expansion animation itself.
     private var providerChips: some View {
         ChipFlowLayout(spacing: 8, lineSpacing: 8) {
             ForEach(Array(visiblePresets.enumerated()), id: \.element.id) { index, preset in
@@ -1277,7 +1555,7 @@ private struct ConfigureAIHomePanel: View {
                     state.enterProvider(preset)
                 }
                 if index < Self.featuredPresets.count {
-                    chip.onboardingEntrance(3 + index)
+                    chip.onboardingEntrance(1 + index)
                 } else {
                     chip.transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
@@ -1286,14 +1564,14 @@ private struct ConfigureAIHomePanel: View {
             OnboardingProviderChip(
                 logo: {
                     Image(systemName: "terminal.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(OnboardingPalette.labelPrimary)
+                        .glyphSize(11, weight: .semibold)
+                        .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                 },
                 label: "Claude Code"
             ) {
                 state.enterClaudeCode()
             }
-            .onboardingEntrance(3 + Self.featuredPresets.count)
+            .onboardingEntrance(1 + Self.featuredPresets.count)
 
             OnboardingProviderChip(
                 logo: { OnboardingProviderLogo(preset: .custom, size: 16) },
@@ -1301,14 +1579,14 @@ private struct ConfigureAIHomePanel: View {
             ) {
                 state.enterCustomProvider()
             }
-            .onboardingEntrance(4 + Self.featuredPresets.count)
+            .onboardingEntrance(2 + Self.featuredPresets.count)
 
             if !state.showAllProviders {
                 OnboardingProviderChip(
                     logo: {
                         Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(OnboardingPalette.labelPrimary)
+                            .glyphSize(11, weight: .semibold)
+                            .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                     },
                     label: L("More")
                 ) {
@@ -1319,7 +1597,7 @@ private struct ConfigureAIHomePanel: View {
                     }
                 }
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
-                .onboardingEntrance(5 + Self.featuredPresets.count)
+                .onboardingEntrance(3 + Self.featuredPresets.count)
             }
         }
     }
@@ -1333,12 +1611,17 @@ private struct ConfigureAIHomePanel: View {
 /// recovery, or the already-on-disk state. Isolated so only the card
 /// re-renders on `ModelManager`'s frequent progress publishes.
 private struct RecommendedModelCard: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
 
     @ObservedObject private var modelManager = ModelManager.shared
 
     var body: some View {
+        Group {
+
         if let model = state.selectedModel {
             VStack(alignment: .leading, spacing: 0) {
                 OnboardingPickedBadge(text: "Picked for your Mac")
@@ -1351,8 +1634,16 @@ private struct RecommendedModelCard: View {
 
                 if let subtitle = ConfigureAIState.chooserSubtitle(for: model) {
                     Text(subtitle)
+                        .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                        .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let reason = pickReason(model) {
+                    Spacer().frame(height: theme.space.s8)
+                    (Text("Why this one: ", bundle: .module).bold() + Text(reason))
                         .font(OnboardingTypography.cardCaption)
-                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .foregroundColor(OnboardingPalette.labelPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -1361,17 +1652,19 @@ private struct RecommendedModelCard: View {
                 statusBlock(model)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 20, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 20, theme))).catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.body.padding.vertical")
             .background(
-                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
-                    .fill(OnboardingPalette.fill5)
+                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
+                    .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
-                    .strokeBorder(OnboardingPalette.fill8, lineWidth: 1)
+                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
+                    .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill8), lineWidth: theme.stroke.default)
             )
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     /// Effective download state for the featured model. A bundle already on
     /// disk renders as `.completed` regardless of any stale service entry.
@@ -1381,20 +1674,20 @@ private struct RecommendedModelCard: View {
     }
 
     private func titleRow(_ model: MLXModel) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.titleRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
             Text(model.simplifiedName)
-                .font(OnboardingTypography.modelTitle)
-                .foregroundColor(OnboardingPalette.labelWhite)
+                .catalogTypography(.heading, theme: theme, fallback: OnboardingTypography.modelTitle)
+                .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelWhite))
                 .fixedSize(horizontal: false, vertical: true)
 
             // The size moves inline next to the name once the meta chips are
             // replaced by the progress block (per the downloading frame).
             if isInProgress(model), let size = model.formattedDownloadSize {
                 Text(size)
-                    .font(.system(size: 15))
-                    .foregroundColor(OnboardingPalette.labelSecondary)
+                    .componentInspectionText(55, role: .body, fallback: .body, theme: theme)
+                    .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
             }
-        }
+        }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.titleRow.horizontalGap")
     }
 
     private func isInProgress(_ model: MLXModel) -> Bool {
@@ -1410,9 +1703,9 @@ private struct RecommendedModelCard: View {
     private func statusBlock(_ model: MLXModel) -> some View {
         switch downloadState(for: model) {
         case .notStarted:
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 16, theme))) {
                 metaChips(model)
-                HStack(spacing: 12) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
                     OnboardingPillButton(
                         title: "Download",
                         style: .primary,
@@ -1426,56 +1719,57 @@ private struct RecommendedModelCard: View {
                         size: .compact,
                         action: { state.openModelChooser() }
                     )
-                }
-            }
+                }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap")
+            }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap")
 
         case .downloading(let progress):
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Downloading..", bundle: .module)
-                    .font(OnboardingTypography.cardCaption)
-                    .foregroundColor(OnboardingPalette.labelSecondary)
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap2", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
+                Text("Downloading. You can continue while it finishes in the background.", bundle: .module)
+                    .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                    .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
+                    .fixedSize(horizontal: false, vertical: true)
                 OnboardingProgressBar(progress: progress)
                 HStack(spacing: 0) {
                     let metrics = metricsText(for: model) ?? L("Starting download…")
                     Text(metrics)
-                        .font(OnboardingTypography.cardCaption)
-                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                        .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                         .contentTransition(.numericText())
-                        .animation(.easeOut(duration: 0.3), value: metrics)
+                        .animation(theme.motion.standard, value: metrics)
                     Spacer(minLength: 8)
                     if let remaining = remainingText(for: model, progress: progress) {
                         Text(remaining)
-                            .font(OnboardingTypography.cardCaption)
-                            .foregroundColor(OnboardingPalette.labelSecondary)
+                            .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                            .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                             .contentTransition(.numericText())
-                            .animation(.easeOut(duration: 0.3), value: remaining)
+                            .animation(theme.motion.standard, value: remaining)
                     }
                 }
-            }
+            }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap2")
 
         case .paused(let progress):
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap3", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
                 OnboardingProgressBar(progress: progress)
-                HStack(spacing: 12) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
                     Text("Download paused", bundle: .module)
-                        .font(OnboardingTypography.cardCaption)
-                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                        .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                     OnboardingPillButton(
                         title: "Resume download",
                         style: .primary,
                         size: .compact,
                         action: { modelManager.resumeDownload(model.id) }
                     )
-                }
-            }
+                }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap2")
+            }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap3")
 
         case .failed(let error):
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap4", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
                 Text(L("Download hit a snag — \(error)"))
-                    .font(OnboardingTypography.cardCaption)
-                    .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.4))
+                    .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                    .foregroundColor(theme.assignedColor("component.library.55.error", fallback: OnboardingPalette.warningLabel))
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 12) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap3", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
                     OnboardingPillButton(
                         title: "Try again",
                         style: .primary,
@@ -1488,20 +1782,20 @@ private struct RecommendedModelCard: View {
                         size: .compact,
                         action: { state.openModelChooser() }
                     )
-                }
-            }
+                }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap3")
+            }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap4")
 
         case .completed:
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap5", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 16, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap4", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 6, theme))) {
                     Image(systemName: "checkmark.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(OnboardingPalette.dinoGreen)
+                        .glyphSize(12, weight: .semibold)
+                        .foregroundColor(theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.dinoGreen))
                     Text("Already on your Mac — ready to go", bundle: .module)
-                        .font(OnboardingTypography.cardCaption)
-                        .foregroundColor(OnboardingPalette.labelSecondary)
-                }
-                HStack(spacing: 12) {
+                        .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                        .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
+                }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap4")
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap5", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
                     OnboardingPillButton(
                         title: "Use this model",
                         style: .primary,
@@ -1516,20 +1810,30 @@ private struct RecommendedModelCard: View {
                             action: { state.openModelChooser() }
                         )
                     }
-                }
-            }
+                }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap5")
+            }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap5")
         }
     }
 
     private func metaChips(_ model: MLXModel) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.metaChips.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
             if let size = model.formattedDownloadSize {
-                OnboardingMetaChip(text: L("Download : \(size)"))
+                OnboardingMetaChip(text: L("One-time \(size) download"))
             }
-            if let memory = model.formattedEstimatedMemory {
-                OnboardingMetaChip(text: L("Est memory usage : \(memory)"))
+            if let fit = ConfigureAIState.fitLabel(model.compatibility(totalMemoryGB: totalMemoryGB)) {
+                OnboardingMetaChip(text: fit)
             }
-        }
+        }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.metaChips.horizontalGap")
+    }
+
+    private var totalMemoryGB: Double { SystemMonitorService.shared.totalMemoryGB }
+
+    private func pickReason(_ model: MLXModel) -> String? {
+        ConfigureAIState.pickReason(
+            for: model,
+            recommendedId: state.recommendedModelId(totalMemoryGB: totalMemoryGB),
+            totalMemoryGB: totalMemoryGB
+        )
     }
 
     /// "341.3 MB of 13.39 GB · 38.5 MB/s" from the live download metrics, or
@@ -1577,6 +1881,10 @@ private struct RecommendedModelCard: View {
 /// shows the green check; the left CTA (outside this panel) becomes
 /// "Continue to Osaurus".
 private struct ConfigureAIProviderPanel: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+
     @ObservedObject var state: ConfigureAIState
 
     private var preset: ProviderPreset? { state.currentAPIProvider }
@@ -1587,6 +1895,8 @@ private struct ConfigureAIProviderPanel: View {
     }
 
     var body: some View {
+        Group {
+
         VStack(alignment: .leading, spacing: 0) {
             backRow
 
@@ -1609,22 +1919,24 @@ private struct ConfigureAIProviderPanel: View {
 
             Spacer(minLength: 0)
         }
-        .padding(24)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.body.padding.vertical")
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     private var backRow: some View {
         Button {
-            state.popBYOKToHome()
+            state.popBYOKToProviders()
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.backRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 5, theme))) {
                 Image(systemName: "arrow.left")
-                    .font(.system(size: 10, weight: .semibold))
+                    .glyphSize(10, weight: .semibold)
                 Text("Back", bundle: .module)
-                    .font(OnboardingTypography.cardCaption)
-            }
-            .foregroundColor(OnboardingPalette.labelSecondary)
-            .padding(.vertical, 4)
+                    .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+            }.catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.backRow.horizontalGap")
+            .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.backRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 4, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.backRow.paddingY")
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1637,7 +1949,7 @@ private struct ConfigureAIProviderPanel: View {
 
     @ViewBuilder
     private func optionRows(_ preset: ProviderPreset) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.optionRows.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
             if oauthKind != nil {
                 OnboardingOptionRow(
                     title: oauthRowTitle(preset),
@@ -1666,7 +1978,7 @@ private struct ConfigureAIProviderPanel: View {
                     state.openConnectDialog(.apiKey)
                 }
             }
-        }
+        }.catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.optionRows.verticalGap")
     }
 
     private func oauthRowTitle(_ preset: ProviderPreset) -> LocalizedStringKey {
@@ -1707,12 +2019,17 @@ private struct ConfigureAIProviderPanel: View {
 /// Connect button. Success closes the dialog; the drill-in shows the green
 /// check and the left CTA becomes "Continue to Osaurus".
 struct ProviderConnectDialog: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     @ObservedObject var state: ConfigureAIState
 
     private var preset: ProviderPreset? { state.currentAPIProvider }
     private var isOAuth: Bool { state.connectDialog == .oauth }
 
     var body: some View {
+        Group {
+
         OnboardingDialog(
             isDismissable: !state.isTesting,
             onClose: { state.closeConnectDialog() }
@@ -1728,15 +2045,15 @@ struct ProviderConnectDialog: View {
                     Spacer().frame(height: 24)
 
                     Text(title(preset))
-                        .font(OnboardingTypography.cardTitle)
-                        .foregroundColor(OnboardingPalette.labelWhite)
+                        .catalogTypography(.heading, theme: theme, fallback: OnboardingTypography.cardTitle)
+                        .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelWhite))
                         .multilineTextAlignment(.center)
 
                     Spacer().frame(height: 8)
 
                     Text(caption(preset))
-                        .font(OnboardingTypography.cardCaption)
-                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                        .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -1753,8 +2070,8 @@ struct ProviderConnectDialog: View {
                     if case .failure(let message) = state.testResult {
                         Spacer().frame(height: 12)
                         Text(message)
-                            .font(.system(size: 11))
-                            .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.4))
+                            .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
+                            .foregroundColor(theme.assignedColor("component.library.55.error", fallback: OnboardingPalette.warningLabel))
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: 320)
@@ -1765,8 +2082,8 @@ struct ProviderConnectDialog: View {
                     actionButton(preset)
                 }
             }
-            .padding(.horizontal, 40)
-            .padding(.vertical, 36)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 40, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.body.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 36, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.body.paddingY")
         }
         .onChange(of: state.isAPISuccess) { _, success in
             // A verified connection closes the dialog after a beat so the
@@ -1778,7 +2095,9 @@ struct ProviderConnectDialog: View {
                 state.closeConnectDialog()
             }
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     private func displayName(_ preset: ProviderPreset) -> String {
         preset == .google ? "Gemini" : preset.name
@@ -1826,46 +2145,61 @@ struct ProviderConnectDialog: View {
     }
 
     private func keyField(_ preset: ProviderPreset) -> some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        SettingsTextField(placeholder: L("sk-..."), text: $state.apiKey, monospaced: true, isSecure: true)
+            .frame(maxWidth: 300).onChange(of: state.apiKey) { _, _ in state.testResult = nil }
+        #else
+
         SecureField(L("sk-..."), text: $state.apiKey)
             .textFieldStyle(.plain)
-            .font(.system(size: 13, design: .monospaced))
-            .foregroundColor(OnboardingPalette.labelPrimary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .componentInspectionText(55, role: .body, fallback: .code, theme: theme)
+            .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.keyField.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.keyField.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.keyField.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 9, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.keyField.paddingY")
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(OnboardingPalette.fill5)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill10), lineWidth: theme.stroke.default)
             )
             .frame(maxWidth: 300)
             .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
-    }
+    
+        #endif
+}
 
     /// Single paste-the-URL form for the custom OpenAI-compatible endpoint.
     /// The URL is parsed into scheme/host/port/path behind the scenes
     /// (`CustomProviderForm.parse`); a resolved preview confirms how the
     /// paste was understood. Optional key below for authenticated servers.
     private var customEndpointForm: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
             formField("http://localhost:11434/v1", text: $state.customEndpointURL)
 
+            Group {
+                #if OSAURUS_DESIGN_SYSTEM
+                SettingsTextField(placeholder: L("API key (optional for local servers)"), text: $state.apiKey, monospaced: true, isSecure: true)
+                #else
             SecureField(L("API key (optional for local servers)"), text: $state.apiKey)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(OnboardingPalette.labelPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .componentInspectionText(55, role: .body, fallback: .code, theme: theme)
+                .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 9, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.paddingY")
                 .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(OnboardingPalette.fill5)
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill10), lineWidth: theme.stroke.default)
                 )
+
+
+                #endif
+            }
 
             // Confirm how the paste was understood, but only when parsing
             // actually added something (scheme, default /v1) beyond the
@@ -1875,39 +2209,45 @@ struct ProviderConnectDialog: View {
                     != state.customEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
             {
                 Text(state.customForm.endpointPreview)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(OnboardingPalette.labelSecondary)
+                    .componentInspectionText(55, role: .code, fallback: .footnote, family: .code, theme: theme)
+                    .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-        }
+        }.catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.verticalGap")
         .frame(maxWidth: 320)
         .onChange(of: state.customForm) { _, _ in state.testResult = nil }
         .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
     }
 
     private func formField(_ placeholder: String, text: Binding<String>) -> some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        SettingsTextField(placeholder: placeholder, text: text, monospaced: true)
+        #else
+
         TextField(placeholder, text: text)
             .textFieldStyle(.plain)
-            .font(.system(size: 13, design: .monospaced))
-            .foregroundColor(OnboardingPalette.labelPrimary)
+            .componentInspectionText(55, role: .body, fallback: .code, theme: theme)
+            .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
             .autocorrectionDisabled()
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.formField.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.formField.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.formField.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 9, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.formField.paddingY")
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(OnboardingPalette.fill5)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill10), lineWidth: theme.stroke.default)
             )
-    }
+    
+        #endif
+}
 
     @ViewBuilder
     private func actionButton(_ preset: ProviderPreset) -> some View {
         if state.isTesting {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
                 ProgressView()
                     .controlSize(.small)
                 Text(
@@ -1916,21 +2256,21 @@ struct ProviderConnectDialog: View {
                         : LocalizedStringKey("Connecting..."),
                     bundle: .module
                 )
-                .font(OnboardingTypography.chip)
-                .foregroundColor(OnboardingPalette.labelPrimary)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(OnboardingPalette.fill8))
+                .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.chip)
+                .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
+            }.catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 16, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 8, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY")
+            .background(Capsule().fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill8)))
         } else if state.isAPISuccess {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 6, theme))) {
                 Image(systemName: "checkmark.circle")
-                    .font(.system(size: 12, weight: .semibold))
+                    .glyphSize(12, weight: .semibold)
                 Text("Connected", bundle: .module)
-                    .font(OnboardingTypography.chip)
-            }
-            .foregroundColor(OnboardingPalette.dinoGreen)
-            .padding(.vertical, 8)
+                    .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.chip)
+            }.catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap2")
+            .foregroundColor(theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.dinoGreen))
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY2", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 8, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY2")
         } else {
             OnboardingPillButton(
                 title: idleButtonTitle,
@@ -1962,6 +2302,9 @@ struct ProviderConnectDialog: View {
 /// hardware-chosen build per model family, a "Picked for your Mac" pill on
 /// the safe default, and per-row cost stats read against this Mac's specs.
 struct ConfigureModelChooserModal: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     @ObservedObject var state: ConfigureAIState
 
     @ObservedObject private var modelManager = ModelManager.shared
@@ -1972,6 +2315,8 @@ struct ConfigureModelChooserModal: View {
     private let systemMonitor = SystemMonitorService.shared
 
     var body: some View {
+        Group {
+
         OnboardingDialog(width: 520, onClose: { state.cancelModelChooser() }) {
             VStack(spacing: 0) {
                 header
@@ -1979,25 +2324,27 @@ struct ConfigureModelChooserModal: View {
                 footer
             }
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     // MARK: Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.header.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 6, theme))) {
             Text("Choose your model", bundle: .module)
-                .font(OnboardingTypography.cardTitle)
-                .foregroundColor(OnboardingPalette.labelWhite)
+                .catalogTypography(.heading, theme: theme, fallback: OnboardingTypography.cardTitle)
+                .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelWhite))
             Text(
-                "Every model here runs privately on your Mac. Not sure? Keep the one we picked for your Mac's specs — you can switch anytime.",
+                "Bigger models give smarter answers but need more memory and a longer download. Lighter ones reply faster and leave room for your other apps. Not sure? Keep the one picked for your Mac.",
                 bundle: .module
             )
-            .font(OnboardingTypography.cardCaption)
-            .foregroundColor(OnboardingPalette.labelSecondary)
+            .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+            .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
             .fixedSize(horizontal: false, vertical: true)
-        }
+        }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.header.verticalGap")
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 24)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.header.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.header.paddingX")
         .padding(.top, 24)
         .padding(.trailing, 44)
         .padding(.bottom, 16)
@@ -2007,13 +2354,13 @@ struct ConfigureModelChooserModal: View {
 
     private var modelList: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 8) {
+            VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
                 ForEach(pickerModels, id: \.model.id) { pair in
                     modelRow(pair.model, compatibility: pair.compatibility)
                 }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 4)
+            }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.verticalGap")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 4, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY")
         }
         .frame(maxHeight: 360)
     }
@@ -2027,54 +2374,59 @@ struct ConfigureModelChooserModal: View {
         return Button {
             state.selectDraftModel(model)
         } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 4, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
                     Text(model.simplifiedName)
-                        .font(OnboardingTypography.optionTitle)
-                        .foregroundColor(OnboardingPalette.labelPrimary)
+                        .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.optionTitle)
+                        .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                     if model.id == recommendedRowId {
-                        OnboardingPickedBadge(text: "Picked for your Mac")
+                        OnboardingPickedBadge(text: "Picked for your Mac", tint: OnboardingPalette.dinoGreen)
+                    } else if model.id == standouts.smartestId {
+                        OnboardingPickedBadge(text: "Smartest that fits")
+                    } else if model.id == standouts.lightestId {
+                        OnboardingPickedBadge(text: "Lightest")
                     }
                     if model.isDownloaded {
                         OnboardingMetaChip(text: L("Downloaded"))
                     }
-                    if compatibility == .tooLarge {
-                        OnboardingMetaChip(text: compatibility.displayName)
-                    }
                     Spacer(minLength: 0)
                     if isSelected {
                         Image(systemName: "checkmark.circle")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(OnboardingPalette.dinoGreen)
+                            .glyphSize(13, weight: .semibold)
+                            .foregroundColor(theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.dinoGreen))
                     }
-                }
+                }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.horizontalGap")
                 if let subtitle = ConfigureAIState.chooserSubtitle(for: model) {
                     Text(subtitle)
-                        .font(OnboardingTypography.cardCaption)
-                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                        .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                 }
-                if let stats = ConfigureAIState.chooserStatsLine(for: model) {
-                    Text(stats)
-                        .font(.system(size: 11))
-                        .foregroundColor(OnboardingPalette.labelSecondary.opacity(0.8))
+                fitLine(model, compatibility: compatibility)
+                if isDisabled,
+                    let reason = ConfigureAIState.tooLargeReason(
+                        estimatedMemoryGB: model.estimatedMemoryGB, totalMemoryGB: systemMonitor.totalMemoryGB)
+                {
+                    Text(reason)
+                        .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
+                        .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                 }
-            }
+            }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.verticalGap")
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 14, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 10, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingY")
             .background(
-                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
-                    .fill(isSelected ? OnboardingPalette.fill5 : OnboardingPalette.fill2)
+                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
+                    .fill(isSelected ? theme.assignedColor("component.library.55.selected", fallback: OnboardingPalette.fill5) : theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill2))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
                     .strokeBorder(
-                        isSelected ? OnboardingPalette.dinoGreen : OnboardingPalette.fill8,
-                        lineWidth: 1
+                        isSelected ? theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.dinoGreen) : theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill8),
+                        lineWidth: theme.stroke.default
                     )
             )
             .contentShape(
-                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
             )
         }
         .buttonStyle(OnboardingPressableButtonStyle(pressedScale: 0.985))
@@ -2082,17 +2434,56 @@ struct ConfigureModelChooserModal: View {
         .opacity(isDisabled ? 0.45 : 1)
     }
 
+    /// "● Runs smoothly here · Download: 8 GB · …": the fit for this Mac
+    /// first, in its color, then the cost.
+    @ViewBuilder
+    private func fitLine(_ model: MLXModel, compatibility: ModelCompatibility) -> some View {
+        let stats = ConfigureAIState.chooserStatsLine(for: model)
+        if let fit = ConfigureAIState.fitLabel(compatibility) {
+            HStack(spacing: theme.space.s6) {
+                Circle()
+                    .fill(fitColor(compatibility))
+                    .frame(width: theme.space.s6, height: theme.space.s6)
+                Text(fit)
+                    .font(OnboardingTypography.badge)
+                    .foregroundColor(fitColor(compatibility))
+                if let stats {
+                    Text(verbatim: "· \(stats)")
+                        .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
+                        .foregroundColor(OnboardingPalette.labelSecondary)
+                        .lineLimit(1)
+                }
+            }
+        } else if let stats {
+            Text(stats)
+                .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
+                .foregroundColor(OnboardingPalette.labelSecondary)
+        }
+    }
+
+    private func fitColor(_ compatibility: ModelCompatibility) -> Color {
+        switch compatibility {
+        case .compatible: return OnboardingPalette.dinoGreen
+        case .tight: return OnboardingPalette.fitTight
+        case .tooLarge, .unknown: return OnboardingPalette.labelSecondary
+        }
+    }
+
+    private var standouts: (lightestId: String?, smartestId: String?) {
+        ConfigureAIState.standouts(in: dedupedTopPicks, totalMemoryGB: systemMonitor.totalMemoryGB)
+    }
+
     // MARK: Footer
 
     private var footer: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
             Text(footerHint)
-                .font(.system(size: 11))
-                .foregroundColor(OnboardingPalette.labelSecondary)
+                .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 10) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
                 Spacer(minLength: 0)
                 OnboardingPillButton(
                     title: "Cancel",
@@ -2107,9 +2498,9 @@ struct ConfigureModelChooserModal: View {
                     isEnabled: state.draftModel != nil,
                     action: { state.commitModelChooser() }
                 )
-            }
-        }
-        .padding(.horizontal, 24)
+            }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.horizontalGap")
+        }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.verticalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.paddingX")
         .padding(.top, 14)
         .padding(.bottom, 20)
     }
@@ -2123,20 +2514,14 @@ struct ConfigureModelChooserModal: View {
             return L("Bigger models are smarter but use more memory.")
         }
         let memoryGB = Int(totalMemoryGB.rounded())
-        let comfortableGB = GPUMemoryBudget.assessment(
-            modelSizeBytes: nil,
-            sizeSource: nil,
-            physicalMemoryGB: totalMemoryGB
-        ).comfortableModelBudgetGB
-        let comfortableText = String(format: "%.0f GB", comfortableGB)
         if let free = state.freeDiskBytes {
             let freeText = free.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
             return L(
-                "Your Mac has \(memoryGB) GB unified memory; for smooth performance, choose models estimated below \(comfortableText) while running. \(freeText) storage is free."
+                "Your Mac has \(memoryGB) GB of memory and \(freeText) of free storage. Models that run smoothly here leave room for your other apps."
             )
         }
         return L(
-            "Your Mac has \(memoryGB) GB unified memory; for smooth performance, choose models estimated below \(comfortableText) while running."
+            "Your Mac has \(memoryGB) GB of memory. Models that run smoothly here leave room for your other apps."
         )
     }
 
