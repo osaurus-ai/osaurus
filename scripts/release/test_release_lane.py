@@ -1,6 +1,7 @@
 import importlib.util
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -147,6 +148,54 @@ class ReleaseLaneTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             lanes.with_classic_upgrade(lanes.ReleaseLane.for_version("1.0.1"), classic,
                                        generated_feed(feed_item("1.0.0")))
+
+    def source_history(self):
+        """classic and main share history up to the 1.0 commit, which only main contains."""
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                   GIT_COMMITTER_EMAIL="t@t", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
+        def git(*args):
+            return subprocess.run(["git", "-C", directory.name, *args], env=env, check=True,
+                                  capture_output=True, text=True).stdout.strip()
+
+        def commit(message):
+            git("commit", "-q", "--allow-empty", "-m", message)
+            return git("rev-parse", "HEAD")
+
+        git("init", "-q", "-b", "main")
+        shared = commit("0.25.33")
+        root = commit("Osaurus 1.0")
+        after_root = commit("1.0.1 fix")
+        git("checkout", "-q", "-b", "hotfix", shared)
+        classic_fix = commit("0.25.34 fix")
+        previous = os.getcwd()
+        os.chdir(directory.name)
+        self.addCleanup(os.chdir, previous)
+        return root, after_root, classic_fix
+
+    def test_source_check_accepts_each_lanes_own_commits_on_any_branch(self):
+        root, after_root, classic_fix = self.source_history()
+        lanes.check_source(lanes.ReleaseLane.for_version("0.25.34"), classic_fix, root)
+        lanes.check_source(lanes.ReleaseLane.for_version("1.0.0"), root, root)
+        lanes.check_source(lanes.ReleaseLane.for_version("1.0.1"), after_root, root)
+        lanes.check_source(lanes.ReleaseLane.for_version("1.0.2-beta.1"), after_root, root)
+
+    def test_source_check_refuses_the_other_products_commit(self):
+        root, after_root, classic_fix = self.source_history()
+        with self.assertRaisesRegex(ValueError, "Osaurus 1.x source"):
+            lanes.check_source(lanes.ReleaseLane.for_version("0.25.34"), after_root, root)
+        with self.assertRaisesRegex(ValueError, "Osaurus Classic source"):
+            lanes.check_source(lanes.ReleaseLane.for_version("1.0.1"), classic_fix, root)
+
+    def test_source_check_fails_closed_when_history_is_missing(self):
+        _, after_root, _ = self.source_history()
+        with self.assertRaisesRegex(ValueError, "cannot tell"):
+            lanes.check_source(lanes.ReleaseLane.for_version("1.0.1"), after_root, "0" * 40)
+
+    def test_the_main_lane_root_is_a_full_commit_sha(self):
+        self.assertRegex(lanes.MAIN_LANE_ROOT, r"^[0-9a-f]{40}$")
 
     def test_feed_check_refuses_items_without_a_version(self):
         broken = appcast("1.0.0").replace("<sparkle:version>1.0.0</sparkle:version>", "")
