@@ -88,9 +88,9 @@ For the full inventory, see [docs/FEATURES.md](docs/FEATURES.md).
 
 Osaurus doesn't depend on any one model. Swap models freely and your agents, memory, and tools stay intact.
 
-- **Local**: Gemma, Qwen, GPT-OSS, Llama, [Liquid LFM](https://www.liquid.ai/models), and more, running on Apple Silicon through MLX. Osaurus publishes [curated quantizations on Hugging Face](https://huggingface.co/OsaurusAI) tuned for quality per gigabyte. Models live in `~/MLXModels` (override with `OSU_MODELS_DIR`), and models already in your Hugging Face cache or LM Studio can be used in place.
+- **Local**: Gemma, Qwen, GPT-OSS, Llama, LFM, and more, running on Apple Silicon through MLX. Osaurus publishes [curated quantizations on Hugging Face](https://huggingface.co/OsaurusAI) tuned for quality per gigabyte. Models live in `~/MLXModels` (override with `OSU_MODELS_DIR`), and models already in your Hugging Face cache or LM Studio can be used in place.
 - **Apple Foundation Models**: on macOS 26+ with Apple Intelligence, Apple's on-device model is available as `foundation`.
-- **Cloud**: OpenAI, Anthropic, Gemini, xAI, [Venice AI](https://venice.ai), OpenRouter, Ollama, LM Studio, or any OpenAI- or Anthropic-compatible endpoint. See [Remote Providers](docs/REMOTE_PROVIDERS.md).
+- **Cloud**: OpenAI, Anthropic, Gemini, xAI, Venice AI, OpenRouter, Ollama, LM Studio, or any OpenAI- or Anthropic-compatible endpoint. See [Remote Providers](docs/REMOTE_PROVIDERS.md).
 - **Osaurus Cloud**: pay-as-you-go access through [Osaurus Router](docs/OSAURUS_ROUTER.md), with no separate provider account. Osaurus doesn't store your prompt or response content, only the usage metadata needed for billing.
 
 ## Install
