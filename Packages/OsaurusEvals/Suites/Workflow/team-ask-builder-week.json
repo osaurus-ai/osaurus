@@ -1,0 +1,41 @@
+{
+  "id": "workflow.team-ask-builder-week",
+  "domain": "workflow",
+  "label": "workflow • prepared ask: what changed here this week",
+  "query": "prepared ask: what changed here this week",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. The fixture is `git_log` text with `stat` on; `since` is seven days back on this Mac's clock at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-builder-week",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "text": "9f8e7d1 2026-11-04 Dana Reyes\n    Add RateLimiter to the API client\n Sources/API/RateLimiter.swift | 48 ++++++++++++++++\n 1 file changed, 48 insertions(+)\n\n4c3b2a0 2026-11-02 Dana Reyes\n    README: document the retry setting\n README.md | 6 ++++++\n 1 file changed, 6 insertions(+)"
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "since": "{{date:days_ago:7}}",
+          "stat": true
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "RateLimiter"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

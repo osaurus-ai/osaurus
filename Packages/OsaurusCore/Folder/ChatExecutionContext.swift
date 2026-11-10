@@ -34,6 +34,7 @@ final class AgentTodoRunScope: @unchecked Sendable {
     /// so they must not count as work toward a newly checked item.
     static let loopControlToolNames: Set<String> = [
         "todo", "complete", "clarify", "share_artifact", PromptWorkingFolderTool.toolName,
+        StateTool.toolName,
     ]
 
     var hasCurrentRunTodo: Bool {
@@ -128,16 +129,33 @@ public enum ChatExecutionContext {
     /// One logical agent run's interactive approval lease.
     @TaskLocal static var toolPermissionRunScope: ToolPermissionRunScope?
 
+    /// Told `true` when this task starts waiting on a person's approval and
+    /// `false` once it is answered, denied, or cancelled. A workflow step or
+    /// spawned worker binds it so its time budget stands still while the
+    /// person decides (`DeadlineClock`).
+    @TaskLocal static var approvalWaitObserver: (@Sendable (_ waiting: Bool) async -> Void)?
+
     /// The current batch ID for grouped operations (nil for non-batch operations).
     @TaskLocal public static var currentBatchId: UUID?
 
     /// The agent ID whose context is active for the current execution.
     @TaskLocal public static var currentAgentId: UUID?
 
+    /// Set for workflow runs that use no agent's keys (no agent, or the
+    /// Orchestrator or Architect). Keys resolve to the values shared by all
+    /// agents, never the private keys of the agent the run is attributed to
+    /// or the tools happen to be registered for.
+    @TaskLocal public static var usesSharedKeysOnly: Bool = false
+
     /// The agent a verified harness agent token speaks for, bound only by
     /// `/mcp/call` after the token resolved. Module-internal so nothing
     /// outside the server can claim it.
     @TaskLocal static var harnessTokenAgentId: UUID?
+
+    /// The Osaurus chat a verified harness token serves, bound beside
+    /// `harnessTokenAgentId`. The call is still an external surface, but
+    /// the chat it belongs to may be open in a window.
+    @TaskLocal static var harnessChatId: UUID?
 
     /// Insights attribution: which surface owns the current unit of work.
     /// Bound by `HTTPHandler` around media / embedding / transcription
@@ -208,11 +226,59 @@ public enum ChatExecutionContext {
     /// an unexposed tool was actually observed executing — publishes one.
     @TaskLocal static var toolExecutionScope: ToolExecutionScope?
 
-    /// The current `agent_runs.id` row (`SchedulerDatabase`) so every
+    /// Tools a workflow node may run because its installed workflow lists
+    /// them (a tool node's tool, an agentic node's tools). Setup approved
+    /// them at install, so the caller agent's dynamic-tool and Apple-app
+    /// grants do not narrow them; scope, global enablement, permission
+    /// policy, approval, and the external-surface deny list still apply.
+    /// Bound only by the workflow node executor.
+    @TaskLocal static var workflowGrantedToolNames: Set<String>?
+
+    /// The workflow's own sandbox environment when the running workflow
+    /// declares dependencies: `shell_run` executes in the VM as this
+    /// identity (its venv and npm workspace on PATH) with the run
+    /// workspace as cwd, and the sandbox bridge resolves to it instead of
+    /// the caller agent. Bound only by the workflow node executor.
+    @TaskLocal public static var workflowSandbox: WorkflowSandboxContext?
+
+    /// Host folders a workflow run may touch beyond its folder root: the
+    /// run workspace and every folder or file the person picked in the
+    /// input form or a dialog. Host file tools accept absolute paths under
+    /// them, so a step can deliver a result to the folder the person chose.
+    /// Bound only by the workflow node executor.
+    @TaskLocal public static var workflowGrantedPaths: [URL]?
+
+    /// The folders and files under `workflowGrantedPaths` that the run may
+    /// save into: the workspace, each write target its steps declare
+    /// (`WorkflowAccessScope`), and folders allowed for saving. A granted
+    /// path not covered here is read-only. Nil leaves granted paths
+    /// writable. Bound only by the workflow node executor.
+    @TaskLocal public static var workflowWritableRoots: [URL]?
+
+    /// Replace approval and write journaling for files a workflow run
+    /// changes on this Mac outside its workspace. Bound only by the
+    /// workflow node executor.
+    @TaskLocal static var workflowHostFiles: WorkflowHostFileHooks?
+
+    /// The workflow run, and node within it, driving the current execution.
+    /// Bound by the workflow node executor so Insights rows emitted inside
+    /// a node (model calls, MCP calls, web search) carry the run.
+    @TaskLocal public static var currentWorkflowRunId: UUID?
+    @TaskLocal public static var currentWorkflowNodeId: String?
+    /// What the running workflow step is for (its intent, else its name),
+    /// quoted on an approval card the step raises.
+    @TaskLocal static var currentWorkflowStepReason: String?
+
+    /// The task (`TaskStore`) of the run driving this execution, for every
+    /// dispatched agent turn. Spawned helpers and workflow runs started
+    /// inside it record it as their parent; Insights rows carry it.
+    @TaskLocal public static var currentTaskId: UUID?
+
+    /// The current run's task id, for DB-enabled agents, so every
     /// mutation done by `db.*` tools or scheduling tools can stamp its
     /// originating run on the `_changelog` audit trail (spec §1.4,
     /// §8). Bound by `BackgroundTaskManager.dispatchChat` for any
-    /// dispatched chat (chat / schedule / watcher / self-scheduled
+    /// dispatched chat (chat / automation / self-scheduled
     /// triggers). `nil` for paths that didn't go through dispatch
     /// (e.g. direct UI edits via `RowEditorSheet`) — the bridge
     /// stamps `_changelog.run_id` as NULL in that case but actor
@@ -235,6 +301,13 @@ public enum ChatExecutionContext {
     /// enforcement (spec §11.3). Bound by
     /// `BackgroundTaskManager.dispatchChat` alongside `currentRunId`.
     @TaskLocal public static var currentBackgroundId: UUID?
+
+    /// The chat session a person is driving right now: bound by a chat
+    /// turn and not by a dispatched (background) run.
+    public static var interactiveSessionId: UUID? {
+        guard currentBackgroundId == nil else { return nil }
+        return currentSessionId.flatMap(UUID.init(uuidString:))
+    }
 
     /// Root of the working folder owned by the chat session driving the
     /// current execution. Bound by every send/run surface (chat run task,
@@ -295,15 +368,6 @@ public enum ChatExecutionContext {
     /// credential files when the user explicitly opts in. Only consulted
     /// when `hostReadOnlyScope` is non-nil.
     @TaskLocal public static var allowHostSecretReads: Bool = false
-
-    /// Combined-mode write grant: `true` when the active agent's
-    /// `allowHostFolderWrites` opt-in is on for the current execution.
-    /// Bound by `ToolRegistry.execute` alongside `hostReadOnlyScope` so
-    /// tool BODIES that route by path (`file_copy`) can gate host-bound
-    /// destinations at execute time — schema visibility alone can't,
-    /// because the same tool serves both directions. `false` in every
-    /// other mode (and in read-only combined mode).
-    @TaskLocal public static var allowHostFolderWrites: Bool = false
 
     /// Sandbox identity for combined mode, letting the unified host
     /// `file_*` tools serve an absolute `/workspace/...` path from the
@@ -407,12 +471,38 @@ public enum ChatExecutionContext {
     /// out-of-module callers cannot bind it.
     @TaskLocal static var hasRemoteReviewer: Bool = false
 
+    /// The sync conversation of a run this Mac hosts for another of the
+    /// user's devices. Its tool approvals go to that conversation for the
+    /// device the user is chatting on, instead of a panel here. Bound by
+    /// `BackgroundTaskManager.dispatchChat` from `SyncHostRunner`'s request
+    /// only. Module-internal so out-of-module callers cannot bind it.
+    @TaskLocal static var syncReviewerScope: String? = nil
+
+    /// The person answering this run's reviews is on another of their
+    /// devices: the paired phone, or the device a hosted run is for.
+    static var reviewsElsewhere: Bool { hasRemoteReviewer || syncReviewerScope != nil }
+
     /// The owner's choice for the Privacy Filter on a turn of their phone's
     /// voice call: sent as written, or every detection redacted without a
     /// review. `nil` everywhere else. Bound by `handleAgentRunEndpoint` only
     /// alongside `hasRemoteReviewer`, so no other caller can switch the
     /// filter off.
     @TaskLocal static var voiceCallPrivacy: VoiceCallPrivacy? = nil
+
+    /// The person (or remote agent) whose message drives this run when it is
+    /// not the owner at this Mac: a workspace teammate, an invite-link peer,
+    /// another person's agent, or a channel sender. Bound by
+    /// `/agents/{id}/run` from the authenticated caller and by channel
+    /// dispatch. Feeds approval items, Insights attribution and per-turn
+    /// authorship. `nil` means the owner (or no person). Module-internal so
+    /// out-of-module callers cannot claim an identity.
+    @TaskLocal static var currentParticipant: Participant? = nil
+
+    /// How an `.ask` tool call is settled when this run's caller cannot
+    /// answer the approval card (a teammate or remote caller on a shared
+    /// agent). Bound by `/agents/{id}/run` from the agent's
+    /// `sharedToolApproval` policy; nil keeps the external-surface denial.
+    @TaskLocal static var ownerApprovalRoute: OwnerApprovalRoute? = nil
 
     /// A turn of the owner's phone call (`osaurus_voice_call`, §6.5): the
     /// reply is spoken, and a local model reads every token a tool returns

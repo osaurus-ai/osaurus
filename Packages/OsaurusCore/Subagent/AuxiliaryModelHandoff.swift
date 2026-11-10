@@ -34,12 +34,15 @@ struct ModelJobInvocation: Sendable, Equatable {
 /// deadline: admission/cleanup must outlive the UI's timeout if the producer
 /// is still draining.
 enum AuxiliaryModelHandoff {
+    enum Phase: Sendable { case waiting, preparing, running, restoring }
+
     static func run<Value: Sendable>(
         targetModelName: String,
         invocation: ModelJobInvocation,
         sessionID: UUID?,
         agentID: UUID,
         operationName: String,
+        onPhase: (@Sendable (Phase, TimeInterval?) -> Void)? = nil,
         body: () async throws -> Value
     ) async throws -> Value {
         try await invocation.withContext {
@@ -53,6 +56,7 @@ enum AuxiliaryModelHandoff {
             // exclusive because the setting may change to a swap while queued.
             let admission: SubagentAdmissionClass = resolved.isLocal ? .localExclusive : .remote
             try Task.checkCancellation()
+            onPhase?(.waiting, SubagentAdmission.defaultWaitTimeoutSeconds)
             switch await SubagentAdmission.shared.admit(admission) {
             case .cancelled:
                 throw CancellationError()
@@ -64,6 +68,7 @@ enum AuxiliaryModelHandoff {
             do {
                 try Task.checkCancellation()
                 let config = SubagentConfigurationStore.snapshot()
+                onPhase?(.preparing, Double(config.budgets.maxElapsedSeconds))
                 let plan = try await SubagentResidency.refreshedPlan(
                     for: resolved,
                     invokingParentModelName: invocation.parentModelName,
@@ -83,18 +88,20 @@ enum AuxiliaryModelHandoff {
                     value = try await handoff.withResidency(
                         scope: scope,
                         resolved: resolved,
-                        feed: feed,
-                        run: body
-                    )
+                        feed: feed
+                    ) {
+                        try await observingBody(plan: plan, onPhase: onPhase, body: body)
+                    }
                 } else if plan.coexists {
                     value = try await CoexistenceHandoff.production(plan: plan).withRetainedParent(
                         scope: scope,
                         resolved: resolved,
-                        feed: feed,
-                        run: body
-                    )
+                        feed: feed
+                    ) {
+                        try await observingBody(plan: plan, onPhase: onPhase, body: body)
+                    }
                 } else {
-                    value = try await body()
+                    value = try await observingBody(plan: plan, onPhase: onPhase, body: body)
                 }
                 await SubagentAdmission.shared.release(admission)
                 return value
@@ -103,5 +110,21 @@ enum AuxiliaryModelHandoff {
                 throw error
             }
         }
+    }
+
+    /// Passive opt-in observation only. Keep the producer non-escaping and
+    /// inside the existing owned handoff, including when it throws/cancels.
+    private static func observingBody<Value: Sendable>(
+        plan: ResidencyPlan,
+        onPhase: (@Sendable (Phase, TimeInterval?) -> Void)?,
+        body: () async throws -> Value
+    ) async rethrows -> Value {
+        onPhase?(.running, nil)
+        defer {
+            if plan.shouldUnload || plan.coexists {
+                onPhase?(.restoring, Double(plan.maxElapsedSeconds))
+            }
+        }
+        return try await body()
     }
 }

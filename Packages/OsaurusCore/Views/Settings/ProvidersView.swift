@@ -33,18 +33,19 @@ enum MCPAddServiceStart: Equatable {
 }
 
 struct ProvidersView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
     @ObservedObject private var manager = MCPProviderManager.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
     /// Owned by the Tools & MCP shell so its header "Add Service" button can
     /// open the sheet from outside this view.
     @Binding var showAddSheet: Bool
     @State private var editingProvider: MCPProvider?
-    /// Prefill for the add sheet when opened via a `pendingMCPProviderDraft`
-    /// hand-off; cleared on dismiss so a manual "Add" starts blank.
-    @State private var addSheetPrefill: MCPProviderDraft?
-    /// Starting step for the add sheet; set by the inline Directory.
-    @State private var addSheetStart: MCPAddServiceStart = .catalog
+    /// The open add sheet: its starting step (set by the inline Directory)
+    /// and any prefill from a `pendingMCPProviderDraft` hand-off. An item
+    /// rather than state read only inside `.sheet(isPresented:)`, which can
+    /// present with the previous value on first open.
+    @State private var addRequest: AddSheetRequest?
     @State private var directoryQuery: String = ""
     @State private var directoryCategory: MCPProviderCategory?
     @State private var metadataDocumentPublished = false
@@ -62,23 +63,21 @@ struct ProvidersView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            SettingsPageContent {
                 servicesSection
                 directorySection
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 8)
-            .padding(.bottom, 32)
         }
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
+            withAnimation(theme.motion.standard.delay(0.1)) {
                 hasAppeared = true
             }
             refreshCredentialPresence()
             refreshHealthSnapshots()
             applyPendingEditRequest()
             applyPendingDraftRequest()
+            if showAddSheet { openAddSheet(.catalog) }
         }
         .onChange(of: managementState.pendingMCPProviderEditId) { _, _ in
             applyPendingEditRequest()
@@ -93,14 +92,11 @@ struct ProvidersView: View {
         ) { _ in
             refreshHealthSnapshots()
         }
-        .sheet(
-            isPresented: $showAddSheet,
-            onDismiss: {
-                addSheetPrefill = nil
-                addSheetStart = .catalog
-            }
-        ) {
-            ProviderEditSheet(provider: nil, prefill: addSheetPrefill, start: addSheetStart) { provider, token in
+        .onChange(of: showAddSheet) { _, show in
+            if show { openAddSheet(.catalog) }
+        }
+        .sheet(item: $addRequest, onDismiss: { showAddSheet = false }) { request in
+            ProviderEditSheet(provider: nil, prefill: request.prefill, start: request.start) { provider, token in
                 manager.addProvider(provider, token: token)
                 refreshCredentialPresence()
             }
@@ -130,9 +126,19 @@ struct ProvidersView: View {
     /// custom editor with the URL and token carried over.
     private func applyPendingDraftRequest() {
         guard let draft = managementState.pendingMCPProviderDraft else { return }
-        addSheetPrefill = draft
-        showAddSheet = true
+        openAddSheet(.catalog, prefill: draft)
         managementState.pendingMCPProviderDraft = nil
+    }
+
+    private struct AddSheetRequest: Identifiable {
+        let id = UUID()
+        let start: MCPAddServiceStart
+        var prefill: MCPProviderDraft?
+    }
+
+    private func openAddSheet(_ start: MCPAddServiceStart, prefill: MCPProviderDraft? = nil) {
+        guard addRequest == nil else { return }
+        addRequest = AddSheetRequest(start: start, prefill: prefill)
     }
 
     private var hubSnapshot: MCPServerHubSnapshot {
@@ -172,8 +178,8 @@ struct ProvidersView: View {
                     }
                     if visibleProviderReports.isEmpty {
                         Text("No services match this filter.", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                            .foregroundColor(theme.text.tertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
@@ -200,68 +206,55 @@ struct ProvidersView: View {
     }
 
     private var servicesMenu: some View {
-        Menu {
-            Picker(selection: $providerFilter) {
-                ForEach(MCPServerHubFilter.allCases, id: \.self) { option in
-                    Text(option.displayName).tag(option)
-                }
-            } label: {
-                Text("Show", bundle: .module)
+        HStack(spacing: theme.space.s6) {
+            if probingAll || reconnectingAll {
+                ProgressView().controlSize(.small)
             }
+            if providerFilter != .all {
+                Text(providerFilter.displayName)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
+            }
+            SettingsOverflowMenu(help: "Connection maintenance and diagnostics", size: .compact) {
+                Picker(selection: $providerFilter) {
+                    ForEach(MCPServerHubFilter.allCases, id: \.self) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                } label: {
+                    Text("Show", bundle: .module)
+                }
 
-            Divider()
+                Divider()
 
-            Button(action: reconnectEnabledProviders) {
-                Label {
-                    Text("Reconnect All", bundle: .module)
-                } icon: {
-                    Image(systemName: "arrow.clockwise")
+                Button(action: reconnectEnabledProviders) {
+                    Label {
+                        Text("Reconnect All", bundle: .module)
+                    } icon: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(reconnectingAll || hubSnapshot.enabledCount == 0)
+
+                Button(action: probeEnabledProviders) {
+                    Label {
+                        Text("Test Connections", bundle: .module)
+                    } icon: {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                    }
+                }
+                .disabled(probingAll || hubSnapshot.enabledCount == 0)
+
+                Divider()
+
+                Button(action: copyHubReport) {
+                    Label {
+                        Text("Copy Diagnostics", bundle: .module)
+                    } icon: {
+                        Image(systemName: "doc.on.doc")
+                    }
                 }
             }
-            .disabled(reconnectingAll || hubSnapshot.enabledCount == 0)
-
-            Button(action: probeEnabledProviders) {
-                Label {
-                    Text("Test Connections", bundle: .module)
-                } icon: {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                }
-            }
-            .disabled(probingAll || hubSnapshot.enabledCount == 0)
-
-            Divider()
-
-            Button(action: copyHubReport) {
-                Label {
-                    Text("Copy Diagnostics", bundle: .module)
-                } icon: {
-                    Image(systemName: "doc.on.doc")
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                if probingAll || reconnectingAll {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 14, height: 14)
-                }
-                if providerFilter != .all {
-                    Text(providerFilter.displayName)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .frame(minWidth: 22, minHeight: 22)
-            .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(Text("Connection maintenance and diagnostics", bundle: .module))
-        .accessibilityLabel(Text("Connection maintenance and diagnostics", bundle: .module))
     }
 
     private func serviceRow(_ report: MCPServerHubProviderReport, index: Int) -> some View {
@@ -303,7 +296,7 @@ struct ProvidersView: View {
             onSaveBearerToken: { token in
                 // Persist directly to Keychain (the provider record
                 // itself doesn't change) and immediately retry.
-                _ = MCPProviderKeychain.saveToken(token, for: report.id)
+                _ = MCPCredentials.saveToken(token, provider: report.provider)
                 refreshCredentialPresence()
                 // Enable the provider so the retry connect doesn't no-op.
                 if !report.provider.enabled {
@@ -338,7 +331,7 @@ struct ProvidersView: View {
                 // presence instead of flashing a false "missing token" warning.
                 let presence = await Task.detached(priority: .utility) {
                     MCPProviderCredentialPresence(
-                        bearerTokenPresent: MCPProviderKeychain.tokenAvailability(for: providerID)
+                        bearerTokenPresent: MCPCredentials.tokenAvailability(provider)
                             .presenceForUI(previous: previousPresence?.bearerTokenPresent),
                         oauthTokensPresent: MCPProviderKeychain.oauthTokensAvailability(
                             for: providerID
@@ -420,7 +413,7 @@ struct ProvidersView: View {
                 let token: String? =
                     switch provider.authType {
                     case .bearerToken:
-                        MCPProviderKeychain.getToken(for: provider.id)
+                        provider.resolvedBearerToken()
                     case .oauth:
                         MCPProviderKeychain.getOAuthTokens(for: provider.id)?.accessToken
                     case .none:
@@ -462,21 +455,11 @@ struct ProvidersView: View {
     /// With no services configured, the group holds a one-line invitation and
     /// the Directory below does the rest.
     private var emptyState: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "server.rack")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("No services yet", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Text("Pick a service below to give your agents more tools.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, minHeight: SettingsGroupMetrics.rowMinHeight, alignment: .leading)
+        SettingsEmptyState(
+            inline: "server.rack",
+            title: "No services yet",
+            hint: "Pick a service below to give your agents more tools."
+        )
     }
 
     // MARK: - Directory
@@ -486,7 +469,7 @@ struct ProvidersView: View {
     private var directorySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SettingsSectionHeader(title: "Directory") {
-                SearchField(text: $directoryQuery, placeholder: "Search services", width: 200, compact: true)
+                SearchField(text: $directoryQuery, placeholder: "Search services")
             }
 
             MCPProviderCategoryChips(selection: $directoryCategory)
@@ -497,8 +480,7 @@ struct ProvidersView: View {
                     title: "Custom Server",
                     tagline: "Connect to any other MCP-compatible server"
                 ) {
-                    addSheetStart = .custom
-                    showAddSheet = true
+                    openAddSheet(.custom)
                 }
                 ForEach(directoryTemplates) { template in
                     MCPProviderDirectoryRow(
@@ -507,20 +489,22 @@ struct ProvidersView: View {
                         tagline: template.tagline,
                         requiresSubscription: template.requiresSubscription
                     ) {
-                        addSheetStart = .template(template)
-                        showAddSheet = true
+                        openAddSheet(.template(template))
                     }
                 }
                 if directoryTemplates.isEmpty && directoryQuery.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text("No services in this category", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else if directoryTemplates.isEmpty {
-                    Text("No services match \"\(directoryQuery.trimmingCharacters(in: .whitespaces))\". Try another name, or pick Custom Server above.", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(
+                        "No services match \"\(directoryQuery.trimmingCharacters(in: .whitespaces))\". Try another name, or pick Custom Server above.",
+                        bundle: .module
+                    )
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -548,14 +532,15 @@ private struct MCPProviderErrorText: View {
     let providerName: String
     let color: Color
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
     @State private var showDetails = false
 
     var body: some View {
         let presentation = MCPProviderErrorPresenter.present(raw, providerName: providerName)
         VStack(alignment: .leading, spacing: 3) {
             Text(presentation.message)
-                .font(.system(size: 11))
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                 .foregroundColor(color)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -564,15 +549,15 @@ private struct MCPProviderErrorText: View {
                     showDetails.toggle()
                 } label: {
                     Text(showDetails ? "Hide details" : "Details", bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                        .foregroundColor(theme.text.secondary)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .pointingHandCursor()
                 if showDetails {
                     Text(details)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -582,7 +567,8 @@ private struct MCPProviderErrorText: View {
 }
 
 private struct ProviderCard: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
     let report: MCPServerHubProviderReport
     var animationIndex: Int = 0
     let isTesting: Bool
@@ -654,22 +640,22 @@ private struct ProviderCard: View {
                 // the command field without hunting through the row.
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: errorIcon(for: error))
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.errorColor)
-                    MCPProviderErrorText(raw: error, providerName: provider.name, color: theme.errorColor)
+                        .glyphSize(11)
+                        .foregroundColor(theme.status.error.foreground)
+                    MCPProviderErrorText(raw: error, providerName: provider.name, color: theme.status.error.foreground)
                     if isCommandNotFoundError(error) {
                         Spacer(minLength: 6)
-                        inlineActionButton(L("Edit"), action: onEdit)
+                        SettingsButton(.secondary, "Edit", size: .compact, action: onEdit)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 18)
+                .padding(.leading, theme.space.s16)
             }
 
             // Expanded content
             if isExpanded {
                 Divider()
-                    .padding(.vertical, 2)
+                    .padding(.vertical, theme.space.s2)
 
                 expandedContent
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -679,7 +665,7 @@ private struct ProviderCard: View {
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
             let delay = Double(animationIndex) * 0.03
-            withAnimation(.easeOut(duration: 0.25).delay(delay)) {
+            withAnimation(theme.motion.standard.delay(delay)) {
                 hasAppeared = true
             }
         }
@@ -693,88 +679,28 @@ private struct ProviderCard: View {
     }
 
     private var providerHeader: some View {
-        HStack(spacing: 12) {
-            providerDisclosure
-                .frame(maxWidth: .infinity, alignment: .leading)
-            providerControls
-        }
-    }
-
-    private var providerDisclosure: some View {
-        Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                isExpanded.toggle()
-            }
-        } label: {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(provider.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-
-                    HStack(spacing: 6) {
-                        Text(statusLabel)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(statusColor)
-
-                        Text(verbatim: "·")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-
-                        Text(provider.transport == .http ? "HTTP" : "stdio")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-
-                        if provider.transport == .stdio {
-                            executionHostBadge
-                        }
-
-                        Text(providerSubtitle)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                            .truncationMode(provider.transport == .stdio ? .middle : .tail)
-
-                        if let toolCount = state?.discoveredToolCount, toolCount > 0 {
-                            Text(verbatim: "·")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                            Text(toolCount == 1 ? L("1 tool") : L("\(toolCount) tools"))
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    if report.hasAttention && !showsAttentionLine {
-                        Text(report.summary)
-                            .font(.system(size: 11))
-                            .foregroundColor(statusColor)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
+        LibraryRow(
+            title: provider.name,
+            subtitle: headerSubtitle,
+            action: {
+                withAnimation(theme.motion.springAnimation) {
+                    isExpanded.toggle()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    private var providerControls: some View {
-        HStack(spacing: 8) {
+        ) {
+            SettingsChevron()
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                .frame(width: 10)
+        } badges: {
+            StatusChip(statusLabel, tint: statusColor, showsDot: true)
+            if provider.transport == .stdio {
+                executionHostBadge
+            }
+        } trailing: {
+            if isTesting {
+                ProgressView().controlSize(.small)
+            }
             connectionButton
-
             Toggle(
                 "",
                 isOn: Binding(
@@ -782,119 +708,86 @@ private struct ProviderCard: View {
                     set: { onToggleEnabled($0) }
                 )
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
-            .controlSize(.small)
+            .settingsSwitch()
             .help(Text("Enable this service", bundle: .module))
-
-            Menu {
-                Button(action: onTest) {
-                    Label {
-                        Text("Test Connection", bundle: .module)
-                    } icon: {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
-                    }
+        } menu: {
+            Button(action: onTest) {
+                Label {
+                    Text("Test Connection", bundle: .module)
+                } icon: {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
                 }
-                .disabled(isTesting)
-
-                Button(action: onCopyDiagnostics) {
-                    Label {
-                        Text("Copy Diagnostics", bundle: .module)
-                    } icon: {
-                        Image(systemName: "doc.on.doc")
-                    }
-                }
-
-                Button(action: onEdit) {
-                    Label {
-                        Text("Edit", bundle: .module)
-                    } icon: {
-                        Image(systemName: "pencil")
-                    }
-                }
-
-                Divider()
-
-                Button(role: .destructive, action: { showDeleteConfirm = true }) {
-                    Label {
-                        Text("Delete", bundle: .module)
-                    } icon: {
-                        Image(systemName: "trash")
-                    }
-                }
-            } label: {
-                Group {
-                    if isTesting {
-                        ProgressView()
-                            .scaleEffect(0.5)
-                    } else {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 15))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                }
-                .frame(width: 28, height: 28)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .accessibilityLabel(Text("Connection actions", bundle: .module))
+            .disabled(isTesting)
+
+            Button(action: onCopyDiagnostics) {
+                Label {
+                    Text("Copy Diagnostics", bundle: .module)
+                } icon: {
+                    Image(systemName: "doc.on.doc")
+                }
+            }
+
+            Button(action: onEdit) {
+                Label {
+                    Text("Edit", bundle: .module)
+                } icon: {
+                    Image(systemName: "pencil")
+                }
+            }
+
+            Divider()
+
+            Button(role: .destructive, action: { showDeleteConfirm = true }) {
+                Label {
+                    Text("Delete", bundle: .module)
+                } icon: {
+                    Image(systemName: "trash")
+                }
+            }
         }
+    }
+
+    /// Transport · endpoint · tool count, then the attention summary when no
+    /// auth/error line is already saying it.
+    private var headerSubtitle: String {
+        var facts = [provider.transport == .http ? "HTTP" : "stdio", providerSubtitle]
+        if let toolCount = state?.discoveredToolCount, toolCount > 0 {
+            facts.append(toolCount == 1 ? L("1 tool") : L("\(toolCount) tools"))
+        }
+        var lines = [facts.joined(separator: " · ")]
+        if report.hasAttention && !showsAttentionLine {
+            lines.append(report.summary)
+        }
+        return lines.joined(separator: "\n")
     }
 
     private var connectionButton: some View {
         Group {
             if isConnecting {
                 ProgressView()
-                    .scaleEffect(0.5)
+                    .controlSize(.small)
                     .frame(width: 76, height: 24)
             } else if isConnected {
-                inlineActionButton(L("Disconnect"), tint: theme.errorColor, action: onDisconnect)
+                SettingsButton(.destructive, "Disconnect", size: .compact, action: onDisconnect)
             } else {
-                inlineActionButton(L("Connect"), action: onConnect)
+                SettingsButton(.secondary, "Connect", size: .compact, action: onConnect)
                     .disabled(!provider.enabled)
-                    .opacity(provider.enabled ? 1 : 0.5)
             }
         }
     }
 
-    /// Small bordered text button used for row-level actions (Connect,
-    /// Disconnect, Sign In, Retry, Edit). Matches `SettingsDestructiveRow`.
-    private func inlineActionButton(
-        _ title: String,
-        tint: Color? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(tint ?? theme.accentColor)
-                .lineLimit(1)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(theme.tertiaryBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .pointingHandCursor()
-    }
-
     private var statusColor: Color {
         if !provider.enabled {
-            return theme.tertiaryText
+            return theme.text.tertiary
         } else if isConnected {
-            return theme.successColor
+            return theme.status.success.foreground
         } else if isConnecting {
-            return theme.accentColor
+            return theme.action.primary.default.background
         } else if state?.lastError != nil {
-            return theme.errorColor
+            return theme.status.error.foreground
         } else {
-            return theme.secondaryText
+            return theme.text.secondary
         }
     }
 
@@ -932,25 +825,16 @@ private struct ProviderCard: View {
     /// Small badge next to the provider name that tells users whether a
     /// stdio subprocess runs sandboxed or on the host. We never show it for
     /// HTTP providers because the distinction isn't meaningful there.
-    @ViewBuilder
     private var executionHostBadge: some View {
         let isHost = provider.executionHost == .host
-        HStack(spacing: 4) {
-            Image(systemName: isHost ? "exclamationmark.shield.fill" : "shippingbox.fill")
-                .font(.system(size: 8))
-            Text(LocalizedStringKey(isHost ? "Host" : "Sandbox"), bundle: .module)
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(isHost ? .orange : theme.accentColor)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(
-            Capsule()
-                .fill((isHost ? Color.orange : theme.accentColor).opacity(0.12))
+        return StatusChip(
+            isHost ? L("Host") : L("Sandbox"),
+            tone: isHost ? .warning : .accent,
+            icon: isHost ? "exclamationmark.shield.fill" : "shippingbox.fill"
         )
     }
 
-    /// One word for the second line of the row; colored with `statusColor`.
+    /// Status chip label, colored with `statusColor`.
     private var statusLabel: String {
         if !provider.enabled {
             return L("Disabled")
@@ -977,26 +861,30 @@ private struct ProviderCard: View {
                 systemName: signInError == nil
                     ? "person.badge.key.fill" : "exclamationmark.triangle.fill"
             )
-            .font(.system(size: 11))
-            .foregroundColor(signInError == nil ? theme.warningColor : theme.errorColor)
+            .textStyle(.footnote)
+            .foregroundColor(signInError == nil ? theme.status.warning.foreground : theme.status.error.foreground)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Sign in required", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 if let signInError {
-                    MCPProviderErrorText(raw: signInError, providerName: provider.name, color: theme.errorColor)
+                    MCPProviderErrorText(
+                        raw: signInError,
+                        providerName: provider.name,
+                        color: theme.status.error.foreground
+                    )
                 } else {
                     Text("This server requires OAuth sign in to provide tools.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(2)
                 }
             }
             Spacer()
-            inlineActionButton(signInError == nil ? L("Sign In") : L("Retry"), action: onSignIn)
+            SettingsButton(.secondary, signInError == nil ? "Sign In" : "Retry", size: .compact, action: onSignIn)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 18)
+        .padding(.leading, theme.space.s16)
     }
 
     /// Bearer-token-flavoured auth-required banner. Shows an inline secure
@@ -1009,54 +897,48 @@ private struct ProviderCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: "key.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
+                    .glyphSize(11)
+                    .foregroundColor(theme.status.warning.foreground)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("API token required", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     if let lastError {
-                        MCPProviderErrorText(raw: lastError, providerName: provider.name, color: theme.errorColor)
+                        MCPProviderErrorText(
+                            raw: lastError,
+                            providerName: provider.name,
+                            color: theme.status.error.foreground
+                        )
                     } else {
-                        Text("This server rejected the request as unauthorized. Paste an API token to retry.", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(3)
+                        Text(
+                            "This server rejected the request as unauthorized. Paste an API token to retry.",
+                            bundle: .module
+                        )
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
+                        .lineLimit(3)
                     }
                 }
                 Spacer()
             }
 
             HStack(spacing: 8) {
-                SecureField(
-                    "",
+                SettingsTextField(
+                    placeholder: L("Paste API token here"),
                     text: $inlineBearerToken,
-                    prompt: Text("Paste API token here", bundle: .module)
-                        .foregroundColor(theme.placeholderText)
+                    monospaced: true,
+                    isSecure: true,
+                    onSubmit: submitInlineBearerToken
                 )
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-                .onSubmit(submitInlineBearerToken)
 
-                inlineActionButton(L("Save & Retry"), action: submitInlineBearerToken)
+                SettingsButton(.secondary, "Save & Retry", size: .compact, action: submitInlineBearerToken)
                     .disabled(
                         inlineBearerToken.trimmingCharacters(in: .whitespaces).isEmpty
                     )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 18)
+        .padding(.leading, theme.space.s16)
     }
 
     private func submitInlineBearerToken() {
@@ -1095,14 +977,14 @@ private struct ProviderCard: View {
             if !provider.customHeaders.isEmpty || !provider.secretHeaderKeys.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "list.bullet.rectangle")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(11)
+                        .foregroundColor(theme.text.tertiary)
                     Text(
                         "\(provider.customHeaders.count + provider.secretHeaderKeys.count) custom header\(provider.customHeaders.count + provider.secretHeaderKeys.count == 1 ? "" : "s")",
                         bundle: .module
                     )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                 }
             }
 
@@ -1110,26 +992,17 @@ private struct ProviderCard: View {
             if isConnected, let tools = state?.discoveredToolSummaries, !tools.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Provides:", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.secondary)
 
                     ToolPillsFlowLayout(spacing: 6) {
                         ForEach(tools) { tool in
-                            HStack(spacing: 4) {
-                                Image(systemName: toolPillIcon(tool.hints))
-                                    .font(.system(size: 9))
-                                    .foregroundColor(tool.hints.isDestructive ? theme.warningColor : nil)
-                                Text(tool.displayName)
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule()
-                                    .fill(theme.tertiaryBackground)
+                            StatusChip(
+                                tool.displayName,
+                                tone: tool.hints.isDestructive ? .warning : .neutral,
+                                icon: toolPillIcon(tool.hints)
                             )
-                            .foregroundColor(theme.primaryText)
-                            .help(toolPillHelp(tool))
+                                .help(toolPillHelp(tool))
                         }
                     }
                 }
@@ -1159,21 +1032,22 @@ private struct ProviderCard: View {
     private func settingItem(icon: String, label: String, value: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(10)
+                .foregroundColor(theme.text.tertiary)
             Text("\(label):", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
             Text(value)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
         }
     }
 }
 
 // MARK: - Provider Edit Sheet
 
-private struct ProviderEditSheet: View {
+struct ProviderEditSheet: View {
+    private var theme: ThemeProtocol { themeManager.currentTheme }
     @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -1327,17 +1201,17 @@ private struct ProviderEditSheet: View {
 
             ScrollView {
                 phaseBody
-                    .padding(24)
+                    .padding(theme.space.s24)
             }
 
             sheetFooter
         }
         .fittedSheetFrame(width: 560, height: 660)
-        .background(themeManager.currentTheme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(themeManager.currentTheme.surface.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(themeManager.currentTheme.primaryBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge)
+                .stroke(themeManager.currentTheme.border.subtle, lineWidth: theme.stroke.default)
         )
         .onAppear { loadProvider() }
     }
@@ -1397,46 +1271,32 @@ private struct ProviderEditSheet: View {
         let info = headerInfo
         let theme = themeManager.currentTheme
         return HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor.opacity(0.12))
-                Image(systemName: info.icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-            }
-            .frame(width: 32, height: 32)
+SettingsIconTile(icon: info.icon, size: 32)
 
             VStack(alignment: .leading, spacing: 2) {
                 info.title
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.heading)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
 
                 info.subtitle
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.caption)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(1)
             }
 
             Spacer()
 
-            Button(action: { dismiss() }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
+            SettingsIconButton("xmark", help: "Close", size: .compact, action: { dismiss() })
             .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 20)
-        .padding(.bottom, 16)
-        .background(theme.primaryBackground)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.top, theme.space.s16)
+        .padding(.bottom, theme.space.s16)
+        .background(theme.surface.canvas)
         .overlay(
             Rectangle()
-                .fill(theme.primaryBorder)
+                .fill(theme.border.subtle)
                 .frame(height: 1),
             alignment: .bottom
         )
@@ -1451,13 +1311,13 @@ private struct ProviderEditSheet: View {
             Spacer()
             footerTrailing
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
         .background(
-            themeManager.currentTheme.primaryBackground
+            themeManager.currentTheme.surface.canvas
                 .overlay(
                     Rectangle()
-                        .fill(themeManager.currentTheme.primaryBorder)
+                        .fill(themeManager.currentTheme.border.subtle)
                         .frame(height: 1),
                     alignment: .top
                 )
@@ -1470,11 +1330,11 @@ private struct ProviderEditSheet: View {
             Button(action: backToCatalog) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .semibold))
+                        .glyphSize(11, weight: .semibold)
                     Text("Use a different service", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
-                .foregroundColor(themeManager.currentTheme.secondaryText)
+                .foregroundColor(themeManager.currentTheme.text.secondary)
             }
             .buttonStyle(PlainButtonStyle())
         }
@@ -1507,12 +1367,12 @@ private struct ProviderEditSheet: View {
         } label: {
             Text("Cancel", bundle: .module)
         }
-        .buttonStyle(MCPSecondaryButtonStyle())
+        .assignedSettingsButtonStyle(.secondary)
     }
 
     private func primarySaveButton(label: Text, enabled: Bool) -> some View {
         Button(action: save) { label }
-            .buttonStyle(MCPPrimaryButtonStyle())
+            .assignedSettingsButtonStyle(.primary)
             .disabled(!enabled)
             .keyboardShortcut(.return, modifiers: .command)
     }
@@ -1530,14 +1390,14 @@ private struct ProviderEditSheet: View {
                         switch result {
                         case .success:
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 12))
+                                .glyphSize(12)
                         case .failure:
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 12))
+                                .glyphSize(12)
                         }
                     } else {
                         Image(systemName: "antenna.radiowaves.left.and.right")
-                            .font(.system(size: 12))
+                            .glyphSize(12)
                     }
                 }
                 .frame(width: 16, height: 16)
@@ -1550,22 +1410,18 @@ private struct ProviderEditSheet: View {
                                 ? L("Connected! (1 tool)")
                                 : L("Connected! (\(probe.toolCount) tools)")
                         )
-                            .font(.system(size: 12, weight: .medium))
+                            .textStyle(.caption, weight: 500)
                     case .failure(let probe):
                         Text("Failed - \(probe.reasonCode.rawValue)", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
                 } else {
                     Text("Test", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
             }
-            .foregroundColor(testResultColor)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(testResultBackground))
         }
-        .buttonStyle(PlainButtonStyle())
+        .assignedSettingsButtonStyle(.secondary, size: .compact)
         .disabled(isTestDisabled)
     }
 
@@ -1611,7 +1467,7 @@ private struct ProviderEditSheet: View {
     }
 
     private func transition(to newPhase: Phase) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+        withAnimation(theme.motion.springAnimation) {
             phase = newPhase
         }
     }
@@ -1669,18 +1525,18 @@ private struct ProviderEditSheet: View {
 
                 if template.requiresSubscription {
                     Text("\(template.displayName) needs a paid account or subscription.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(themeManager.currentTheme.text.tertiary)
                         .multilineTextAlignment(.center)
                 }
 
                 if let error = oauthError, template.authType == .oauth {
                     Text(error)
-                        .font(.system(size: 12))
-                        .foregroundColor(themeManager.currentTheme.errorColor)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(themeManager.currentTheme.status.error.foreground)
                         .multilineTextAlignment(.center)
                         .lineLimit(4)
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, theme.space.s8)
                 }
             }
         }
@@ -1696,8 +1552,8 @@ private struct ProviderEditSheet: View {
                 "We'll open your browser to sign in. After approving, you'll be redirected back to Osaurus.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(themeManager.currentTheme.tertiaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(themeManager.currentTheme.text.tertiary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: 360)
         }
@@ -1718,7 +1574,6 @@ private struct ProviderEditSheet: View {
                         .frame(width: 14, height: 14)
                 } else {
                     Image(systemName: "person.badge.key.fill")
-                        .font(.system(size: 13, weight: .semibold))
                 }
                 Group {
                     if isSigningIn {
@@ -1727,21 +1582,9 @@ private struct ProviderEditSheet: View {
                         Text("Sign In with \(template.displayName)", bundle: .module)
                     }
                 }
-                .font(.system(size: 14, weight: .semibold))
             }
-            .foregroundColor(.white)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(
-                        enabled
-                            ? themeManager.currentTheme.accentColor
-                            : themeManager.currentTheme.accentColor.opacity(0.4)
-                    )
-            )
         }
-        .buttonStyle(PlainButtonStyle())
+        .assignedSettingsButtonStyle(.primary)
         .disabled(isSigningIn || !enabled)
     }
 
@@ -1750,40 +1593,37 @@ private struct ProviderEditSheet: View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 18))
-                    .foregroundColor(themeManager.currentTheme.successColor)
+                    .glyphSize(18)
+                    .foregroundColor(themeManager.currentTheme.status.success.foreground)
                 Text("Connected to \(template.displayName)", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                    .foregroundColor(themeManager.currentTheme.text.primary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.successColor.opacity(0.12))
-            )
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(.status(.success))
 
             if let scopes = oauthConfig?.scopes, !scopes.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "key.fill")
-                        .font(.system(size: 9))
+                        .glyphSize(9)
                     Text(scopes.joined(separator: " "))
-                        .font(.system(size: 10, design: .monospaced))
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
                 }
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                .foregroundColor(themeManager.currentTheme.text.tertiary)
                 .frame(maxWidth: 360)
             }
 
             Button(action: signInWithOAuth) {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11))
+                        .glyphSize(11)
                     Text("Re-authenticate", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
-                .foregroundColor(themeManager.currentTheme.secondaryText)
+                .foregroundColor(themeManager.currentTheme.text.secondary)
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(isSigningIn)
@@ -1813,27 +1653,22 @@ private struct ProviderEditSheet: View {
                 Button(action: { NSWorkspace.shared.open(helpURL) }) {
                     HStack(spacing: 4) {
                         Image(systemName: "link.circle.fill")
-                            .font(.system(size: 11))
+                            .glyphSize(11)
                         Text("Open \(template.displayName) docs", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .foregroundColor(themeManager.currentTheme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
 
             VStack(spacing: 10) {
-                MCPStyledTextField(
-                    label: "Client ID",
-                    placeholder: "Paste the Client ID",
-                    text: $manualClientId,
-                    isMonospaced: true
-                )
-                MCPStyledSecureField(
-                    label: "Client Secret",
-                    placeholder: "Paste the Client Secret",
-                    text: $manualClientSecret
-                )
+                SettingsFieldRow(label: "Client ID") {
+                    SettingsTextField(placeholder: L("Paste the Client ID"), text: $manualClientId, monospaced: true)
+                }
+                SettingsFieldRow(label: "Client Secret") {
+                    SettingsTextField(placeholder: L("Paste the Client Secret"), text: $manualClientSecret, monospaced: true, isSecure: true)
+                }
             }
             .frame(maxWidth: 460)
 
@@ -1847,8 +1682,8 @@ private struct ProviderEditSheet: View {
                 "Your Client Secret is stored in your macOS Keychain and only sent to \(template.displayName).",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(themeManager.currentTheme.tertiaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(themeManager.currentTheme.text.tertiary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
         }
@@ -1881,15 +1716,12 @@ private struct ProviderEditSheet: View {
                 text: L("Paste the resulting Client ID and Client Secret below, then click Sign In.")
             )
         }
-        .padding(14)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.tertiaryBackground)
-        )
+        .settingsChrome(.inset)
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(themeManager.currentTheme.primaryBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.medium)
+                .stroke(themeManager.currentTheme.border.subtle, lineWidth: theme.stroke.default)
         )
     }
 
@@ -1900,12 +1732,12 @@ private struct ProviderEditSheet: View {
     private func confidentialOAuthStep(number: Int, text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text("\(number).")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                .foregroundColor(themeManager.currentTheme.text.tertiary)
                 .frame(width: 18, alignment: .trailing)
             Text(text)
-                .font(.system(size: 12))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(themeManager.currentTheme.text.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1919,18 +1751,11 @@ private struct ProviderEditSheet: View {
     private func redirectURIRow(_ uri: String) -> some View {
         HStack(spacing: 8) {
             Text(uri)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(themeManager.currentTheme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                        )
-                )
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                .foregroundColor(themeManager.currentTheme.text.primary)
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s6)
+                .settingsChrome(.control)
                 .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -1938,21 +1763,18 @@ private struct ProviderEditSheet: View {
             Button(action: { copyToPasteboard(uri) }) {
                 HStack(spacing: 4) {
                     Image(systemName: "doc.on.doc")
-                        .font(.system(size: 11))
+                        .glyphSize(11)
                     Text("Copy", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                 }
-                .foregroundColor(themeManager.currentTheme.accentColor)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(themeManager.currentTheme.accentColor.opacity(0.10))
-                )
+                .foregroundColor(themeManager.currentTheme.text.link)
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s6)
+                .settingsChrome(.selected)
             }
             .buttonStyle(PlainButtonStyle())
         }
-        .padding(.leading, 26)
+        .padding(.leading, theme.space.s24)
     }
 
     /// Replace the system pasteboard contents with `value`. Pulled out so
@@ -1966,22 +1788,20 @@ private struct ProviderEditSheet: View {
     @ViewBuilder
     private func apiKeyBlock(template: MCPProviderTemplate) -> some View {
         VStack(spacing: 10) {
-            MCPStyledSecureField(
-                label: "API Key",
-                placeholder: "Paste your API key",
-                text: $token
-            )
+            SettingsFieldRow(label: "API Key") {
+                SettingsTextField(placeholder: L("Paste your API key"), text: $token, monospaced: true, isSecure: true)
+            }
             .frame(maxWidth: 420)
 
             if let helpURL = template.apiKeyHelpURL {
                 Button(action: { NSWorkspace.shared.open(helpURL) }) {
                     HStack(spacing: 4) {
                         Image(systemName: "link.circle.fill")
-                            .font(.system(size: 11))
+                            .glyphSize(11)
                         Text("Where do I get my key?", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .foregroundColor(themeManager.currentTheme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -1990,8 +1810,8 @@ private struct ProviderEditSheet: View {
                 "Your API key is stored in your macOS Keychain and only sent to \(template.displayName).",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(themeManager.currentTheme.tertiaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(themeManager.currentTheme.text.tertiary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: 360)
         }
@@ -2001,18 +1821,15 @@ private struct ProviderEditSheet: View {
     private func noAuthBlock(template: MCPProviderTemplate) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "lock.open.fill")
-                .font(.system(size: 13))
-                .foregroundColor(themeManager.currentTheme.successColor)
+                .glyphSize(13)
+                .foregroundColor(themeManager.currentTheme.status.success.foreground)
             Text("This server doesn't require authentication.", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(themeManager.currentTheme.text.primary)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.successColor.opacity(0.10))
-        )
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.status(.success))
     }
 
     /// "Add Provider" enable rule for the connect-known footer. OAuth waits on
@@ -2034,24 +1851,19 @@ private struct ProviderEditSheet: View {
 
     private var configureCustomBody: some View {
         VStack(alignment: .leading, spacing: 16) {
-            EditorCard(title: "Connection", icon: "link") {
+            SettingsSection(title: "Connection") {
                 VStack(alignment: .leading, spacing: 14) {
-                    MCPStyledTextField(
-                        label: "Name",
-                        placeholder: "My MCP Server",
-                        text: $name
-                    )
+                    SettingsFieldRow(label: "Name") {
+                        SettingsTextField(placeholder: L("My MCP Server"), text: $name)
+                    }
 
                     transportPicker
 
                     switch transport {
                     case .http:
-                        MCPStyledTextField(
-                            label: "URL",
-                            placeholder: "https://mcp.example.com",
-                            text: $url,
-                            isMonospaced: true
-                        )
+                        SettingsFieldRow(label: "URL") {
+                            SettingsTextField(placeholder: "https://mcp.example.com", text: $url, monospaced: true)
+                        }
 
                         authTypePicker
 
@@ -2059,11 +1871,9 @@ private struct ProviderEditSheet: View {
                         case .none:
                             EmptyView()
                         case .bearerToken:
-                            MCPStyledSecureField(
-                                label: "Bearer Token",
-                                placeholder: "Optional - stored securely in Keychain",
-                                text: $token
-                            )
+                            SettingsFieldRow(label: "Bearer Token") {
+                                SettingsTextField(placeholder: L("Optional - stored securely in Keychain"), text: $token, monospaced: true, isSecure: true)
+                            }
                         case .oauth:
                             oauthSection
                         }
@@ -2089,9 +1899,8 @@ private struct ProviderEditSheet: View {
     }
 
     private func probeResultCard(_ result: MCPProviderProbeResult) -> some View {
-        EditorCard(
-            title: result.succeeded ? "Probe Passed" : "Probe Failed",
-            icon: result.succeeded ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+        SettingsSection(
+            title: result.succeeded ? "Probe Passed" : "Probe Failed"
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
@@ -2101,25 +1910,25 @@ private struct ProviderEditSheet: View {
                 }
 
                 Text(result.redactedMessage)
-                    .font(.system(size: 12))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(themeManager.currentTheme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let action = result.redactedAction {
                     Text(action)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.accentColor)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(themeManager.currentTheme.text.link)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Button(action: { copyProbeResult(result) }) {
                     HStack(spacing: 6) {
                         Image(systemName: "doc.on.doc")
-                            .font(.system(size: 11, weight: .semibold))
+                            .glyphSize(11, weight: .semibold)
                         Text("Copy Probe Result", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .foregroundColor(themeManager.currentTheme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .localizedHelp("Copy")
@@ -2130,20 +1939,17 @@ private struct ProviderEditSheet: View {
     private func probeChip(title: String, value: String) -> some View {
         HStack(spacing: 4) {
             Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                .foregroundColor(themeManager.currentTheme.text.tertiary)
             Text(value)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundColor(themeManager.currentTheme.primaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                .foregroundColor(themeManager.currentTheme.text.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(themeManager.currentTheme.tertiaryBackground)
-        )
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s4)
+        .settingsChrome(.inset)
     }
 
     private func copyProbeResult(_ result: MCPProviderProbeResult) {
@@ -2184,55 +1990,21 @@ private struct ProviderEditSheet: View {
         addLabel: String,
         entries: Binding<[HeaderEntry]>
     ) -> some View {
-        EditorCard(title: title, icon: icon) {
-            VStack(alignment: .leading, spacing: 12) {
-                let addButton = keyValueAddButton(label: addLabel, entries: entries)
-                if entries.wrappedValue.isEmpty {
-                    HStack {
-                        Text(LocalizedStringKey(emptyLabel), bundle: .module)
-                            .font(.system(size: 13))
-                            .foregroundColor(themeManager.currentTheme.tertiaryText)
-                        Spacer()
-                        addButton
-                    }
-                    .padding(.vertical, 4)
-                } else {
-                    HStack {
-                        Spacer()
-                        addButton
-                    }
-                    ForEach(entries) { $entry in
-                        HeaderRow(header: $entry) {
-                            entries.wrappedValue.removeAll { $0.id == entry.id }
-                        }
+        SettingsSection(title: title) {
+            SettingsButton(.secondary, addLabel, icon: "plus", size: .compact) {
+                entries.wrappedValue.append(HeaderEntry(key: "", value: "", isSecret: false))
+            }
+        } content: {
+            if entries.wrappedValue.isEmpty {
+                SettingsEmptyState(inline: icon, title: emptyLabel)
+            } else {
+                ForEach(entries) { $entry in
+                    HeaderRow(header: $entry) {
+                        entries.wrappedValue.removeAll { $0.id == entry.id }
                     }
                 }
             }
         }
-    }
-
-    private func keyValueAddButton(
-        label: String,
-        entries: Binding<[HeaderEntry]>
-    ) -> some View {
-        Button(action: {
-            entries.wrappedValue.append(HeaderEntry(key: "", value: "", isSecret: false))
-        }) {
-            HStack(spacing: 4) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 11))
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(themeManager.currentTheme.accentColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(themeManager.currentTheme.accentColor.opacity(0.1))
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
     }
 
     /// Stdio-only Connection-card fields: where to run, the command, args,
@@ -2245,54 +2017,39 @@ private struct ProviderEditSheet: View {
 
             executionHostExplainer
 
-            MCPStyledTextField(
-                label: "Command",
-                placeholder: "/usr/local/bin/uvx or npx",
-                text: $command,
-                isMonospaced: true
-            )
+            SettingsFieldRow(label: "Command") {
+                SettingsTextField(placeholder: L("/usr/local/bin/uvx or npx"), text: $command, monospaced: true)
+            }
 
-            MCPStyledTextField(
-                label: "Arguments",
-                placeholder: "e.g. -y @scope/server --root '/path with spaces'",
-                text: $argsString,
-                isMonospaced: true
-            )
+            SettingsFieldRow(label: "Arguments") {
+                SettingsTextField(placeholder: L("e.g. -y @scope/server --root '/path with spaces'"), text: $argsString, monospaced: true)
+            }
 
-            MCPStyledTextField(
-                label: "Working Directory",
-                placeholder: "Optional, e.g. /Users/me/projects/my-mcp",
-                text: $workingDirectory,
-                isMonospaced: true
-            )
+            SettingsFieldRow(label: "Working Directory") {
+                SettingsTextField(placeholder: L("Optional, e.g. /Users/me/projects/my-mcp"), text: $workingDirectory, monospaced: true)
+            }
         }
     }
 
     private var transportPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Transport", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-            Picker("Transport", selection: $transport) {
-                Text("HTTP / SSE", bundle: .module).tag(MCPProviderTransport.http)
-                Text("Stdio", bundle: .module).tag(MCPProviderTransport.stdio)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+        SettingsFieldRow(label: "Transport") {
+            AssignedBaseSegmentedPicker(
+                selection: $transport,
+                options: [.init(MCPProviderTransport.http, "HTTP / SSE"), .init(MCPProviderTransport.stdio, "Stdio")]
+            )
+            .fixedSize()
+            .accessibilityLabel(Text("Transport", bundle: .module))
         }
     }
 
     private var executionHostPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Run in", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-            Picker("Run in", selection: $executionHost) {
-                Text("Sandbox", bundle: .module).tag(MCPProviderExecutionHost.sandbox)
-                Text("Host", bundle: .module).tag(MCPProviderExecutionHost.host)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+        SettingsFieldRow(label: "Run In") {
+            AssignedBaseSegmentedPicker(
+                selection: $executionHost,
+                options: [.init(MCPProviderExecutionHost.sandbox, "Sandbox"), .init(MCPProviderExecutionHost.host, "Host")]
+            )
+            .fixedSize()
+            .accessibilityLabel(Text("Run In", bundle: .module))
         }
     }
 
@@ -2312,59 +2069,50 @@ private struct ProviderEditSheet: View {
             if SandboxBackend.current == .seatbelt {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.orange)
+                        .glyphSize(12, weight: .semibold)
+                        .foregroundColor(theme.status.warning.foreground)
                     Text(
                         "Sandboxed MCP servers require macOS 26 or later and will fail to start on this Mac. Choose Host to run this provider — note it will then run without sandbox protection.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(themeManager.currentTheme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.orange.opacity(0.10))
-                )
+                .padding(theme.space.s8)
+                .settingsChrome(.status(.warning))
             } else {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.accentColor)
+                        .glyphSize(12, weight: .semibold)
+                        .foregroundColor(themeManager.currentTheme.text.link)
                     Text(
                         "Runs in an isolated Linux VM with no access to host files or credentials. Outbound network is on by default and can be turned off per agent in the agent's Sandbox settings.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(themeManager.currentTheme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(themeManager.currentTheme.accentColor.opacity(0.08))
-                )
+                .padding(theme.space.s8)
+                .settingsChrome(.selected)
             }
 
         case .host:
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.orange)
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundColor(theme.status.warning.foreground)
                 Text(
                     "Running on the host means this subprocess can access your files, network, and credentials. Only use Host for tools you trust.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(themeManager.currentTheme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.orange.opacity(0.10))
-            )
+            .padding(theme.space.s8)
+            .settingsChrome(.status(.warning))
         }
     }
 
@@ -2372,21 +2120,21 @@ private struct ProviderEditSheet: View {
     /// and stdio editor flows so the user gets the same advanced surface
     /// regardless of transport.
     private var advancedCard: some View {
-        EditorCard(title: "Advanced", icon: "gearshape") {
+        SettingsSection(title: "Advanced") {
             VStack(alignment: .leading, spacing: 0) {
                 Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    withAnimation(theme.motion.springAnimation) {
                         showAdvanced.toggle()
                     }
                 }) {
                     HStack {
                         Text(showAdvanced ? L("Hide advanced settings") : L("Show advanced settings"))
-                            .font(.system(size: 13))
-                            .foregroundColor(themeManager.currentTheme.accentColor)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                            .foregroundColor(themeManager.currentTheme.text.link)
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            .glyphSize(11, weight: .semibold)
+                            .foregroundColor(themeManager.currentTheme.text.tertiary)
                             .rotationEffect(.degrees(showAdvanced ? 90 : 0))
                     }
                     .contentShape(Rectangle())
@@ -2395,7 +2143,7 @@ private struct ProviderEditSheet: View {
 
                 if showAdvanced {
                     VStack(alignment: .leading, spacing: 16) {
-                        Divider().padding(.vertical, 8)
+                        Divider().padding(.vertical, theme.space.s8)
 
                         // Streaming is HTTP-only (SSE); the stdio JSON-RPC
                         // protocol streams every response by default so the
@@ -2414,57 +2162,34 @@ private struct ProviderEditSheet: View {
                             isOn: $autoConnect
                         )
 
-                        Divider().padding(.vertical, 4)
+                        Divider().padding(.vertical, theme.space.s4)
 
                         VStack(alignment: .leading, spacing: 16) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text("Discovery Timeout", bundle: .module)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(themeManager.currentTheme.primaryText)
-                                    Spacer()
-                                    Text("\(Int(discoveryTimeout))s", bundle: .module)
-                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                        .foregroundColor(themeManager.currentTheme.accentColor)
-                                }
-                                Slider(value: $discoveryTimeout, in: 5 ... 60, step: 5)
-                                    .tint(themeManager.currentTheme.accentColor)
-                            }
+                            SettingsSlider(
+                                title: "Discovery Timeout",
+                                valueText: "\(Int(discoveryTimeout))s",
+                                value: $discoveryTimeout,
+                                range: 5 ... 60,
+                                step: 5
+                            )
 
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text("Tool Call Timeout", bundle: .module)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(themeManager.currentTheme.primaryText)
-                                    Spacer()
-                                    Text("\(Int(toolCallTimeout))s", bundle: .module)
-                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                        .foregroundColor(themeManager.currentTheme.accentColor)
-                                }
-                                Slider(value: $toolCallTimeout, in: 10 ... 120, step: 5)
-                                    .tint(themeManager.currentTheme.accentColor)
-                            }
+                            SettingsSlider(
+                                title: "Tool Call Timeout",
+                                valueText: "\(Int(toolCallTimeout))s",
+                                value: $toolCallTimeout,
+                                range: 10 ... 120,
+                                step: 5
+                            )
 
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text("Max Duration with Progress", bundle: .module)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(themeManager.currentTheme.primaryText)
-                                    Spacer()
-                                    progressHardCapLabel
-                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                        .foregroundColor(themeManager.currentTheme.accentColor)
-                                }
-                                Slider(value: $progressHardCap, in: MCPProvider.progressHardCapRange, step: 300)
-                                    .tint(themeManager.currentTheme.accentColor)
-                                Text(
+                            SettingsSlider(
+                                title: "Max Duration with Progress",
+                                valueText: progressHardCapLabel,
+                                description:
                                     "Calls that keep reporting progress can run this long. The timeout above is the longest gap between updates.",
-                                    bundle: .module
-                                )
-                                .font(.system(size: 11))
-                                .foregroundColor(themeManager.currentTheme.tertiaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                            }
+                                value: $progressHardCap,
+                                range: MCPProvider.progressHardCapRange,
+                                step: 300
+                            )
                         }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -2475,33 +2200,31 @@ private struct ProviderEditSheet: View {
 
     /// Minutes, with the hour form in parentheses past an hour so long caps
     /// stay readable ("90 min (1 h 30 min)").
-    private var progressHardCapLabel: Text {
+    private var progressHardCapLabel: String {
         let minutes = Int(progressHardCap / 60)
         let hours = minutes / 60
         let remainder = minutes % 60
         if minutes <= 60 {
-            return Text("\(minutes) min", bundle: .module)
+            return L("\(minutes) min")
         } else if remainder == 0 {
-            return Text("\(minutes) min (\(hours) h)", bundle: .module)
+            return L("\(minutes) min (\(hours) h)")
         } else {
-            return Text("\(minutes) min (\(hours) h \(remainder) min)", bundle: .module)
+            return L("\(minutes) min (\(hours) h \(remainder) min)")
         }
     }
 
     @ViewBuilder
     private var authTypePicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Authentication", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-
-            Picker("Authentication", selection: $authType) {
-                Text("None", bundle: .module).tag(MCPProviderAuthType.none)
-                Text("Bearer Token", bundle: .module).tag(MCPProviderAuthType.bearerToken)
-                Text("OAuth", bundle: .module).tag(MCPProviderAuthType.oauth)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+        SettingsFieldRow(label: "Authentication") {
+            AssignedBaseSegmentedPicker(
+                selection: $authType,
+                options: [
+                    .init(MCPProviderAuthType.none, "None"), .init(MCPProviderAuthType.bearerToken, "Bearer Token"),
+                    .init(MCPProviderAuthType.oauth, "OAuth"),
+                ]
+            )
+            .fixedSize()
+            .accessibilityLabel(Text("Authentication", bundle: .module))
         }
     }
 
@@ -2524,11 +2247,11 @@ private struct ProviderEditSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "person.badge.key.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .glyphSize(11)
+                    .foregroundColor(themeManager.currentTheme.text.tertiary)
                 Text("Sign in via the server's OAuth login flow", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(themeManager.currentTheme.text.secondary)
             }
 
             HStack(spacing: 10) {
@@ -2538,26 +2261,26 @@ private struct ProviderEditSheet: View {
                             ProgressView().scaleEffect(0.6)
                         } else {
                             Image(systemName: isOAuthSignedIn ? "arrow.clockwise" : "person.badge.key")
-                                .font(.system(size: 12))
+                                .glyphSize(12)
                         }
                         Text(
                             LocalizedStringKey(isOAuthSignedIn ? "Re-authenticate" : "Sign In"),
                             bundle: .module
                         )
-                        .font(.system(size: 12, weight: .semibold))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
                 }
-                .buttonStyle(MCPPrimaryButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(isSigningIn || url.trimmingCharacters(in: .whitespaces).isEmpty)
 
                 if isOAuthSignedIn {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(themeManager.currentTheme.successColor)
+                            .glyphSize(11)
+                            .foregroundColor(themeManager.currentTheme.status.success.foreground)
                         Text("Signed in", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(themeManager.currentTheme.successColor)
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                            .foregroundColor(themeManager.currentTheme.status.success.foreground)
                     }
                 }
 
@@ -2566,19 +2289,19 @@ private struct ProviderEditSheet: View {
 
             if let error = oauthError {
                 Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.errorColor)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(themeManager.currentTheme.status.error.foreground)
                     .lineLimit(3)
             }
 
             if let config = oauthConfig, !config.scopes.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "key.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .glyphSize(9)
+                        .foregroundColor(themeManager.currentTheme.text.tertiary)
                     Text(config.scopes.joined(separator: " "))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(themeManager.currentTheme.text.tertiary)
                         .lineLimit(2)
                 }
             }
@@ -2594,16 +2317,16 @@ private struct ProviderEditSheet: View {
     private var oauthAdvancedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) { showOAuthAdvanced.toggle() }
+                withAnimation(theme.motion.quick) { showOAuthAdvanced.toggle() }
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .glyphSize(9, weight: .semibold)
+                        .foregroundColor(themeManager.currentTheme.text.tertiary)
                         .rotationEffect(.degrees(showOAuthAdvanced ? 90 : 0))
                     Text("Manual endpoints (advanced)", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                        .foregroundColor(themeManager.currentTheme.text.secondary)
                 }
                 .contentShape(Rectangle())
             }
@@ -2615,33 +2338,22 @@ private struct ProviderEditSheet: View {
                         "Fill these in only for servers that don't advertise OAuth metadata. Both the authorize and token URLs must be set to skip discovery.",
                         bundle: .module
                     )
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(themeManager.currentTheme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                    MCPStyledTextField(
-                        label: "Authorize URL",
-                        placeholder: "https://auth.example.com/oauth/authorize",
-                        text: $manualAuthEndpoint,
-                        isMonospaced: true
-                    )
-                    MCPStyledTextField(
-                        label: "Token URL",
-                        placeholder: "https://auth.example.com/oauth/token",
-                        text: $manualTokenEndpoint,
-                        isMonospaced: true
-                    )
-                    MCPStyledTextField(
-                        label: "Client ID",
-                        placeholder: "Pre-registered OAuth client id (leave blank for DCR)",
-                        text: $manualClientId,
-                        isMonospaced: true
-                    )
-                    MCPStyledTextField(
-                        label: "Scopes",
-                        placeholder: "space- or comma-separated, e.g. read write offline_access",
-                        text: $manualScopes
-                    )
+                    SettingsFieldRow(label: "Authorize URL") {
+                        SettingsTextField(placeholder: "https://auth.example.com/oauth/authorize", text: $manualAuthEndpoint, monospaced: true)
+                    }
+                    SettingsFieldRow(label: "Token URL") {
+                        SettingsTextField(placeholder: "https://auth.example.com/oauth/token", text: $manualTokenEndpoint, monospaced: true)
+                    }
+                    SettingsFieldRow(label: "Client ID") {
+                        SettingsTextField(placeholder: L("Pre-registered OAuth client id (leave blank for DCR)"), text: $manualClientId, monospaced: true)
+                    }
+                    SettingsFieldRow(label: "Scopes") {
+                        SettingsTextField(placeholder: L("space- or comma-separated, e.g. read write offline_access"), text: $manualScopes)
+                    }
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -2737,18 +2449,18 @@ private struct ProviderEditSheet: View {
     }
 
     private var testResultColor: Color {
-        guard let result = testResult else { return themeManager.currentTheme.secondaryText }
+        guard let result = testResult else { return themeManager.currentTheme.text.secondary }
         switch result {
-        case .success: return themeManager.currentTheme.successColor
-        case .failure: return themeManager.currentTheme.errorColor
+        case .success: return themeManager.currentTheme.status.success.foreground
+        case .failure: return themeManager.currentTheme.status.error.foreground
         }
     }
 
     private var testResultBackground: Color {
-        guard let result = testResult else { return themeManager.currentTheme.tertiaryBackground }
+        guard let result = testResult else { return themeManager.currentTheme.surface.hover }
         switch result {
-        case .success: return themeManager.currentTheme.successColor.opacity(0.12)
-        case .failure: return themeManager.currentTheme.errorColor.opacity(0.12)
+        case .success: return themeManager.currentTheme.status.success.background
+        case .failure: return themeManager.currentTheme.status.error.background
         }
     }
 
@@ -2771,7 +2483,15 @@ private struct ProviderEditSheet: View {
                 name = prefill.name
                 url = prefill.url
                 token = prefill.bearerToken ?? ""
-                authType = .bearerToken
+                authType = prefill.authType
+                transport = prefill.transport
+                command = prefill.command
+                argsString = ShellArgs.join(prefill.args)
+                workingDirectory = prefill.workingDirectory
+                // Values never travel with a draft; the names are kept as
+                // secrets so what the user types lands in the Keychain.
+                envEntries = prefill.envKeys.map { HeaderEntry(key: $0, value: "", isSecret: true) }
+                customHeaders = prefill.headerKeys.map { HeaderEntry(key: $0, value: "", isSecret: true) }
                 return
             }
             // Add-mode. `init` already seeded `phase` and the draft fields.
@@ -3031,21 +2751,15 @@ private struct ProviderEditSheet: View {
         // sensitive fields alone after the first save.
         for entry in envEntries
         where entry.isSecret && !entry.key.isEmpty && !entry.value.isEmpty {
-            if !MCPProviderKeychain.saveEnvSecret(
-                entry.value,
-                key: entry.key,
-                for: updatedProvider.id
-            ) {
-                NSLog("ProvidersView: failed to save secret env value to Keychain")
+            if !MCPCredentials.saveEnv(entry.value, provider: updatedProvider, name: entry.key) {
+                NSLog("ProvidersView: failed to save secret env value to Keys")
             }
         }
 
-        // Save secret header values to Keychain
+        // Save secret header values to Keys
         for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
-            if !MCPProviderKeychain.saveHeaderSecret(
-                header.value, key: header.key, for: updatedProvider.id
-            ) {
-                NSLog("ProvidersView: failed to save secret header to Keychain")
+            if !MCPCredentials.saveHeader(header.value, provider: updatedProvider, header: header.key) {
+                NSLog("ProvidersView: failed to save secret header to Keys")
             }
         }
 
@@ -3077,132 +2791,48 @@ extension ProviderEditSheet.TestResult {
 
 private struct HeaderRow: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
     @Binding var header: ProviderEditSheet.HeaderEntry
     let onDelete: () -> Void
 
-    @State private var isKeyFocused = false
-    @State private var isValueFocused = false
-
     var body: some View {
         HStack(spacing: 8) {
-            // Key field
-            ZStack(alignment: .leading) {
-                if header.key.isEmpty {
-                    Text("Key", bundle: .module)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-                TextField(
-                    "",
-                    text: $header.key,
-                    onEditingChanged: { editing in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isKeyFocused = editing
-                        }
-                    }
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(width: 120)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isKeyFocused
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isKeyFocused ? 1.5 : 1
-                            )
-                    )
-            )
+            SettingsTextField(placeholder: L("Key"), text: $header.key, monospaced: true)
+                .frame(width: 120)
 
-            // Value field
-            ZStack(alignment: .leading) {
-                if header.value.isEmpty {
-                    Text(LocalizedStringKey(header.isSecret ? "Secret value" : "Value"), bundle: .module)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-                if header.isSecret {
-                    SecureField("", text: $header.value)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
-                } else {
-                    TextField(
-                        "",
-                        text: $header.value,
-                        onEditingChanged: { editing in
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                isValueFocused = editing
-                            }
-                        }
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isValueFocused
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isValueFocused ? 1.5 : 1
-                            )
-                    )
+            SettingsTextField(
+                placeholder: header.isSecret ? L("Secret value") : L("Value"),
+                text: $header.value,
+                monospaced: true,
+                isSecure: header.isSecret
             )
 
             // Secret toggle
             Button(action: { header.isSecret.toggle() }) {
                 HStack(spacing: 4) {
                     Image(systemName: header.isSecret ? "lock.fill" : "lock.open")
-                        .font(.system(size: 10))
+                        .glyphSize(10)
                     Text(LocalizedStringKey(header.isSecret ? "Secret" : "Plain"), bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
                 }
                 .foregroundColor(
                     header.isSecret
-                        ? themeManager.currentTheme.accentColor
-                        : themeManager.currentTheme.tertiaryText
+                        ? theme.action.primary.default.background
+                        : theme.text.tertiary
                 )
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(
-                            header.isSecret
-                                ? themeManager.currentTheme.accentColor.opacity(0.1)
-                                : themeManager.currentTheme.tertiaryBackground
-                        )
-                )
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s6)
+                .settingsChrome(header.isSecret ? .selected : .inset)
             }
             .buttonStyle(PlainButtonStyle())
 
             // Delete button
             Button(action: onDelete) {
                 Image(systemName: "trash")
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.errorColor)
+                    .glyphSize(11)
+                    .foregroundColor(theme.status.error.foreground)
                     .frame(width: 28, height: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(themeManager.currentTheme.errorColor.opacity(0.1))
-                    )
+                    .settingsChrome(.status(.error))
             }
             .buttonStyle(PlainButtonStyle())
         }
@@ -3211,197 +2841,16 @@ private struct HeaderRow: View {
 
 // MARK: - Styled Components
 
-/// The editor sheet's cards are the same `SettingsSection` every settings
-/// tab uses; the alias keeps the sheet's call sites short.
-private typealias EditorCard = SettingsSection
-
-private struct MCPStyledTextField: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    let placeholder: String
-    @Binding var text: String
-    var isMonospaced: Bool = false
-
-    @State private var isFocused = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-
-            ZStack(alignment: .leading) {
-                if text.isEmpty {
-                    Text(LocalizedStringKey(placeholder), bundle: .module)
-                        .font(.system(size: 13, design: isMonospaced ? .monospaced : .default))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-
-                TextField(
-                    "",
-                    text: $text,
-                    onEditingChanged: { editing in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isFocused = editing
-                        }
-                    }
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, design: isMonospaced ? .monospaced : .default))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isFocused
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
-            )
-        }
-    }
-}
-
-private struct MCPStyledSecureField: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    let placeholder: String
-    @Binding var text: String
-
-    @State private var isFocused = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-            }
-
-            ZStack(alignment: .leading) {
-                if text.isEmpty {
-                    Text(LocalizedStringKey(placeholder), bundle: .module)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-
-                SecureField("", text: $text)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isFocused
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
-            )
-        }
-    }
-}
-
 private struct MCPToggleRow: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
     let title: String
     let description: String
     @Binding var isOn: Bool
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(themeManager.currentTheme.primaryText)
-                Text(LocalizedStringKey(description), bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundStyle(themeManager.currentTheme.tertiaryText)
-            }
-
-            Spacer()
-
+        SettingsRow(title: title, description: description) {
             Toggle("", isOn: $isOn)
-                .toggleStyle(SwitchToggleStyle(tint: themeManager.currentTheme.accentColor))
-                .labelsHidden()
+                .settingsSwitch()
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                )
-        )
-    }
-}
-
-private struct MCPPrimaryButtonStyle: ButtonStyle {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .semibold))
-            // Never wrap the label: in a crowded footer the flexible spacer
-            // should compress, not the button text (keeps the CTA the same
-            // height as its neighbors).
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .foregroundColor(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.accentColor)
-            )
-            .opacity(configuration.isPressed ? 0.8 : 1.0)
-    }
-}
-
-private struct MCPSecondaryButtonStyle: ButtonStyle {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .foregroundColor(themeManager.currentTheme.primaryText)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
 }
 
@@ -3454,6 +2903,6 @@ private struct ToolPillsFlowLayout: Layout {
     #Preview {
         ProvidersView()
             .frame(width: 700, height: 500)
-            .environment(\.theme, DarkTheme())
+            .environment(\.theme, CustomizableTheme.dark())
     }
 #endif

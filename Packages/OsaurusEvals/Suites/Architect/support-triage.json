@@ -1,0 +1,18 @@
+{
+  "id": "architect.support-triage",
+  "domain": "architect",
+  "label": "architect \u2022 support triage",
+  "query": "Make a workflow that takes a customer support message and decides whether it's a refund request or a general question, then drafts a one-sentence reply for whichever it is. Output the category and the reply. Test it on a refund message, then offer to save it.",
+  "notes": "Decide node plus conditional branches. Pins that the Architect wires a decide node, both branches, a completed test run, and a save proposal.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 20,
+      "nodeKinds": [
+        "inference"
+      ],
+      "requireTestRun": true,
+      "requireProposeSave": true
+    }
+  }
+}

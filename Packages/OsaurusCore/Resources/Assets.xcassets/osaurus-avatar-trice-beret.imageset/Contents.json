@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "osaurus-avatar-trice-beret.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

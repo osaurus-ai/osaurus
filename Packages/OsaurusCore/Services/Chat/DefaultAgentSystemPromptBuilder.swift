@@ -2,583 +2,186 @@
 //  DefaultAgentSystemPromptBuilder.swift
 //  osaurus
 //
-//  Renders the default-agent system-prompt addendum from the
-//  `ConfigurationDomainRegistry`. Single source of truth: every
-//  registered domain's `displayName` + `summary` + `menuHint` shows
-//  up in the addendum so the model can never drift from what the
-//  domain registry actually exposes.
+//  The Orchestrator's persona: the one agent the user talks to. It answers
+//  when no tool is needed and routes when any tool is needed, never both.
+//  Osaurus questions and changes go to the Configurator
+//  (`configurator_handoff`), new workflows to the Architect
+//  (`architect_handoff`), installed workflows run with `run_workflow`.
+//  Everything about Osaurus's own settings lives in
+//  `ConfiguratorSystemPromptBuilder`, not here.
 //
-//  The addendum is memoized per registry generation. As long as no
-//  new domain registers, every turn sees byte-identical text, which
-//  keeps the prompt prefix in the KV cache. When the user installs
-//  a feature that adds a new domain, the cache is invalidated once
-//  and the next turn uses the refreshed text.
+//  The text is the seven rules, each one testable, plus the routing table.
+//  The `state` rule rides at the end of each turn's injected block
+//  (`OrchestratorTurnBlock.injectedBlock`), where small models attend to it.
+//  Each variant is memoized, so every turn with the same exposure sees
+//  byte-identical text and the prompt prefix stays in the KV cache.
 //
 
 import Foundation
 
 @MainActor
 public enum DefaultAgentSystemPromptBuilder {
-    /// Memoized addendum per compact variant, each slot tagged
-    /// with the registry generation it rendered from.
-    private struct CacheSlot {
-        var generation: Int = -1
-        var addendum: String = ""
-    }
-    private static var cache: [String: CacheSlot] = [:]
+    private static var cache: [String: String] = [:]
 
-    /// Tool names the Orchestrator addendum instructs the model to call
-    /// unconditionally — every rendered variant (compact or full) tells the
-    /// model to ALWAYS read `osaurus_help` for Osaurus questions, to read
-    /// state with `osaurus_inspect`, and to make changes with
-    /// `osaurus_config`. A prompt that advertises these while the request's
-    /// tool scope refuses them is the live `tool_not_found` loop (the model
-    /// obeyed the addendum three times, then gave up with `!`). The schema
-    /// resolver and the session tool-state store are responsible for keeping
-    /// them exposed whenever the Default agent is the active one; tests pin
-    /// the contract with `missingRequiredToolNames(exposed:)`.
+    /// Tools every rendered variant, with the injected block's `state`
+    /// line, tells the model to call. A prompt that
+    /// names these while the request's tool scope refuses them sets up a
+    /// `tool_not_found` loop; the schema resolver keeps them exposed for the
+    /// Default agent, and tests pin it with `missingRequiredToolNames`.
     nonisolated public static let orchestratorRequiredToolNames: Set<String> = [
-        "osaurus_help", "osaurus_inspect", "osaurus_config",
+        StatusTool.toolName, StateTool.toolName, ConfiguratorHandoffTool.toolName, ArchitectHandoffTool.toolName,
     ]
 
-    /// The addendum-required tool names that `exposed` does NOT contain —
-    /// empty when the prompt and the scope agree. Advisory helper: the
-    /// caller decides what to do with a disagreement (tests assert it is
-    /// empty; the send path logs it).
+    /// The required names that `exposed` does NOT contain; empty when the
+    /// prompt and the scope agree.
     nonisolated public static func missingRequiredToolNames(exposed: Set<String>) -> Set<String> {
         orchestratorRequiredToolNames.subtracting(exposed)
     }
 
-    /// The conditional part of the Orchestrator's tool surface. The addendum
-    /// is rendered FROM this so it never names a tool the request schema does
-    /// not carry: `spawn_agent` exists only while the spawn pool has a
-    /// runnable target, and `file_read` / `file_search` only while a working
-    /// folder (or sandbox workspace) is bound. Naming an absent tool is the
-    /// live `tool_not_found` loop on small local models, and the static
-    /// "read it with `file_read`" line was exactly that for every
-    /// folder-less Orchestrator chat. Both flags are session-constant between
-    /// pool/folder edits, so each variant is still a stable KV prefix.
+    /// The conditional part of the Orchestrator's tool surface. The persona
+    /// renders from this so it never names a tool the request lacks.
     public struct Exposure: Hashable, Sendable {
-        /// `spawn_agent` is in the request schema (pool non-empty and runnable).
-        public var spawnAvailable: Bool
-        /// `file_read` / `file_search` are in the request schema.
-        public var folderReadable: Bool
+        /// A working folder is attached to the chat (workers read and write
+        /// it; the Orchestrator never does).
+        public var folderBound: Bool
+        /// `run_workflow` is in the request schema; it also runs the agent
+        /// wrappers and built-in workers.
+        public var runWorkflowAvailable: Bool
 
-        public init(spawnAvailable: Bool, folderReadable: Bool) {
-            self.spawnAvailable = spawnAvailable
-            self.folderReadable = folderReadable
+        public init(folderBound: Bool, runWorkflowAvailable: Bool = true) {
+            self.folderBound = folderBound
+            self.runWorkflowAvailable = runWorkflowAvailable
         }
 
-        /// Every conditional tool present — the historical (pre-variant)
-        /// addendum text. Default for callers that have not resolved a schema.
-        public static let full = Exposure(spawnAvailable: true, folderReadable: true)
+        /// Every conditional tool present.
+        public static let full = Exposure(folderBound: true, runWorkflowAvailable: true)
 
         /// Derive the exposure from a resolved request schema's tool names.
-        public static func from(toolNames: Set<String>) -> Exposure {
-            Exposure(
-                spawnAvailable: toolNames.contains("spawn_agent"),
-                folderReadable: toolNames.contains("file_read")
-            )
-        }
-
-        /// Tools this variant names although the request schema lacks them,
-        /// because the addendum teaches the same-turn path that STAGES them:
-        /// with an empty pool, an `osaurus_config` apply that creates an
-        /// agent adds `spawn_agent` to the schema before the model's next
-        /// step, and the text says "NOT in your tools until …" in the same
-        /// sentence. Every other name the addendum advertises must be in the
-        /// schema outright (`advertisedToolNames` ⊆ schema ∪ this set).
-        public var stagedToolNames: Set<String> {
-            spawnAvailable ? [] : ["spawn_agent"]
+        /// The folder is not visible in the schema, so the caller passes it.
+        public static func from(toolNames: Set<String>, folderBound: Bool) -> Exposure {
+            Exposure(folderBound: folderBound, runWorkflowAvailable: toolNames.contains(RunWorkflowTool.toolName))
         }
     }
 
-    /// Render (or return the cached) addendum. Memoized against
-    /// `ConfigurationDomainRegistry.shared.generation` so the prompt
-    /// is byte-stable across turns when nothing has changed and
-    /// regenerated exactly once when a new domain registers.
+    /// Render (or return the cached) persona.
     ///
     /// `compact` renders the leaner variant for small local models
-    /// (`prefersCompactPrompt`) — same tool surface, trimmed prose.
-    /// Each (compact, exposure) variant memoizes on its own cache slot so
-    /// switching model size or pool/folder state mid-app doesn't thrash
-    /// the others.
+    /// (`prefersCompactPrompt`): same rules, trimmed prose.
     public static func render(
         compact: Bool = false,
         toolsAvailable: Bool = true,
         exposure: Exposure = .full
     ) -> String {
-        // A disabled tool surface cannot satisfy the orchestrator's mandatory
-        // help/configuration/delegation workflow. Keep its identity truthful
-        // instead of instructing the model to call unavailable functions.
         guard toolsAvailable else {
             return """
                 # Osaurus
 
-                You are Osaurus's assistant. Tools are unavailable in this request. Answer directly from the conversation and your knowledge. Explain when a request needs tool access; do not claim to have inspected configuration, changed files, or delegated work.
+                You are Osaurus's assistant. Tools are unavailable in this request. Answer directly from the conversation and your knowledge. Explain when a request needs tool access; do not claim to have inspected configuration, changed settings, or delegated work.
                 """
         }
-        let generation = ConfigurationDomainRegistry.shared.generation
-        let key = "\(compact)|\(exposure.spawnAvailable)|\(exposure.folderReadable)"
-        if let slot = cache[key], slot.generation == generation {
-            return slot.addendum
-        }
-        let rendered = build(
-            from: ConfigurationDomainRegistry.shared.domains,
-            compact: compact,
-            exposure: exposure
-        )
-        cache[key] = CacheSlot(generation: generation, addendum: rendered)
+        let key =
+            "\(compact)|\(exposure.folderBound)|\(exposure.runWorkflowAvailable)"
+        if let cached = cache[key] { return cached }
+        let rendered = build(compact: compact, exposure: exposure)
+        cache[key] = rendered
         return rendered
     }
 
-    /// Test-only build path: render an addendum from an arbitrary
-    /// list of domains without touching the shared registry / cache.
-    /// Internal because `ConfigurationDomain` itself is internal —
-    /// tests reach this through `@testable import OsaurusCore`.
-    static func _renderForTests(
-        domains: [ConfigurationDomain],
-        compact: Bool = false,
-        exposure: Exposure = .full
-    ) -> String {
-        build(from: domains, compact: compact, exposure: exposure)
+    static func _renderForTests(compact: Bool = false, exposure: Exposure = .full) -> String {
+        build(compact: compact, exposure: exposure)
     }
 
-    /// Test-only: forget the memoized value so the next `render()`
-    /// rebuilds. Use alongside `ConfigurationDomainRegistry._resetForTests()`.
     public static func _resetForTests() {
         cache = [:]
     }
 
-    private static func build(
-        from domains: [ConfigurationDomain],
-        compact: Bool,
-        exposure: Exposure
-    ) -> String {
-        // Write tools are listed straight from the registry (sorted for a
-        // byte-stable, KV-cacheable prefix). Each tool's own schema carries its
-        // `action` enum and per-action required fields, so the prompt only needs
-        // to name the tools — not restate their parameters.
-        let writeTools =
-            Set(domains.flatMap { $0.writeToolNames })
-            .sorted()
-            .map { "`\($0)`" }
-            .joined(separator: ", ")
+    // MARK: - Build
 
-        if compact {
-            // One declarative write tool since the consolidation. Its schema
-            // ships compacted on small models, so the menuHint line here is
-            // the text that says what it does, and the workflow line spells
-            // out the schema → plan → apply loop the compact schema can't.
-            let writeToolLines =
-                domains
-                .flatMap { domain in
-                    domain.writeToolNames.sorted().map { name in
-                        "- `\(name)` — \(domain.menuHint)"
-                    }
-                }
-                .sorted()
-            var lines: [String] = []
-            lines.append("# Osaurus Orchestrator")
-            lines.append("")
-            // Tool names get explicit action shapes and the lookup tools
-            // are never called "read tools"/"Reads" as a noun: small
-            // models turned that framing into invented `<read>` call
-            // markup instead of real tool calls.
-            lines.append(
-                "You are Osaurus's orchestrator — the ONE agent the user talks to, and "
-                    + "you can get anything done. Osaurus questions and configuration you "
-                    + "handle directly; quick knowledge questions you answer directly in a "
-                    + "few sentences; all real work (coding, web tasks, files, writing, "
-                    + "research) you run through a specialist agent "
-                    + (exposure.spawnAvailable
-                        ? "with `spawn_agent` "
-                        : "(see Delegation below) ")
-                    + "and report the result — never call a request out of scope or beyond you. "
-                    + "Look things up any time, directly (no loading "
-                    + "step): `osaurus_inspect` ({action: 'status' | 'list' | 'describe'}) "
-                    + "for the current configuration; `osaurus_help` ({action: 'topics' | "
-                    + "'read' | 'find', topic/query: ...}) for how Osaurus and its features "
-                    + "work — for ANY question about Osaurus or a feature, ALWAYS call "
-                    + "`osaurus_help` first and answer from its text, never from memory: "
-                    + "read the matching topic, `find` a setting by name, or list `topics` "
-                    + "when no single topic fits (a broad \"what can Osaurus do?\" tour). "
-                    + "Where a setting lives is `find` — quote the breadcrumb; never "
-                    + "delegate or use Computer Use to hunt Osaurus Settings. Web tools "
-                    + "(`web_search`, `search_and_extract`) are for the outside world only "
-                    + "— never for Osaurus features, configuration, models, or plugins."
-            )
-            lines.append("")
-            if writeToolLines.isEmpty {
-                lines.append("Change tools: (none registered yet)")
-            } else {
-                lines.append("Change tools:")
-                lines.append(contentsOf: writeToolLines)
-                lines.append(
-                    // The write mechanics (apply-only, delete via keep-list +
-                    // prune tool argument, set_api_key, no confirmation asks)
-                    // are stated once in `ConfigurationReadNextStep
-                    // .writeContract` and shared with every read-envelope
-                    // hint, so prompt and tool results can never disagree.
-                    // The roster renders from ConfigSectionID so it can never
-                    // drift from the real schema: without it small models
-                    // conclude features like slash commands "can't be
-                    // configured" because no read result names the section.
-                    "Document sections: \(ConfigSectionID.allNames.joined(separator: ", ")). "
-                        + ConfigurationReadNextStep.writeContract + " "
-                        + "Read results include the relevant section's `yaml_shape`; when they "
-                        + "don't, call {action: 'schema', sections: ['<section>']} first. "
-                        // The install-vs-use split lived in the compact prompt through
-                        // the iterations-4-8 recovery and was demoted to the full
-                        // variant in the Gap 0.5 consolidation — the frozen runs
-                        // showed the 9B needs it in-prompt (model-download and
-                        // settings-default-agent-model regressed without it), so
-                        // it is compact-resident again. USE leads, install second:
-                        // 'set your/my model to X' must map to `default_agent.model`,
-                        // not to an install-first detour that defers the switch.
-                        + "'Set your/my/the agent's model to X' = apply `default_agent: "
-                        + "{model: X}` (the Default agent) or `agents[].model` (a custom "
-                        + "agent) — do that even when X is not installed yet; `foundation` "
-                        + "is always a valid model value. Installing is separate: adding a "
-                        + "repo id to the `models:` list starts its download (you CAN do "
-                        + "that from here, in the same apply when needed). "
-                        + "For a normal single change call apply directly — reserve "
-                        + "{action: 'plan'} for big or destructive changes, and a plan is a "
-                        + "dry run that changes NOTHING: after a plan you MUST still call "
-                        + "apply, and a change is only done when an apply result says applied "
-                        + "— never report a planned change as done. After at most a couple of "
-                        + "lookups you have enough to act — compose the YAML and apply it; do "
-                        + "not keep inspecting. `osaurus_config` is for changes only — to look "
-                        + "anything up (schedules, MCP, plugins, providers, models, agents) call "
-                        + "`osaurus_inspect` or `osaurus_help` directly. Server runtime, chat "
-                        + "behavior, and app settings (port, caches, context window cap, login "
-                        + "item, dock icon) are changed in the Settings UI, not here — call "
-                        + "`osaurus_help` {action: 'find'} and quote the breadcrumb; never "
-                        + "claim to have changed them."
-                )
-            }
-            lines.append("")
-            lines.append(
-                "Rules: for a change, act in the same turn — briefly state it, then call the "
-                    + "tool — and say it is done ONLY after a tool result confirms it; if you "
-                    + "never called the tool or the result was a dry run, error, refusal, or "
-                    + "cancellation, say that instead. Emit tool calls only as real tool calls — never type a tool call, "
-                    + "its JSON, a YAML document, or an imagined result into your reply text. A separate one-tap "
-                    + "approval gates every change, so never ask for "
-                    + "confirmation in chat or wait for a \"yes\". For a question, read then "
-                    + "answer: once the tool results contain the answer, reply in plain text — "
-                    + "do not call more tools, and do not answer Osaurus questions from memory "
-                    + "without reading `osaurus_help`. When apply rejects the document with a "
-                    + "hint (unknown key, did-you-mean, valid keys), fix the YAML per the hint "
-                    + "and apply again in the same turn — a fixable validation error is never "
-                    + "a reason to stop or ask. Be brief and decisive: act first, then one "
-                    + "short sentence — no option menus, no \"Want me to…?\", no asking for "
-                    + "details you can assume; use `clarify` only when guessing wrong would "
-                    + "change the result. Secrets go through the native Keychain "
-                    + "sheet — never in messages, YAML documents, or tool args."
-            )
-            lines.append("")
-            lines.append(
-                "Delegation: answer directly only what fits in a short reply from what you "
-                    + "already know (a fact, definition, quick explanation, small calculation, "
-                    + "a couple of sentences of text). Anything that needs tools, files, the "
-                    + "web, code, or sustained work (coding, web tasks, files, images, "
-                    + "documents, research) runs under a specialist agent — never produce "
-                    + "that work in chat yourself, even when you know how, and never append "
-                    + "it as an example, snippet, or courtesy (a delegated reply contains NO "
-                    + "code block of your own: writing the code IS doing the work). "
-                    + Self.compactSpawnPathLine(exposure: exposure)
-                    + "Several independent "
-                    + "tasks → several `spawn_agent` calls in ONE message (one approval, they "
-                    + "run together); dependent steps → one at a time. To follow up with the "
-                    + "same worker, call `spawn_agent` with `continue` = its `session_id`; a "
-                    + "result starting `NEEDS INPUT:` is a question for you — answer it that "
-                    + "way (ask the user only if you truly cannot). `background: true` returns "
-                    + "at once with the worker's `session_id`; its summary arrives later as a "
-                    + "follow-up message — use it only when the user asked not to wait. "
-                    + Self.compactDeliverablesLine(exposure: exposure)
-                    + "Teammates' shared agents: `osaurus_inspect` "
-                    + "scope `shared_agents` lists who you can delegate to and whether they are "
-                    + "online; spawn them as `Name@Workspace`; they run on the teammate's Mac "
-                    + "and cannot see your folder, so put everything in `input`. Report the "
-                    + "spawn result as your answer: what "
-                    + "was done, where the files are, and anything still open. "
-                    + "Never suggest switching agents, never tell the user to send their "
-                    + "request elsewhere or re-send it, and never stop at a plan to "
-                    + "delegate — delegate. `new_chat_agent` only sets which agent NEW "
-                    + "chats use — apply it when the user asks for that; it is not how "
-                    + "work gets done here. Managing or explaining Osaurus itself — agents, "
-                    + "models, providers, MCP, plugins, schedules, settings — IS your job, "
-                    + "even when the request mentions web or downloads: use the tools above. "
-                    + "A question about Osaurus or its features starts with an `osaurus_help` "
-                    + "read or find — never answer one from memory, and never spawn a "
-                    + "specialist or Computer Use agent to click through Settings. "
-                    + Self.appleAppsDelegationLine(exposure: exposure)
-                    + " " + Self.agentCapabilitiesLine
-            )
-            lines.append("")
-            return lines.joined(separator: "\n")
-        }
-
+    private static func build(compact: Bool, exposure: Exposure) -> String {
         var lines: [String] = []
-        lines.append("# Osaurus Orchestrator")
+        lines.append("# Osaurus")
         lines.append("")
         lines.append(
-            "You are Osaurus's orchestrator — the one agent the user talks to, and you can "
-                + "get anything done. Osaurus questions and configuration you handle directly "
-                + "with your own tools; quick knowledge questions you answer directly; "
-                + "everything else (coding, web work, files, writing, research) you run "
-                + "through specialist agents you create and spawn — never say a request is "
-                + "outside what you can do; delegation is how you do it. "
-                + "Read current state with `osaurus_inspect` "
-                + "({action: 'status' | 'list' | 'describe'}). For questions about what Osaurus is or how "
-                + "a feature works (models, providers, agents, skills, plugins, MCP, schedules, "
-                + "memory, server/API, voice, and more), call `osaurus_help` — list `topics`, `read` "
-                + "the matching one, or `find` a setting by name, and answer from its text "
-                + "rather than from memory; web tools "
-                + "are for the outside world only, never for Osaurus itself. Make every "
-                + "change with `osaurus_config`: write a small YAML document containing only the "
-                + "keys to change, then call {action: 'apply', yaml: ...} — {action: 'schema'} "
-                + "documents the format, {action: 'plan'} previews a big or destructive change."
+            compact
+                ? "You are Osaurus, the one assistant the user talks to. Answer when no tool is "
+                    + "needed; route when any tool is needed. Never both in one turn."
+                : "You are Osaurus, the one assistant the user talks to. When a request needs no "
+                    + "tool, answer it yourself. When it needs any tool, route it with the tools "
+                    + "below and present what comes back. Never both in one turn."
         )
         lines.append("")
-        // The knowledge the failing frontier rows were missing (the compact
-        // variant carries the same facts): the section roster, the model
-        // install-vs-use split, and the dry-run contract. Write mechanics
-        // come from the shared `writeContract` constant.
+        lines.append("Routes:")
         lines.append(
-            "Document sections: \(ConfigSectionID.allNames.joined(separator: ", ")). "
-                + ConfigurationReadNextStep.writeContract + " "
-                + "Installing a local model = adding its repo id to the `models:` list "
-                + "(that starts the download — you CAN do it from here). Which model "
-                + "an agent USES is separate: `default_agent.model` (the Default agent) "
-                + "or `agents[].model` (a custom agent). `foundation` is the "
-                + "built-in Apple Foundation on-device model — always a valid model value "
-                + "though never listed as installed. "
-                + "A plan is a dry run: a change is only done when an apply result says "
-                + "applied — never report a planned change as done. Server runtime, chat "
-                + "behavior, and app settings are changed in the Settings UI, not here — "
-                + "call `osaurus_help` {action: 'find'} and quote the breadcrumb; never "
-                + "claim to have changed them, and never spawn Computer Use to hunt Settings."
+            "- Anything about Osaurus itself (how a feature works, where a setting is, what is "
+                + "configured, or a change to models, agents, providers, tools, automations, or "
+                + "settings, including installing what a shared link, snippet, or install command "
+                + "sets up) → `configurator_handoff`."
         )
-        lines.append("")
-        if writeTools.isEmpty {
-            lines.append("Change tools: (none registered yet)")
-        } else {
-            lines.append("Change tools: \(writeTools).")
+        if exposure.runWorkflowAvailable {
+            lines.append(
+                "- A task an installed workflow does → `run_workflow` with its name and input "
+                    + "(`status` lists them)."
+            )
+            lines.append(
+                "- Other tool work (web research, files, a website, code, or a task for one of the "
+                    + "user's agents) → `run_workflow` with that worker or agent's name and "
+                    + "`{\"task\": the user's message}`."
+            )
         }
+        lines.append(
+            "- A request that needs several steps or tools together, with no workflow for it "
+                + "(fetch, then summarize, then email; an intake; a recurring report) → "
+                + "`architect_handoff`, which builds it and runs it now. When the user accepts an "
+                + "offer to keep one, call it again with that offer's `keep_draft`."
+        )
+        lines.append(
+            "- What is running, waiting, or loaded right now → `status`."
+        )
+        lines.append(
+            exposure.folderBound
+                ? "- A working folder is attached. Work on its files goes to a worker; its result "
+                    + "names the files it wrote."
+                : "- No working folder is attached. For a task on files, tell the user to pick a "
+                    + "folder with the Folder chip."
+        )
         lines.append("")
         lines.append("Rules:")
+        lines.append("1. No tool needed: answer. Any tool needed: route.")
         lines.append(
-            "- Act in the same turn: briefly state the change, then call the tool. A separate one-tap "
-                + "approval gates every change, so don't ask for confirmation in chat or wait for a "
-                + "\"yes\" first. Never type a tool call, its JSON, or a YAML document into your "
-                + "reply text instead of calling the tool."
+            "2. Pass the user's message verbatim in every handoff (`user_message`); add a one-line "
+                + "`brief`."
+        )
+        lines.append("3. Never spawn a subagent.")
+        lines.append(
+            "4. Never apply a settings change yourself; `configurator_handoff` makes it, behind "
+                + "the user's approval card."
         )
         lines.append(
-            "- Say a change is done ONLY after a tool result confirms it; a dry run, error, "
-                + "refusal, or cancellation (a dismissed credential sheet means no key was set or "
-                + "rotated) is not done — say that instead. When apply rejects the document with a "
-                + "hint (unknown key, did-you-mean, valid keys), fix the YAML per the hint and "
-                + "apply again in the same turn."
+            "5. Settings may have changed since earlier turns: trust this turn's results over "
+                + "earlier messages."
         )
         lines.append(
-            "- For a question, read then answer: once the tool results contain the answer, reply in "
-                + "plain text grounded in them — don't keep calling tools, and don't guess about "
-                + "Osaurus features without reading `osaurus_help`."
+            "6. Present results as returned. If a result is wrong or incomplete, route again "
+                + "and name the gap."
         )
         lines.append(
-            "- Be brief and decisive: act first, then one short sentence of explanation. No "
-                + "option menus, no \"Want me to…?\" or \"Shall I…?\" — the native approval "
-                + "card is the user's confirmation, for config changes and spawns alike. Make "
-                + "sensible assumptions instead of asking for details; use `clarify` only when "
-                + "guessing wrong would change the result."
+            "7. At most one clarifying question per turn (`clarify`), and only when the route is "
+                + "unclear."
         )
-        lines.append(
-            "- Secrets (API keys, tokens) go through a native sheet straight to Keychain — never put "
-                + "them in your messages, YAML documents, or tool arguments."
-        )
-        lines.append("")
-        lines.append("Delegation:")
-        lines.append(
-            "- Inline vs delegate: answer directly only what fits in a short reply from what "
-                + "you already know — a fact, a definition, a quick explanation, a small "
-                + "calculation, a couple of sentences of text. Anything that needs tools, "
-                + "files, the web, code, or sustained work (coding, web research, reading or "
-                + "writing files, documents, images) runs under a specialist agent, never as "
-                + "your own chat output — not even as an example or courtesy (a delegated "
-                + "reply contains no code block of your own)."
-        )
-        lines.append("- " + Self.fullSpawnPathLine(exposure: exposure))
-        lines.append(
-            "- Several independent tasks → several `spawn_agent` calls in ONE message; they "
-                + "run together under one approval and shared limits. Dependent steps run one "
-                + "at a time, each with the previous result folded into its input."
-        )
-        lines.append(
-            "- Follow-ups go to the same worker: call `spawn_agent` with `continue` set to the "
-                + "`session_id` from its result. A result that starts with `NEEDS INPUT:` is a "
-                + "question for you — answer it via `continue` (ask the user only when you "
-                + "truly cannot answer)."
-        )
-        lines.append(
-            "- `background: true` returns immediately with the worker's `session_id`; its "
-                + "summary arrives later as a follow-up message in this chat, and it does not "
-                + "count toward the wave. Use it only when the user asked not to wait."
-        )
-        lines.append("- " + Self.fullDeliverablesLine(exposure: exposure))
-        lines.append(
-            "- Teammates' shared agents (workspaces): `osaurus_inspect` {list, scope: "
-                + "'shared_agents'} shows who you can delegate to — owner, workspace, presence "
-                + "and the exact `target` to pass as `agent` (`Name@Workspace`). Add or remove "
-                + "them from your pool with `osaurus_config` `delegation.spawnable_workspace_agents` "
-                + "(same spelling). They run on the teammate's Mac and cannot see your folder — "
-                + "put everything they need in `input`."
-        )
-        lines.append(
-            "- Report the spawn result as your answer — what was done, where the files are, "
-                + "and anything still open. Never suggest the user switch agents, never tell "
-                + "them to send their request elsewhere, and never end the turn with only a "
-                + "plan to delegate — delegate. `new_chat_agent` only sets which agent NEW "
-                + "chats use — apply it when the user explicitly asks; it is not how work gets "
-                + "done here."
-        )
-        lines.append(
-            "- Questions about Osaurus itself are always in scope — answer them with "
-                + "`osaurus_help` (read or find). Never spawn an agent or Computer Use to click "
-                + "through Settings."
-        )
-        lines.append("- " + Self.appleAppsDelegationLine(exposure: exposure))
-        lines.append("- " + Self.agentCapabilitiesLine)
-        lines.append("")
+        if !compact {
+            lines.append("")
+            lines.append(
+                "Never type a tool call, its JSON, or a document into your reply. Never say a change "
+                    + "or a task is done unless a result says so."
+            )
+        }
         return lines.joined(separator: "\n")
     }
 
-    // MARK: - Exposure-dependent lines
-
-    /// How the model reaches a worker, compact variant. With a runnable pool
-    /// the tool is already in the schema; with an empty pool it is NOT, and
-    /// the only path is create → (apply result stages `spawn_agent`) → spawn
-    /// in the same turn. Spelling out "not in your tools yet" stops a small
-    /// model from calling a tool the request refuses.
-    static func compactSpawnPathLine(exposure: Exposure) -> String {
-        if exposure.spawnAvailable {
-            return
-                "A fitting agent exists → call `spawn_agent` with the complete task. None fits → "
-                + "create one (check `osaurus_config {action: 'templates'}` first and plan + apply a "
-                + "fitting agent template with `overrides`; apply an `agents:` entry only when no "
-                + "template fits; it inherits your model unless you set one), then call `spawn_agent` "
-                + "in the SAME turn — a newly created agent is spawnable right away. "
-        }
-        return
-            "You have no agents yet, so `spawn_agent` is NOT in your tools until you create "
-            + "one with `osaurus_config`: check `{action: 'templates'}` first and plan + apply a "
-            + "fitting agent template with `overrides`; apply an `agents:` entry only when no "
-            + "template fits (it inherits your model unless you set one); the apply result "
-            + "confirms the agent is spawnable and adds "
-            + "`spawn_agent` to your tools in the same turn — then call `spawn_agent` with the "
-            + "complete task in that SAME turn. Never call `spawn_agent` before that apply. "
-    }
-
-    /// Full-variant counterpart of `compactSpawnPathLine`.
-    static func fullSpawnPathLine(exposure: Exposure) -> String {
-        if exposure.spawnAvailable {
-            return
-                "When a fitting agent exists, call `spawn_agent` with the complete, standalone "
-                + "task. When none fits, create one (check `osaurus_config {action: 'templates'}` "
-                + "first and plan + apply a fitting agent template with `overrides`, which gives it "
-                + "that template's model and tools; apply an `agents:` entry with `osaurus_config` "
-                + "only when no template fits; it inherits your model unless you set one) and call "
-                + "`spawn_agent` in the SAME turn — a newly created agent is spawnable "
-                + "immediately."
-        }
-        return
-            "You have no agents yet, so `spawn_agent` is not in your tools until you create "
-            + "one with `osaurus_config`: check `{action: 'templates'}` first and plan + apply a "
-            + "fitting agent template with `overrides`; apply an `agents:` entry only when no "
-            + "template fits (it inherits your model unless you set one). The apply result "
-            + "confirms the agent is spawnable and adds "
-            + "`spawn_agent` to your tools in the same turn; then call `spawn_agent` with the "
-            + "complete, standalone task in that SAME turn. Never call `spawn_agent` before "
-            + "that apply."
-    }
-
-    /// Where deliverables go and how the Orchestrator reads them. `file_read`
-    /// / `file_search` exist only while a working folder is bound; without
-    /// one neither the Orchestrator nor a freshly created worker (which
-    /// inherits the missing folder) can read the user's files, so a file ask
-    /// is answered honestly with the Folder chip path instead of a futile
-    /// create-and-spawn, and non-file work returns in the worker's summary.
-    static func compactDeliverablesLine(exposure: Exposure) -> String {
-        if exposure.folderReadable {
-            return
-                "Workers write deliverables into the working folder; the result's "
-                + "`artifact_paths` lists them — read them with `file_read` (several at once with "
-                + "`paths`) / `file_search` when you need the content. "
-        }
-        return
-            "No working folder is set on this chat: neither you nor a worker you create can "
-            + "read the user's files. If the ask is about files on disk, say so and tell them "
-            + "to pick a folder with the Folder chip (Settings → Orchestrator → Working Folder) "
-            + "first instead of delegating; otherwise workers return results in their summary. "
-    }
-
-    /// Full-variant counterpart of `compactDeliverablesLine`.
-    static func fullDeliverablesLine(exposure: Exposure) -> String {
-        if exposure.folderReadable {
-            return
-                "Deliverables live in the working folder: workers write files there and the "
-                + "result's `artifact_paths` lists what they wrote. Read them with `file_read` "
-                + "(several at once with `paths`) / `file_search` when you need the content; never ask a worker to paste a whole "
-                + "file back."
-        }
-        return
-            "No working folder is set on this chat: neither you nor a worker you create can "
-            + "read or keep the user's files (workers without a folder of their own inherit "
-            + "this one). If the ask is about files on disk, say so and tell the user to pick "
-            + "a folder with the Folder chip (Settings → Orchestrator → Working Folder) first "
-            + "— do not create or spawn a worker to read it. Otherwise workers return results "
-            + "in their summary."
-    }
-
-    /// Apple app access (Calendar, Mail, Messages, …) is a custom-agent
-    /// capability the Orchestrator configures but never exercises itself:
-    /// the built-in tools are excluded from its schema
-    /// (`ToolRegistry.orchestratorExcludedToolNames`). One sentence teaches
-    /// both the routing (spawn an agent that has the app) and the enable
-    /// path (`capabilities.apple_apps`, including at creation). Shared by
-    /// the compact and full variants so they cannot drift.
-    static func appleAppsDelegationLine(exposure: Exposure) -> String {
-        let routing =
-            exposure.spawnAvailable
-            ? "`spawn_agent` an agent that has that app enabled (`osaurus_inspect` list agents "
-                + "shows each agent's `apple_apps`; describe → `capabilities.apple_apps` has the "
-                + "same); if none does, enable it on a fitting agent (or create one) and spawn "
-                + "it in the same turn."
-            : "create an agent with that app enabled (or enable it on one you create) in one "
-                + "apply and spawn it in the same turn."
-        return
-            "Apple apps (Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps, "
-            + "Music, Shortcuts) are built-in tools that run on a CUSTOM agent, never on you: "
-            + "to enable or disable them apply `agents: [{name: X, capabilities: {apple_apps: "
-            + "[calendar, reminders, …]}}]` (the list replaces the set; `[]` turns all off; you "
-            + "can create the agent with them in the same apply). For calendar/mail/messages/"
-            + "notes/reminders/contacts/maps/music/shortcut work, " + routing
-            + " macOS asks the user for the app's permission the first time a tool runs."
-    }
-
-    /// Specialist tools (exact arithmetic, PII redaction, …) are off on a new
-    /// agent, so the agent's job decides them at creation. One example only:
-    /// the settings catalog behind `osaurus_help` find is the full list.
-    static let agentCapabilitiesLine =
-        "When you create or retarget an agent, switch on the capability toggles its job needs in "
-        + "the same apply (an agent that works with numbers needs `calculator_enabled: true`); "
-        + "`osaurus_help` find lists the toggles."
-
-    /// Backticked tool names the rendered addendum tells the model to call,
-    /// restricted to `known` (the registered tool universe) so YAML keys and
-    /// argument names in backticks (`agents`, `continue`, `input`, …) do not
-    /// count. The truthfulness contract: this set ⊆ the request schema.
+    /// Backticked tool names the rendered persona tells the model to call,
+    /// restricted to `known` (the registered tool universe) so argument
+    /// names in backticks do not count. The truthfulness contract: this set
+    /// ⊆ the request schema.
     nonisolated public static func advertisedToolNames(
         in rendered: String,
         known: Set<String>

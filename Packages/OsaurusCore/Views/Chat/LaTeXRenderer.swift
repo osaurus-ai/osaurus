@@ -66,8 +66,8 @@ struct MathBlockView: View {
     var body: some View {
         MathBlockRepresentable(
             latex: latex,
-            fontSize: CGFloat(theme.bodySize) * Typography.scale(for: baseWidth) * 1.15,
-            textColor: NSColor(theme.primaryText)
+            fontSize: theme.pointSize(.heading),
+            textColor: NSColor(theme.text.primary)
         )
         .frame(maxWidth: baseWidth - 32, alignment: .center)
         .frame(maxWidth: .infinity, alignment: .center)

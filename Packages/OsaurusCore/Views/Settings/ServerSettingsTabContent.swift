@@ -314,11 +314,11 @@ struct ServerSettingsTabContent: View {
             if let message = successMessage {
                 ThemedToastView(message, type: .success)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 70)
+                    .padding(.bottom, theme.space.s64)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.optionalDoubleFieldCommitter, decimalEdits)
         .onAppear {
             // Defer a beat so the section scroll runs after first layout.
@@ -385,12 +385,9 @@ struct ServerSettingsTabContent: View {
     private var sectionScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                SettingsPageContent {
                     settingsSections
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity)
             }
             // Gives `scrollTo(_:anchor: .top)` a breathing-room buffer so
             // anchored sections don't kiss the top edge of the scroll.
@@ -401,7 +398,7 @@ struct ServerSettingsTabContent: View {
                 renderedLandingAnchors = anchors
             }
             .onChange(of: activeSection) { _, new in
-                withAnimation(.smooth(duration: 0.45)) {
+                withAnimation(theme.motion.slow) {
                     if let controlLandingTarget {
                         proxy.scrollTo(controlLandingTarget, anchor: .center)
                     } else {
@@ -415,7 +412,7 @@ struct ServerSettingsTabContent: View {
                 // Cancellation prevents an earlier result stealing the scroll.
                 try? await Task.sleep(for: .milliseconds(100))
                 guard !Task.isCancelled else { return }
-                withAnimation(.smooth(duration: 0.45)) {
+                withAnimation(theme.motion.slow) {
                     proxy.scrollTo(target, anchor: .center)
                 }
             }
@@ -551,11 +548,11 @@ struct ServerSettingsTabContent: View {
     }
 
     private func showSuccess(_ message: String) {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             successMessage = message
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 successMessage = nil
             }
         }

@@ -36,11 +36,12 @@ public enum HarnessKind: String, Codable, Sendable, CaseIterable, Identifiable {
 
     /// Arguments a new runtime of this kind starts with. Claude Code's are
     /// built by its adapter from the agent's settings, so the user list stays
-    /// empty; Pi needs RPC mode selected explicitly.
+    /// empty; Pi needs RPC mode selected explicitly, and a session keyed on
+    /// the chat so a relaunch resumes it.
     public var defaultArguments: [String] {
         switch self {
         case .claudeCode: return []
-        case .piRPC: return ["--mode", "rpc"]
+        case .piRPC: return ["--mode", "rpc", "--session-id", HarnessArgumentPlaceholder.chatId]
         }
     }
 }

@@ -13,7 +13,7 @@ struct PluginsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private let repoService = PluginRepositoryService.shared
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     @State private var selectedTab: PluginsTab = .installed
     @State private var searchText: String = ""
@@ -48,7 +48,7 @@ struct PluginsView: View {
 
     // Live counts feeding the Claude aggregator's debounced refresh.
     private let claudeSkillManager = SkillManager.shared
-    private let claudeScheduleManager = ScheduleManager.shared
+    private let claudeEventManager = EventManager.shared
     private let claudeSlashCommands = SlashCommandRegistry.shared
     @ObservedObject private var claudeMCPManager = MCPProviderManager.shared
 
@@ -85,14 +85,14 @@ struct PluginsView: View {
                 plugin: plugin,
                 missingPermissions: missingPermissionsPerPlugin[plugin.pluginId] ?? [],
                 onBack: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedPlugin = nil
                     }
                 },
                 onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
                 onUninstall: {
                     try await repoService.uninstall(pluginId: plugin.pluginId)
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedPlugin = nil
                     }
                 },
@@ -109,14 +109,14 @@ struct PluginsView: View {
             ClaudePluginDetailView(
                 plugin: claudePlugin,
                 onBack: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedClaudePlugin = nil
                     }
                 },
                 onUpdate: { try await updateClaudePlugin(claudePlugin) },
                 onUninstall: {
                     await uninstallClaudePlugin(claudePlugin)
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedClaudePlugin = nil
                     }
                 },
@@ -139,7 +139,7 @@ struct PluginsView: View {
             ClaudeMarketplaceDetailView(
                 entry: entry,
                 onBack: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedMarketplaceEntry = nil
                     }
                 },
@@ -150,7 +150,7 @@ struct PluginsView: View {
                     // available. Transition into the rich installed detail
                     // (uninstall / previews / configure) for a continuous flow.
                     if let installed = installedClaudePlugin(for: entry) {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        withAnimation(theme.motion.springAnimation) {
                             selectedMarketplaceEntry = nil
                             selectedClaudePlugin = installed
                         }
@@ -168,7 +168,7 @@ struct PluginsView: View {
                 Spacer()
                 ThemedToastView(message, type: .success)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 20)
+                    .padding(.bottom, theme.space.s16)
             }
             .zIndex(100)
         }
@@ -177,7 +177,7 @@ struct PluginsView: View {
     var body: some View {
         marketplaceObservers
             .onChange(of: claudeSkillManager.skills.count) { _, _ in scheduleClaudeRefresh() }
-            .onChange(of: claudeScheduleManager.schedules.count) { _, _ in scheduleClaudeRefresh() }
+            .onChange(of: claudeEventManager.events.count) { _, _ in scheduleClaudeRefresh() }
             .onChange(of: claudeSlashCommands.customCommands.count) { _, _ in scheduleClaudeRefresh() }
             .onChange(of: claudeMCPManager.configuration.providers.count) { _, _ in
                 scheduleClaudeRefresh()
@@ -212,8 +212,8 @@ struct PluginsView: View {
             successToastOverlay
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
         .onAppear {
             reload()
             if repoService.plugins.isEmpty {
@@ -230,7 +230,7 @@ struct PluginsView: View {
             // Load the official Claude marketplace catalog once so the
             // Browse tab's discovery grid is ready when the user switches.
             claudeMarketplace.loadIfNeeded()
-            withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
+            withAnimation(theme.motion.standard.delay(0.1)) {
                 hasAppeared = true
             }
             applyPendingPluginDetailRequest()
@@ -268,7 +268,7 @@ struct PluginsView: View {
             if let pluginId = secretsSheetPluginId {
                 ToolSecretsSheet(
                     pluginId: pluginId,
-                    agentId: Agent.defaultId,
+                    agentId: nil,
                     pluginName: secretsSheetPluginName ?? pluginId,
                     pluginVersion: secretsSheetPluginVersion,
                     secrets: secretsSheetSecrets,
@@ -374,7 +374,7 @@ struct PluginsView: View {
 
         reload()
         if succeeded == total {
-            showSuccess(L("Updated \(succeeded) plugins"))
+            showSuccess(succeeded == 1 ? L("Updated 1 plugin") : L("Updated \(succeeded) plugins"))
         } else {
             showSuccess(L("Updated \(succeeded) of \(total) plugins"))
         }
@@ -439,7 +439,7 @@ struct PluginsView: View {
         if !installedPlugins.contains(where: { $0.pluginId == pluginId }) {
             selectedTab = .browse
         }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        withAnimation(theme.motion.springAnimation) {
             selectedPlugin = plugin
         }
         managementState.pendingPluginDetailId = nil
@@ -465,7 +465,7 @@ struct PluginsView: View {
     private var gridContent: some View {
         VStack(spacing: 0) {
             headerBar
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
+                .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
             Group {
                 switch selectedTab {
@@ -484,15 +484,10 @@ struct PluginsView: View {
     // MARK: - Header Bar
 
     private var headerBar: some View {
-        ManagerHeaderWithTabs(
-            title: L("Plugins"),
-            subtitle: L("Browse and manage plugins")
-        ) {
-            HeaderIconButton(
-                "arrow.clockwise",
-                isLoading: isRefreshButtonLoading,
-                help: isRefreshButtonLoading ? L("Refreshing...") : L("Refresh repository")
-            ) {
+        SettingsPageHeader(
+            title: "Plugins",
+            subtitle: "Browse and manage plugins",
+            onRefresh: {
                 Task {
                     isRefreshButtonLoading = true
                     await repoService.refresh()
@@ -501,24 +496,27 @@ struct PluginsView: View {
                     reload()
                     isRefreshButtonLoading = false
                 }
+            },
+            refreshHelp: "Refresh repository",
+            isRefreshing: isRefreshButtonLoading,
+            toolbar: {
+                let claudeCount = filteredClaudePlugins.count
+                let claudeUpdateCount = claudeAggregator.plugins.filter { $0.hasUpdate }.count
+                SettingsTabsRow(
+                    selection: $selectedTab,
+                    counts: [
+                        .installed: installedPlugins.count + claudeCount,
+                        .browse: filteredPlugins.count,
+                        .claude: filteredMarketplaceEntries.count,
+                    ],
+                    badges: (updatesAvailableCount + claudeUpdateCount) > 0
+                        ? [.installed: updatesAvailableCount + claudeUpdateCount]
+                        : nil,
+                    searchText: $searchText,
+                    searchPlaceholder: "Search plugins"
+                )
             }
-        } tabsRow: {
-            let claudeCount = filteredClaudePlugins.count
-            let claudeUpdateCount = claudeAggregator.plugins.filter { $0.hasUpdate }.count
-            HeaderTabsRow(
-                selection: $selectedTab,
-                counts: [
-                    .installed: installedPlugins.count + claudeCount,
-                    .browse: filteredPlugins.count,
-                    .claude: filteredMarketplaceEntries.count,
-                ],
-                badges: (updatesAvailableCount + claudeUpdateCount) > 0
-                    ? [.installed: updatesAvailableCount + claudeUpdateCount]
-                    : nil,
-                searchText: $searchText,
-                searchPlaceholder: "Search plugins"
-            )
-        }
+        )
     }
 
     // MARK: - Installed Tab
@@ -526,16 +524,17 @@ struct PluginsView: View {
     private var installedTabContent: some View {
         Group {
             if installedPlugins.isEmpty && filteredClaudePlugins.isEmpty {
-                emptyState(
-                    icon: "puzzlepiece.extension",
-                    title: L("No plugins installed"),
-                    subtitle: searchText.isEmpty
-                        ? L("Browse the repository or import a Claude plugin")
-                        : L("Try a different search term")
+                SettingsEmptyState(
+                    inline: "puzzlepiece.extension",
+                    title: "No plugins installed",
+                    hint: searchText.isEmpty
+                        ? "Browse the repository or import a Claude plugin"
+                        : "Try a different search term"
                 )
+                .frame(maxHeight: .infinity)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+                    SettingsPageContent {
                         GitHubTokenCard()
                         if totalUpdatesAvailable > 0 {
                             UpdateAllPluginsBanner(
@@ -548,7 +547,7 @@ struct PluginsView: View {
                             ToolPermissionBanner(count: pluginsWithMissingPermissionsCount, subject: .plugins)
                         }
 
-                        LazyVGrid(columns: responsiveGrid, spacing: 20) {
+                        LazyVGrid(columns: responsiveGrid, spacing: theme.libraryGridGap) {
                             ForEach(Array(installedPlugins.enumerated()), id: \.element.id) { index, plugin in
                                 PluginCard(
                                     plugin: plugin,
@@ -556,7 +555,7 @@ struct PluginsView: View {
                                     animationDelay: Double(index) * 0.05,
                                     hasAppeared: hasAppeared,
                                     onSelect: {
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                        withAnimation(theme.motion.springAnimation) {
                                             selectedPlugin = plugin
                                         }
                                     },
@@ -579,7 +578,7 @@ struct PluginsView: View {
                                     animationDelay: Double(index + nativeOffset) * 0.05,
                                     hasAppeared: hasAppeared,
                                     onSelect: {
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                        withAnimation(theme.motion.springAnimation) {
                                             selectedClaudePlugin = claudePlugin
                                         }
                                     },
@@ -601,7 +600,6 @@ struct PluginsView: View {
                             }
                         }
                     }
-                    .padding(24)
                 }
             }
         }
@@ -613,7 +611,7 @@ struct PluginsView: View {
     /// still using multiple columns when the window has enough room.
     private var responsiveGrid: [GridItem] {
         [
-            GridItem(.adaptive(minimum: 340), spacing: 20, alignment: .top)
+            GridItem(.adaptive(minimum: 340), spacing: theme.libraryGridGap, alignment: .top)
         ]
     }
 
@@ -630,7 +628,7 @@ struct PluginsView: View {
     /// installed detail when it's already installed, otherwise the discovery
     /// detail with an Install call-to-action.
     private func openMarketplaceEntry(_ entry: MarketplacePlugin) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        withAnimation(theme.motion.springAnimation) {
             if let installed = installedClaudePlugin(for: entry) {
                 selectedClaudePlugin = installed
             } else {
@@ -642,20 +640,21 @@ struct PluginsView: View {
     private var browseTabContent: some View {
         Group {
             if let errorMessage = repoLastError {
-                VStack(spacing: 12) {
+                VStack(spacing: theme.space.s12) {
                     offlineBanner(message: errorMessage)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 16)
+                        .padding(.horizontal, theme.settingsPageInset)
+                        .padding(.top, theme.settingsPageTop)
                     nativeBrowseGrid
                 }
             } else if isRepoRefreshing && filteredPlugins.isEmpty {
                 loadingState
             } else if filteredPlugins.isEmpty {
-                emptyState(
-                    icon: "puzzlepiece.extension",
+                SettingsEmptyState(
+                    inline: "puzzlepiece.extension",
                     title: searchText.isEmpty ? "No plugins available" : "No plugins match your search",
-                    subtitle: searchText.isEmpty ? nil : "Try a different search term"
+                    hint: searchText.isEmpty ? "" : "Try a different search term"
                 )
+                .frame(maxHeight: .infinity)
             } else {
                 nativeBrowseGrid
             }
@@ -663,22 +662,22 @@ struct PluginsView: View {
     }
 
     private var loadingState: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: theme.space.s16) {
             ProgressView()
                 .scaleEffect(1.2)
             Text("Loading repository...", bundle: .module)
-                .font(.system(size: 14))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                .foregroundColor(theme.text.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 60)
+        .padding(.vertical, theme.space.s64)
     }
 
     private var nativeBrowseGrid: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            SettingsPageContent {
                 GitHubTokenCard()
-                LazyVGrid(columns: responsiveGrid, spacing: 20) {
+                LazyVGrid(columns: responsiveGrid, spacing: theme.libraryGridGap) {
                     ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
                     PluginCard(
                         plugin: plugin,
@@ -686,7 +685,7 @@ struct PluginsView: View {
                         animationDelay: Double(index) * 0.05,
                         hasAppeared: hasAppeared,
                         onSelect: {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            withAnimation(theme.motion.springAnimation) {
                                 selectedPlugin = plugin
                             }
                         },
@@ -701,7 +700,6 @@ struct PluginsView: View {
                     }
                 }
             }
-            .padding(24)
         }
     }
 
@@ -709,7 +707,7 @@ struct PluginsView: View {
 
     private var claudePluginsTabContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            SettingsPageContent {
                 if !claudeMarketplace.categories.isEmpty {
                     MarketplaceCategoryChips(
                         categories: claudeMarketplace.categories.map { category in
@@ -724,7 +722,6 @@ struct PluginsView: View {
                 }
                 marketplaceSection
             }
-            .padding(24)
         }
     }
 
@@ -739,7 +736,7 @@ struct PluginsView: View {
         } else {
             // Installed plugins are excluded upstream (they live in the
             // Installed tab), so this grid is purely available discovery.
-            LazyVGrid(columns: responsiveGrid, spacing: 20) {
+            LazyVGrid(columns: responsiveGrid, spacing: theme.libraryGridGap) {
                 ForEach(Array(filteredMarketplaceEntries.enumerated()), id: \.element.name) {
                     index,
                     entry in
@@ -756,7 +753,7 @@ struct PluginsView: View {
     }
 
     private var marketplaceLoadingGrid: some View {
-        LazyVGrid(columns: responsiveGrid, spacing: 20) {
+        LazyVGrid(columns: responsiveGrid, spacing: theme.libraryGridGap) {
             ForEach(0 ..< 6, id: \.self) { _ in
                 MarketplaceSkeletonCard()
             }
@@ -764,12 +761,12 @@ struct PluginsView: View {
     }
 
     private func marketplaceErrorView(_ message: String) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             offlineBanner(message: message)
             Button(action: { Task { await claudeMarketplace.refresh() } }) {
                 Text("Retry", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.link)
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(claudeMarketplace.isLoading)
@@ -777,54 +774,24 @@ struct PluginsView: View {
     }
 
     private var marketplaceEmptyView: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "sparkle.magnifyingglass")
-                .font(.system(size: 32, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-            Text(
-                searchText.isEmpty
-                    ? "No plugins in this category yet"
-                    : "No plugins match your search",
-                bundle: .module
-            )
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
+        SettingsEmptyState(
+            inline: "sparkle.magnifyingglass",
+            title: searchText.isEmpty ? "No plugins in this category yet" : "No plugins match your search"
+        )
+        .padding(.vertical, theme.settingsSectionGap)
     }
 
     // MARK: - Empty / Loading States
 
-    private func emptyState(icon: String, title: String, subtitle: String?) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 40, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-
-            Text(title)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            if let subtitle = subtitle {
-                Text(subtitle)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 60)
-    }
-
     private func offlineBanner(message: String) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "wifi.slash")
-                .font(.system(size: 14))
-                .foregroundColor(theme.warningColor)
+                .glyphSize(14)
+                .foregroundColor(theme.status.warning.foreground)
 
             Text(message)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                .foregroundColor(theme.text.secondary)
 
             Spacer()
 
@@ -836,31 +803,24 @@ struct PluginsView: View {
                 }
             }) {
                 Text("Retry", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.link)
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(isRepoRefreshing)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.warningColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+        .settingsChrome(.status(.warning))
     }
 
     // MARK: - Success Toast
 
     private func showSuccess(_ message: String) {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             successMessage = message
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 successMessage = nil
             }
         }
@@ -1036,7 +996,9 @@ struct PluginsView: View {
 // MARK: - Plugin Card (Grid)
 
 private struct PluginCard: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     let plugin: PluginState
     let missingPermissions: [SystemPermission]
     let animationDelay: Double
@@ -1047,7 +1009,6 @@ private struct PluginCard: View {
     var onInstall: (() async throws -> Void)?
     var onChange: (() -> Void)?
 
-    @State private var isHovered = false
     @State private var errorMessage: String?
     @State private var showError = false
     @State private var showKeyMismatch = false
@@ -1061,7 +1022,7 @@ private struct PluginCard: View {
             ? .red
             : hasMissingPermissions || hasMissingSecrets
                 ? .orange
-                : theme.accentColor
+                : theme.action.primary.default.background
     }
 
     private func handleInstallError(_ error: Error) {
@@ -1074,122 +1035,32 @@ private struct PluginCard: View {
     }
 
     var body: some View {
-        Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 12) {
-                // Header row: icon + name + menu
-                HStack(alignment: .center, spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(
-                                LinearGradient(
-                                    colors: [pluginColor.opacity(0.15), pluginColor.opacity(0.05)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                        Image(
-                            systemName: plugin.hasLoadError
-                                ? "exclamationmark.triangle.fill"
-                                : "puzzlepiece.extension.fill"
-                        )
-                        .font(.system(size: 18))
-                        .foregroundColor(pluginColor)
-                    }
-                    .frame(width: 36, height: 36)
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(plugin.displayName)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-
-                        HStack(spacing: 6) {
-                            if let version = plugin.installedVersion ?? plugin.latestVersion {
-                                Text("v\(version.description)", bundle: .module)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(theme.tertiaryText)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 1)
-                                    .background(Capsule().fill(theme.tertiaryBackground))
-                            }
-
-                            statusBadge
-                        }
-                    }
-
-                    Spacer(minLength: 8)
-
-                    cardMenu
-                }
-
-                // Description
-                if let description = plugin.pluginDescription {
-                    Text(description)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                        .lineSpacing(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                Spacer(minLength: 0)
-
-                // Compact stats row
-                HStack(spacing: 0) {
-                    if let caps = plugin.capabilities {
-                        let toolCount = caps.tools?.count ?? 0
-                        let skillCount = caps.skills?.count ?? 0
-                        if toolCount > 0 {
-                            statItem(icon: "wrench.and.screwdriver", text: "\(toolCount)")
-                        }
-                        if toolCount > 0 && skillCount > 0 {
-                            statDot
-                        }
-                        if skillCount > 0 {
-                            statItem(icon: "lightbulb", text: "\(skillCount)")
-                        }
-                    }
-
-                    if plugin.capabilities?.tools?.count ?? 0 > 0 || plugin.capabilities?.skills?.count ?? 0 > 0 {
-                        if plugin.authors != nil || plugin.license != nil {
-                            statDot
-                        }
-                    }
-
-                    if let authors = plugin.authors, !authors.isEmpty {
-                        statItem(icon: "person", text: authors.joined(separator: ", "))
-                    }
-                    if plugin.authors != nil && plugin.license != nil {
-                        statDot
-                    }
-                    if let license = plugin.license {
-                        statItem(icon: "doc.text", text: license)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-            .padding(16)
-            .background(cardBackground)
-            .overlay(hoverGradient)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(cardBorder)
-            .shadow(
-                color: Color.black.opacity(isHovered ? 0.08 : 0.04),
-                radius: isHovered ? 10 : 5,
-                x: 0,
-                y: isHovered ? 3 : 2
+        LibraryCard(
+            title: plugin.displayName,
+            animationDelay: animationDelay,
+            hasAppeared: hasAppeared,
+            action: onSelect
+        ) {
+            LibraryIcon(
+                symbol: plugin.hasLoadError ? "exclamationmark.triangle.fill" : "puzzlepiece.extension.fill",
+                tint: pluginColor
             )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(isHovered ? 1.01 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 20)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+        } badges: {
+            if let version = plugin.installedVersion ?? plugin.latestVersion {
+                StatusChip(L("v\(version.description)"), tone: .neutral)
+            }
+            statusBadge
+            if plugin.isInstalling {
+                ProgressView().controlSize(.mini)
+            }
+        } content: {
+            if let description = plugin.pluginDescription {
+                LibraryCardPreview(text: description)
+            }
+        } footer: {
+            LibraryStatRow(stats: stats)
+        } menu: {
+            menuItems
         }
         .onAppear {
             if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.pluginId }) {
@@ -1225,7 +1096,7 @@ private struct PluginCard: View {
         .sheet(isPresented: $showSecretsSheet) {
             ToolSecretsSheet(
                 pluginId: plugin.pluginId,
-                agentId: Agent.defaultId,
+                agentId: nil,
                 pluginName: plugin.displayName,
                 pluginVersion: plugin.installedVersion?.description,
                 secrets: cachedSecrets,
@@ -1242,161 +1113,97 @@ private struct PluginCard: View {
     @ViewBuilder
     private var statusBadge: some View {
         if PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled {
-            StatusCapsuleBadge(
-                icon: "checkmark.seal.fill",
-                text: L("Built into Osaurus"),
-                color: theme.accentColor
-            )
+            StatusChip(L("Built into Osaurus"), tone: .accent, icon: "checkmark.seal.fill")
         } else if plugin.hasLoadError {
-            StatusCapsuleBadge(icon: "exclamationmark.triangle.fill", text: L("Error"), color: .red)
+            StatusChip(L("Error"), tint: .red, icon: "exclamationmark.triangle.fill")
         } else if hasMissingSecrets {
-            StatusCapsuleBadge(icon: "key.fill", text: L("Key Required"), color: theme.warningColor)
+            StatusChip(L("Key Required"), tone: .warning, icon: "key.fill")
         } else if hasMissingPermissions {
-            StatusCapsuleBadge(icon: "lock.shield", text: L("Permission"), color: theme.warningColor)
+            StatusChip(L("Permission"), tone: .warning, icon: "lock.shield")
         } else if plugin.hasUpdate {
-            StatusCapsuleBadge(icon: "arrow.up.circle.fill", text: L("Update"), color: .orange)
+            StatusChip(L("Update"), tint: .orange, icon: "arrow.up.circle.fill")
         } else if plugin.isInstalled {
-            StatusCapsuleBadge(icon: "checkmark.circle.fill", text: L("Installed"), color: .green)
+            StatusChip(L("Installed"), tint: .green, icon: "checkmark.circle.fill")
         }
     }
 
     // MARK: - Card Menu
 
     @ViewBuilder
-    private var cardMenu: some View {
-        if plugin.isInstalling {
-            ProgressView()
-                .scaleEffect(0.7)
-                .frame(width: 24, height: 24)
-        } else {
-            Menu {
-                Button(action: onSelect) {
-                    Label {
-                        Text("View Details", bundle: .module)
-                    } icon: {
-                        Image(systemName: "info.circle")
-                    }
+    private var menuItems: some View {
+        Button(action: onSelect) {
+            Label {
+                Text("View Details", bundle: .module)
+            } icon: {
+                Image(systemName: "info.circle")
+            }
+        }
+        if plugin.hasUpdate, let onUpgrade {
+            Button {
+                Task {
+                    do { try await onUpgrade() } catch { handleInstallError(error) }
                 }
-                if plugin.hasUpdate, let onUpgrade {
-                    Button {
-                        Task {
-                            do { try await onUpgrade() } catch { handleInstallError(error) }
-                        }
-                    } label: {
-                        Label {
-                            Text("Update", bundle: .module)
-                        } icon: {
-                            Image(systemName: "arrow.up.circle.fill")
-                        }
-                    }
+            } label: {
+                Label {
+                    Text("Update", bundle: .module)
+                } icon: {
+                    Image(systemName: "arrow.up.circle.fill")
                 }
-                if !cachedSecrets.isEmpty {
-                    Button {
-                        showSecretsSheet = true
-                    } label: {
-                        Label(
-                            hasMissingSecrets ? L("Configure Secrets") : L("Edit Secrets"),
-                            systemImage: "key.fill"
-                        )
-                    }
+            }
+        }
+        if !cachedSecrets.isEmpty {
+            Button {
+                showSecretsSheet = true
+            } label: {
+                Label(
+                    hasMissingSecrets ? L("Configure Secrets") : L("Edit Secrets"),
+                    systemImage: "key.fill"
+                )
+            }
+        }
+        if !plugin.isInstalled, let onInstall {
+            Button {
+                Task {
+                    do { try await onInstall() } catch { handleInstallError(error) }
                 }
-                if !plugin.isInstalled, let onInstall {
-                    Button {
-                        Task {
-                            do { try await onInstall() } catch { handleInstallError(error) }
-                        }
-                    } label: {
-                        Label {
-                            Text("Install", bundle: .module)
-                        } icon: {
-                            Image(systemName: "arrow.down.circle.fill")
-                        }
-                    }
+            } label: {
+                Label {
+                    Text("Install", bundle: .module)
+                } icon: {
+                    Image(systemName: "arrow.down.circle.fill")
                 }
-                if plugin.isInstalled, let onUninstall {
-                    Divider()
-                    Button(role: .destructive) {
-                        Task {
-                            do { try await onUninstall() } catch {
-                                errorMessage = error.localizedDescription
-                                showError = true
-                            }
-                        }
-                    } label: {
-                        Label {
-                            Text("Uninstall", bundle: .module)
-                        } icon: {
-                            Image(systemName: "trash")
-                        }
+            }
+        }
+        if plugin.isInstalled, let onUninstall {
+            Divider()
+            Button(role: .destructive) {
+                Task {
+                    do { try await onUninstall() } catch {
+                        errorMessage = error.localizedDescription
+                        showError = true
                     }
                 }
             } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(theme.tertiaryBackground))
+                Label {
+                    Text("Uninstall", bundle: .module)
+                } icon: {
+                    Image(systemName: "trash")
+                }
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 24)
         }
     }
 
-    // MARK: - Stats
-
-    private func statItem(icon: String, text: String) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .medium))
-            Text(text)
-                .font(.system(size: 10, weight: .medium))
-                .lineLimit(1)
+    private var stats: [LibraryStat] {
+        var stats: [LibraryStat] = []
+        let toolCount = plugin.capabilities?.tools?.count ?? 0
+        let skillCount = plugin.capabilities?.skills?.count ?? 0
+        if toolCount > 0 { stats.append(LibraryStat(icon: "wrench.and.screwdriver", text: "\(toolCount)")) }
+        if skillCount > 0 { stats.append(LibraryStat(icon: "lightbulb", text: "\(skillCount)")) }
+        if let authors = plugin.authors, !authors.isEmpty {
+            stats.append(LibraryStat(icon: "person", text: authors.joined(separator: ", ")))
         }
-        .foregroundColor(theme.tertiaryText)
-    }
-
-    private var statDot: some View {
-        Circle()
-            .fill(theme.tertiaryText.opacity(0.4))
-            .frame(width: 3, height: 3)
-            .padding(.horizontal, 8)
-    }
-
-    // MARK: - Card Styling
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-    }
-
-    private var cardBorder: some View {
-        let installedHealthy =
-            plugin.isInstalled && !plugin.hasLoadError
-            && !hasMissingPermissions && !hasMissingSecrets
-        return RoundedRectangle(cornerRadius: 12)
-            .strokeBorder(
-                isHovered
-                    ? pluginColor.opacity(0.25)
-                    : installedHealthy ? Color.green.opacity(0.2) : theme.cardBorder,
-                lineWidth: isHovered ? 1.5 : 1
-            )
-    }
-
-    private var hoverGradient: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        pluginColor.opacity(isHovered ? 0.06 : 0),
-                        Color.clear,
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .allowsHitTesting(false)
-            .animation(.easeOut(duration: 0.15), value: isHovered)
+        if let license = plugin.license { stats.append(LibraryStat(icon: "doc.text", text: license)) }
+        return stats
     }
 
     private func updateSecretsStatus() {
@@ -1423,7 +1230,7 @@ private struct PluginDetailView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let plugin: PluginState
     let missingPermissions: [SystemPermission]
@@ -1433,7 +1240,6 @@ private struct PluginDetailView: View {
     let onInstall: () async throws -> Void
     let onChange: () -> Void
 
-    @State private var hasAppeared = false
     @State private var errorMessage: String?
     @State private var showError = false
     @State private var showKeyMismatch = false
@@ -1454,7 +1260,7 @@ private struct PluginDetailView: View {
     }
 
     private var pluginColor: Color {
-        plugin.hasLoadError ? .red : theme.accentColor
+        plugin.hasLoadError ? .red : theme.action.primary.default.background
     }
 
     private func handleInstallError(_ error: Error) {
@@ -1467,57 +1273,45 @@ private struct PluginDetailView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            detailHeaderBar
+        SettingsPage {
+            detailHeader
+        } content: {
+            heroMetadata
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    heroHeader
-                        .padding(.bottom, 8)
-
-                    if isSuperseded {
-                        supersededBanner
-                    }
-
-                    if plugin.hasLoadError {
-                        errorSection
-                    }
-
-                    if hasMissingSecrets && !plugin.hasLoadError && !isSuperseded {
-                        secretsBanner
-                    }
-
-                    if !missingPermissions.isEmpty && !plugin.hasLoadError && !isSuperseded {
-                        permissionsBanner
-                    }
-
-                    if readmeContent != nil {
-                        readmeSection
-                    }
-
-                    capabilitiesSection
-
-                    if plugin.isInstalled && !plugin.hasLoadError {
-                        routesSection
-                    }
-
-                    if changelogContent != nil {
-                        changelogSection
-                    }
-
-                    externalLinksSection
-                }
-                .padding(24)
+            if isSuperseded {
+                supersededBanner
             }
+
+            if plugin.hasLoadError {
+                errorSection
+            }
+
+            if hasMissingSecrets && !plugin.hasLoadError && !isSuperseded {
+                secretsBanner
+            }
+
+            if !missingPermissions.isEmpty && !plugin.hasLoadError && !isSuperseded {
+                permissionsBanner
+            }
+
+            if readmeContent != nil {
+                readmeSection
+            }
+
+            capabilitiesSection
+
+            if plugin.isInstalled && !plugin.hasLoadError {
+                routesSection
+            }
+
+            if changelogContent != nil {
+                changelogSection
+            }
+
+            externalLinksSection
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .opacity(hasAppeared ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: hasAppeared)
-        .onAppear {
-            loadPluginData()
-            withAnimation { hasAppeared = true }
-        }
+        .settingsBackDestination("Plugins") { onBack() }
+        .onAppear { loadPluginData() }
         .themedAlert(
             L("Error"),
             isPresented: $showError,
@@ -1579,7 +1373,7 @@ private struct PluginDetailView: View {
         .sheet(isPresented: $showSecretsSheet) {
             ToolSecretsSheet(
                 pluginId: plugin.pluginId,
-                agentId: Agent.defaultId,
+                agentId: nil,
                 pluginName: plugin.displayName,
                 pluginVersion: plugin.installedVersion?.description,
                 secrets: cachedSecrets,
@@ -1591,217 +1385,126 @@ private struct PluginDetailView: View {
         }
     }
 
-    // MARK: - Header Bar
+    // MARK: - Header
 
-    private var detailHeaderBar: some View {
-        HStack(spacing: 12) {
-            Button(action: onBack) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Plugins", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            Spacer()
-
-            HStack(spacing: 6) {
-                if plugin.isInstalled {
-                    Button {
-                        showDeleteConfirm = true
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.errorColor)
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(theme.errorColor.opacity(0.1)))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .localizedHelp("Uninstall")
+    @ViewBuilder
+    private var detailHeader: some View {
+        if plugin.isInstalled {
+            detailHeader {
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: {
+                    Text("Uninstall", bundle: .module)
                 }
             }
+        } else {
+            detailHeader { EmptyView() }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 14)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1),
-                    alignment: .bottom
-                )
-        )
     }
 
-    // MARK: - Hero Header
-
-    private var heroHeader: some View {
-        HStack(spacing: 20) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(
-                        LinearGradient(
-                            colors: [pluginColor.opacity(0.2), pluginColor.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(pluginColor.opacity(0.3), lineWidth: 2)
-                Image(
-                    systemName: plugin.hasLoadError
-                        ? "exclamationmark.triangle.fill"
-                        : "puzzlepiece.extension.fill"
+    private func detailHeader<Overflow: View>(@ViewBuilder overflow: @escaping () -> Overflow) -> some View {
+        SettingsPageHeader(
+            title: plugin.displayName,
+            verbatimTitle: true,
+            subtitle: plugin.pluginDescription,
+            verbatimSubtitle: true,
+            leading: {
+                SettingsIconTile(
+                    icon: plugin.hasLoadError ? "exclamationmark.triangle.fill" : "puzzlepiece.extension.fill",
+                    size: 32,
+                    tint: pluginColor
                 )
-                .font(.system(size: 28))
-                .foregroundColor(pluginColor)
-            }
-            .frame(width: 72, height: 72)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Text(plugin.displayName)
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundColor(theme.primaryText)
-
-                    if let version = plugin.installedVersion ?? plugin.latestVersion {
-                        Text("v\(version.description)", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-                    }
+            },
+            status: {
+                if let version = plugin.installedVersion ?? plugin.latestVersion {
+                    StatusChip(L("v\(version.description)"), tone: .neutral)
                 }
-
-                if let description = plugin.pluginDescription {
-                    Text(description)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(3)
+            },
+            secondary: {
+                if plugin.isInstalled && !plugin.hasLoadError, let webConfig = loadedPlugin?.webConfig {
+                    SettingsButton(.secondary, "Open Web App", icon: "globe") { openWebApp(webConfig) }
                 }
-
-                HStack(spacing: 12) {
-                    if let authors = plugin.authors, !authors.isEmpty {
-                        heroStatBadge(
-                            icon: "person",
-                            text: authors.joined(separator: ", "),
-                            color: theme.tertiaryText
-                        )
-                    }
-                    if let license = plugin.license {
-                        heroStatBadge(icon: "doc.text", text: license, color: theme.tertiaryText)
-                    }
-                    if let caps = plugin.capabilities {
-                        let toolCount = caps.tools?.count ?? 0
-                        let skillCount = caps.skills?.count ?? 0
-                        if toolCount > 0 {
-                            heroStatBadge(
-                                icon: "wrench.and.screwdriver",
-                                text: toolCount == 1 ? L("1 tool") : L("\(toolCount) tools"),
-                                color: .orange
-                            )
-                        }
-                        if skillCount > 0 {
-                            heroStatBadge(
-                                icon: "lightbulb",
-                                text: skillCount == 1 ? L("1 skill") : L("\(skillCount) skills"),
-                                color: .cyan
-                            )
-                        }
-                    }
-                    if loadedPlugin?.webConfig != nil {
-                        heroStatBadge(icon: "globe", text: L("Web App"), color: .purple)
-                    }
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            VStack(spacing: 8) {
+            },
+            primary: {
                 if plugin.isInstalling {
-                    ProgressView()
-                        .scaleEffect(0.9)
-                        .frame(width: 100, height: 36)
+                    ProgressView().controlSize(.small)
                 } else if plugin.hasUpdate {
-                    Button {
+                    SettingsButton(.primary, "Update", icon: "arrow.up.circle.fill") {
                         Task {
                             do { try await onUpgrade() } catch { handleInstallError(error) }
                         }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "arrow.up.circle.fill").font(.system(size: 12))
-                            Text("Update", bundle: .module).font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange))
                     }
-                    .buttonStyle(PlainButtonStyle())
                 } else if !plugin.isInstalled {
-                    Button {
+                    SettingsButton(.primary, "Install", icon: "arrow.down.circle.fill") {
                         Task {
                             do { try await onInstall() } catch { handleInstallError(error) }
                         }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "arrow.down.circle.fill").font(.system(size: 12))
-                            Text("Install", bundle: .module).font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
                     }
-                    .buttonStyle(PlainButtonStyle())
                 }
+            },
+            overflow: overflow
+        )
+    }
 
-                if plugin.isInstalled && !plugin.hasLoadError,
-                    let webConfig = loadedPlugin?.webConfig
-                {
-                    Button {
-                        let port = loadServerPort()
-                        // Browsers cannot set the X-Osaurus-Agent-Id header
-                        // on top-level navigation; pass the agent id via the
-                        // `osr_agent` query param so the server accepts the
-                        // initial GET. The injected `window.__osaurus.fetch`
-                        // helper then carries it forward to subsequent calls.
-                        let agentId = Agent.defaultId.uuidString
-                        let url = URL(
-                            string:
-                                "http://127.0.0.1:\(port)/plugins/\(plugin.pluginId)\(webConfig.mount)?osr_agent=\(agentId)"
-                        )!
-                        NSWorkspace.shared.open(url)
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "globe").font(.system(size: 12))
-                            Text("Open Web App", bundle: .module).font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor.opacity(0.1))
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
+    private func openWebApp(_ webConfig: PluginManifest.WebSpec) {
+        let port = loadServerPort()
+        // Browsers cannot set the X-Osaurus-Agent-Id header
+        // on top-level navigation; pass the agent id via the
+        // `osr_agent` query param so the server accepts the
+        // initial GET. The injected `window.__osaurus.fetch`
+        // helper then carries it forward to subsequent calls.
+        let agentId = Agent.defaultId.uuidString
+        let url = URL(
+            string:
+                "http://127.0.0.1:\(port)/plugins/\(plugin.pluginId)\(webConfig.mount)?osr_agent=\(agentId)"
+        )!
+        NSWorkspace.shared.open(url)
+    }
+
+    // MARK: - Metadata
+
+    @ViewBuilder
+    private var heroMetadata: some View {
+        let toolCount = plugin.capabilities?.tools?.count ?? 0
+        let skillCount = plugin.capabilities?.skills?.count ?? 0
+        let authors = plugin.authors ?? []
+        if !authors.isEmpty || plugin.license != nil || toolCount > 0 || skillCount > 0
+            || loadedPlugin?.webConfig != nil
+        {
+            HStack(spacing: theme.space.s12) {
+                if !authors.isEmpty {
+                    heroStatBadge(icon: "person", text: authors.joined(separator: ", "), color: theme.text.tertiary)
+                }
+                if let license = plugin.license {
+                    heroStatBadge(icon: "doc.text", text: license, color: theme.text.tertiary)
+                }
+                if toolCount > 0 {
+                    heroStatBadge(
+                        icon: "wrench.and.screwdriver",
+                        text: toolCount == 1 ? L("1 tool") : L("\(toolCount) tools"),
+                        color: .orange
+                    )
+                }
+                if skillCount > 0 {
+                    heroStatBadge(
+                        icon: "lightbulb",
+                        text: skillCount == 1 ? L("1 skill") : L("\(skillCount) skills"),
+                        color: .cyan
+                    )
+                }
+                if loadedPlugin?.webConfig != nil {
+                    heroStatBadge(icon: "globe", text: L("Web App"), color: .purple)
                 }
             }
         }
     }
 
     private func heroStatBadge(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             Image(systemName: icon)
-                .font(.system(size: 10))
+                .glyphSize(10)
             Text(text)
-                .font(.system(size: 11, weight: .medium))
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                 .lineLimit(1)
         }
         .foregroundColor(color)
@@ -1814,18 +1517,18 @@ private struct PluginDetailView: View {
             if let loadError = plugin.loadError {
                 if loadError.hasPrefix(PluginManager.PluginLoadError.consentRequiredPrefix) {
                     detailCard {
-                        HStack(spacing: 12) {
+                        HStack(spacing: theme.space.s12) {
                             Image(systemName: "lock.shield.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(theme.warningColor)
+                                .glyphSize(20)
+                                .foregroundColor(theme.status.warning.foreground)
 
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: theme.space.s2) {
                                 Text("Approval Required", bundle: .module)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(theme.primaryText)
+                                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                                    .foregroundColor(theme.text.primary)
                                 Text("This plugin needs your approval before it can load.", bundle: .module)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
+                                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                                    .foregroundColor(theme.text.secondary)
                             }
 
                             Spacer()
@@ -1842,32 +1545,28 @@ private struct PluginDetailView: View {
                                     }
                                 }
                             } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "checkmark.shield.fill").font(.system(size: 10))
-                                    Text("Approve", bundle: .module).font(.system(size: 12, weight: .semibold))
+                                HStack(spacing: theme.space.s4) {
+                                    Image(systemName: "checkmark.shield.fill").glyphSize(10)
+                                    Text("Allow", bundle: .module).catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                                 }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
                             }
-                            .buttonStyle(PlainButtonStyle())
+                            .assignedSettingsButtonStyle(.primary)
                         }
                     }
                 } else {
                     detailCard {
-                        HStack(spacing: 12) {
+                        HStack(spacing: theme.space.s12) {
                             Image(systemName: "exclamationmark.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(.red)
+                                .glyphSize(20)
+                                .foregroundColor(theme.status.error.foreground)
 
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: theme.space.s2) {
                                 Text("Failed to load plugin", bundle: .module)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.red)
+                                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                                    .foregroundColor(theme.status.error.foreground)
                                 Text(loadError)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
+                                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                                    .foregroundColor(theme.text.secondary)
                                     .lineLimit(5)
                             }
 
@@ -1876,16 +1575,12 @@ private struct PluginDetailView: View {
                             Button {
                                 showRetryConfirm = true
                             } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.clockwise").font(.system(size: 11))
-                                    Text("Retry", bundle: .module).font(.system(size: 12, weight: .semibold))
+                                HStack(spacing: theme.space.s4) {
+                                    Image(systemName: "arrow.clockwise").glyphSize(11)
+                                    Text("Retry", bundle: .module).catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                                 }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(RoundedRectangle(cornerRadius: 6).fill(Color.blue))
                             }
-                            .buttonStyle(PlainButtonStyle())
+                            .assignedSettingsButtonStyle(.primary, size: .compact)
                         }
                     }
                 }
@@ -1918,18 +1613,18 @@ private struct PluginDetailView: View {
                 }
             }
         return detailCard {
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 20))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(20)
+                    .foregroundColor(theme.text.link)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Built into Osaurus", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                        .foregroundColor(theme.text.primary)
                     Text(detail, bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                 }
 
                 Spacer()
@@ -1938,17 +1633,12 @@ private struct PluginDetailView: View {
                     Button {
                         AppDelegate.shared?.showManagementWindow(initialTab: nativeTab)
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: nativeTab.icon).font(.system(size: 10))
+                        HStack(spacing: theme.space.s4) {
+                            Image(systemName: nativeTab.icon).glyphSize(10)
                             Text("Open \(nativeTab.label) Settings", bundle: .module)
-                                .font(.system(size: 12, weight: .semibold))
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .assignedSettingsButtonStyle(.primary)
                 }
 
                 // One-click cleanup: routes to the same destructive-confirm
@@ -1956,18 +1646,15 @@ private struct PluginDetailView: View {
                 Button {
                     showDeleteConfirm = true
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "trash").font(.system(size: 10))
+                    HStack(spacing: theme.space.s4) {
+                        Image(systemName: "trash").glyphSize(10)
                         Text("Uninstall", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
-                    .foregroundColor(theme.errorColor)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.errorColor.opacity(0.1))
-                    )
+                    .foregroundColor(theme.status.error.foreground)
+                    .padding(.horizontal, theme.space.s12)
+                    .padding(.vertical, theme.space.s8)
+                    .settingsChrome(.status(.error))
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -1978,18 +1665,18 @@ private struct PluginDetailView: View {
 
     private var secretsBanner: some View {
         detailCard {
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Image(systemName: "key.fill")
-                    .font(.system(size: 20))
-                    .foregroundColor(theme.warningColor)
+                    .glyphSize(20)
+                    .foregroundColor(theme.status.warning.foreground)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("API Keys Required", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                        .foregroundColor(theme.text.primary)
                     Text("This plugin requires credentials to function properly.", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                 }
 
                 Spacer()
@@ -1997,16 +1684,12 @@ private struct PluginDetailView: View {
                 Button {
                     showSecretsSheet = true
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "key.fill").font(.system(size: 10))
-                        Text("Configure", bundle: .module).font(.system(size: 12, weight: .semibold))
+                    HStack(spacing: theme.space.s4) {
+                        Image(systemName: "key.fill").glyphSize(10)
+                        Text("Configure", bundle: .module).catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
             }
         }
     }
@@ -2015,42 +1698,37 @@ private struct PluginDetailView: View {
 
     private var permissionsBanner: some View {
         detailCard {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "lock.shield.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(theme.warningColor)
+                        .glyphSize(20)
+                        .foregroundColor(theme.status.warning.foreground)
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text("System Permissions Required", bundle: .module)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
+                            .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                            .foregroundColor(theme.text.primary)
                         Text("Grant the following permissions to use all features:", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                            .foregroundColor(theme.text.secondary)
                     }
 
                     Spacer()
                 }
 
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     ForEach(missingPermissions, id: \.rawValue) { perm in
                         Button {
                             SystemPermissionService.shared.requestPermission(perm)
                             onChange()
                         } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: perm.systemIconName).font(.system(size: 11))
-                                Text("Grant \(perm.displayName)", bundle: .module).font(
-                                    .system(size: 11, weight: .medium)
-                                )
+                            HStack(spacing: theme.space.s6) {
+                                Image(systemName: perm.systemIconName).glyphSize(11)
+                                Text("Grant \(perm.displayName)", bundle: .module)
+                                    .componentInspectionText(48, role: .caption, fallback: .footnote, weight: 500, theme: theme)
                             }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
                         }
-                        .buttonStyle(PlainButtonStyle())
+                        .assignedSettingsButtonStyle(.primary)
                     }
 
                     Spacer()
@@ -2060,14 +1738,14 @@ private struct PluginDetailView: View {
                             SystemPermissionService.shared.openSystemSettings(for: firstPerm)
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "gear").font(.system(size: 10))
-                            Text("Open Settings", bundle: .module).font(.system(size: 11, weight: .medium))
+                        HStack(spacing: theme.space.s4) {
+                            Image(systemName: "gear").glyphSize(10)
+                            Text("Open Settings", bundle: .module).catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                         }
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground))
+                        .foregroundColor(theme.text.secondary)
+                        .padding(.horizontal, theme.space.s8)
+                        .padding(.vertical, theme.space.s6)
+                        .settingsChrome(.inset)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
@@ -2125,8 +1803,8 @@ private struct PluginDetailView: View {
             if let content = changelogContent {
                 ScrollView {
                     Text(content)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }
@@ -2144,24 +1822,21 @@ private struct PluginDetailView: View {
             !links.isEmpty
         {
             detailSection(title: L("Links"), icon: "link") {
-                HStack(spacing: 12) {
+                HStack(spacing: theme.space.s12) {
                     ForEach(links, id: \.url) { link in
                         Button {
                             if let url = URL(string: link.url) {
                                 NSWorkspace.shared.open(url)
                             }
                         } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "link").font(.system(size: 10))
-                                Text(link.label).font(.system(size: 12, weight: .medium))
+                            HStack(spacing: theme.space.s4) {
+                                Image(systemName: "link").glyphSize(10)
+                                Text(link.label).catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                             }
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.accentColor.opacity(0.1))
-                            )
+                            .foregroundColor(theme.text.link)
+                            .padding(.horizontal, theme.space.s8)
+                            .padding(.vertical, theme.space.s6)
+                            .settingsChrome(.selected)
                         }
                         .buttonStyle(.plain)
                     }
@@ -2178,42 +1853,28 @@ private struct PluginDetailView: View {
         icon: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundColor(theme.text.link)
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                    .foregroundColor(theme.text.primary)
             }
 
             content()
         }
-        .padding(16)
+        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.card)
     }
 
     private func detailCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
-            .padding(16)
+            .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .settingsChrome(.card)
     }
 
     // MARK: - Data Loading
@@ -2265,7 +1926,7 @@ enum PluginSecretsStatus {
     ) async -> Bool {
         await Task.detached(priority: .userInitiated) {
             agentIds.contains { agentId in
-                !ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: pluginId, agentId: agentId)
+                !PluginCredentials.missingRequired(specs: specs, pluginId: pluginId, agentId: agentId).isEmpty
             }
         }.value
     }
@@ -2273,104 +1934,26 @@ enum PluginSecretsStatus {
 
 // MARK: - Shared Components
 
-/// Compact pill used by both native and Claude plugin cards to surface a
-/// short "Installed" / "Update" / "Error" / "Key Required" state next to
-/// the version badge.
-struct StatusCapsuleBadge: View {
-    let icon: String
-    let text: String
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(.system(size: 9))
-            Text(text)
-                .font(.system(size: 9, weight: .bold))
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(color.opacity(0.12)))
-        .foregroundColor(color)
-        .fixedSize()
-    }
-}
-
-private struct PluginCapabilitiesBadge: View {
-    @Environment(\.theme) private var theme
-
-    let toolCount: Int
-    let skillCount: Int
-
-    var body: some View {
-        if toolCount > 0 || skillCount > 0 {
-            HStack(spacing: 4) {
-                if toolCount > 0 {
-                    HStack(spacing: 3) {
-                        Image(systemName: "wrench.and.screwdriver")
-                            .font(.system(size: 9))
-                        Text("\(toolCount)", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                }
-                if toolCount > 0 && skillCount > 0 {
-                    Text("+")
-                        .font(.system(size: 9))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                if skillCount > 0 {
-                    HStack(spacing: 3) {
-                        Image(systemName: "lightbulb")
-                            .font(.system(size: 9))
-                        Text("\(skillCount)", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                }
-            }
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(theme.tertiaryBackground))
-        }
-    }
-}
-
 private struct PluginProvidesSummary: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let tools: [RegistryCapabilities.ToolSummary]
     let skills: [RegistryCapabilities.SkillSummary]
 
     var body: some View {
         if !tools.isEmpty || !skills.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                PluginFlowLayout(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                PluginFlowLayout(spacing: theme.space.s6) {
                     ForEach(tools, id: \.name) { tool in
-                        HStack(spacing: 4) {
-                            Image(systemName: "function")
-                                .font(.system(size: 9))
-                            Text(tool.name)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(theme.tertiaryBackground))
-                        .foregroundColor(theme.primaryText)
-                        .help(tool.description)
+                        StatusChip(tool.name, tone: .neutral, icon: "function")
+                            .help(tool.description)
                     }
 
                     ForEach(skills, id: \.name) { skill in
-                        HStack(spacing: 4) {
-                            Image(systemName: "lightbulb")
-                                .font(.system(size: 9))
-                            Text(skill.name)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.12)))
-                        .foregroundColor(theme.primaryText)
-                        .help(skill.description)
+                        StatusChip(skill.name, tone: .accent, icon: "lightbulb")
+                            .help(skill.description)
                     }
                 }
             }
@@ -2426,40 +2009,32 @@ private struct PluginFlowLayout: Layout {
 // MARK: - Routes Summary
 
 private struct PluginRoutesSummary: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let pluginId: String
     let routes: [PluginManifest.RouteSpec]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             ForEach(routes, id: \.id) { route in
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Text(route.methods.joined(separator: ", "))
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(theme.accentColor.opacity(0.12))
-                        )
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.link)
+                        .padding(.horizontal, theme.space.s6)
+                        .padding(.vertical, theme.space.s2)
+                        .settingsChrome(.selected)
 
                     Text("/plugins/\(pluginId)\(route.path)", bundle: .module)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
 
                     Spacer()
 
-                    Text(route.auth.rawValue)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(authColor(route.auth))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule().fill(authColor(route.auth).opacity(0.12))
-                        )
+                    StatusChip(route.auth.rawValue, tint: authColor(route.auth))
                 }
             }
         }
@@ -2476,78 +2051,28 @@ private struct PluginRoutesSummary: View {
 
 // MARK: - Marketplace Category Chips
 
-/// Horizontal, scrollable filter chips for the Claude marketplace. The first
-/// chip ("All") clears the filter; each category chip shows its plugin count
-/// and adopts the shared category palette color when selected.
+/// Claude marketplace categories: "All" clears the filter; each chip shows
+/// its plugin count and selects in the shared category palette color.
 private struct MarketplaceCategoryChips: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let categories: [ClaudeMarketplaceCategory]
     let totalCount: Int
     @Binding var selected: String?
 
-    /// Stable scroll id for the "All" chip, whose category key is `nil`.
-    private let allChipID = "__all__"
-
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    chip(key: nil, label: L("All"), count: totalCount, color: theme.accentColor)
-                        .id(allChipID)
-                    ForEach(categories) { category in
-                        chip(
-                            key: category.id,
-                            label: category.displayName,
-                            count: category.count,
-                            color: ClaudeMarketplacePalette.color(for: category.id)
-                        )
-                        .id(category.id)
-                    }
-                }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 2)
-            }
-            // Bring the tapped pill fully into view so the user can walk
-            // between the extremes of the category list.
-            .onChange(of: selected) { _, newValue in
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    proxy.scrollTo(newValue ?? allChipID, anchor: .center)
-                }
-            }
-        }
-    }
-
-    private func chip(key: String?, label: String, count: Int, color: Color) -> some View {
-        let isSelected = selected == key
-        return Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                selected = key
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Text(label)
-                    .font(.system(size: 12, weight: .semibold))
-                Text("\(count)")
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
-                    .foregroundColor(isSelected ? .white.opacity(0.85) : theme.tertiaryText)
-            }
-            .foregroundColor(isSelected ? .white : theme.secondaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(isSelected ? color : theme.tertiaryBackground)
-            )
-            .overlay(
-                Capsule()
-                    .stroke(
-                        isSelected ? Color.clear : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
+        let byId = Dictionary(categories.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        FilterChipRow(
+            categories.map(\.id),
+            selection: $selected,
+            allCount: totalCount,
+            allowsDeselect: false,
+            title: { byId[$0]?.displayName ?? $0 },
+            count: { byId[$0]?.count },
+            tint: { ClaudeMarketplacePalette.color(for: $0) }
+        )
     }
 }
 
@@ -2556,16 +2081,15 @@ private struct MarketplaceCategoryChips: View {
 /// Subtle shimmering placeholder shown while the marketplace catalog loads,
 /// so the Browse tab feels alive instead of blank.
 private struct MarketplaceSkeletonCard: View {
-    @Environment(\.theme) private var theme
-    @State private var shimmer = false
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.tertiaryBackground)
-                    .frame(width: 36, height: 36)
-                VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s12) {
+                SettingsSkeletonBar(width: 36, height: 36)
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     bar(width: 120, height: 12)
                     bar(width: 64, height: 9)
                 }
@@ -2577,20 +2101,14 @@ private struct MarketplaceSkeletonCard: View {
             bar(width: 90, height: 9)
         }
         .frame(height: 132, alignment: .top)
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 12).fill(theme.cardBackground))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
-        .opacity(shimmer ? 0.55 : 1.0)
-        .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: shimmer)
-        .onAppear { shimmer = true }
+        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
+        .settingsChrome(.card)
+        .settingsShimmer()
     }
 
     @ViewBuilder
     private func bar(width: CGFloat?, height: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 4)
-            .fill(theme.tertiaryBackground)
-            .frame(width: width, height: height)
-            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+        SettingsSkeletonBar(width: width, height: height)
     }
 }
 
@@ -2601,69 +2119,61 @@ private struct MarketplaceSkeletonCard: View {
 /// Mirrors `ToolPermissionBanner`'s styling so the two call-to-action cards
 /// read as a family. A single tap upgrades every outdated plugin.
 struct UpdateAllPluginsBanner: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     let count: Int
     let isUpdating: Bool
     let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             ZStack {
                 Circle()
-                    .fill(theme.accentColor.opacity(0.15))
+                    .fill(theme.status.info.background)
                     .frame(width: 36, height: 36)
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(16)
+                    .foregroundColor(theme.text.link)
             }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(
                     "\(count) plugin\(count == 1 ? "" : "s") ha\(count == 1 ? "s" : "ve") an update available",
                     bundle: .module
                 )
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                .foregroundColor(theme.text.primary)
                 Text("Update them all at once", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
             }
 
             Spacer()
 
             Button(action: action) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     if isUpdating {
                         ProgressView()
                             .scaleEffect(0.6)
                             .frame(width: 12, height: 12)
                     } else {
                         Image(systemName: "arrow.up.circle")
-                            .font(.system(size: 11))
+                            .glyphSize(11)
                     }
                     Text(isUpdating ? "Updating..." : "Update all", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
-                .foregroundColor(theme.accentColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
+                .foregroundColor(theme.text.link)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
+                .settingsChrome(.selected)
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(isUpdating)
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.accentColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+        .settingsChrome(.selected)
     }
 }
 
@@ -2678,7 +2188,7 @@ struct NativePluginsBrowseView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var repoService = PluginRepositoryService.shared
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
     @State private var selectedPlugin: PluginState?
@@ -2687,7 +2197,7 @@ struct NativePluginsBrowseView: View {
     /// still using multiple columns when the window has enough room. Mirrors
     /// `PluginsView.responsiveGrid`.
     private var responsiveGrid: [GridItem] {
-        [GridItem(.adaptive(minimum: 340), spacing: 20, alignment: .top)]
+        [GridItem(.adaptive(minimum: 340), spacing: theme.libraryGridGap, alignment: .top)]
     }
 
     /// Installed plugins first, then not-yet-installed ones. Superseded and
@@ -2715,8 +2225,8 @@ struct NativePluginsBrowseView: View {
             detailOverlay
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
         .onAppear {
             // Populate the repository the first time this tab is shown so the
             // not-installed cards appear without opening the Plugins section.
@@ -2726,7 +2236,7 @@ struct NativePluginsBrowseView: View {
                     await repoService.refresh()
                 }
             }
-            withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
+            withAnimation(theme.motion.standard.delay(0.1)) {
                 hasAppeared = true
             }
         }
@@ -2746,9 +2256,9 @@ struct NativePluginsBrowseView: View {
                 emptyState
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    SettingsPageContent {
                         GitHubTokenCard()
-                        LazyVGrid(columns: responsiveGrid, spacing: 20) {
+                        LazyVGrid(columns: responsiveGrid, spacing: theme.libraryGridGap) {
                             ForEach(Array(browsePlugins.enumerated()), id: \.element.id) { index, plugin in
                                 PluginCard(
                                     plugin: plugin,
@@ -2756,7 +2266,7 @@ struct NativePluginsBrowseView: View {
                                     animationDelay: Double(index) * 0.05,
                                     hasAppeared: hasAppeared,
                                     onSelect: {
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                        withAnimation(theme.motion.springAnimation) {
                                             selectedPlugin = plugin
                                         }
                                     },
@@ -2768,7 +2278,6 @@ struct NativePluginsBrowseView: View {
                             }
                         }
                     }
-                    .padding(24)
                 }
             }
         }
@@ -2781,14 +2290,14 @@ struct NativePluginsBrowseView: View {
                 plugin: plugin,
                 missingPermissions: [],
                 onBack: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedPlugin = nil
                     }
                 },
                 onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
                 onUninstall: {
                     try await repoService.uninstall(pluginId: plugin.pluginId)
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedPlugin = nil
                     }
                 },
@@ -2800,16 +2309,8 @@ struct NativePluginsBrowseView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "puzzlepiece.extension")
-                .font(.system(size: 40, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-            Text("No plugins available", bundle: .module)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 60)
+        SettingsEmptyState(inline: "puzzlepiece.extension", title: "No plugins available")
+            .frame(maxHeight: .infinity)
     }
 }
 
@@ -2827,7 +2328,7 @@ struct ClaudePluginsMarketplaceView: View {
 
     private let claudeSkillManager = SkillManager.shared
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     /// Shared header search query from the hosting view.
     let searchText: String
@@ -2847,7 +2348,7 @@ struct ClaudePluginsMarketplaceView: View {
     @State private var successMessage: String?
 
     private var responsiveGrid: [GridItem] {
-        [GridItem(.adaptive(minimum: 340), spacing: 20, alignment: .top)]
+        [GridItem(.adaptive(minimum: 340), spacing: theme.libraryGridGap, alignment: .top)]
     }
 
     var body: some View {
@@ -2861,12 +2362,12 @@ struct ClaudePluginsMarketplaceView: View {
             successToastOverlay
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
         .onAppear {
             claudeMarketplace.loadIfNeeded()
             Task { await claudeAggregator.checkForUpdates() }
-            withAnimation(.easeOut(duration: 0.25).delay(0.1)) { hasAppeared = true }
+            withAnimation(theme.motion.standard.delay(0.1)) { hasAppeared = true }
             Task { await updateFilteredEntries() }
         }
         .task(id: searchText) {
@@ -2901,7 +2402,7 @@ struct ClaudePluginsMarketplaceView: View {
 
     private var marketplaceContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            SettingsPageContent {
                 // Claude plugin installs and update checks go through the
                 // GitHub API, so surface token status here as well.
                 GitHubTokenCard()
@@ -2919,14 +2420,13 @@ struct ClaudePluginsMarketplaceView: View {
                 }
                 marketplaceSection
             }
-            .padding(24)
         }
     }
 
     @ViewBuilder
     private var marketplaceSection: some View {
         if claudeMarketplace.isLoading && claudeMarketplace.entries.isEmpty {
-            LazyVGrid(columns: responsiveGrid, spacing: 20) {
+            LazyVGrid(columns: responsiveGrid, spacing: theme.libraryGridGap) {
                 ForEach(0 ..< 6, id: \.self) { _ in MarketplaceSkeletonCard() }
             }
         } else if let error = claudeMarketplace.lastError, claudeMarketplace.entries.isEmpty {
@@ -2934,7 +2434,7 @@ struct ClaudePluginsMarketplaceView: View {
         } else if filteredMarketplaceEntries.isEmpty {
             marketplaceEmptyView
         } else {
-            LazyVGrid(columns: responsiveGrid, spacing: 20) {
+            LazyVGrid(columns: responsiveGrid, spacing: theme.libraryGridGap) {
                 ForEach(Array(filteredMarketplaceEntries.enumerated()), id: \.element.name) { index, entry in
                     ClaudeMarketplaceCard(
                         entry: entry,
@@ -2949,29 +2449,22 @@ struct ClaudePluginsMarketplaceView: View {
     }
 
     private func marketplaceErrorView(_ message: String) -> some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
+        VStack(spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "wifi.slash")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.warningColor)
+                    .glyphSize(14)
+                    .foregroundColor(theme.status.warning.foreground)
                 Text(message)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
             }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.warningColor.opacity(0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
-                    )
-            )
+            .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+            .settingsChrome(.status(.warning))
             Button(action: { Task { await claudeMarketplace.refresh() } }) {
                 Text("Retry", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.link)
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(claudeMarketplace.isLoading)
@@ -2979,21 +2472,11 @@ struct ClaudePluginsMarketplaceView: View {
     }
 
     private var marketplaceEmptyView: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "sparkle.magnifyingglass")
-                .font(.system(size: 32, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-            Text(
-                searchText.isEmpty
-                    ? "No plugins in this category yet"
-                    : "No plugins match your search",
-                bundle: .module
-            )
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
+        SettingsEmptyState(
+            inline: "sparkle.magnifyingglass",
+            title: searchText.isEmpty ? "No plugins in this category yet" : "No plugins match your search"
+        )
+        .padding(.vertical, theme.settingsSectionGap)
     }
 
     // MARK: Detail overlays
@@ -3004,14 +2487,14 @@ struct ClaudePluginsMarketplaceView: View {
             ClaudeMarketplaceDetailView(
                 entry: entry,
                 onBack: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedMarketplaceEntry = nil
                     }
                 },
                 onInstall: {
                     try await installMarketplaceEntry(entry)
                     if let installed = installedClaudePlugin(for: entry) {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        withAnimation(theme.motion.springAnimation) {
                             selectedMarketplaceEntry = nil
                             selectedClaudePlugin = installed
                         }
@@ -3028,14 +2511,14 @@ struct ClaudePluginsMarketplaceView: View {
             ClaudePluginDetailView(
                 plugin: claudePlugin,
                 onBack: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedClaudePlugin = nil
                     }
                 },
                 onUpdate: { try await updateClaudePlugin(claudePlugin) },
                 onUninstall: {
                     await uninstallClaudePlugin(claudePlugin)
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(theme.motion.springAnimation) {
                         selectedClaudePlugin = nil
                     }
                 },
@@ -3059,7 +2542,7 @@ struct ClaudePluginsMarketplaceView: View {
                 Spacer()
                 ThemedToastView(message, type: .success)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 20)
+                    .padding(.bottom, theme.space.s16)
             }
             .zIndex(100)
         }
@@ -3073,7 +2556,7 @@ struct ClaudePluginsMarketplaceView: View {
     }
 
     private func openMarketplaceEntry(_ entry: MarketplacePlugin) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        withAnimation(theme.motion.springAnimation) {
             if let installed = installedClaudePlugin(for: entry) {
                 selectedClaudePlugin = installed
             } else {
@@ -3175,11 +2658,11 @@ struct ClaudePluginsMarketplaceView: View {
     }
 
     private func showSuccess(_ message: String) {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             successMessage = message
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 successMessage = nil
             }
         }

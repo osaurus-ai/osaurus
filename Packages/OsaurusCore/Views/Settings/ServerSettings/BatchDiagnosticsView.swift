@@ -100,15 +100,15 @@ struct BatchDiagnosticsView: View {
         } else {
             HStack(spacing: 8) {
                 Image(systemName: "moon.zzz")
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 Text(
                     "No model loaded — diagnostics appear once a request creates a BatchEngine.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
             }
-            .padding(8)
+            .padding(theme.space.s8)
         }
     }
 
@@ -120,19 +120,16 @@ struct BatchDiagnosticsView: View {
     private func stat(_ label: String, value: String, identifier: String? = nil) -> some View {
         let row = HStack {
             Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
             Spacer()
             Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.primary)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.inputBackground)
-        )
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s6)
+        .settingsChrome(.inset)
         if let identifier {
             row
                 .accessibilityElement(children: .ignore)

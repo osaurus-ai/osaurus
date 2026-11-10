@@ -132,7 +132,12 @@ public actor FileChangeJournal {
 
     // MARK: - State
 
-    let database: ChatHistoryDatabase
+    let database: FileHistoryDatabase
+    /// Pre-sync chat-history database whose file-change rows are copied once.
+    private let legacyDatabase: ChatHistoryDatabase?
+    /// The shared journal opens its databases on first use; tests hand in open ones.
+    private let opensDatabaseOnDemand: Bool
+    private var lastOpenAttempt: Date?
     let storeRoot: URL
     public nonisolated let objects: FileObjectStore
     private let hostRootProvider: @Sendable (String, SandboxWorkspaceRootKind) -> URL
@@ -144,7 +149,9 @@ public actor FileChangeJournal {
     /// sessionId → sets (oldest first). The DB is the durable mirror.
     var cache: [String: [FileChangeSet]] = [:]
     var loadedSessions: Set<String> = []
-    /// Writes deferred while the chat-history DB is closed.
+    private var sessionLastUse: [String: UInt64] = [:]
+    private var sessionUseClock: UInt64 = 0
+    /// Writes deferred while the file-history DB is closed.
     var pendingUpserts: [UUID: FileChangeSet] = [:]
     var pendingDeletes: Set<UUID> = []
     private var active: [UUID: CaptureRecord] = [:]
@@ -175,8 +182,10 @@ public actor FileChangeJournal {
     // MARK: - Init
 
     public init() {
-        self.database = ChatHistoryDatabase.shared
-        self.storeRoot = OsaurusPaths.root().appendingPathComponent("file-history", isDirectory: true)
+        self.database = FileHistoryDatabase.shared
+        self.legacyDatabase = ChatHistoryDatabase.shared
+        self.opensDatabaseOnDemand = true
+        self.storeRoot = OsaurusPaths.fileHistory()
         self.objects = FileObjectStore(root: storeRoot)
         self.hostRootProvider = { rootId, kind in kind.hostURL(agentName: rootId) }
         self.ownershipRepairEnabled = true
@@ -187,7 +196,8 @@ public actor FileChangeJournal {
 
     /// Test entry point: isolated DB, store, and workspace roots.
     init(
-        database: ChatHistoryDatabase,
+        database: FileHistoryDatabase,
+        legacyDatabase: ChatHistoryDatabase? = nil,
         storeRoot: URL,
         hostRootProvider: @escaping @Sendable (String, SandboxWorkspaceRootKind) -> URL,
         legacyBaselinesRoot: URL? = nil,
@@ -195,6 +205,8 @@ public actor FileChangeJournal {
         shadowEntryLimit: Int = FileChangeJournal.maxShadowEntries
     ) {
         self.database = database
+        self.legacyDatabase = legacyDatabase
+        self.opensDatabaseOnDemand = false
         self.storeRoot = storeRoot
         self.objects = FileObjectStore(root: storeRoot)
         self.hostRootProvider = hostRootProvider
@@ -918,6 +930,7 @@ public actor FileChangeJournal {
     /// Captures on disk at first use belong to a previous run that died
     /// mid-call (or a job whose VM died with the app): diff them now.
     func ensureRecovered() {
+        openDatabaseIfNeeded()
         importLegacyIfNeeded()
         guard !recovered else { return }
         recovered = true
@@ -953,17 +966,79 @@ public actor FileChangeJournal {
         return sigs
     }
 
+    // MARK: - Database
+
+    /// Opens the file-history database once storage is unlocked. Retried at
+    /// most every few seconds so a locked key doesn't stall every capture.
+    private func openDatabaseIfNeeded() {
+        guard opensDatabaseOnDemand, !database.isOpen else { return }
+        if let lastOpenAttempt, Date().timeIntervalSince(lastOpenAttempt) < 5 { return }
+        lastOpenAttempt = Date()
+        guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
+        do {
+            try database.open()
+        } catch {
+            Self.log.error("file history database didn't open: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     // MARK: - Legacy import
+
+    /// File history used to live in the chat-history database. Copy its
+    /// change sets over once, then convert the older `sandbox_changes`
+    /// rows. A failed attempt is retried on the next launch.
+    private func importLegacyIfNeeded() {
+        guard !legacyImported, database.isOpen else { return }
+        legacyImported = true
+        guard !database.legacyImportDone else { return }
+        guard let legacy = openLegacyDatabase() else {
+            if legacyDatabase == nil || !FileManager.default.fileExists(
+                atPath: OsaurusPaths.chatHistoryDatabaseFile().path)
+            {
+                try? database.markLegacyImportDone()
+            }
+            return
+        }
+        var failed = false
+        for sessionId in legacy.legacyFileChangeSessionIds() {
+            do {
+                for set in try legacy.legacyFileChangeSets(sessionId: sessionId) {
+                    try database.upsertFileChangeSet(set)
+                }
+            } catch {
+                failed = true
+                Self.log.error("file history copy failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if !convertSandboxChanges(from: legacy) { failed = true }
+        if !failed { try? database.markLegacyImportDone() }
+    }
+
+    /// The legacy database, opened if its file exists and storage is unlocked.
+    private func openLegacyDatabase() -> ChatHistoryDatabase? {
+        guard let legacy = legacyDatabase else { return nil }
+        if legacy.isOpenNonBlocking { return legacy }
+        guard opensDatabaseOnDemand,
+            FileManager.default.fileExists(atPath: OsaurusPaths.chatHistoryDatabaseFile().path),
+            StorageKeyManager.shared.isStorageReadyForWrites
+        else { return nil }
+        do {
+            try legacy.open()
+        } catch {
+            Self.log.error("old chat history didn't open: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+        return legacy
+    }
 
     /// Carry `sandbox_changes` rows (net change vs a session-start
     /// baseline clone) into one "imported" set per session so everything
     /// that was undoable before the upgrade stays undoable.
-    private func importLegacyIfNeeded() {
-        guard !legacyImported, database.isOpen else { return }
-        legacyImported = true
-        let sessions = database.sandboxChangeSessionIds()
+    private func convertSandboxChanges(from legacy: ChatHistoryDatabase) -> Bool {
+        var succeeded = true
+        let sessions = legacy.sandboxChangeSessionIds()
         for sessionId in sessions {
-            let rows = database.loadSandboxChanges(sessionId: sessionId)
+            let rows = legacy.loadSandboxChanges(sessionId: sessionId)
             guard !rows.isEmpty else { continue }
             let setId = UUID()
             var entries: [FileChangeEntry] = []
@@ -1007,12 +1082,13 @@ public actor FileChangeJournal {
                 entries: entries)
             do {
                 try database.upsertFileChangeSet(set)
-                try database.deleteSandboxChanges(sessionId: sessionId)
+                try legacy.deleteSandboxChanges(sessionId: sessionId)
                 if let legacyBaselinesRoot {
                     try? FileManager.default.removeItem(
                         at: legacyBaselinesRoot.appendingPathComponent(sessionId, isDirectory: true))
                 }
             } catch {
+                succeeded = false
                 Self.log.error("legacy import failed: \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -1020,6 +1096,7 @@ public actor FileChangeJournal {
             try? FileManager.default.removeItem(
                 at: legacyBaselinesRoot.appendingPathComponent("pending-jobs", isDirectory: true))
         }
+        return succeeded
     }
 
     private func legacyBaselineURL(_ row: SandboxWorkspaceChange) -> URL? {
@@ -1041,12 +1118,36 @@ public actor FileChangeJournal {
     // MARK: - Persistence
 
     func loadIfNeeded(_ sessionId: String) {
+        touchSession(sessionId)
         guard !loadedSessions.contains(sessionId), database.isOpen else { return }
         loadedSessions.insert(sessionId)
         let rows = database.loadFileChangeSets(sessionId: sessionId)
         let known = Set((cache[sessionId] ?? []).map(\.id))
         cache[sessionId] = (rows.filter { !known.contains($0.id) } + (cache[sessionId] ?? []))
             .sorted { $0.createdAt < $1.createdAt }
+        evictIdleSessions()
+    }
+
+    /// Sessions kept decoded in `cache`. The DB is the durable copy, so an
+    /// evicted session reloads on its next query; without a cap every chat
+    /// that touched a file this launch stays resident.
+    static let maxCachedSessions = 12
+
+    private func touchSession(_ sessionId: String) {
+        sessionUseClock &+= 1
+        sessionLastUse[sessionId] = sessionUseClock
+    }
+
+    private func evictIdleSessions() {
+        guard cache.count > Self.maxCachedSessions, database.isOpen else { return }
+        let busy = Set(active.values.map(\.sessionId)).union(pendingUpserts.values.map(\.sessionId))
+        let idle = cache.keys.filter { !busy.contains($0) }
+            .sorted { (sessionLastUse[$0] ?? 0) < (sessionLastUse[$1] ?? 0) }
+        for sessionId in idle.prefix(cache.count - Self.maxCachedSessions) {
+            cache.removeValue(forKey: sessionId)
+            loadedSessions.remove(sessionId)
+            sessionLastUse.removeValue(forKey: sessionId)
+        }
     }
 
     /// Add a new set to the cache + DB and notify.
@@ -1058,6 +1159,7 @@ public actor FileChangeJournal {
     }
 
     func persist(_ set: FileChangeSet) {
+        openDatabaseIfNeeded()
         guard database.isOpen else {
             pendingUpserts[set.id] = set
             return
@@ -1101,14 +1203,21 @@ public actor FileChangeJournal {
         guard ownershipRepairEnabled else { return }
         let restored = entries.filter { $0.after != nil && $0.rootKind != .hostFolder }.prefix(100)
         guard !restored.isEmpty else { return }
-        var commands: [String] = []
-        for entry in restored {
-            let path = entry.displayPath.replacingOccurrences(of: "'", with: "'\\''")
-            commands.append("chown agent-\(entry.rootId):agent-\(entry.rootId) '\(path)'")
+        // Each agent's files are only mounted in its own container. Skip
+        // agents without a running container rather than restarting the
+        // pod for a best-effort repair.
+        let members = Set(await SandboxManager.shared.podMemberNames)
+        let byAgent = Dictionary(grouping: restored, by: \.rootId)
+        for (agentName, agentEntries) in byAgent where members.contains(agentName) {
+            let commands = agentEntries.map { entry in
+                let path = entry.displayPath.replacingOccurrences(of: "'", with: "'\\''")
+                return "chown agent-\(agentName):agent-\(agentName) '\(path)'"
+            }
+            _ = try? await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
+                command: commands.joined(separator: "; ") + " 2>/dev/null || true",
+                target: .agent(agentName),
+                timeout: 10
+            )
         }
-        _ = try? await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
-            command: commands.joined(separator: "; ") + " 2>/dev/null || true",
-            timeout: 10
-        )
     }
 }

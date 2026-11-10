@@ -241,7 +241,7 @@ A paired phone starting a voice call on a cloud model the filter runs for asks t
 
 ```
 Privacy (Management → Privacy)  ← tabs always render; no model required
-└── ManagerHeaderWithTabs
+└── SettingsPageHeader
     │
     ├── Overview
     │   ├── Enable Privacy Filter (master toggle — regex layer, no download)

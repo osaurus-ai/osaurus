@@ -48,11 +48,11 @@ struct AgentAbilityContextPreviewBar: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "brain.head.profile")
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .glyphSize(10.5, weight: .semibold)
                     .foregroundColor(statusColor)
                 Text("Context", bundle: .module)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.chip)
+                    .foregroundColor(theme.text.secondary)
 
                 if let delta {
                     deltaChip(delta)
@@ -60,33 +60,21 @@ struct AgentAbilityContextPreviewBar: View {
                 }
 
                 Text(compactEstimateText)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
                     .contentTransition(.numericText())
 
-                Text(compactImpactLabel)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(statusColor)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(statusColor.opacity(0.11)))
+                StatusChip(compactImpactLabel, tint: statusColor)
 
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7.5, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(7.5, weight: .semibold)
+                    .foregroundColor(theme.text.tertiary)
             }
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(
-            Capsule()
-                .fill(controlFill)
-                .overlay(
-                    Capsule()
-                        .stroke(controlBorder, lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s6)
+        .settingsChrome(.control)
         .localizedHelp("Show how much model context this agent uses")
         .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
             contextPopover
@@ -97,32 +85,25 @@ struct AgentAbilityContextPreviewBar: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "brain.head.profile")
-                    .font(.system(size: 13, weight: .semibold))
+                    .glyphSize(13, weight: .semibold)
                     .foregroundColor(statusColor)
                     .frame(width: 30, height: 30)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: theme.radius.medium)
                             .fill(statusColor.opacity(0.12))
                     )
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text("Context impact", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.primary)
                             .fixedSize()
-                        Text(abilityCountText)
-                            .font(.system(size: 9.5, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.tertiaryBackground))
+                        StatusChip(abilityCountText, tone: .neutral)
                     }
                     Text(summaryText)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -130,10 +111,10 @@ struct AgentAbilityContextPreviewBar: View {
 
                 VStack(alignment: .trailing, spacing: 3) {
                     Text(fullEstimateText)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.primary)
                     Text(impactLabel)
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(SettingsFont.chip)
                         .foregroundColor(statusColor)
                 }
             }
@@ -142,7 +123,7 @@ struct AgentAbilityContextPreviewBar: View {
                 AgentAbilityContextDetailsView(preview: preview)
             }
         }
-        .padding(14)
+        .padding(theme.space.s12)
         .frame(width: 390)
     }
 
@@ -180,11 +161,11 @@ struct AgentAbilityContextPreviewBar: View {
     }
 
     private var statusColor: Color {
-        guard let preview else { return theme.accentColor }
+        guard let preview else { return theme.action.primary.default.background }
         switch preview.severity {
-        case .normal: return theme.accentColor
-        case .warning: return theme.warningColor
-        case .critical: return theme.errorColor
+        case .normal: return theme.action.primary.default.background
+        case .warning: return theme.status.warning.foreground
+        case .critical: return theme.status.error.foreground
         }
     }
 
@@ -215,33 +196,28 @@ struct AgentAbilityContextPreviewBar: View {
     }
 
     private var controlFill: Color {
-        guard let preview else { return theme.cardBackground }
+        guard let preview else { return theme.surface.raised }
         switch preview.severity {
-        case .normal: return theme.cardBackground
-        case .warning: return theme.warningColor.opacity(0.055)
-        case .critical: return theme.errorColor.opacity(0.055)
+        case .normal: return theme.surface.raised
+        case .warning: return theme.status.warning.background
+        case .critical: return theme.status.error.background
         }
     }
 
     private var controlBorder: Color {
-        guard let preview else { return theme.cardBorder }
+        guard let preview else { return theme.border.default }
         switch preview.severity {
-        case .normal: return theme.cardBorder
-        case .warning: return theme.warningColor.opacity(0.45)
-        case .critical: return theme.errorColor.opacity(0.45)
+        case .normal: return theme.border.default
+        case .warning: return theme.status.warning.border
+        case .critical: return theme.status.error.border
         }
     }
 
     private func deltaChip(_ delta: Int) -> some View {
         let magnitude = AgentAbilityContextPreview.format(tokens: abs(delta))
         let text = delta > 0 ? "+\(magnitude)" : "−\(magnitude)"
-        let color = delta > 0 ? theme.warningColor : theme.accentColor
-        return Text(text)
-            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-            .foregroundColor(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
+        let color = delta > 0 ? theme.status.warning.foreground : theme.action.primary.default.background
+        return StatusChip(text, tint: color)
     }
 
     private func windowPercent(_ fraction: Double) -> String {
@@ -259,43 +235,43 @@ private struct AgentAbilityContextDetailsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Divider().foregroundColor(theme.cardBorder)
+            Divider().foregroundColor(theme.border.default)
 
             Text(
                 "Context is the model's working space. Agent instructions and tool descriptions use some of it before your first message; memory can add more on each turn. A larger setup can slow the first reply and leave less room for a very long conversation.",
                 bundle: .module
             )
-            .font(.system(size: 10.5))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(displayRows) { row in
                     HStack(spacing: 8) {
                         Text(row.label, bundle: .module)
-                            .font(.system(size: 10.5))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.secondary)
                         Spacer()
                         Text("~\(AgentAbilityContextPreview.format(tokens: row.tokens)) tokens")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.tertiary)
                     }
                 }
             }
 
             Text(toolModeExplanation, bundle: .module)
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let notice = autoDisableNotice {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(theme.warningColor)
+                        .glyphSize(9)
+                        .foregroundColor(theme.status.warning.foreground)
                     Text(notice)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -371,224 +347,6 @@ private struct AgentAbilityContextDetailsView: View {
             format: L("%@ turned off for %@ because its working space is too small."),
             what,
             model
-        )
-    }
-}
-
-// MARK: - Ability Group Header
-
-/// Small-caps group label + optional one-line description above a run of
-/// ability cards, so the overview reads as distinct domains rather than a
-/// wall of switches.
-struct AgentAbilityGroupHeader: View {
-    @Environment(\.theme) private var theme
-
-    let label: LocalizedStringKey
-    var description: LocalizedStringKey? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            AgentSheetSectionLabel(label)
-            if let description {
-                Text(description, bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.leading, 2)
-        .padding(.top, 4)
-    }
-}
-
-// MARK: - Ability Card
-
-/// The canonical ability card: tinted icon tile, title + subtitle, and an
-/// accent switch. The card visibly "lights up" when active (icon tint,
-/// border, tile fill), shows a paused chip when a dependency suppresses it
-/// (Tools off), and can carry a configure deep link plus arbitrary
-/// accessory content (disclaimers, folder pickers, shortcuts).
-struct AgentAbilityCard<Accessory: View>: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    let title: LocalizedStringKey
-    let subtitle: LocalizedStringKey
-    let icon: String
-    /// Switch binding; nil renders a card without a switch (e.g. Host
-    /// Files, whose state is a folder grant rather than a toggle).
-    var isOn: Binding<Bool>? = nil
-    /// Visual active state when there is no switch.
-    var isActive: Bool? = nil
-    /// False dims the card and disables the switch (e.g. sandbox not
-    /// running) while keeping the copy readable.
-    var isInteractive: Bool = true
-    /// Rendered as a warning chip when the ability is gated off by a
-    /// dependency even though its own switch may be on.
-    var pausedNote: LocalizedStringKey? = nil
-    /// Makes the paused chip tappable — a "take me to the cause"
-    /// affordance (e.g. scroll to and highlight the Tools master card).
-    var onPausedNoteTap: (() -> Void)? = nil
-    var configureLabel: LocalizedStringKey? = nil
-    var onConfigure: (() -> Void)? = nil
-    @ViewBuilder let accessory: () -> Accessory
-
-    init(
-        title: LocalizedStringKey,
-        subtitle: LocalizedStringKey,
-        icon: String,
-        isOn: Binding<Bool>? = nil,
-        isActive: Bool? = nil,
-        isInteractive: Bool = true,
-        pausedNote: LocalizedStringKey? = nil,
-        onPausedNoteTap: (() -> Void)? = nil,
-        configureLabel: LocalizedStringKey? = nil,
-        onConfigure: (() -> Void)? = nil,
-        @ViewBuilder accessory: @escaping () -> Accessory
-    ) {
-        self.title = title
-        self.subtitle = subtitle
-        self.icon = icon
-        self.isOn = isOn
-        self.isActive = isActive
-        self.isInteractive = isInteractive
-        self.pausedNote = pausedNote
-        self.onPausedNoteTap = onPausedNoteTap
-        self.configureLabel = configureLabel
-        self.onConfigure = onConfigure
-        self.accessory = accessory
-    }
-
-    private var active: Bool {
-        isOn?.wrappedValue ?? isActive ?? false
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                iconTile
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title, bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    Text(subtitle, bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 12)
-
-                if let isOn {
-                    Toggle(title, isOn: isOn)
-                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                        .labelsHidden()
-                        .disabled(!isInteractive)
-                }
-            }
-
-            if let pausedNote {
-                let chip = HStack(spacing: 4) {
-                    Image(systemName: "pause.circle.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                    Text(pausedNote, bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                }
-                .foregroundColor(theme.warningColor)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(theme.warningColor.opacity(0.12)))
-
-                Group {
-                    if let onPausedNoteTap {
-                        Button(action: onPausedNoteTap) { chip.contentShape(Capsule()) }
-                            .buttonStyle(.plain)
-                            .help(Text("Show the switch this depends on", bundle: .module))
-                    } else {
-                        chip
-                    }
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            accessory()
-
-            if active, let configureLabel, let onConfigure {
-                Button(action: onConfigure) {
-                    HStack(spacing: 4) {
-                        Text(configureLabel, bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 8, weight: .semibold))
-                    }
-                    .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(
-                            active ? theme.accentColor.opacity(0.5) : theme.cardBorder,
-                            lineWidth: 1
-                        )
-                )
-        )
-        .opacity(isInteractive ? 1 : 0.55)
-        .animation(
-            reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85),
-            value: active
-        )
-    }
-
-    private var iconTile: some View {
-        Image(systemName: icon)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(active ? theme.accentColor : theme.secondaryText)
-            .frame(width: 30, height: 30)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        active
-                            ? theme.accentColor.opacity(0.14)
-                            : theme.tertiaryBackground.opacity(0.6)
-                    )
-            )
-    }
-}
-
-extension AgentAbilityCard where Accessory == EmptyView {
-    /// Convenience for the common accessory-free card.
-    init(
-        title: LocalizedStringKey,
-        subtitle: LocalizedStringKey,
-        icon: String,
-        isOn: Binding<Bool>? = nil,
-        isActive: Bool? = nil,
-        isInteractive: Bool = true,
-        pausedNote: LocalizedStringKey? = nil,
-        onPausedNoteTap: (() -> Void)? = nil,
-        configureLabel: LocalizedStringKey? = nil,
-        onConfigure: (() -> Void)? = nil
-    ) {
-        self.init(
-            title: title,
-            subtitle: subtitle,
-            icon: icon,
-            isOn: isOn,
-            isActive: isActive,
-            isInteractive: isInteractive,
-            pausedNote: pausedNote,
-            onPausedNoteTap: onPausedNoteTap,
-            configureLabel: configureLabel,
-            onConfigure: onConfigure,
-            accessory: { EmptyView() }
         )
     }
 }

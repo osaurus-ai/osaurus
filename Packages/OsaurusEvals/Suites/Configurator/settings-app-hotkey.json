@@ -1,0 +1,35 @@
+{
+  "id": "configurator.settings-app-hotkey",
+  "domain": "configurator",
+  "label": "configurator • change the global hotkey via the app section",
+  "query": "Change my global Osaurus hotkey to Command-Shift-O.",
+  "notes": "`app.hotkey` in text form (`cmd+shift+o`; glyph form `⌘⇧O` also parses). The 'shift' matcher probes the document text. The runner restores ChatConfiguration (which stores the hotkey) after the case.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "hotkey"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "shift"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

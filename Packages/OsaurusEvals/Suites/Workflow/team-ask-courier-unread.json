@@ -1,0 +1,51 @@
+{
+  "id": "workflow.team-ask-courier-unread",
+  "domain": "workflow",
+  "label": "workflow • prepared ask: what is still unread",
+  "query": "prepared ask: what is still unread",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-courier-unread",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "messages": [
+            {
+              "id": "<read-1@mail.test>",
+              "subject": "Your flight check-in is open",
+              "sender": "airline@example.test",
+              "dateReceived": "{{date:today_start-2d}}",
+              "isRead": false
+            }
+          ],
+          "count": 1
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "unread_only": true,
+          "since": "{{date:days_ago:14}}",
+          "limit": 40
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "flight"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

@@ -126,7 +126,7 @@ struct StructuredDocumentAttachmentMetadataTests {
         #expect(metadata?.structureSummary?.tableCount == 1)
         #expect(
             attachment.businessDocumentSummary?.chipDetailLabel
-                == "Workbook - 1 sheet - Review - \(Self.formattedBytes(4_096))"
+                == "Workbook - \(Self.formattedBytes(4_096))"
         )
     }
 

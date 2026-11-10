@@ -21,7 +21,20 @@ final class ModelPickerItemCache: ObservableObject {
     @Published private(set) var items: [ModelPickerItem] = [] {
         didSet { chatModelCandidates = items.chatModelCandidates }
     }
+    /// Chat/cloud discovery has completed. Optional local media may still be
+    /// scanning and joins `items` through a later publication.
     @Published private(set) var isLoaded = false
+
+    // Optional local media discovery may wait on an unavailable volume or a
+    // filesystem permission prompt. It must not hold usable chat models behind
+    // that I/O. Each catalog retains its last completed snapshot and publishes
+    // through the same items stream when refreshed.
+    private var chatAndCloudItems: [ModelPickerItem] = []
+    private var localMediaItems: [ModelPickerItem] = []
+    private let loadChatAndCloudItems: @MainActor () async -> [ModelPickerItem]
+    private let loadLocalMediaItems: @MainActor () async -> [ModelPickerItem]
+    private var localMediaRebuildTask: Task<Void, Never>?
+    private var pendingLocalMediaRebuild = false
 
     /// Stored projection of `items.chatModelCandidates`, recomputed once per
     /// rebuild. The filter runs `isLikelyChatCapable` string matching over
@@ -80,8 +93,22 @@ final class ModelPickerItemCache: ObservableObject {
     /// notifications into at most one extra rebuild.
     private var pendingRebuild: Bool = false
 
-    private init() {
-        registerObservers()
+    private convenience init() {
+        self.init(
+            observeChanges: true,
+            loadChatAndCloudItems: Self.computeItems,
+            loadLocalMediaItems: Self.computeLocalMediaItems
+        )
+    }
+
+    private init(
+        observeChanges: Bool,
+        loadChatAndCloudItems: @escaping @MainActor () async -> [ModelPickerItem],
+        loadLocalMediaItems: @escaping @MainActor () async -> [ModelPickerItem]
+    ) {
+        self.loadChatAndCloudItems = loadChatAndCloudItems
+        self.loadLocalMediaItems = loadLocalMediaItems
+        if observeChanges { registerObservers() }
     }
 
     private func registerObservers() {
@@ -131,6 +158,7 @@ final class ModelPickerItemCache: ObservableObject {
     /// latest items computed by the rebuild that this call awaited.
     @discardableResult
     func buildModelPickerItems() async -> [ModelPickerItem] {
+        requestLocalMediaRebuild()
         if let existing = rebuildTask {
             // A rebuild is already running — request another pass after it
             // finishes (so we pick up state that changed since it started),
@@ -145,16 +173,57 @@ final class ModelPickerItemCache: ObservableObject {
             var latest: [ModelPickerItem] = []
             repeat {
                 self.pendingRebuild = false
-                let options = await Self.computeItems()
-                self.items = options
+                self.chatAndCloudItems = await self.loadChatAndCloudItems()
+                self.publishItems()
                 self.isLoaded = true
-                latest = options
+                latest = self.items
             } while self.pendingRebuild
             self.rebuildTask = nil
             return latest
         }
         rebuildTask = task
         return await task.value
+    }
+
+    /// Media download/delete callers can explicitly wait for their refreshed
+    /// media catalog. Ordinary chat/picker callers do not wait for disk I/O
+    /// belonging to a different runtime.
+    func refreshLocalMediaModelItems() async {
+        requestLocalMediaRebuild()
+        await localMediaRebuildTask?.value
+    }
+
+    private func requestLocalMediaRebuild() {
+        if localMediaRebuildTask != nil {
+            pendingLocalMediaRebuild = true
+            return
+        }
+        localMediaRebuildTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            repeat {
+                self.pendingLocalMediaRebuild = false
+                let options = await self.loadLocalMediaItems()
+                // If model state changed during discovery, keep the previous
+                // snapshot until the requested fresh pass completes.
+                if !self.pendingLocalMediaRebuild {
+                    self.localMediaItems = options
+                    if self.isLoaded { self.publishItems() }
+                }
+            } while self.pendingLocalMediaRebuild
+            self.localMediaRebuildTask = nil
+        }
+    }
+
+    private func publishItems() {
+        var options = chatAndCloudItems
+        // Preserve foundation/local/media/remote ordering as media arrives.
+        let index =
+            options.firstIndex {
+                if case .remote = $0.source { return true }
+                return false
+            } ?? options.endIndex
+        options.insert(contentsOf: localMediaItems, at: index)
+        items = options
     }
 
     /// The items as they stand, for a reader that doesn't need a rebuild of
@@ -188,6 +257,8 @@ final class ModelPickerItemCache: ObservableObject {
     /// caller will immediately trigger a rebuild.
     func invalidateCache() {
         isLoaded = false
+        chatAndCloudItems = []
+        localMediaItems = []
         items = []
     }
 
@@ -200,9 +271,23 @@ final class ModelPickerItemCache: ObservableObject {
         @discardableResult
         func _setItemsForTesting(_ newItems: [ModelPickerItem]) -> [ModelPickerItem] {
             let previous = items
+            chatAndCloudItems = newItems.filter { !$0.source.isImageGeneration }
+            localMediaItems = newItems.filter { $0.source.isImageGeneration }
             items = newItems
             isLoaded = true
             return previous
+        }
+
+        static func _makeForTesting(
+            observeChanges: Bool = false,
+            loadChatAndCloudItems: @escaping @MainActor () async -> [ModelPickerItem],
+            loadLocalMediaItems: @escaping @MainActor () async -> [ModelPickerItem]
+        ) -> ModelPickerItemCache {
+            ModelPickerItemCache(
+                observeChanges: observeChanges,
+                loadChatAndCloudItems: loadChatAndCloudItems,
+                loadLocalMediaItems: loadLocalMediaItems
+            )
         }
     #endif
 
@@ -245,19 +330,6 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.fromMLXModel(model))
         }
 
-        // On-device image-generation models (vMLXFlux). Only surface bundles
-        // that are fully staged/loadable; incomplete ones stay hidden until
-        // their weights are present.
-        let imageModels = (try? await ImageGenerationService.shared.availableModels()) ?? []
-        for model in imageModels where model.ready && model.kind != "videoGen" {
-            options.append(.fromImageModel(model))
-        }
-        let videoModels = (try? await ImageGenerationService.shared.availableVideoModels()) ?? []
-        options.append(contentsOf: videoModels.map { model in
-            ModelPickerItem(id: model.id, displayName: model.displayName, source: .imageGeneration,
-                imageKind: "videoGen", imageReady: true, mediaModel: model)
-        })
-
         let manager = RemoteProviderManager.shared
         let remote = Self.remoteModelItems(
             providers: manager.cachedAvailableModels(),
@@ -289,6 +361,31 @@ final class ModelPickerItemCache: ObservableObject {
         // providers.
         RemoteReasoningCapabilityCatalog.replaceAll(remote.reasoningCapabilities)
 
+        return options
+    }
+
+    /// Keep the existing ready-bundle and video eligibility rules. Only the
+    /// dependency on chat readiness changes; media still publishes after its
+    /// actual scan, without guessing availability or abandoning an I/O task.
+    private static func computeLocalMediaItems() async -> [ModelPickerItem] {
+        var options: [ModelPickerItem] = []
+        let imageModels = (try? await ImageGenerationService.shared.availableModels()) ?? []
+        for model in imageModels where model.ready && model.kind != "videoGen" {
+            options.append(.fromImageModel(model))
+        }
+        let videoModels = (try? await ImageGenerationService.shared.availableVideoModels()) ?? []
+        options.append(
+            contentsOf: videoModels.map { model in
+                ModelPickerItem(
+                    id: model.id,
+                    displayName: model.displayName,
+                    source: .imageGeneration,
+                    imageKind: "videoGen",
+                    imageReady: true,
+                    mediaModel: model
+                )
+            }
+        )
         return options
     }
 

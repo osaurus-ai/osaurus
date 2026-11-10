@@ -2,9 +2,9 @@
 //  SetupWizardParts.swift
 //  osaurus
 //
-//  Shared setup wizard pieces: the step rail, done and issue banners,
-//  inline action buttons, and the permissions step. Each wizard owns its
-//  own steps and what they edit.
+//  Pieces both setup wizards share (agent and workflow): the step rail,
+//  done and issue banners, inline action buttons, and the permissions
+//  step. Each wizard owns its own steps and what they edit.
 //
 
 import AppKit
@@ -26,60 +26,71 @@ struct SetupStepRail<Step: Hashable>: View {
     let state: (Step) -> SetupStepState
 
     var body: some View {
+        ScrollView(.vertical) {
+            rail.padding(theme.space.s12)
+        }
+        .scrollIndicators(.automatic)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(theme.surface.subtle)
+    }
+
+    private var rail: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(steps.enumerated()), id: \.element) { index, step in
                 let status = state(step)
                 let isCurrent = step == current
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { current = step }
+                    withAnimation(theme.motion.quick) { current = step }
                 } label: {
                     HStack(spacing: 10) {
                         ZStack {
                             Circle()
-                                .fill(isCurrent ? theme.accentColor.opacity(0.15) : theme.tertiaryBackground)
+                                .fill(isCurrent ? theme.surface.selected : theme.surface.hover)
                                 .frame(width: 26, height: 26)
                             if status == .done {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(theme.successColor)
+                                    .glyphSize(11, weight: .bold)
+                                    .foregroundColor(theme.status.success.foreground)
                             } else {
                                 Text("\(index + 1)")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(isCurrent ? theme.accentColor : theme.secondaryText)
+                                    .font(SettingsFont.smallLabel)
+                                    .foregroundColor(isCurrent ? theme.text.link : theme.text.secondary)
                             }
                         }
                         VStack(alignment: .leading, spacing: 1) {
                             Text(title(step))
-                                .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
-                                .foregroundColor(isCurrent ? theme.primaryText : theme.secondaryText)
+                                .font(SettingsFont.compactLabel)
+                                .foregroundColor(isCurrent ? theme.text.primary : theme.text.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                             switch status {
                             case .done:
-                                Text("Done", bundle: .module).font(.system(size: 10)).foregroundColor(theme.successColor)
+                                Text("Done", bundle: .module).font(SettingsFont.footnote).foregroundColor(
+                                    theme.status.success.foreground
+                                )
                             case .required:
-                                Text("Required", bundle: .module).font(.system(size: 10)).foregroundColor(theme.warningColor)
+                                Text("Required", bundle: .module).font(SettingsFont.footnote).foregroundColor(
+                                    theme.status.warning.foreground
+                                )
                             case .optional:
-                                Text("Optional", bundle: .module).font(.system(size: 10)).foregroundColor(theme.tertiaryText)
+                                Text("Optional", bundle: .module).font(SettingsFont.footnote).foregroundColor(
+                                    theme.text.tertiary
+                                )
                             case .none:
                                 EmptyView()
                             }
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(isCurrent ? theme.accentColor.opacity(0.08) : Color.clear)
-                    )
+                    .padding(.horizontal, theme.space.s8)
+                    .padding(.vertical, theme.space.s8)
+                    .settingsChrome(isCurrent ? .selected : nil)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .settingsSearchHighlight(glowing == step)
             }
-            Spacer()
         }
-        .padding(12)
-        .background(theme.secondaryBackground.opacity(0.5))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -90,12 +101,12 @@ struct StepDoneBanner: View {
     let text: String
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill").foregroundColor(theme.successColor)
-            Text(text).font(.system(size: 12, weight: .medium)).foregroundColor(theme.primaryText)
+            Image(systemName: "checkmark.circle.fill").foregroundColor(theme.status.success.foreground)
+            Text(text).font(SettingsFont.compactLabel).foregroundColor(theme.text.primary)
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(theme.successColor.opacity(0.08)))
+        .settingsChrome(.status(.success))
     }
 }
 
@@ -107,11 +118,13 @@ struct StepIssueList: View {
             ForEach(items) { item in
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: item.isBlocking ? "exclamationmark.circle.fill" : "info.circle")
-                        .foregroundColor(item.isBlocking ? theme.warningColor : theme.infoColor)
-                        .padding(.top, 1)
+                        .foregroundColor(
+                            item.isBlocking ? theme.status.warning.foreground : theme.status.info.foreground
+                        )
+                        .padding(.top, theme.space.s2)
                     Text(item.detail)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -127,29 +140,27 @@ struct StepActionButton: View {
     let title: LocalizedStringKey
     let icon: String
     var primary: Bool = true
+    var isLoading: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
+                if isLoading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: icon)
+                        .glyphSize(11, weight: .semibold)
+                }
                 Text(title, bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(SettingsFont.compactLabel)
                     .lineLimit(1)
             }
-            .foregroundColor(primary ? theme.accentColor : theme.secondaryText)
+            .foregroundColor(primary ? theme.text.link : theme.text.secondary)
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(primary ? theme.accentColor.opacity(0.08) : theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(primary ? theme.accentColor.opacity(0.2) : theme.inputBorder, lineWidth: 1)
-                    )
-            )
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(primary ? .selected : .subtle)
         }
         .buttonStyle(.plain)
     }
@@ -160,11 +171,11 @@ struct OrSeparator: View {
     @Environment(\.theme) private var theme
     var body: some View {
         HStack(spacing: 10) {
-            Rectangle().fill(theme.inputBorder).frame(height: 1)
+            Rectangle().fill(theme.border.default).frame(height: 1)
             Text("or", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-            Rectangle().fill(theme.inputBorder).frame(height: 1)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.tertiary)
+            Rectangle().fill(theme.border.default).frame(height: 1)
         }
     }
 }
@@ -191,22 +202,22 @@ struct PermissionsStep: View {
                 ForEach(permissions, id: \.self) { permission in
                     HStack(spacing: 10) {
                         Image(systemName: permission.iconName)
-                            .foregroundColor(theme.secondaryText)
+                            .foregroundColor(theme.text.secondary)
                             .frame(width: 18)
                         Text(permission.displayName)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.primary)
                         Spacer()
                         StepActionButton(title: "Open System Settings", icon: "gear") {
                             permissionService.openSystemSettings(for: permission)
                         }
                     }
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.6)))
+                    .padding(theme.space.s8)
+                    .settingsChrome(.inset)
                 }
                 Text("Grant the permission, then come back to this window. It re-checks on its own.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
             StepActionButton(title: "Check Again", icon: "arrow.clockwise", primary: false) {
                 permissionService.refreshAllPermissions()

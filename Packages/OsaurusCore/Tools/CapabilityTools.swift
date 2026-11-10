@@ -62,6 +62,7 @@ actor CapabilityLoadBuffer {
         // spawn specs so the orchestrator can run the new agent in the
         // SAME turn instead of waiting for the next compose.
         "osaurus_config",
+        "osaurus_import",
     ]
 
     static func shouldActivate(after toolName: String) -> Bool {
@@ -1273,6 +1274,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // stands (the execution boundary does not move on a model's say-so);
         // it just names the one real next step, which is user-facing.
         if isWorkspaceTool {
+            let agentId = ChatExecutionContext.currentAgentId
+            if let refusal = await MainActor.run(body: {
+                ToolRegistry.sandboxNotReadyRefusal(tool: toolId, agentId: agentId)
+            }) {
+                return .failure(LoadFailure(kind: .rejected, message: refusal.message))
+            }
             return .failure(
                 LoadFailure(
                     kind: .rejected,

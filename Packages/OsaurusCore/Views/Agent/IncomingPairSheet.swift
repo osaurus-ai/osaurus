@@ -2,10 +2,10 @@
 //  IncomingPairSheet.swift
 //  osaurus
 //
-//  Approval modal shown when this device opens an `osaurus://...?pair=...`
-//  deeplink. The receiver explicitly consents before we POST the invite back
-//  to the source agent's relay-tunnel `/pair-invite` endpoint and persist a
-//  RemoteAgent locally.
+//  "Add Shared Agent": shown when this device opens a guest link
+//  (`osaurus://...?pair=...`). Says what the agent's owner will see before
+//  the receiver consents; only then do we POST the invite back to the
+//  owner's `/pair-invite` endpoint and save a RemoteAgent locally.
 //
 
 import SwiftUI
@@ -22,206 +22,94 @@ struct IncomingPairSheet: View {
     @State private var note: String = ""
     @State private var existingPairing: RemoteAgent?
 
+    private var displayName: String { invite.name.isEmpty ? L("Untitled Agent") : invite.name }
+
     var body: some View {
         VStack(spacing: 0) {
-            AgentSheetHeader(
+            SettingsSheetHeader(
                 icon: "person.crop.circle.badge.plus",
-                title: "Add Remote Agent",
-                subtitle: "Authorize this invite to chat with someone else's agent.",
+                title: "Add Shared Agent",
+                subtitle: "Someone shared an agent with you. It runs on their Mac.",
                 onClose: { dismiss() }
             )
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    agentCard
-                    if let existing = existingPairing {
-                        replaceNotice(for: existing)
+                VStack(alignment: .leading, spacing: theme.space.s16) {
+                    SettingsSection {
+                        SettingsRow(
+                            title: displayName,
+                            description: invite.desc.flatMap { $0.isEmpty ? nil : $0 } ?? invite.shortAddress,
+                            verbatimTitle: true,
+                            leading: {
+                                AgentAvatarView(
+                                    mascotId: nil,
+                                    name: displayName,
+                                    tint: agentColorFor(invite.name),
+                                    diameter: 36,
+                                    monogramFontSize: 15,
+                                    borderWidth: theme.stroke.default
+                                )
+                            },
+                            trailing: { EncryptionBadge() }
+                        )
+                        SettingsValueRow(
+                            title: "Link Expires",
+                            value: invite.expirationDate.formatted(date: .abbreviated, time: .shortened)
+                        )
                     }
-                    detailsCard
+
+                    if let existing = existingPairing {
+                        SheetHintRow(
+                            kind: .warning,
+                            message: L(
+                                "You already added this agent on \(existing.pairedAt.formatted(date: .abbreviated, time: .omitted)). Adding it again replaces that one."
+                            )
+                        )
+                    }
+
+                    SettingsCallout(
+                        icon: "eye",
+                        title: "What the Owner Can See",
+                        message:
+                            "Your messages and the files you attach in chats with this agent go to the owner's Mac, where it runs, and the owner can read those chats. Your other agents and chats stay private. The owner can remove your access at any time."
+                    )
+
+                    SettingsSection(title: "Note") {
+                        SettingsTextField(
+                            placeholder: L("e.g., Alice's research agent"),
+                            text: $note,
+                            icon: "text.alignleft"
+                        )
+                    }
+
                     if let errorMessage {
-                        errorBanner(errorMessage)
+                        SheetHintRow(kind: .error, message: errorMessage)
                     }
                 }
-                .padding(20)
+                .padding(theme.settingsSheetInset)
             }
-            .background(theme.primaryBackground)
+            .background(theme.surface.overlay)
 
-            AgentSheetFooter(
-                primary: AgentSheetFooter.Action(
-                    label: isWorking ? "Adding…" : "Add Remote Agent",
+            SettingsSheetFooter(
+                primary: SettingsSheetFooter.Action(
+                    label: isWorking ? "Adding…" : "Add Shared Agent",
                     isEnabled: !isWorking,
                     isLoading: isWorking,
                     handler: { Task { await accept() } }
                 ),
-                secondary: AgentSheetFooter.Action(
-                    label: "Decline",
+                secondary: SettingsSheetFooter.Action(
+                    label: "Not Now",
                     isEnabled: !isWorking,
                     handler: { dismiss() }
                 ),
                 hint: "+ Enter to add"
             )
         }
-        .fittedSheetFrame(width: 480, height: 580)
-        .background(theme.cardBackground)
+        .fittedSheetFrame(width: 480, height: 600)
+        .background(theme.surface.raised)
         .onAppear {
             existingPairing = RemoteAgentManager.shared.remoteAgent(forAddress: invite.addr)
         }
-    }
-
-    // MARK: Sections
-
-    private var agentCard: some View {
-        let color = agentColorFor(invite.name)
-        return HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [color.opacity(0.2), color.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Circle().strokeBorder(color.opacity(0.5), lineWidth: 2)
-                Text(invite.name.isEmpty ? "?" : invite.name.prefix(1).uppercased())
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundColor(color)
-            }
-            .frame(width: 56, height: 56)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(invite.name.isEmpty ? "Untitled Agent" : invite.name)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                if let desc = invite.desc, !desc.isEmpty {
-                    Text(desc)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                }
-                Text(invite.shortAddress)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            Spacer()
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.inputBackground.opacity(0.7))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    private func replaceNotice(for existing: RemoteAgent) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
-                .font(.system(size: 14))
-                .foregroundColor(theme.warningColor)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Already paired with this agent", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    "Accepting will replace the existing pairing (added \(existing.pairedAt.formatted(date: .abbreviated, time: .omitted))).",
-                    bundle: .module
-                )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(2)
-            }
-            Spacer()
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.warningColor.opacity(0.10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.warningColor.opacity(0.25), lineWidth: 1)
-                )
-        )
-    }
-
-    private var detailsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            metadataRow(label: "Source", value: invite.url, mono: true)
-            metadataRow(
-                label: "Expires",
-                value: invite.expirationDate.formatted(date: .abbreviated, time: .shortened),
-                mono: false
-            )
-
-            VStack(alignment: .leading, spacing: 6) {
-                AgentSheetSectionLabel("Note (optional)")
-                StyledTextField(
-                    placeholder: "e.g., Alice's research agent",
-                    text: $note,
-                    icon: "text.alignleft"
-                )
-                Text("Will be saved when you accept.", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-            }
-
-            Text(
-                "On approve, your device will fetch a private access key from the agent's server. The agent's owner can revoke this at any time.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .padding(.top, 4)
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    private func metadataRow(label: String, value: String, mono: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .frame(width: 60, alignment: .leading)
-            Text(value)
-                .font(mono ? .system(size: 11, design: .monospaced) : .system(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-            Spacer()
-        }
-    }
-
-    private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(theme.errorColor)
-            Text(message)
-                .font(.system(size: 11))
-                .foregroundColor(theme.errorColor)
-                .lineLimit(3)
-            Spacer()
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.errorColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.errorColor.opacity(0.25), lineWidth: 1)
-                )
-        )
     }
 
     // MARK: Actions

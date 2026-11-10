@@ -30,19 +30,19 @@ struct GitHubTokenPromptSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
-                    .font(.system(size: 20))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(20)
+                    .foregroundColor(theme.text.link)
                 Text("Connect GitHub to update plugins", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.cardTitle)
+                    .foregroundColor(theme.text.primary)
             }
 
             Text(
                 "GitHub limits how often this app can browse and update plugins before it starts showing errors. Connecting a free GitHub account raises that limit so updates keep working.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -67,48 +67,35 @@ struct GitHubTokenPromptSheet: View {
             HStack(spacing: 12) {
                 Button(action: { dismiss() }) {
                     Text("Cancel", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
 
                 Spacer()
 
                 Button(action: save) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle")
-                            .font(.system(size: 13))
-                        Text("Save token", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor.opacity(trimmedToken.isEmpty ? 0.4 : 1.0))
-                    )
+                    Label(L("Save token"), systemImage: "checkmark.circle")
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(trimmedToken.isEmpty)
             }
         }
-        .padding(24)
+        .padding(theme.space.s24)
         .frame(width: 460)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
     }
 
     private func stepRow(_ number: Int, text: Text) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("\(number)")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(theme.accentColor)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.link)
                 .frame(width: 16, height: 16)
-                .background(Circle().fill(theme.accentColor.opacity(0.15)))
+                .background(Circle().fill(theme.status.info.background))
             text
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
-                .tint(theme.accentColor)
+                .textStyle(.caption)
+                .foregroundColor(theme.text.primary)
+                .tint(theme.action.primary.default.background)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -172,37 +159,28 @@ struct GitHubTokenCard: View {
         cardSurface {
             HStack(spacing: 10) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
-                    .font(.system(size: 15))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(15)
+                    .foregroundColor(theme.text.link)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Stop plugin update errors", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
                     Text(
                         "GitHub limits how often this app can check for updates. Connect a free GitHub account to update plugins without hitting that limit.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 8)
 
                 Button { showAddSheet = true } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Add token", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                    Label(L("Add Token"), systemImage: "plus.circle")
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary, size: .compact)
             }
         }
     }
@@ -214,57 +192,49 @@ struct GitHubTokenCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 15))
-                        .foregroundColor(.green)
+                        .glyphSize(15)
+                        .foregroundColor(theme.status.success.foreground)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("GitHub connected", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
+                            .font(SettingsFont.sectionTitle)
+                            .foregroundColor(theme.text.primary)
                         Text(
                             "Plugins can now browse and update reliably without hitting GitHub's limit.",
                             bundle: .module
                         )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                     }
 
                     Spacer(minLength: 8)
 
                     Button {
-                        withAnimation(.easeOut(duration: 0.15)) {
+                        withAnimation(theme.motion.quick) {
                             isReplacing.toggle()
                             replaceInput = ""
                         }
                     } label: {
                         Text(isReplacing ? "Cancel" : "Replace…", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.tertiaryBackground.opacity(0.6))
-                            )
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.secondary)
+                            .padding(.horizontal, theme.space.s8)
+                            .padding(.vertical, theme.space.s6)
+                            .settingsChrome(.inset)
                     }
                     .buttonStyle(PlainButtonStyle())
 
                     Button {
                         GitHubAuth.setToken(nil)
                         GitHubSkillService.shared.reloadAuthentication()
-                        withAnimation(.easeOut(duration: 0.15)) {
+                        withAnimation(theme.motion.quick) {
                             isReplacing = false
                             hasToken = false
                         }
                     } label: {
                         Text("Remove", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.red)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.red.opacity(0.12)))
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .assignedSettingsButtonStyle(.destructive)
                 }
 
                 if isReplacing {
@@ -273,20 +243,8 @@ struct GitHubTokenCard: View {
 
                         Button(action: replaceToken) {
                             Text("Save", bundle: .module)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(
-                                            theme.accentColor.opacity(
-                                                trimmedReplace.isEmpty ? 0.4 : 1.0
-                                            )
-                                        )
-                                )
                         }
-                        .buttonStyle(PlainButtonStyle())
+                        .assignedSettingsButtonStyle(.primary, size: .compact)
                         .disabled(trimmedReplace.isEmpty)
                     }
                 }
@@ -296,16 +254,9 @@ struct GitHubTokenCard: View {
 
     private func cardSurface<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.tertiaryBackground.opacity(0.4))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.cardBorder.opacity(0.6), lineWidth: 1)
-                    )
-            )
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s12)
+            .settingsChrome(.subtle)
     }
 
     private var trimmedReplace: String {
@@ -316,7 +267,7 @@ struct GitHubTokenCard: View {
         guard !trimmedReplace.isEmpty else { return }
         GitHubAuth.setToken(trimmedReplace)
         GitHubSkillService.shared.reloadAuthentication()
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(theme.motion.quick) {
             isReplacing = false
             replaceInput = ""
         }
@@ -333,28 +284,12 @@ struct GitHubTokenField: View {
     let onSubmit: () -> Void
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            if tokenInput.isEmpty {
-                Text(verbatim: "ghp_…")
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(theme.placeholderText)
-                    .allowsHitTesting(false)
-            }
-            SecureField("", text: $tokenInput)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .onSubmit(onSubmit)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
+        SettingsTextField(
+            placeholder: "ghp_…",
+            text: $tokenInput,
+            monospaced: true,
+            isSecure: true,
+            onSubmit: onSubmit
         )
     }
 }

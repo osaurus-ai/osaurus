@@ -28,7 +28,7 @@ public enum AgentInviteError: Error, LocalizedError {
         case .agentMissingIdentity:
             return "This agent has no derived crypto identity yet."
         case .relayBaseURLMissing:
-            return "The agent's relay tunnel is not connected."
+            return "The agent's remote access isn't connected. Turn it on in Sharing → Access."
         case .signingFailed:
             return "Could not sign the invite payload."
         case .signatureMismatch:

@@ -1,0 +1,35 @@
+{
+  "id": "orchestrator.team-keeper-pdf",
+  "domain": "orchestrator",
+  "label": "orchestrator • a downloaded PDF goes to Keeper, not the Files worker",
+  "query": "Summarize the PDF I downloaded",
+  "notes": "Routing on, with the day-one team (Planner, Courier, Keeper, Scout) created from the bundled templates in a scratch folder. The Orchestrator reads the roster and calls `run_workflow` with \"Keeper\". Keeper owns Downloads and Notes; the Files worker owns writing and editing in the working folder.",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Keeper"
+          }
+        }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

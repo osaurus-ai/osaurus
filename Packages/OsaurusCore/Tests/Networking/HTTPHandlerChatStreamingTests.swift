@@ -1383,6 +1383,7 @@ struct HTTPHandlerChatStreamingTests {
             let requests = await engine.requests
             #expect(requests.count == 2)
             let defaultNames = Set(requests[0].tools?.map(\.function.name) ?? [])
+            // The built-in worker wrappers keep `run_workflow` with nothing installed.
             #expect(defaultNames == ToolRegistry.orchestratorAllowedToolNames)
 
             let customSystemMessage = requests[1].messages.first { $0.role == "system" }

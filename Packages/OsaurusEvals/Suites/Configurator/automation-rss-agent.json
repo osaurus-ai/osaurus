@@ -1,0 +1,52 @@
+{
+  "id": "configurator.automation-rss-agent",
+  "domain": "configurator",
+  "label": "configurator • RSS automation that runs an existing custom agent for tool work",
+  "query": "Whenever https://example.com/blog/feed.xml publishes a new post, have my Eval News Agent read the post and save notes about it.",
+  "notes": "Agent routing is right here: the person names an existing custom agent and the work needs tools (read the post, save notes). RSS source with the feed URL, agent `Eval News Agent`, instructions that use the feed item. The case must not create a second agent.",
+  "fixtures": {
+    "seedAgents": [
+      {
+        "id": "a1c2e3f4-5b6d-4e7f-8091-a2b3c4d5e6f7",
+        "name": "Eval News Agent"
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "rss"
+          }
+        }
+      ],
+      "argsMustNotContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "agents:"
+          }
+        }
+      ],
+      "expectAutomations": [
+        {
+          "sourceKind": "rss",
+          "action": "agent",
+          "agent": "Eval News Agent"
+        }
+      ],
+      "expectAutomationCount": 1,
+      "maxIterations": 8
+    }
+  }
+}

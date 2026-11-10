@@ -1,0 +1,46 @@
+{
+  "id": "orchestrator.run-workflow-now",
+  "domain": "orchestrator",
+  "label": "orchestrator • run an Orchestrator-runnable workflow now (no automation)",
+  "query": "Run my Daily Digest workflow now for today.",
+  "notes": "A one-off run of a workflow marked Let Osaurus Run This: `run_workflow` with workflow `Daily Digest` and `day` in its input. No automation is created for a one-time run.",
+  "fixtures": {
+    "seedInstalledWorkflows": [
+      {
+        "id": "6f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c45",
+        "name": "Daily Digest",
+        "summary": "Summarize the day's news and calendar.",
+        "inputs": [
+          "day"
+        ],
+        "required": [
+          "day"
+        ],
+        "orchestratorVisible": true
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load",
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Daily Digest"
+          }
+        }
+      ],
+      "expectAutomationCount": 0,
+      "maxIterations": 6
+    }
+  }
+}
