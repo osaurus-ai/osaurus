@@ -304,26 +304,77 @@ struct TemplateStoreTests {
         }
     }
 
-    /// The library loads in the background (APPLE-MACOS-3KB). A reader that
-    /// touches a brand-new store before that load lands must still see the
-    /// library, not built-ins only.
+    /// Same as `withTemporaryRoot`, for bodies that await the background
+    /// library load. The temporary root stays in place until the body ends.
+    private func withTemporaryRootAsync(
+        _ body: @MainActor @Sendable (TemplateStore) async throws -> Void
+    ) async throws {
+        try await StoragePathsTestLock.shared.run { @MainActor in
+            let previous = OsaurusPaths.overrideRoot
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("template-store-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            let store = TemplateStore.shared
+            store.reload()
+            defer {
+                OsaurusPaths.overrideRoot = previous
+                try? FileManager.default.removeItem(at: root)
+                store.reload()
+            }
+            try await body(store)
+        }
+    }
+
+    /// The library loads in the background (APPLE-MACOS-3KB). Readers never
+    /// load synchronously: before the load lands they return built-ins
+    /// only, and the library-only template shows up once it lands.
     @Test
-    func freshStore_readsLibraryBeforeBackgroundLoadLands() async throws {
-        try await withTemporaryRoot { store in
+    func freshStore_findsLibraryTemplateOnceBackgroundLoadLands() async throws {
+        try await withTemporaryRootAsync { store in
             let saved = try store.save(AgentTemplate(name: "Library Scout", agent: AgentEntry(name: "Library Scout")))
-            let fresh = TemplateStore()
+            let fresh = TemplateStore.makeForTesting()
+            if !fresh.isLibraryLoaded {
+                // Built-ins are available immediately; no disk read on this actor.
+                #expect(fresh.template(named: "Library Scout", kind: .agent) == nil)
+                #expect(!fresh.allTemplates.isEmpty)
+            }
+            await fresh.libraryLoaded()
+            #expect(fresh.isLibraryLoaded)
             #expect(fresh.template(named: "Library Scout", kind: .agent)?.id == saved.id)
+            #expect(fresh.templates.contains { $0.id == saved.id })
         }
     }
 
     @Test
-    func freshStore_libraryCopyShadowsBuiltInImmediately() async throws {
-        try await withTemporaryRoot { store in
+    func freshStore_libraryCopyShadowsBuiltInOnceLoaded() async throws {
+        try await withTemporaryRootAsync { store in
             let builtIn = try #require(store.builtIn.first)
             let copy = try store.save(builtIn)
-            let fresh = TemplateStore()
+            let fresh = TemplateStore.makeForTesting()
+            await fresh.libraryLoaded()
             #expect(!fresh.isBuiltIn(copy))
             #expect(fresh.latest(id: builtIn.id)?.version == copy.version)
+        }
+    }
+
+    /// A mutation that beats the background load must still see the
+    /// on-disk index, or it would drop other templates' hidden flags.
+    @Test
+    func freshStore_mutationBeforeLoadKeepsExistingIndex() async throws {
+        try await withTemporaryRootAsync { store in
+            let hidden = try store.save(AgentTemplate(name: "Hidden", agent: AgentEntry(name: "Hidden")))
+            let other = try store.save(AgentTemplate(name: "Other", agent: AgentEntry(name: "Other")))
+            store.setAvailableToOrchestrator(false, id: hidden.id)
+
+            let fresh = TemplateStore.makeForTesting()
+            fresh.setAvailableToOrchestrator(false, id: other.id)
+
+            store.reload()
+            let visible = store.orchestratorVisible(kind: .agent).map(\.id)
+            #expect(!visible.contains(hidden.id))
+            #expect(!visible.contains(other.id))
+            await fresh.libraryLoaded()
         }
     }
 
