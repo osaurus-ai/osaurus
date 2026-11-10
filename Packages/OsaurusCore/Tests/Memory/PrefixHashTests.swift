@@ -231,6 +231,82 @@ struct PrefixHashTests {
         #expect(full.canonicalHashPayload() != compact.canonicalHashPayload())
     }
 
+    @Test func prefixHashIdentityIsUnchangedByWarmCache() {
+        let manifest = PromptManifest(sections: [
+            .static(id: "platform", label: "Platform", content: "You are Osaurus.")
+        ])
+        let tools = [
+            fixtureTool(description: "Mutates context."),
+            Tool(
+                type: "function",
+                function: ToolFunction(
+                    name: "nested_context",
+                    description: "Nested schema.",
+                    parameters: .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "outer": .object([
+                                "type": .string("object"),
+                                "properties": .object(["inner": .object(["type": .string("number")])]),
+                            ])
+                        ]),
+                    ])
+                )
+            ),
+        ]
+        // Cold: clearing only drops memoized bytes, so it is safe alongside
+        // parallel tests; every caller still gets correct bytes.
+        ToolCanonicalPayloadCache.shared.removeAll()
+        let cold = manifest.staticPrefixHash(tools: tools)
+        let warm = manifest.staticPrefixHash(tools: tools)
+        #expect(cold == warm)
+        #expect(
+            ModelRuntime.computePrefixHash(systemContent: "sys", tools: tools)
+                == ModelRuntime.computePrefixHash(systemContent: "sys", tools: tools)
+        )
+        for tool in tools {
+            #expect(tool.canonicalHashPayload() == tool.computeCanonicalHashPayload())
+        }
+    }
+
+    @Test func prefixHashChangesWhenSchemaChangesAfterWarmCache() {
+        let manifest = PromptManifest(sections: [
+            .static(id: "platform", label: "Platform", content: "You are Osaurus.")
+        ])
+        let before = fixtureTool(description: "Mutates context.")
+        let after = fixtureTool(
+            description: "Mutates context.",
+            parameterDescription: "Repository-relative path to mutate."
+        )
+        let warmBefore = manifest.staticPrefixHash(tools: [before])
+        _ = manifest.staticPrefixHash(tools: [before])
+        #expect(manifest.staticPrefixHash(tools: [after]) != warmBefore)
+        #expect(manifest.staticPrefixHash(tools: [before]) == warmBefore)
+    }
+
+    @Test func canonicalPayloadCacheKeyIncludesFullSchemaNotJustName() {
+        let cache = ToolCanonicalPayloadCache()
+        let a = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "same_name",
+                description: "Same.",
+                parameters: .object(["type": .string("object"), "required": .array([.string("a")])])
+            )
+        )
+        let b = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "same_name",
+                description: "Same.",
+                parameters: .object(["type": .string("object"), "required": .array([.string("b")])])
+            )
+        )
+        cache.store(Data("a".utf8), for: a)
+        #expect(cache.payload(for: a) == Data("a".utf8))
+        #expect(cache.payload(for: b) == nil)
+    }
+
     @Test func canonicalPayloadCacheIsBounded() {
         let cache = ToolCanonicalPayloadCache()
         for i in 0..<(ToolCanonicalPayloadCache.maxEntries + 10) {
