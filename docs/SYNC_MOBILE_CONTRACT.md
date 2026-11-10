@@ -43,6 +43,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `workflow_forms` | `detail` on `workflow_dialog` items (the form's fields) and the `submit` answer (§4) |
 | `workflow_runs` | `workflow` on a `run_progress` tool and in `toolCallDisplay`: the run the call started, its steps and how it ended (§3.2, §3.3) |
 | `workflow_library` | `workflows` in the manage state, the `runWorkflow` op and `ai.osaurus.workflow-runs/1` (§5.4) |
+| `workflow_outputs` | the `workflowOutput` op and its `ai.osaurus.workflow-output/1` message (§5.5) |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
   NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without
@@ -720,6 +721,30 @@ when a card changed.
 - `card` is the card of §3.2.
 - `finishedMs` is set once the run ends.
 - `caller` is `user`, `agent`, `orchestrator`, `workflow` or `event`. It is kept open.
+
+### 5.5 Run outputs (`workflow_outputs`)
+
+`workflowOutput` (`runId`) asks for a finished run's output. Only runs the iPhone opens are sent.
+
+- The Mac writes a message in the manage conversation with content `workflow-output` and
+  `ai.osaurus.workflow-output/1` app data, then answers with `{ "runId": "…" }`:
+
+```json
+{ "v": 1, "runId": "…", "status": "completed", "input": { "topic": "Q3" },
+  "output": { "report": "…" }, "error": "…",
+  "files": [ { "id": "…", "filename": "report.md", "mimeType": "text/markdown", "fileSize": 1180,
+               "blob": 0 },
+             { "id": "…", "filename": "raw.mov", "mimeType": "video/quicktime", "fileSize": 52428800,
+               "skipped": "tooLarge" } ],
+  "digest": "…" }
+```
+
+- `input` and `output` over 16 KiB move to blobs (`{"$blob": i, "size": n}`).
+- A file over 10 MiB, or past 32 MiB for the run, is listed with `skipped: "tooLarge"`. A file that
+  is gone is listed with `skipped: "missing"`.
+- The same run's message is replaced only when its digest changes. The Mac keeps the last 10 of
+  these messages.
+- Errors: `run_not_found`, and `running` (the run hasn't ended).
 
 ## 6. HTTP routes and their Sync replacements
 

@@ -93,4 +93,35 @@ struct SyncWorkflowCardTests {
         #expect(request.workflowId == "abc")
         #expect(request.input?.objectValue?["topic"]?.stringValue == "Q3")
     }
+
+    @Test func anOutputCarriesItsInputItsOutputAndItsFiles() throws {
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("output-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let report = staging.appendingPathComponent("report.md")
+        try Data("# Q3".utf8).write(to: report)
+
+        var run = Self.run()
+        run.status = .completed
+        run.output = .object(["text": .string(String(repeating: "a", count: 20_000))])
+        run.artifacts = [
+            WorkflowArtifact(source: .shared, filename: "report.md", path: report.path, fileSize: 4),
+            WorkflowArtifact(source: .shared, filename: "gone.md", path: staging.appendingPathComponent("gone").path),
+        ]
+        let payload = SyncWorkflowOutput.payload(for: run, staging: staging)
+
+        #expect(payload.object["status"] == .string("completed"))
+        #expect(payload.object["input"] == .object([:]))
+        // The long output went to a blob, staged where it can be cleaned up after.
+        #expect(payload.object["output"]?.objectValue?["$blob"] == .number(0))
+        #expect(SyncWorkflowOutput.isStaged(payload.blobs[0].path))
+        let files = try #require(payload.object["files"]?.arrayValue)
+        #expect(files[0].objectValue?["blob"] == .number(1))
+        #expect(payload.blobs[1].path == report.path)
+        #expect(!SyncWorkflowOutput.isStaged(report.path))
+        #expect(files[1].objectValue?["skipped"] == .string("missing"))
+
+        // Same run, same files: the same digest, so the message isn't rewritten.
+        #expect(SyncWorkflowOutput.payload(for: run, staging: staging).digest == payload.digest)
+    }
 }

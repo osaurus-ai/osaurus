@@ -58,6 +58,7 @@ enum SyncDeviceFeedContract {
         "workflow_forms",
         "workflow_runs",
         "workflow_library",
+        "workflow_outputs",
     ]
 
     /// Each device's record under `prefix`, keyed by device key.
@@ -233,6 +234,8 @@ enum SyncDeviceFeedContract {
             case contextUsage
             /// `workflowId`, `input` (the form's values): starts the workflow and answers with its `runId`.
             case runWorkflow
+            /// `runId`: writes a finished run's output message (§5.5) and answers once it's written.
+            case workflowOutput
             /// An op this Mac's build doesn't know.
             case unsupported
 
@@ -276,6 +279,8 @@ enum SyncDeviceFeedContract {
         /// `runWorkflow`
         var workflowId: String?
         var input: JSONValue?
+        /// `workflowOutput`
+        var runId: String?
         var requestedMs: Int64
 
         init(

@@ -47,7 +47,8 @@
           "continue_own_chats",
           "workflow_forms",
           "workflow_runs",
-          "workflow_library"
+          "workflow_library",
+          "workflow_outputs"
         ],
         "build": "0.25.31 (1234)",
         "presence": {

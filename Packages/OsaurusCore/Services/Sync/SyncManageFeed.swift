@@ -623,6 +623,31 @@ final class SyncManageFeed {
             }
         case .contextUsage:
             return await contextUsage(request)
+        case .workflowOutput:
+            let payload: SyncWorkflowOutput.Payload
+            switch SyncWorkflowOutput.payload(runId: request.runId) {
+            case .success(let found): payload = found
+            case .failure(.notFound): return failed("run_not_found", "That run isn't on this Mac any more.")
+            case .failure(.running): return failed("running", "The run hasn't finished yet.")
+            }
+            let written = await Task.detached(priority: .userInitiated) { () -> Bool in
+                defer {
+                    // JSON staged for blobs; the files themselves stay where the run left them.
+                    for blob in payload.blobs where SyncWorkflowOutput.isStaged(blob.path) {
+                        try? FileManager.default.removeItem(atPath: blob.path)
+                    }
+                }
+                do {
+                    try SyncConversationStore.shared.performWrite { core in
+                        try SyncWorkflowOutput.write(payload, core: core)
+                    }
+                    return true
+                } catch {
+                    return false
+                }
+            }.value
+            guard written else { return failed("failed", "The run's output couldn't be sent.") }
+            return answered(["runId": payload.runId])
         case .runWorkflow:
             switch SyncWorkflowLibrary.start(workflowId: request.workflowId, values: request.input) {
             case .success(let runId):
@@ -711,7 +736,8 @@ final class SyncManageFeed {
                 } catch {
                     return failed("load_failed", "The model couldn't be loaded on this Mac.")
                 }
-            case .setFavorite, .getModelOptions, .setModelOption, .contextUsage, .runWorkflow, .unsupported:
+            case .setFavorite, .getModelOptions, .setModelOption, .contextUsage, .runWorkflow, .workflowOutput,
+                .unsupported:
                 return done()
             }
             return done(agentId: agentId)
