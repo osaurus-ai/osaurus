@@ -1,0 +1,185 @@
+{
+  "domains" : [
+    "agent_loop",
+    "apple_script",
+    "cache_proof",
+    "capability_claims",
+    "computer_use_loop",
+    "default_agent",
+    "http_api",
+    "memory",
+    "micro_perf",
+    "reasoning_channel",
+    "subagent"
+  ],
+  "generatedAt" : "2026-09-01T09:23:50.162Z",
+  "models" : [
+    {
+      "actionCompletionCoverage" : 0.9716312056737588,
+      "agentLoopDiagnostics" : {
+        "exitCounts" : {
+          "cancelled" : 5,
+          "finalResponse" : 119,
+          "iterationCapReached" : 16,
+          "overBudget" : 1
+        },
+        "exitOriginCounts" : {
+          "ordinaryModelFinal" : 108,
+          "typedTerminal" : 16,
+          "unrecorded" : 17
+        },
+        "measuredRows" : 141,
+        "recoveryRetriesTotal" : 0,
+        "rowsWithExitTelemetry" : 141
+      },
+      "cacheTotals" : {
+        "diskL2Evictions" : 51,
+        "diskL2Hits" : 1099,
+        "diskL2Misses" : 41433,
+        "diskL2Stores" : 1661,
+        "kvPrefixHits" : 0,
+        "kvPrefixMisses" : 0,
+        "pagedEvictions" : 0,
+        "ssmCompanionHits" : 1107,
+        "ssmCompanionMisses" : 15,
+        "ssmCompanionReDerives" : 32
+      },
+      "chatModelPassed" : 218,
+      "chatModelScored" : 328,
+      "correctFileDeliveryRate" : 0.6891891891891891,
+      "environment" : {
+        "caseCount" : 19,
+        "catalogHash" : "2e766b2b52f4cf37",
+        "chip" : "Apple M5 Max",
+        "commit" : "1bbd959",
+        "contributor" : "jax-0n-git",
+        "cpuCores" : 18,
+        "harness" : "osaurus",
+        "judge" : "self-judge",
+        "lowPowerMode" : false,
+        "osVersion" : "26.6.2",
+        "powerSource" : "AC",
+        "runModel" : "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
+        "thermalState" : "nominal",
+        "totalRamMb" : 131072
+      },
+      "flakyCases" : 0,
+      "harness" : "osaurus",
+      "loopFreeRate" : 0.8652482269503546,
+      "meanAgentLoopWallTimeMs" : 32397.393333996442,
+      "meanCpuPercent" : 106.27664004871406,
+      "meanDecodeTokensPerSecond" : 54.656333932782566,
+      "meanFirstActionMs" : 3479.3476362298006,
+      "meanFirstStepContextTokens" : 3281.6714285714284,
+      "meanFrictionCalls" : 0.4722222222222222,
+      "meanPromptTokensPerTask" : 27386.18,
+      "meanTotalTokensPerTask" : 25851.86574074074,
+      "meanTtftMs" : 259.8568127579885,
+      "medianModelSteps" : 5,
+      "modelId" : "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
+      "peakCpuPercent" : 269.38998162150546,
+      "peakPhysFootprintMb" : 13743.737808227539,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 91,
+          "scored" : 141,
+          "skipReasons" : {
+            "other: no AppleScript model installed; applescript/mac_query delegation tools withheld — case skipped" : 3
+          },
+          "skipped" : 3
+        },
+        "apple_script" : {
+          "errored" : 0,
+          "passed" : 23,
+          "scored" : 32,
+          "skipReasons" : {
+            "other: liveProof environment not ready — Automation permission is denied for this process (error -1743). Grant Osaurus access to the target app under System Settings → Privacy & Security → Automation, then re-run locally." : 3
+          },
+          "skipped" : 3
+        },
+        "cache_proof" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 23,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 30,
+          "scored" : 49,
+          "skipped" : 0
+        },
+        "http_api" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 15,
+          "skipReasons" : {
+            "other: scenario: multimodal_image · port 58107" : 1,
+            "other: scenario: multimodal_video · port 58107" : 1
+          },
+          "skipped" : 2
+        },
+        "memory" : {
+          "errored" : 0,
+          "passed" : 1,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "micro_perf" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "reasoning_channel" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 13,
+          "skipped" : 0
+        },
+        "subagent" : {
+          "errorCategories" : {
+            "runtime_other" : 1
+          },
+          "errored" : 1,
+          "passed" : 33,
+          "scored" : 35,
+          "skipReasons" : {
+            "missingDependency: live spawn_model_residency lane unavailable on this host: residency lane unavailable: orchestrator 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is not installed locally" : 8,
+            "other: live image lane unavailable on this host: Image edit is not enabled for this agent." : 1,
+            "other: live image lane unavailable on this host: Image generation is not enabled for this agent." : 1,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'mlx-community/Qwen3.5-4B-OptiQ-4bit' is neither installed locally nor routable via a connected provider" : 2,
+            "other: live spawn_model_residency lane unavailable on this host: residency lane unavailable: target 'xai/grok-4.3' is neither installed locally nor routable via a connected provider" : 2
+          },
+          "skipped" : 14
+        }
+      },
+      "startedAt" : "2026-09-01T07:22:34Z",
+      "subsystemPassed" : 9,
+      "subsystemScored" : 16,
+      "topContextContributors" : [
+        "tool:redact_file=491",
+        "tool:search_and_extract=371",
+        "tool:detect_pii=353",
+        "tool:file_read=279",
+        "tool:render_chart=275",
+        "tool:spawn_batch=266"
+      ],
+      "totalPassed" : 227,
+      "totalScored" : 344
+    }
+  ]
+}
