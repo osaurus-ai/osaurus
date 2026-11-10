@@ -16,7 +16,17 @@
 import SwiftUI
 
 struct DatabaseSavedViewsView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+#if OSAURUS_DESIGN_SYSTEM
+    var inspectionTheme: (any ThemeProtocol)?
+#endif
+    private var theme: any ThemeProtocol {
+#if OSAURUS_DESIGN_SYSTEM
+        if let value = inspectionTheme { return value }
+#endif
+        return inheritedTheme
+    }
 
     let agentId: UUID
     /// Saved-view name to pre-select on first load (notification
@@ -50,7 +60,7 @@ struct DatabaseSavedViewsView: View {
                 .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .task { await reload() }
         .onChange(of: agentId) { _, _ in Task { await reload() } }
         .onChange(of: selection) { _, _ in Task { await runSelected() } }
@@ -67,45 +77,44 @@ struct DatabaseSavedViewsView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Saved Views", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(0.5)
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.tertiary)
                 Spacer()
                 Button {
                     Task { await reload() }
                 } label: {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 11))
+                    Image(systemName: "arrow.clockwise").glyphSize(11)
                 }
                 .buttonStyle(.borderless)
             }
-            .padding(.horizontal, 14).padding(.vertical, 9)
-            Divider().foregroundColor(theme.primaryBorder)
+            .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s8)
+            Divider().foregroundColor(theme.border.subtle)
             if isLoading {
-                ProgressView().padding(24)
+                ProgressView().padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
                 Spacer(minLength: 0)
             } else if views.isEmpty {
                 Text(
                     "No saved views yet. Ask the agent in chat to create one — it uses the `db_define_view` tool.",
                     bundle: .module
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-                .padding(16)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
                 Spacer(minLength: 0)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
+                    LazyVStack(alignment: .leading, spacing: theme.space.s2) {
                         ForEach(views, id: \.name) { view in
                             sidebarRow(view)
                         }
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, theme.space.s6)
+                    .padding(.vertical, theme.space.s6)
                 }
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(theme.secondaryBackground.opacity(0.25))
+        .background(theme.surface.hover)
     }
 
     @ViewBuilder
@@ -114,32 +123,30 @@ struct DatabaseSavedViewsView: View {
         Button {
             selection = view
         } label: {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: theme.space.s8) {
                 Image(systemName: view.pinned ? "pin.fill" : "eye")
-                    .font(.system(size: 11))
+                    .glyphSize(11)
                     .foregroundColor(
-                        view.pinned ? .orange : (isSelected ? theme.accentColor : theme.secondaryText)
+                        view.pinned
+                            ? .orange : (isSelected ? theme.action.primary.default.background : theme.text.secondary)
                     )
                     .frame(width: 14)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(view.name)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .componentInspectionText(53, role: .code, fallback: .caption, weight: isSelected ? 600 : 500, family: .code, theme: theme)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(view.renderHint)
-                        .font(.system(size: 9))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8).padding(.vertical, 6)
+            .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(isSelected ? theme.accentColor.opacity(0.12) : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .settingsChrome(isSelected ? .selected : nil)
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
@@ -150,16 +157,16 @@ struct DatabaseSavedViewsView: View {
         if let view = selection {
             VStack(alignment: .leading, spacing: 0) {
                 detailHeader(view)
-                Divider().foregroundColor(theme.primaryBorder)
+                Divider().foregroundColor(theme.border.subtle)
                 if isRunning {
-                    ProgressView().padding(24)
+                    ProgressView().padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
                     Spacer(minLength: 0)
                 } else if let preview = previewRows {
                     if preview.rows.isEmpty {
                         Text("No rows for this view.", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(16)
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                            .foregroundColor(theme.text.tertiary)
+                            .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
                         Spacer(minLength: 0)
                     } else {
                         previewGrid(preview)
@@ -169,17 +176,17 @@ struct DatabaseSavedViewsView: View {
                                     ? L("Preview shows the first row.")
                                     : L("Preview shows the first \(preview.rows.count) rows.")
                             )
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
+                            .componentInspectionText(53, role: .caption, fallback: .micro, theme: theme)
+                            .foregroundColor(theme.text.tertiary)
+                            .padding(.horizontal, theme.space.s12)
+                            .padding(.vertical, theme.space.s6)
                         }
                     }
                 } else if let error = loadError {
                     Text(error)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.red)
-                        .padding(16)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.status.error.foreground)
+                        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
                     Spacer(minLength: 0)
                 } else {
                     Spacer(minLength: 0)
@@ -188,20 +195,20 @@ struct DatabaseSavedViewsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             Text("Pick a view to preview its rows.", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-                .padding(24)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.horizontal, theme.space.s24).padding(.vertical, theme.space.s24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
     @ViewBuilder
     private func detailHeader(_ view: AgentSavedView) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
                 Text(view.name)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .componentInspectionText(53, role: .code, fallback: .code, family: .code, theme: theme)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
@@ -212,47 +219,41 @@ struct DatabaseSavedViewsView: View {
                         view.pinned ? "Unpin" : "Pin to Overview",
                         systemImage: view.pinned ? "pin.slash" : "pin"
                     )
-                    .font(.system(size: 11, weight: .medium))
+                    .componentInspectionText(53, role: .caption, fallback: .footnote, weight: 500, theme: theme)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
                 .fixedSize()
                 .localizedHelp("Pinned views appear as cards on the Database Overview.")
                 Button(role: .destructive) {
                     Task { await drop(view) }
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
+                        .glyphSize(11, weight: .medium)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(.red)
+                .assignedSettingsButtonStyle(.destructive, size: .compact)
                 .fixedSize()
                 .localizedHelp("Drop this saved view. The underlying tables are not affected.")
             }
             if let desc = view.description, !desc.isEmpty {
-                Text(desc).font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                Text(desc).catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription).foregroundColor(theme.text.secondary)
             }
             Text(view.sql)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .componentInspectionText(53, role: .code, fallback: .footnote, family: .code, theme: theme)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(4)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.tertiaryBackground.opacity(0.6))
-                )
+                .settingsChrome(.inset)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
                 )
                 .textSelection(.enabled)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(theme.secondaryBackground.opacity(0.4))
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s8)
+        .background(theme.surface.hover)
     }
 
     @ViewBuilder
@@ -350,3 +351,25 @@ struct DatabaseSavedViewsView: View {
         }
     }
 }
+
+#if OSAURUS_DESIGN_INSPECTOR
+extension DatabaseSavedViewsView {
+    static func inspectionPopulatedRows() -> some View { InspectorDatabaseSavedDisplay() }
+    fileprivate static func renderInspection(_ theme: any ThemeProtocol) -> some View {
+        var view = DatabaseSavedViewsView(agentId: UUID(uuidString: "ABC00000-0000-4000-8000-000000000053")!)
+        view.inspectionTheme = theme
+        let item = AgentSavedView(name: "local_notes_with_a_long_saved_view_name", sql: "SELECT id, title FROM local_notes WHERE archived = 0;", renderHint: "table", refresh: "manual", description: "Original saved-view header and SQL display. No query is run.", pinned: true, createdAt: Date(), updatedAt: Date())
+        return VStack(alignment: .leading, spacing: 12) {
+            view.sidebarRow(item)
+            view.detailHeader(item)
+        }.allowsHitTesting(false)
+    }
+}
+#endif
+
+#if OSAURUS_DESIGN_INSPECTOR
+private struct InspectorDatabaseSavedDisplay: View {
+    @ObservedObject private var manager = ThemeManager.shared
+    var body: some View { DatabaseSavedViewsView.renderInspection(manager.currentTheme) }
+}
+#endif

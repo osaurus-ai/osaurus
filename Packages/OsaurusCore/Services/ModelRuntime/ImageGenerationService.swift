@@ -53,6 +53,8 @@ public actor ImageGenerationService {
         let cancel: @Sendable () -> Void
     }
     private var producerJobs: [String: ProducerJob] = [:]
+    /// Drive loops queued or running, including jobs without an id.
+    private var activeDrives = 0
 
     /// Bundle metadata lookup/peak estimate, gate instance and GPU cleanup are replaceable.
     /// The production service and FluxEngine stream/drain implementations are
@@ -143,6 +145,14 @@ public actor ImageGenerationService {
             }
         }
         return LoadedModelSummary(name: name, bytes: bytes)
+    }
+
+    /// Memory-pressure unload: releases the resident image model only when
+    /// no job is queued or running. Returns the unloaded bundle name.
+    public func unloadIfIdle() async -> String? {
+        guard activeDrives == 0, let name = loadedDirectoryName else { return nil }
+        await unload()
+        return name
     }
 
     public func unload() async {
@@ -317,6 +327,8 @@ public actor ImageGenerationService {
         let stop = FluxInterrupt()
         let cancellation = ImageJobCancellation { try await self.metalGate.enterImageGeneration() }
         let producer = Task {
+            self.activeDrives += 1
+            defer { self.activeDrives -= 1 }
             try await cancellation.enter()
             self.cleanupGPUCache()
             let epoch = MLXErrorRecovery.errorSequence()
@@ -397,17 +409,10 @@ public actor ImageGenerationService {
             quantizationBits: local.quantizationBits,
             defaultSteps: flux3?.stamp.defaults.steps ?? entry?.defaultSteps,
             defaultGuidance: entry?.defaultGuidance,
-            capabilities: capabilities(kind: kind, canonical: local.canonicalName, entry: entry),
+            capabilities: capabilities(kind: kind, canonical: local.canonicalName, entry: entry, limits: limits),
             blockedReasons: local.blockedReasons,
             totalBytes: local.totalBytes,
-            requestLimits: limits.map {
-                ImageRequestLimits(minimumSteps: $0.minimumSteps, maximumSteps: $0.maximumSteps,
-                    fixedSteps: $0.fixedSteps, dimensionMultiple: $0.dimensionMultiple,
-                    minimumDimension: $0.minDimension, maximumDimension: $0.maxDimension,
-                    maximumPixels: $0.maxPixels, maximumImages: $0.maximumImages,
-                    maximumSourceImages: $0.maxSourceImages, formats: $0.supportedFormats.map(\.rawValue),
-                    samplers: $0.samplers, schedulers: $0.schedulers)
-            },
+            requestLimits: local.canEnterNativeLoadPath ? limits.map(ImageRequestLimits.init) : nil,
             defaultWidth: flux3?.stamp.defaults.width,
             defaultHeight: flux3?.stamp.defaults.height
         )
@@ -416,11 +421,14 @@ public actor ImageGenerationService {
     static func capabilities(
         kind: ModelKind,
         canonical: String?,
-        entry: ModelEntry?
+        entry: ModelEntry?,
+        limits: FluxModelLimits? = nil
     ) -> ImageModelCapabilities {
-        ImageModelRequestPolicy.capabilities(
+        var result = ImageModelRequestPolicy.capabilities(
             kind: kind.rawValue, canonical: canonical, supportsLoRA: entry?.supportsLoRA ?? false
         )
+        if let limits { result.editStrength = limits.supportsStrength }
+        return result
     }
 
     // MARK: - Generate / edit / upscale
@@ -456,6 +464,31 @@ public actor ImageGenerationService {
         }
     }
 
+    /// Refuses a job whose estimated peak the Memory Safety plan blocks,
+    /// naming the setting that refused it. An advisory estimate (FLUX 3) only
+    /// logs: declared bundle limits and real allocation failures stay
+    /// authoritative.
+    nonisolated static func admitMemory(peakBytes: Int64, advisory: Bool = false) throws {
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: ServerRuntimeSettingsStore.snapshot(),
+            baseLoadConfiguration: .osaurusProduction,
+            host: MemoryStatus.snapshot(),
+            request: VMLXMemoryRequestEstimate(workingSetBytes: UInt64(max(0, peakBytes))))
+        if advisory {
+            if !plan.blockingIssues.isEmpty {
+                print(
+                    "[Flux3] advisory_memory_estimate_bytes=\(peakBytes) issues=\(plan.blockingIssues.count); continuing within stamped limits"
+                )
+            }
+            return
+        }
+        if let issue = plan.blockingIssues.first {
+            throw ImageGenerationError.memoryAdmission(
+                field: issue.field, estimatedBytes: peakBytes,
+                budgetBytes: plan.resolvedLoadBudgetBytes.map { Int64(clamping: $0) }, message: issue.message)
+        }
+    }
+
     /// Metadata-only request estimate. No weights or GPU lease are acquired.
     /// Keep the request builder shared with execution so admission sees the
     /// actual defaults, batch and preview settings.
@@ -481,7 +514,7 @@ public actor ImageGenerationService {
         let mask = try params.maskImage.map(Self.stageInput)
         defer { if let mask { try? FileManager.default.removeItem(at: mask) } }
         let request = try Self.editRequest(params, info: target.info, sources: sources,
-            mask: mask, outputDir: OsaurusPaths.generatedImages())
+            mask: mask, outputDir: OsaurusPaths.generatedImages(), limits: limits)
         let query = engine ?? FluxEngine()
         return Int64(try await query.estimatedPeakBytes(for: request,
             modelURL: target.directory, name: target.engineName))
@@ -534,7 +567,7 @@ public actor ImageGenerationService {
                 try limits?.validate(Self.generationRequest(params, info: info, index: 0,
                     outputDir: OsaurusPaths.generatedImages(), nativeBatch: nativeBatch))
             }
-        ) { engine, outputDir, index, info, nativeBatch in
+        ) { engine, outputDir, index, info, nativeBatch, _ in
             var request = Self.generationRequest(params, info: info, index: index, outputDir: outputDir, nativeBatch: nativeBatch)
             request.interrupt = producerInterrupt
             return await engine.generate(request)
@@ -586,14 +619,14 @@ public actor ImageGenerationService {
             validate: { info, limits in
                 try Self.validateEdit(params, info: info, limits: limits)
             }
-        ) { engine, outputDir, _, info, _ in
+        ) { engine, outputDir, _, info, _, limits in
             let sources = try Self.stageInputs(params.sourceImages)
             guard !sources.isEmpty else {
                 throw ImageGenerationError.invalidRequest("edit requires at least one source image")
             }
             let mask = try params.maskImage.map { try Self.stageInput($0) }
             let request = try Self.editRequest(params, info: info, sources: sources, mask: mask,
-                outputDir: outputDir, interrupt: producerInterrupt)
+                outputDir: outputDir, limits: limits, interrupt: producerInterrupt)
             return await engine.edit(request)
         }
     }
@@ -626,13 +659,14 @@ public actor ImageGenerationService {
     }
 
     private static func editRequest(_ params: ImageEditParameters, info: ImageModelInfo,
-        sources: [URL], mask: URL?, outputDir: URL, interrupt: FluxInterrupt? = nil) throws -> ImageEditRequest {
+        sources: [URL], mask: URL?, outputDir: URL, limits: FluxModelLimits?,
+        interrupt: FluxInterrupt? = nil) throws -> ImageEditRequest {
         try ImageEditRequest(
             prompt: params.prompt,
                 sourceImages: sources,
                 mask: mask,
                 strength: ImageModelRequestPolicy(canonical: info.canonicalName)
-                    .editStrength(params.strength),
+                    .editStrength(params.strength, supportsPartialDenoising: limits?.supportsStrength),
                 width: params.width,
                 height: params.height,
                 steps: params.steps ?? info.defaultSteps ?? Self.defaultSteps(for: params.model),
@@ -667,7 +701,7 @@ public actor ImageGenerationService {
                              try SeedVR2BundleMetadata.validateUpscale(sourceWidth: width, sourceHeight: height,
                                  scale: params.scale, format: Self.engineFormat(params.outputFormat))
                          }
-                     }) { engine, outputDir, _, _, _ in
+                     }) { engine, outputDir, _, _, _, _ in
             let source = try Self.stageInput(params.sourceImage)
             let request = UpscaleRequest(
                 sourceImage: source,
@@ -697,7 +731,7 @@ public actor ImageGenerationService {
         count: Int = 1,
         estimatePeak: (@Sendable () async throws -> Int64)? = nil,
         validate: @escaping @Sendable (ImageModelInfo, FluxModelLimits?) throws -> Void = { _, _ in },
-        _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo, Bool) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
+        _ build: @escaping @Sendable (FluxEngine, URL, Int, ImageModelInfo, Bool, FluxModelLimits?) async throws -> AsyncThrowingStream<ImageGenEvent, Error>
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
             guard jobID.map({ producerJobs[$0] == nil }) ?? true else {
@@ -717,7 +751,9 @@ public actor ImageGenerationService {
             // the consumer task: it must retain and drain the engine producer.
             let observer = interrupt?.observeInterrupt(cancel)
             let task = Task {
+                self.activeDrives += 1
                 defer {
+                    self.activeDrives -= 1
                     if let observer { interrupt?.removeInterruptObserver(observer) }
                     if let jobID { self.producerJobs.removeValue(forKey: jobID) }
                 }
@@ -783,20 +819,9 @@ public actor ImageGenerationService {
                             }
                         }
                         if let peak = estimatedPeak {
-                            let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
-                                for: ServerRuntimeSettingsStore.snapshot(),
-                                baseLoadConfiguration: .osaurusProduction,
-                                host: MemoryStatus.snapshot(),
-                                request: VMLXMemoryRequestEstimate(workingSetBytes: UInt64(peak)))
                             let target = try resolvedTarget ?? self.resolveLoadTarget(requestedModel)
                             let advisory = ImageModelRequestPolicy(canonical: target.info.canonicalName).estimatesAreAdvisory
-                            if advisory, !plan.blockingIssues.isEmpty {
-                                print("[Flux3] advisory_memory_estimate_bytes=\(peak) issues=\(plan.blockingIssues.count); continuing within stamped limits")
-                            }
-                            if !advisory, let issue = plan.blockingIssues.first {
-                                throw ImageGenerationError.memoryAdmission(field: issue.field,
-                                    estimatedBytes: peak, message: issue.message)
-                            }
+                            try Self.admitMemory(peakBytes: peak, advisory: advisory)
                         }
                         continuation.yield(.loadingModel(model: requestedModel))
                         let prepared = try await self.ensureLoaded(requestedModel, expected: kind,
@@ -819,7 +844,7 @@ public actor ImageGenerationService {
                         // after a recovered GPU error. Do not start another one.
                         if self.recoveredErrorSince(mlxErrorEpoch) != nil { break }
                         guard let modelInfo else { break }
-                        let stream = try await build(engine, outputDir, index, modelInfo, nativeBatch)
+                        let stream = try await build(engine, outputDir, index, modelInfo, nativeBatch, modelLimits)
                         await self.testStreamCheckpoint?(.created(index))
                         await self.testStreamCheckpoint?(.willDrain(index))
                         for try await event in stream {

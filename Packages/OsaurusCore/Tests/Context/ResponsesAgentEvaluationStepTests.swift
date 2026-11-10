@@ -232,4 +232,54 @@ struct ResponsesAgentEvaluationStepTests {
         }
     }
 
+    @Test func diskSessionPreparationRunsOnlyAtRequestedBoundaries() async throws {
+        let engine = Engine(row(), close: true)
+        var preparedAfterRequestCounts: [Int] = []
+        let result = await CacheProofEvaluator.runConversation(
+            queries: ["one", "two", "three", "four"], model: "fixture-model",
+            startNewSessionBeforeTurns: [2, 4], engine: engine,
+            prepareNewSession: { model in
+                #expect(model == "fixture-model")
+                preparedAfterRequestCounts.append(await engine.requests.count)
+            }
+        )
+        let requests = await engine.requests
+        #expect(preparedAfterRequestCounts == [1, 3])
+        #expect(requests.count == 4 && result.visibleTurns.count == 4)
+        #expect(requests[1].input.count == 1 && requests[3].input.count == 1)
+        #expect(requests[2].input.contains { $0.role == "assistant" })
+        #expect(requests[0].sessionID != requests[1].sessionID)
+        #expect(requests[1].sessionID == requests[2].sessionID)
+        #expect(requests[2].sessionID != requests[3].sessionID)
+    }
+
+    @Test func failedDiskSessionPreparationRetainsPriorTurnAndStopsBeforeAnotherRequest() async {
+        let engine = Engine(row(), close: true)
+        let result = await CacheProofEvaluator.runConversation(
+            queries: ["first", "must not run"], model: "fixture-model",
+            startNewSessionBeforeTurns: [2], engine: engine,
+            prepareNewSession: { _ in
+                throw NSError(domain: "fixture", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "fixture model drain failed"
+                ])
+            }
+        )
+        #expect(await engine.requests.count == 1)
+        #expect(result.visibleTurns == ["Original answer."])
+        #expect(result.turnMetrics?.count == 1)
+        #expect(result.error?.contains("fixture model drain failed") == true)
+        #expect(result.skipReason == nil)
+    }
+
+    @Test func ordinaryFreshSessionDoesNotRequireModelUnload() async {
+        let engine = Engine(row(), close: true)
+        let result = await CacheProofEvaluator.runConversation(
+            queries: ["one", "two"], model: "fixture-model",
+            startNewSessionBeforeTurns: [2], engine: engine
+        )
+        #expect(await engine.requests.count == 2)
+        #expect(result.error == nil)
+        #expect(result.visibleTurns.count == 2)
+    }
+
 }

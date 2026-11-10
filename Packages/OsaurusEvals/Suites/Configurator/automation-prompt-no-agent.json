@@ -1,0 +1,52 @@
+{
+  "id": "configurator.automation-prompt-no-agent",
+  "domain": "configurator",
+  "label": "configurator • tool-less automation with instructions alone (no agent, no workflow)",
+  "query": "Every morning at 7:30, give me a short motivational quote.",
+  "notes": "Nothing to call and no tools needed, no custom agents and no workflows exist. The routing rule says `instructions` alone (one tool-less model answer): a daily 07:30 schedule whose action is the prompt. Creating an agent for this, or refusing because no agent exists, fails.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load",
+        "architect_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "instructions"
+          }
+        }
+      ],
+      "argsMustNotContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "agents:"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "agent:"
+          }
+        }
+      ],
+      "expectAutomations": [
+        {
+          "sourceKind": "schedule",
+          "action": "prompt",
+          "instructionsContain": "quote"
+        }
+      ],
+      "expectAutomationCount": 1,
+      "maxIterations": 8
+    }
+  }
+}

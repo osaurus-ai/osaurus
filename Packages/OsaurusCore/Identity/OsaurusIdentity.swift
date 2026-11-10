@@ -41,6 +41,7 @@ public struct OsaurusIdentity: Sendable {
         defer { seed.zeroOut() }
         let mnemonic = try MasterKeyMnemonic.mnemonic(forKey: seed)
         try MasterMnemonicStore.store(mnemonic)
+        await SyncWalletLink.linkNewWallet(masterKey: seed)
 
         let deviceId = try await ensureDeviceAttested()
         let recovery = RecoveryManager.configure(address: result.osaurusId)
@@ -157,6 +158,7 @@ public struct OsaurusIdentity: Sendable {
         // not undo the master install that just succeeded. Without a device
         // ID the re-mint below degrades to the legacy layout.
         let deviceScope = try? await ensureDeviceAttested()
+        await SyncWalletLink.linkNewWallet(masterKey: seed)
 
         APIKeyManager.shared.reload()
         var drift = IdentityHealthCheck.diagnose(
@@ -227,6 +229,7 @@ public struct OsaurusIdentity: Sendable {
         MasterKey.delete()
         MasterMnemonicStore.delete()
         APIKeyManager.shared.deleteAll()
+        SyncWalletLink.clear()
 
         for agent in AgentManager.shared.agents where !agent.isBuiltIn {
             guard agent.agentIndex != nil || agent.agentAddress != nil else { continue }

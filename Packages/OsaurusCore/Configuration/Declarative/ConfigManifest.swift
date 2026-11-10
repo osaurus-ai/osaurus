@@ -88,6 +88,12 @@ public struct ConfigKeySpec: Sendable {
     }
 }
 
+/// A retired top-level section still accepted on input.
+public struct ConfigLegacySectionSpec: Sendable {
+    public let name: String
+    public let value: ConfigValueSpec
+}
+
 /// One top-level document section.
 public struct ConfigSectionSpec: Sendable {
     public let id: ConfigSectionID
@@ -110,8 +116,9 @@ public enum ConfigManifest {
     public static let version = 1
 
     /// Every section, in canonical render order. This table IS the schema.
-    /// Server runtime, chat behavior, and app shell sections were removed
-    /// in scope reduction 2 — those live in the Settings UI only.
+    /// Server runtime settings were removed in scope reduction 2 and live in
+    /// the Settings UI only, as does everything on the Chat and General
+    /// pages that `chat` / `app` do not list.
     public static let sections: [ConfigSectionSpec] = [
         ConfigSectionSpec(
             .memory,
@@ -128,7 +135,7 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .harnessRuntimes,
-            comment: "external agent harnesses an agent can run on (Agents → Runtimes)",
+            comment: "external agent harnesses an agent can run on (Settings → Runtimes)",
             value: .entityList(
                 [
                     ConfigKeySpec(
@@ -186,9 +193,83 @@ public enum ConfigManifest {
             ])),
 
         ConfigSectionSpec(
+            .configurator,
+            comment: "the built-in helper behind Osaurus questions and settings changes (Settings → Agents → Configurator; its name is fixed)",
+            value: .mapping([
+                ConfigKeySpec(
+                    "model", .scalar(.string, example: "null", nullable: true),
+                    comment: "same format as default_agent.model",
+                    moreComments: ["null = use the Orchestrator's model"]),
+                ConfigKeySpec(
+                    "temperature", .scalar(.number, example: "null", nullable: true),
+                    comment: "0..2 or null (the model's own default)"),
+                ConfigKeySpec(
+                    "system_prompt", .scalar(.string, example: "\"\""),
+                    comment: "extra instructions after the built-in ones"),
+            ])),
+
+        ConfigSectionSpec(
             .activeAgent,
             comment: "which agent NEW chats open with: \"default\" or a custom agent's name (legacy key: active_agent)",
             value: .scalar(.string, example: "default")),
+
+        ConfigSectionSpec(
+            .modelDefaults,
+            comment: "model roles from Models → Model Defaults (the chat's own model is per agent: default_agent.model / agents[].model)",
+            value: .mapping([
+                ConfigKeySpec(
+                    "core_model", .scalar(.string, example: "foundation", nullable: true),
+                    comment: "memory, chat titles, follow-ups, transcription cleanup; same format as default_agent.model",
+                    moreComments: ["null = use the chat's model"]),
+                ConfigKeySpec(
+                    "compaction_model", .scalar(.string, example: "null", nullable: true),
+                    comment: "summarizes older messages near the context limit",
+                    moreComments: ["null = use the chat's model"]),
+            ])),
+
+        ConfigSectionSpec(
+            .chat,
+            comment: "everyday Chat page switches (Top P, Max Tool Attempts, and Context Window Cap stay in Settings)",
+            value: .mapping([
+                ConfigKeySpec(
+                    "smooth_streaming", .scalar(.boolean, example: "true"),
+                    comment: "pace the visible reveal evenly"),
+                ConfigKeySpec(
+                    "group_activity", .scalar(.boolean, example: "true"),
+                    comment: "Group Thinking & Tool Activity into one \"Worked for …\" row"),
+                ConfigKeySpec(
+                    "expand_thinking", .scalar(.boolean, example: "false"),
+                    comment: "Expand Thinking While Streaming"),
+                ConfigKeySpec(
+                    "spell_check", .scalar(.boolean, example: "false"),
+                    comment: "Check Spelling While Typing"),
+                ConfigKeySpec(
+                    "auto_titles", .scalar(.boolean, example: "true"),
+                    comment: "Automatically Name Chats"),
+                ConfigKeySpec(
+                    "follow_up_suggestions", .scalar(.boolean, example: "true"),
+                    comment: "Suggest Follow-Up Questions"),
+                ConfigKeySpec(
+                    "clipboard_monitoring", .scalar(.boolean, example: "true"),
+                    comment: "offer copied text when the hotkey opens chat"),
+                ConfigKeySpec(
+                    "keep_mac_awake", .scalar(.boolean, example: "true"),
+                    comment: "Keep Mac Awake While Agents Run"),
+            ])),
+
+        ConfigSectionSpec(
+            .app,
+            comment: "app basics from Settings → General (dock icon, updates, and reset stay in Settings)",
+            value: .mapping([
+                ConfigKeySpec(
+                    "hotkey", .scalar(.string, example: "\"cmd+;\"", nullable: true),
+                    comment: "Global Hotkey: cmd/shift/option/ctrl + one key, e.g. \"cmd+shift+o\"",
+                    moreComments: ["null = no hotkey"]),
+                ConfigKeySpec("start_at_login", .scalar(.boolean, example: "false")),
+                ConfigKeySpec(
+                    "show_notifications", .scalar(.boolean, example: "true"),
+                    comment: "toasts for background tasks and events"),
+            ])),
 
         ConfigSectionSpec(
             .agents,
@@ -205,6 +286,10 @@ public enum ConfigManifest {
                         comment: "required on create; one line, 1..160 characters and at most 1024 UTF-8 bytes"),
                     ConfigKeySpec("system_prompt", .scalar(.string, example: "\"\"")),
                     ConfigKeySpec(
+                        "avatar", .scalar(.string, example: "green"),
+                        comment: "mascot: " + AgentMascot.allCases.map(\.rawValue).joined(separator: " | ")
+                            + "; \"\" = the name's initial"),
+                    ConfigKeySpec(
                         "model", .scalar(.string, example: "null", nullable: true),
                         comment: "same format as default_agent.model; omitted = the Orchestrator's model"),
                     ConfigKeySpec(
@@ -213,6 +298,9 @@ public enum ConfigManifest {
                     ConfigKeySpec(
                         "max_tokens", .scalar(.integer, example: "null", nullable: true)),
                     ConfigKeySpec("show_response_metrics", .scalar(.boolean, example: "false")),
+                    ConfigKeySpec(
+                        "follow_up_suggestions", .scalar(.boolean, example: "true"),
+                        comment: "false hides follow-up suggestions in this agent's chats; chat.follow_up_suggestions still gates all agents"),
                     ConfigKeySpec(
                         "generation_settings", .nullableMapping(agentGenerationKeys),
                         comment: "replaces advanced overrides; absent preserves, null clears"),
@@ -250,8 +338,24 @@ public enum ConfigManifest {
                             ConfigKeySpec(
                                 "render_chart_enabled", .scalar(.boolean, example: "false")),
                             ConfigKeySpec(
+                                "calculator_enabled", .scalar(.boolean, example: "false"),
+                                comment: "exact arithmetic tool; enable for agents that work with numbers",
+                                moreComments: ["(finance, budgets, invoices, data analysis, unit conversions)"]),
+                            ConfigKeySpec(
+                                "redaction_tools_enabled", .scalar(.boolean, example: "false"),
+                                comment: "detect_pii + redact_file in host-folder chats (PII scrubbing)"),
+                            ConfigKeySpec(
+                                "task_checklist_enabled", .scalar(.boolean, example: "true"),
+                                comment: "todo checklist + complete; default on"),
+                            ConfigKeySpec(
+                                "clarify_enabled", .scalar(.boolean, example: "true"),
+                                comment: "ask the user a question mid-task; default on"),
+                            ConfigKeySpec(
+                                "artifacts_enabled", .scalar(.boolean, example: "true"),
+                                comment: "share_artifact file cards in chat; default on"),
+                            ConfigKeySpec(
                                 "relay_enabled", .scalar(.boolean, example: "false"),
-                                comment: "relay tunnel forwards to this agent",
+                                comment: "remote access: the agent relay forwards to this agent",
                                 moreComments: ["(HIGH RISK: reachable from outside)"]),
                             ConfigKeySpec(
                                 "apple_apps", .scalarList(.string, example: ["calendar", "reminders"]),
@@ -302,7 +406,7 @@ public enum ConfigManifest {
                             ConfigKeySpec("enabled", .scalar(.boolean, example: "true")),
                             ConfigKeySpec(
                                 "network_enabled", .scalar(.boolean, example: "true"),
-                                comment: "outbound network from the sandbox VM"),
+                                comment: "outbound network for this agent's sandbox commands"),
                             ConfigKeySpec(
                                 "allowed_domains", .scalarList(.string, example: []),
                                 comment: "egress allowlist; empty = unrestricted"),
@@ -335,8 +439,16 @@ public enum ConfigManifest {
                         comment: "folder PATH hint; attached when it exists locally,",
                         moreComments: ["otherwise the apply asks the user to pick it"]),
                     ConfigKeySpec(
+                        "working_folder_read_only", .scalar(.boolean, example: "false"),
+                        comment: "true: the agent reads and searches its folder but never",
+                        moreComments: ["writes, edits, copies, undoes, redacts, or runs commands there"]),
+                    ConfigKeySpec(
                         "source_template", .scalar(.string, example: "\"\""),
                         comment: "provenance: agent template this agent came from"),
+                    ConfigKeySpec(
+                        "workflows", .scalarList(.string, example: []),
+                        comment: "installed workflow NAMES this agent may call (as workflow_<slug> tools);",
+                        moreComments: ["list REPLACES the set; [] turns them off; installing stays in Main window → Workflows"]),
                     ConfigKeySpec(
                         "runtime", .scalar(.string, example: "builtin"),
                         comment: "\"builtin\" or a harness_runtimes name; a harness",
@@ -344,6 +456,18 @@ public enum ConfigManifest {
                     ConfigKeySpec(
                         "claude_code", .mapping(ConfigManifest.claudeCodeKeys(includeConfigWrites: false)),
                         comment: "used when runtime is a claude_code harness"),
+                    ConfigKeySpec(
+                        "shared_tool_approval",
+                        .mapping([
+                            ConfigKeySpec(
+                                "mode", .scalar(.string, example: "deny", allowed: ["deny", "ask_owner"]),
+                                comment: "deny | ask_owner"),
+                            ConfigKeySpec(
+                                "timeout_seconds", .scalar(.integer, example: "600"),
+                                comment: "30..86400; declined when the owner doesn't answer"),
+                        ]),
+                        comment: "a teammate / remote caller hits an ask tool on this shared agent:",
+                        moreComments: ["deny fails the call; ask_owner waits for your approval"]),
                 ],
                 requiredKey: "name")),
 
@@ -465,7 +589,7 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .channels,
-            comment: "channel routing (credentials/routes stay in Settings)",
+            comment: "channels: what each receives (allowlists), who answers (routing), what it sends (write_*, posting)",
             value: .mapping([
                 ConfigKeySpec(
                     "write_enabled", .scalar(.boolean, example: "true"),
@@ -476,26 +600,41 @@ public enum ConfigManifest {
                     .mapping(
                         ConfigManifestChannelExtras.platformKeys(
                             spaceComment: "configured guild ids;",
-                            includeBotTokenRef: true))),
+                            includeBotTokenRef: true,
+                            accountIdExample: "discord-<id>"))),
                 ConfigKeySpec(
                     "slack",
                     .mapping(
                         ConfigManifestChannelExtras.platformKeys(
                             spaceComment: "configured team ids;",
                             includeBotTokenRef: true,
-                            includeAppTokenRef: true))),
+                            includeAppTokenRef: true,
+                            accountIdExample: "slack-<team id>"))),
                 ConfigKeySpec(
                     "telegram",
                     .mapping(
                         ConfigManifestChannelExtras.platformKeys(
                             spaceComment: nil,
-                            includeBotTokenRef: true))),
+                            includeBotTokenRef: true,
+                            accountIdExample: "telegram-<id>"))),
                 ConfigKeySpec(
                     "imessage",
                     .mapping(ConfigManifestChannelExtras.platformKeys(spaceComment: nil))),
                 ConfigKeySpec(
                     "whatsapp",
                     .mapping(ConfigManifestChannelExtras.platformKeys(spaceComment: nil))),
+                ConfigKeySpec("email", .mapping(ConfigManifestChannelExtras.emailKeys)),
+                ConfigKeySpec(
+                    "connections",
+                    .entityList(
+                        [
+                            ConfigKeySpec(
+                                "connection", .scalar(.string, example: "Ops bridge"),
+                                comment: "n8n / custom HTTP connection name or id"),
+                            ConfigManifestChannelExtras.routingKey,
+                        ],
+                        requiredKey: "connection"),
+                    comment: "routing for n8n / custom HTTP connections (created in Settings)"),
             ])),
 
         ConfigSectionSpec(
@@ -668,8 +807,20 @@ public enum ConfigManifest {
             ])),
 
         ConfigSectionSpec(
-            .schedules,
-            comment: "scheduled runs of CUSTOM agents",
+            .automations,
+            comment: "automations: a trigger (schedule, folder, webhook, rss, sse, run_failed, app) that runs an installed workflow, one tool-less model answer (instructions alone), or a CUSTOM agent for tool work; channel messages are channels.<platform>.routing",
+            value: .entityList(ConfigManifestEventKeys.itemKeys, requiredKey: "name")),
+    ]
+
+    /// Pre-automations sections still accepted on input (translated to
+    /// `automations:` before planning). Validated like any section; never
+    /// rendered in the schema reference, JSON schema, or example.
+    static let legacySections: [ConfigLegacySectionSpec] = [
+        ConfigLegacySectionSpec(
+            name: "events",
+            value: .entityList(ConfigManifestEventKeys.itemKeys, requiredKey: "name")),
+        ConfigLegacySectionSpec(
+            name: "schedules",
             value: .entityList(
                 [
                     ConfigKeySpec("name", .scalar(.string, example: "Morning news")),
@@ -704,9 +855,8 @@ public enum ConfigManifest {
                 ],
                 requiredKey: "name")),
 
-        ConfigSectionSpec(
-            .watchers,
-            comment: "folder watchers running CUSTOM agents",
+        ConfigLegacySectionSpec(
+            name: "watchers",
             value: .entityList(
                 [
                     ConfigKeySpec("name", .scalar(.string, example: "Downloads sorter")),
@@ -733,6 +883,12 @@ public enum ConfigManifest {
                     ConfigKeySpec("enabled", .scalar(.boolean, example: "true")),
                 ],
                 requiredKey: "name")),
+    ]
+
+    /// Retired `channels.<platform>` keys still accepted on input
+    /// (translated to the platform's default `automations:` entry).
+    static let legacyChannelPlatformKeys: Set<String> = [
+        "inbound_enabled", "inbound_agent", "require_mention", "continue_threads", "auto_reply_enabled",
     ]
 
     static func claudeCodeKeys(includeConfigWrites: Bool) -> [ConfigKeySpec] {
@@ -786,10 +942,16 @@ public enum ConfigManifest {
     /// dotted path (`""` = root, `"agents[]"` = one agents item, ...).
     public static let knownKeys: [String: Set<String>] = {
         var out: [String: Set<String>] = [
-            "": Set(sections.map { $0.id.rawValue } + ["version"])
+            "": Set(sections.map { $0.id.rawValue } + legacySections.map(\.name) + ["version"])
         ]
         for section in sections {
             collectKnownKeys(path: section.id.rawValue, value: section.value, into: &out)
+        }
+        for section in legacySections {
+            collectKnownKeys(path: section.name, value: section.value, into: &out)
+        }
+        for platform in ConfigChannelPlatform.allCases {
+            out["channels.\(platform.rawValue)", default: []].formUnion(legacyChannelPlatformKeys)
         }
         return out
     }()
@@ -818,6 +980,9 @@ public enum ConfigManifest {
         var out: [String: String] = [:]
         for section in sections {
             collectRequiredKeys(path: section.id.rawValue, value: section.value, into: &out)
+        }
+        for section in legacySections {
+            collectRequiredKeys(path: section.name, value: section.value, into: &out)
         }
         return out
     }()
@@ -876,6 +1041,7 @@ public enum ConfigManifest {
     static let sectionValueByName: [String: ConfigValueSpec] = {
         var out: [String: ConfigValueSpec] = [:]
         for section in sections { out[section.id.rawValue] = section.value }
+        for section in legacySections { out[section.name] = section.value }
         return out
     }()
 

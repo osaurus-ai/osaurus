@@ -42,7 +42,7 @@ direct transport) or from an egress destination (`RequestLog.inferLocality`).
 | Chain head sidecar  | `~/.osaurus/activity/activity.head`          | Plain text `"<seq>:<hash>\n"`, written atomically after every append.                   |
 | Policy              | `~/.osaurus/config/activity-log.json`        | `retentionDays` (int or null = forever), `storeContent` (bool).                        |
 
-### 2.1 Schema (`PRAGMA user_version = 1`)
+### 2.1 Schema (`PRAGMA user_version = 2`)
 
 ```sql
 CREATE TABLE activity (
@@ -61,11 +61,18 @@ CREATE TABLE activity (
   privacy_filter_applied INTEGER NOT NULL DEFAULT 0, redacted_count INTEGER,
   finish_reason TEXT, error_message TEXT, title TEXT NOT NULL,
   payload BLOB NOT NULL,                   -- canonical JSON of the full RequestLog (see §4)
-  prev_hash TEXT NOT NULL, hash TEXT NOT NULL
+  prev_hash TEXT NOT NULL, hash TEXT NOT NULL,
+  workflow_run_id TEXT,                    -- v2; indexed (idx_activity_workflow_run)
+  task_id TEXT,                            -- additive; indexed (idx_activity_task)
+  participant_key TEXT                     -- additive; indexed (idx_activity_participant)
 );
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 -- meta rows: anchor_seq, anchor_hash (see §4.3)
 ```
+
+v1 → v2 adds `workflow_run_id` with `ALTER TABLE` and its index; `task_id`
+and `participant_key` are added the same way on open. Existing rows keep a NULL column and their
+payload, so their hashes still verify.
 
 The indexed columns are a *projection* of the payload for filtering and
 aggregation. **The payload is the record.** Verify and Export read the
@@ -111,14 +118,19 @@ Optional fields are **omitted** when nil.
 | `connection`                        | `RequestConnectionInfo?`   | `providerId`, `remoteEndpoint`, `transport` (`local`/`direct`/`secureChannel`), `mode` (`local`/`remoteInference`/`remoteAgentRun`), `accessKeyId`, `audience`. |
 | `egress`                            | `EgressInfo?`              | `destinationLabel`, `destinationHost`, `bytesSent`, `bytesReceived`, `dataClasses[]`, `privacyFilterApplied`, `redactedSpanCount`, `details{}`. |
 | `agentId`, `agentName`, `sessionId`, `turnId`, `requestId` | | Attribution. `turnId` links a row to the chat assistant turn (delegated subagent and helper-loop rows inherit the parent turn). |
+| `workflowRunId`, `workflowNodeId`   | UUID string?, string?      | The workflow run (and step) the row was made in. Set on `workflow_run` / `workflow_node` rows and on every model, tool, and network row emitted inside a step (read from `ChatExecutionContext.currentWorkflowRunId` / `currentWorkflowNodeId`). |
+| `taskId`                            | UUID string?               | The task the row was made in (`ChatExecutionContext.currentTaskId`): every model, tool, and network row of a background agent turn, automation run or helper. A `task` row and an `event` row carry their own task id. Omitted from the payload when nil. |
 | `pluginId`, `userAgent`, `clientIP` |                            | Inbound / plugin attribution.                                                                            |
+| `participant`                       | `ParticipantRef?`          | Who the row was done for when that isn't simply you: a workspace teammate, invite peer, remote agent, or channel sender (`kind`, `handle`, `wallet`, `agentName`, `agentAddress`, `ownerHandle`, channel identity), snapshot at write time. Read from `ChatExecutionContext.currentParticipant`, bound for a shared agent's inbound run, so every model, tool and network row of that run carries it; `interaction` rows carry the requester. Projected to the `participant_key` column (`Participant.key`: wallet, agent address, or `channel:<kind>:<sender>`). Omitted from the payload when nil, so older rows hash unchanged. |
+
+For in-process Chat/Responses inference, `temperature` and `maxTokens` describe caller overrides. An omitted output limit stays absent in the log and appears as defaults in Insights; it is resolved by the runtime/model bundle. A dispatch placeholder is not an explicit user cap. Explicit limits, including 16,384 and 1,048,576, remain recorded exactly. Request-rate and generation-rate fields have distinct timing scopes; the request log does not by itself establish the final effective sampler or bundle limit.
 
 `egress.details` is a flat `String → String` map. The store bounds it to
 **32 keys**, key length **64**, value length **2 048** characters
 (`ActivityLogStore.boundedDetails`). Emitters use it for category-specific
 facts (query, result count, audio seconds, media size…). Keys named
-`query`, `urls`, `arguments`, `result_preview`, `message` are treated as
-*content* and are withheld when content storage is off.
+`query`, `urls`, `arguments`, `result_preview`, `message`, `logs`, `task_title`,
+`attention_title` are treated as *content* and are withheld when content storage is off.
 
 ### 3.1 Categories and emitters
 
@@ -131,13 +143,18 @@ facts (query, result count, audio seconds, media size…). Keys named
 | `mcp_tool_call`        | `/mcp/<provider>/<tool>`; arguments, result preview, transport.                                                                                   | local (stdio) / remote  | `MCPProviderManager`                                                                         |
 | `channel_delivery`     | `/channels/<connection>/<room>`; method `PUBLISH` (proactive post) or `REPLY` (auto-reply to an inbound message). Metadata only, plus `attachments` data class when files were sent. | remote (iMessage: local) | `ChannelActivityLogger` ← `AgentChannelPublishService`, `AgentChannelInboundRelay`           |
 | `router_control`       | Osaurus Router control plane (`/workspaces/...`, `/id/...`, `/v1/media/...`, `/health`).                                                          | remote                  | `OsaurusRouterAPIClient`                                                                     |
-| `inbound_api`          | Any inbound HTTP request not classified above (incl. paired-peer requests, which are also egress: the response goes back over the Secure Channel). | local / remote (P2P)    | `HTTPHandler`                                                                                |
+| `inbound_api`          | Any inbound HTTP request not classified above (incl. paired-peer requests, which are also egress: the response goes back over the Secure Channel), and each agent change an iPhone asks for through Sync (method `SYNC`, path `/manage/<op>`, participant the iPhone; details `op`, `request_id`, `error`, never field values). | local / remote (P2P)    | `HTTPHandler`, `SyncManageFeed`                                                              |
 | `plugin_call`          | Plugin host API calls.                                                                                                                            | local                   | Plugin host                                                                                  |
 | `plugin_log`           | Plugin log lines (hidden by default; **Filter → Show plugin console logs**).                                                                      | local                   | Plugin host                                                                                  |
 | `embedding`            | One row per embedding batch (`/internal/embeddings`, or `/v1/embeddings` / `/api/embed` for API callers). Metadata only: `texts`, `chars`, `dims`, `purpose` (`memory_search`, `memory_index`, `tool_search`, `tool_index`, `skill_search`, `skill_index`, `knowledge_search`, `knowledge_index`, `method_search`, `method_index`, `plugin_embed`; absent for `/v1/embeddings`). | local                   | `MetalSafeEmbedder` (all local embedding funnels through it), `HTTPHandler`                  |
 | `audio_transcription`  | Speech-to-text: `/internal/audio_transcription` (`mode` = `live` dictation session or `file`) or `/v1/audio/transcriptions`. Transcript in `responseBody`; `audio_seconds`, `audio_bytes`, `audio_format`, `transcript_chars`. | local                   | `SpeechService`, `HTTPHandler`                                                               |
 | `speech_synthesis`     | Text-to-speech: `/internal/speech_synthesis` (local Pocket TTS) or `/v1/audio/speech` (OpenAI-compatible remote TTS). Spoken text in `requestBody`; `voice`, `chars`, `audio_seconds`, `provider`, `trigger` (`read_aloud`, `speak_tool`), `cancelled`. | local or remote         | `TTSService`                                                                                 |
 | `media_generation`     | Image / video jobs: `/internal/image_generate` (local MLX), `/v1/images/<op>` / `/v1/videos/<op>` (Venice), `/images/*`, `/videos/*` (API callers). Prompt in `requestBody`; `media_kind`, `operation` (`generate`, `edit`, `upscale`, `quote`), `count`, `size`, `steps`, `provider`/`backend`, `job_id`. Osaurus Cloud media is recorded by its `router_control` row instead. | local or remote         | `NativeImageJobCoordinator`, `MediaGenerationCoordinator`, `HTTPHandler`                     |
+| `workflow_run`         | One row per finished workflow run: method `RUN`, `/workflow/<slug>`; input in `requestBody`, output in `responseBody`; `workflow`, `workflow_id`, `status`, `caller`, `steps`, `failed_step`, `test`, `folder`. Status 200 completed, 499 cancelled, 500 failed / needs setup. | local                   | `WorkflowActivityLogger` ← `WorkflowRunService`                                              |
+| `workflow_node`        | One row per finished step (done or failed): method `STEP`, `/workflow/<slug>/<node>`; step input / output, model and tokens, `toolCalls[]` for tool and agentic steps; `workflow`, `node_name`, `kind`, `status`, `attempts`, `urls` (code-step fetches), `logs`. | local (remote when a code step fetched) | `WorkflowActivityLogger` ← `WorkflowRunService`                              |
+| `task`                 | One row per finished task (see `docs/TASK_QUEUE.md`): method `TASK`, `/tasks/<queue-slug>/<work>`; `task_id`, `task_title`, `queue`, `origin`, `work` (`agent_turn`, `workflow_run`, `subagent`), `state`, `reason`, `parent_task_id`, `root_task_id`, `depth`, `attempts`, `wait_ms`, `automation_id`. Status 200 succeeded, 204 skipped, 499 stopped / interrupted, 500 failed. Filtered and duplicate deliveries are not logged. Metadata only. | local                   | `TaskActivityLogger` ← `TaskBus`                                                             |
+| `event`                | One row per event occurrence (schedule, folder, webhook, channel message), written when it settles: source, action, status. Metadata only. | local                   | `EventActivityLogger`                                                                        |
+| `interaction`          | One row per settled "needs you" moment (`docs/AGENT_ATTENTION.md`): method `APPROVE`, `DENY`, `ALLOW_CONVERSATION`, `REPLY`, `DISMISS`, `TIMEOUT`, `ABANDON` or `RETRACT`, path `/attention/<kind>`; `DELIVER` for a non-blocking item when it is raised (an inbound message, a teammate starting a conversation); `MESSAGE` (`/conversations/participant_message`) when you write in a hosted conversation. Details: `attention_id`, `kind`, `attention_title` (content), `tool`, `approval_id`, `delivered_to`, `requester` / `requester_kind` / `requester_key`, `agent` / `agent_address`, `decision`, `surface`, `decided_by` / `decided_by_kind`, `scope`, `message` (reply text, content; never for a secret request), `wait_ms`. Status 200 granted or answered, 403 denied, 408 timed out (the only error, and the only interaction with a status dot), 499 abandoned or withdrawn. Source `P2P` for a teammate, invite-link peer or their agent, `Channel` for a channel sender, `Chat UI` for you and your paired phone. Title is the outcome and subject ("Approved web_fetch"). Tool arguments are never recorded. | local                   | `AttentionActivityLogger` ← `AttentionCenter`; `InboundSharedRunBridge.postOwnerMessage`    |
 | `system`               | Chain-of-custody events (§6). Listed under the **All** scope; select the **System** scope tab in Insights to see only them.                      | local                   | `ActivityLogStore`, `InsightsService`, `ActivityExportCoordinator`                           |
 
 **Double-write guard.** When an API caller hits `/v1/embeddings`,
@@ -432,7 +449,6 @@ Network traffic without rows:
 - Workspace / Secure Channel handshake, liveness and relay keep-alives.
 - The unauthenticated Osaurus Router announcements feed (`GET /announcements`)
   and health probe: no wallet headers, no body, no account data.
-- Themes API fetches.
 - GitHub skill / plugin imports and plugin registry downloads.
 - Sandbox package downloads (`pip`, `npm`, `go`) inside the Linux VM.
 - Anonymous telemetry, crash reports, app updates (Sparkle) and model
@@ -448,7 +464,8 @@ Local work without rows:
 - Tool execution that stays on this Mac (file reads, shell, AppleScript,
   Computer Use actions) — the model turns that chose them are logged with
   `toolCalls`; the side effects are not separately logged here (see the
-  agent run / file-history surfaces).
+  agent run / file-history surfaces). A workflow tool or agentic step lists
+  its calls in the `workflow_node` row's `toolCalls`.
 
 ---
 
@@ -464,6 +481,8 @@ Local work without rows:
 | Media / speech / embedding emitters      | `Packages/OsaurusCore/Services/Insights/MediaActivityLogger.swift`                    |
 | Channel delivery emitter                 | `Packages/OsaurusCore/Services/Insights/ChannelActivityLogger.swift`                  |
 | Search / MCP emitters                    | `Packages/OsaurusCore/Services/Insights/SearchActivityLogger.swift`, `MCPActivityLogger.swift` |
+| Workflow run / step emitter              | `Packages/OsaurusCore/Services/Insights/WorkflowActivityLogger.swift`                 |
+| Interaction emitter (approvals, questions, owner messages) | `Packages/OsaurusCore/Services/Attention/AttentionActivityLogger.swift` |
 | Export rendering and manifest            | `Packages/OsaurusCore/Services/Insights/ActivityExportService.swift`                  |
 | Export save-panel flow (+ `exported` row) | `Packages/OsaurusCore/Services/Insights/ActivityExportCoordinator.swift`             |
 | Wire capture for remote inference        | `Packages/OsaurusCore/Services/Provider/WireTransportProbe.swift`                     |

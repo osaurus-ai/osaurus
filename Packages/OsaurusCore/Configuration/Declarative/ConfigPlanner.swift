@@ -5,7 +5,7 @@
 //  Diffs an `OsaurusConfigDocument` against current Osaurus state and
 //  produces a `ConfigPlan`. Merge-by-default: only sections present in
 //  the document are considered, and within entity sections (agents,
-//  mcp_servers, models, plugins, providers, schedules, watchers) only
+//  mcp_servers, models, plugins, providers, events) only
 //  listed entries change — unless `prune` is set, which additionally
 //  deletes unlisted entries of the DECLARED sections.
 //
@@ -39,6 +39,11 @@ enum ConfigRisk {
     static func autoPolicySendsStillAsk(_ tool: String) -> String {
         "Sets tool `\(tool)` to auto — drafts will run without asking; calls that send as the user still show an approval card every time."
     }
+    /// The sandbox adapters run commands and write files in the VM; only
+    /// the workspace tools are meant to reach them.
+    static func sandboxAdapterEnabled(_ tool: String) -> String {
+        "Enables `\(tool)` directly — it runs commands or writes files in the sandbox without going through the workspace tools."
+    }
     static func computerUse(_ agent: String) -> String {
         "Gives agent `\(agent)` screen control (computer use)."
     }
@@ -64,7 +69,7 @@ enum ConfigRisk {
         AppleApp.sorted(desired.subtracting(current).intersection(riskyAppleApps)).map { appleApp(agent, $0) }
     }
     static func relayEnabled(_ agent: String) -> String {
-        "Exposes agent `\(agent)` through the relay tunnel (reachable from outside this Mac)."
+        "Turns on remote access for agent `\(agent)` (reachable from outside this Mac)."
     }
     static func alwaysAllowSubagent(_ kind: String) -> String {
         "Sets subagent kind `\(kind)` to always_allow — its jobs run without asking."
@@ -106,7 +111,10 @@ enum ConfigRisk {
         "Lets agents SEND messages on \(platform) (to its write allowlist)."
     }
     static func channelAutoReply(_ platform: String) -> String {
-        "Inbound \(platform) messages get replies without per-message confirmation."
+        "Matching \(platform) messages get replies without per-message confirmation."
+    }
+    static func channelAutonomousPosting(_ agent: String, _ platform: String) -> String {
+        "Lets agent `\(agent)` post on \(platform) on its own without asking first."
     }
     static func deleteCommand(_ name: String) -> String {
         "Deletes slash command `/\(name)` (prune)."
@@ -130,11 +138,11 @@ enum ConfigRisk {
     static func deleteMCPServer(_ name: String) -> String {
         "Removes MCP server `\(name)` and its tools (prune)."
     }
-    static func deleteSchedule(_ name: String) -> String {
-        "Deletes schedule `\(name)` (prune)."
+    static func deleteEvent(_ name: String) -> String {
+        "Deletes event `\(name)` (prune)."
     }
-    static func deleteWatcher(_ name: String) -> String {
-        "Deletes watcher `\(name)` (prune)."
+    static func unsignedWebhook(_ name: String) -> String {
+        "Webhook event `\(name)` accepts any caller that knows its URL (no signature or secret check)."
     }
     static func deleteSearchProvider(_ id: String) -> String {
         "Removes search provider `\(id)` and its stored key (prune)."
@@ -165,19 +173,20 @@ enum ConfigPlanner {
     /// Build the plan. Throws `ConfigPlanIssues` when the document is
     /// invalid (every issue listed at once).
     static func plan(document: OsaurusConfigDocument, prune: Bool) throws -> ConfigPlan {
+        let (translated, legacyNotes) = document.translatingLegacyEvents()
         var issues: [String] = []
-        validate(document: document, prune: prune, into: &issues)
-        if prune { validatePruneAgentReferences(document: document, into: &issues) }
+        validate(document: translated, prune: prune, into: &issues)
+        if prune { validatePruneAgentReferences(document: translated, into: &issues) }
         if !issues.isEmpty { throw ConfigPlanIssues(issues: issues) }
 
         // Post-validation, every model reference resolves; rewrite them to
         // canonical form so the plan shows exactly what apply will store
         // (e.g. bare `claude-x` -> `anthropic/claude-x`).
-        let document = normalizedModelReferences(in: document)
+        let document = normalizedModelReferences(in: translated)
 
         let current = ConfigExporter.export()
         var actions: [ConfigPlanAction] = []
-        var notes: [String] = []
+        var notes: [String] = legacyNotes
 
         if let section = document.memory {
             planMemory(section, current: current.memory, into: &actions)
@@ -188,11 +197,23 @@ enum ConfigPlanner {
         if let section = document.defaultAgent {
             planDefaultAgent(section, current: current.defaultAgent, into: &actions)
         }
+        if let section = document.configurator {
+            planConfigurator(section, current: current.configurator, into: &actions)
+        }
         if let entries = document.agents {
             planAgents(entries, prune: prune, into: &actions, notes: &notes)
         }
         if let name = document.activeAgent {
             planActiveAgent(name, current: current.activeAgent ?? "default", into: &actions)
+        }
+        if let section = document.modelDefaults {
+            planModelDefaults(section, current: current.modelDefaults, into: &actions)
+        }
+        if let section = document.chat {
+            planChat(section, current: current.chat, into: &actions)
+        }
+        if let section = document.app {
+            planApp(section, current: current.app, into: &actions)
         }
         if let section = document.tools {
             planTools(section, into: &actions, notes: &notes)
@@ -224,14 +245,26 @@ enum ConfigPlanner {
         if let section = document.searchProviders {
             planSearchProviders(section, prune: prune, into: &actions)
         }
-        if let entries = document.schedules {
-            planSchedules(entries, document: document, prune: prune, into: &actions)
+        let agentNames = effectiveAgentNames(document: document, prune: prune)
+        if let entries = document.automations {
+            ConfigEvents.plan(entries, agentNames: agentNames, prune: prune, into: &actions)
         }
-        if let entries = document.watchers {
-            planWatchers(entries, document: document, prune: prune, into: &actions)
+        for scoped in ConfigChannelRouting.scopes(in: document) {
+            guard let scope = scoped.scope else { continue }
+            ConfigEvents.plan(scoped.entries, scope: scope, agentNames: agentNames, prune: prune, into: &actions)
+        }
+        for target in ConfigChannelPlatform.targets(in: document.channels) {
+            guard target.platform.supportsPosting, let posting = target.section.posting,
+                ConfigChannelAccounts.isKnown(target)
+            else { continue }
+            ConfigChannelPosting.plan(posting, target: target, agentNames: agentNames, prune: prune, into: &actions)
         }
 
-        return ConfigPlan(actions: actions, notes: notes)
+        var plan = ConfigPlan(actions: actions, notes: notes)
+        if !plan.isEmpty, let currentYAML = try? ConfigYAML.canonical(current) {
+            plan.diffText = ConfigDiff.preview(currentYAML: currentYAML, desired: document, prune: prune)
+        }
+        return plan
     }
 
     // MARK: - Validation
@@ -259,10 +292,10 @@ enum ConfigPlanner {
 
     /// Prune-only integrity check: pruning `agents:` deletes every custom
     /// agent the document does not list — but `AgentManager.delete` does NOT
-    /// cascade schedules/watchers (it only resets the active-agent selection
-    /// to Default). Refuse a document whose prune would leave a SURVIVING
-    /// schedule or watcher pointing at a deleted agent: the user must delete
-    /// or reassign it in the same document.
+    /// cascade events (it only resets the active-agent selection to
+    /// Default). Refuse a document whose prune would leave a SURVIVING event
+    /// pointing at a deleted agent: the user must delete or reassign it in
+    /// the same document.
     private static func validatePruneAgentReferences(
         document: OsaurusConfigDocument, into issues: inout [String]
     ) {
@@ -277,50 +310,12 @@ enum ConfigPlanner {
             uniquingKeysWith: { first, _ in first }
         )
 
-        // A schedule/watcher survives when its section is absent (merge
-        // semantics leave it alone) or when it is listed in the document
-        // (prune only deletes UNLISTED entries). A listed entry that
-        // explicitly reassigns `agent` is already validated against the
-        // post-apply agent set by the regular reference checks.
-        let listedSchedules: [String: ScheduleEntry]? = document.schedules.map { entries in
-            Dictionary(
-                entries.map { ($0.name.lowercased(), $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
-        }
-        for schedule in ScheduleManager.shared.schedules {
-            guard let agentId = schedule.agentId,
-                let agentName = prunedNameById[agentId]
-            else { continue }
-            if let listed = listedSchedules {
-                guard let entry = listed[schedule.name.lowercased()] else { continue }
-                guard entry.agent == nil else { continue }
-            }
-            issues.append(
-                "prune: schedule `\(schedule.name)` still runs on agent `\(agentName)`, "
-                    + "which this prune would delete. Delete or reassign the schedule "
-                    + "in the same document.")
-        }
-
-        let listedWatchers: [String: WatcherEntry]? = document.watchers.map { entries in
-            Dictionary(
-                entries.map { ($0.name.lowercased(), $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
-        }
-        for watcher in WatcherManager.shared.watchers {
-            guard let agentId = watcher.agentId,
-                let agentName = prunedNameById[agentId]
-            else { continue }
-            if let listed = listedWatchers {
-                guard let entry = listed[watcher.name.lowercased()] else { continue }
-                guard entry.agent == nil else { continue }
-            }
-            issues.append(
-                "prune: watcher `\(watcher.name)` still runs on agent `\(agentName)`, "
-                    + "which this prune would delete. Delete or reassign the watcher "
-                    + "in the same document.")
-        }
+        // An event survives when `events:` is absent (merge semantics leave
+        // it alone) or when it is listed (prune only deletes UNLISTED
+        // entries). A listed entry that reassigns `agent` / `workflow` is
+        // validated against the post-apply agent set by the regular checks.
+        ConfigEvents.validatePruneAgentReferences(
+            document: document, prunedNameById: prunedNameById, into: &issues)
     }
 
     /// Agent model ids must resolve to something the chat runtime can route:
@@ -352,6 +347,19 @@ enum ConfigPlanner {
                 section.model,
                 current: DefaultAgentConfigurationStore.load().defaultModel,
                 label: "default_agent.model")
+        }
+        if let section = document.configurator {
+            check(
+                section.model,
+                current: ConfiguratorConfigurationStore.load().resolvedModel,
+                label: "configurator.model")
+        }
+        if let section = document.modelDefaults {
+            let chat = ChatConfigurationStore.load()
+            check(section.coreModel, current: chat.coreModelIdentifier, label: "model_defaults.core_model")
+            check(
+                section.compactionModel, current: chat.compactionModelIdentifier,
+                label: "model_defaults.compaction_model")
         }
         let existingAgents = AgentManager.shared.agents.filter { !$0.isBuiltIn }
         for entry in document.agents ?? [] {
@@ -387,6 +395,21 @@ enum ConfigPlanner {
             section.model = canonical(section.model)
             document.defaultAgent = section
         }
+        if var section = document.configurator {
+            section.model = canonical(section.model)
+            document.configurator = section
+        }
+        if var section = document.modelDefaults {
+            section.coreModel = canonical(section.coreModel)
+            section.compactionModel = canonical(section.compactionModel)
+            document.modelDefaults = section
+        }
+        if var section = document.app, case .value(let text) = section.hotkey,
+            case .success(let hotkey) = HotkeyText.parse(text)
+        {
+            section.hotkey = .value(HotkeyText.text(for: hotkey))
+            document.app = section
+        }
         if let agents = document.agents {
             document.agents = agents.map { entry in
                 var entry = entry
@@ -419,6 +442,15 @@ enum ConfigPlanner {
             checkRuntimeReference(
                 section.runtime, claudeCode: section.claudeCode, label: "default_agent",
                 document: document, prune: prune, into: &issues)
+        }
+        if let section = document.configurator {
+            checkRange(section.temperature, 0.0...2.0, "configurator.temperature", &issues)
+        }
+        if let section = document.app, case .value(let text) = section.hotkey,
+            case .failure(let error) = HotkeyText.parse(text),
+            text != ConfigExporter.currentHotkeyText()
+        {
+            issues.append("app.hotkey: \(error.message)")
         }
 
         if let agents = document.agents {
@@ -463,6 +495,18 @@ enum ConfigPlanner {
                 if let v = entry.sandbox?.maxCommandsPerTurn, !(1...500).contains(v) {
                     issues.append(
                         "agents[\(entry.name)].sandbox.max_commands_per_turn: must be in 1...500.")
+                }
+                if let names = entry.workflows {
+                    for raw in names where InstalledWorkflowStore.shared.workflow(named: raw) == nil {
+                        if let refusal = AgentWrapperCatalog.configRefusal(raw) {
+                            issues.append("agents[\(entry.name)].workflows: \(refusal)")
+                            continue
+                        }
+                        let installed = InstalledWorkflowStore.shared.workflows.map(\.name)
+                        issues.append(
+                            "agents[\(entry.name)].workflows: `\(raw)` is not an installed workflow. Installed: "
+                                + (installed.isEmpty ? "none" : installed.joined(separator: ", ")) + ".")
+                    }
                 }
                 if let apps = entry.capabilities?.appleApps {
                     for raw in apps where AppleApp.parse(raw) == nil {
@@ -642,27 +686,17 @@ enum ConfigPlanner {
         }
 
         if let channels = document.channels {
-            let customAgents = effectiveAgentNames(document: document, prune: prune)
-            for platform in ConfigChannelPlatform.allCases {
-                guard let section = platform.section(in: channels) else { continue }
-                let label = "channels.\(platform.rawValue)"
+            ConfigChannelAccounts.validate(channels, into: &issues)
+            for target in ConfigChannelPlatform.targets(in: channels) {
+                let platform = target.platform
+                let section = target.section
+                let label = target.path
+                if !ConfigChannelAccounts.isKnown(target) {
+                    issues.append(ConfigChannelAccounts.unknownAccountIssue(target))
+                    continue
+                }
                 if let v = section.defaultReadLimit, !(1...100).contains(v) {
                     issues.append("\(label).default_read_limit: must be in 1...100.")
-                }
-                if let name = section.inboundAgent.valueOrNil {
-                    let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                    if key == "default" || key.isEmpty {
-                        issues.append(
-                            "\(label).inbound_agent: channel dispatch needs a CUSTOM agent "
-                                + "(never the Default agent); null clears it.")
-                    } else if ConfigAgentTargetReference.workspaceRef(name) != nil {
-                        // Shared workspace agent (`<workspaceId>:<address>`);
-                        // only the key shape is checked here.
-                    } else if !customAgents.contains(key) {
-                        issues.append(
-                            "\(label).inbound_agent: no custom agent named `\(name)` exists or "
-                                + "is created by this document.")
-                    }
                 }
                 if let raw = section.botTokenRef {
                     if platform.supportsBotTokenRef {
@@ -670,7 +704,8 @@ enum ConfigPlanner {
                     } else {
                         issues.append(
                             "\(label).bot_token_ref: \(platform.rawValue) has no bot token — "
-                                + "iMessage needs none and WhatsApp links interactively.")
+                                + "iMessage needs none, WhatsApp links interactively, and Email uses its "
+                                + "mail accounts' own sign-in.")
                     }
                 }
                 if let raw = section.appTokenRef {
@@ -679,6 +714,19 @@ enum ConfigPlanner {
                     } else {
                         issues.append("\(label).app_token_ref: only Slack uses an app-level token.")
                     }
+                }
+                if !platform.hasWriteAllowlist, section.writeAllowlist != nil {
+                    issues.append(
+                        "\(label).write_allowlist: \(platform.rawValue) replies in every watched mailbox "
+                            + "once write_enabled is true — there is no separate write list.")
+                }
+                if !platform.supportsPosting, section.posting != nil {
+                    issues.append(
+                        "\(label).posting: \(platform.rawValue) agents only reply to mail they received — "
+                            + "they cannot post on their own.")
+                }
+                if platform == .email {
+                    validateEmailRooms(section.readAllowlist ?? [], label: label, into: &issues)
                 }
             }
         }
@@ -914,111 +962,45 @@ enum ConfigPlanner {
         }
 
         let agentNames = effectiveAgentNames(document: document, prune: prune)
-
-        if let schedules = document.schedules {
-            var seen = Set<String>()
-            let existing = ScheduleManager.shared.schedules
-            for entry in schedules {
-                let key = entry.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                if key.isEmpty {
-                    issues.append("schedules[]: every schedule needs a non-empty name.")
-                    continue
-                }
-                if !seen.insert(key).inserted {
-                    issues.append("schedules[\(entry.name)]: duplicate schedule name in document.")
-                }
-                let isNew = !existing.contains { $0.name.lowercased() == key }
-                if isNew {
-                    if entry.agent == nil {
-                        issues.append(
-                            "schedules[\(entry.name)]: `agent` (custom agent name) is required to "
-                                + "create a schedule.")
-                    }
-                    if entry.instructions == nil {
-                        issues.append("schedules[\(entry.name)]: `instructions` is required to create.")
-                    }
-                    if entry.frequency == nil {
-                        issues.append("schedules[\(entry.name)]: `frequency` is required to create.")
-                    }
-                }
-                if let agent = entry.agent {
-                    if agent.lowercased() == "default" {
-                        issues.append(
-                            "schedules[\(entry.name)].agent: schedules cannot target the Default agent.")
-                    } else if ConfigAgentTargetReference.workspaceRef(agent) != nil {
-                        // A shared workspace agent (`<workspaceId>:<address>`).
-                        // Membership is live relay state, checked when the
-                        // schedule fires; the document only needs the key shape.
-                    } else if !agentNames.contains(agent.lowercased()) {
-                        issues.append(
-                            "schedules[\(entry.name)].agent: no custom agent named `\(agent)` exists "
-                                + "or is created by this document.")
-                    }
-                }
-                if let frequency = entry.frequency {
-                    if case .failure(let error) = ConfigScheduleFrequency.parse(
-                        frequency: frequency,
-                        value: entry.frequencyValue,
-                        timeOfDay: entry.frequencyTimeOfDay
-                    ) {
-                        issues.append("schedules[\(entry.name)]: \(error.message)")
-                    }
-                }
+        var eventNames = Set<String>()
+        if let events = document.automations {
+            for entry in events where entry.source?.kind?.lowercased() == EventSourceKind.channelMessage.rawValue {
+                issues.append(
+                    "automations[\(entry.name)]: channel rules live under `channels.<platform>.routing` "
+                        + "(`channels.connections[].routing` for n8n / custom HTTP); this one names no known "
+                        + "platform or connection.")
             }
+            ConfigEvents.validate(
+                events.filter { $0.source?.kind?.lowercased() != EventSourceKind.channelMessage.rawValue },
+                agentNames: agentNames, seen: &eventNames, into: &issues)
         }
+        for scoped in ConfigChannelRouting.scopes(in: document) {
+            if let issue = scoped.issue { issues.append(issue) }
+            guard let scope = scoped.scope else { continue }
+            ConfigEvents.validate(scoped.entries, scope: scope, agentNames: agentNames, seen: &eventNames, into: &issues)
+        }
+        issues += ConfigChannelRouting.autoReplyIssues(in: document, prune: prune)
+        for target in ConfigChannelPlatform.targets(in: document.channels) {
+            guard target.platform.supportsPosting, let posting = target.section.posting,
+                ConfigChannelAccounts.isKnown(target)
+            else { continue }
+            ConfigChannelPosting.validate(posting, target: target, agentNames: agentNames, into: &issues)
+        }
+    }
 
-        if let watchers = document.watchers {
-            var seen = Set<String>()
-            let existing = WatcherManager.shared.watchers
-            for entry in watchers {
-                let key = entry.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                if key.isEmpty {
-                    issues.append("watchers[]: every watcher needs a non-empty name.")
-                    continue
-                }
-                if !seen.insert(key).inserted {
-                    issues.append("watchers[\(entry.name)]: duplicate watcher name in document.")
-                }
-                let isNew = !existing.contains { $0.name.lowercased() == key }
-                if isNew {
-                    if entry.agent == nil {
-                        issues.append(
-                            "watchers[\(entry.name)]: `agent` (custom agent name) is required to create.")
-                    }
-                    if entry.instructions == nil {
-                        issues.append("watchers[\(entry.name)]: `instructions` is required to create.")
-                    }
-                    if entry.path == nil {
-                        issues.append("watchers[\(entry.name)]: `path` is required to create.")
-                    }
-                }
-                if let agent = entry.agent {
-                    if agent.lowercased() == "default" {
-                        issues.append(
-                            "watchers[\(entry.name)].agent: watchers cannot run on the Default agent.")
-                    } else if ConfigAgentTargetReference.workspaceRef(agent) != nil {
-                        // Shared workspace agent; see the schedules note above.
-                    } else if !agentNames.contains(agent.lowercased()) {
-                        issues.append(
-                            "watchers[\(entry.name)].agent: no custom agent named `\(agent)` exists "
-                                + "or is created by this document.")
-                    }
-                }
-                if let raw = entry.path {
-                    let expanded = (raw as NSString).expandingTildeInPath
-                    var isDirectory: ObjCBool = false
-                    if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory)
-                        || !isDirectory.boolValue
-                    {
-                        issues.append(
-                            "watchers[\(entry.name)].path: `\(expanded)` is not an existing directory.")
-                    }
-                }
-                if let raw = entry.responsiveness, Responsiveness(rawValue: raw.lowercased()) == nil {
-                    issues.append(
-                        "watchers[\(entry.name)].responsiveness: must be one of: fast, balanced, "
-                            + "patient, relaxed, deferred, extended.")
-                }
+    /// Email rooms are `<mail account id>/<mailbox>`; the account must be a
+    /// Mail app or IMAP account added in Settings.
+    private static func validateEmailRooms(_ rooms: [String], label: String, into issues: inout [String]) {
+        let accounts = Set(SourceConnectionStore.shared.connections(of: [.mailApp, .imap]).map(\.id))
+        for room in rooms {
+            guard let route = EmailChannelConfiguration.parseRoomId(room) else {
+                issues.append("\(label).read_allowlist: `\(room)` must be `<mail account id>/<mailbox>`.")
+                continue
+            }
+            if !accounts.contains(route.connectionId) {
+                issues.append(
+                    "\(label).read_allowlist: `\(room)` names no mail account. Add the account in "
+                        + "Settings → Channels → Email first.")
             }
         }
     }
@@ -1195,6 +1177,32 @@ enum ConfigPlanner {
                 changes: changes, risks: risks))
     }
 
+    private static func planConfigurator(
+        _ desired: ConfiguratorSection, current: ConfiguratorSection?,
+        into actions: inout [ConfigPlanAction]
+    ) {
+        let current = current ?? ConfiguratorSection()
+        var changes: [String] = []
+        diff("model", desired: desired.model, current: current.model, into: &changes)
+        diff("temperature", desired: desired.temperature, current: current.temperature, into: &changes)
+        diff("system_prompt", desired: desired.systemPrompt, current: current.systemPrompt, into: &changes)
+        guard !changes.isEmpty else { return }
+        actions.append(
+            ConfigPlanAction(
+                section: ConfigSectionID.configurator.rawValue, target: "configurator",
+                kind: .update, changes: changes))
+    }
+
+    static func sharedToolApprovalChange(_ policy: SharedToolApprovalPolicy) -> String {
+        switch policy.mode {
+        case .deny:
+            return "shared_tool_approval: deny (teammates' tool calls that need approval fail)"
+        case .askOwner:
+            return "shared_tool_approval: ask_owner (you approve teammates' tool calls; "
+                + "declined after \(Int(policy.effectiveTimeout))s)"
+        }
+    }
+
     /// Plan lines and risks for an agent's `runtime` and `claude_code` keys.
     @MainActor
     private static func diffRuntime(
@@ -1217,6 +1225,58 @@ enum ConfigPlanner {
                 contentsOf: ConfigHarness.changes(claudeCode, current: currentClaudeCode, prefix: "claude_code"))
             risks.append(contentsOf: ConfigHarness.risks(claudeCode, current: currentClaudeCode, agent: agent))
         }
+    }
+
+    private static func planModelDefaults(
+        _ desired: ModelDefaultsSection, current: ModelDefaultsSection?,
+        into actions: inout [ConfigPlanAction]
+    ) {
+        let current = current ?? ModelDefaultsSection()
+        var changes: [String] = []
+        diff("core_model", desired: desired.coreModel, current: current.coreModel, into: &changes)
+        diff(
+            "compaction_model", desired: desired.compactionModel,
+            current: current.compactionModel, into: &changes)
+        guard !changes.isEmpty else { return }
+        actions.append(
+            ConfigPlanAction(
+                section: ConfigSectionID.modelDefaults.rawValue, target: "model_defaults",
+                kind: .update, changes: changes))
+    }
+
+    private static func planChat(
+        _ desired: ChatSection, current: ChatSection?, into actions: inout [ConfigPlanAction]
+    ) {
+        let current = current ?? ChatSection()
+        var changes: [String] = []
+        diff("smooth_streaming", desired: desired.smoothStreaming, current: current.smoothStreaming, into: &changes)
+        diff("group_activity", desired: desired.groupActivity, current: current.groupActivity, into: &changes)
+        diff("expand_thinking", desired: desired.expandThinking, current: current.expandThinking, into: &changes)
+        diff("spell_check", desired: desired.spellCheck, current: current.spellCheck, into: &changes)
+        diff("auto_titles", desired: desired.autoTitles, current: current.autoTitles, into: &changes)
+        diff(
+            "follow_up_suggestions", desired: desired.followUpSuggestions,
+            current: current.followUpSuggestions, into: &changes)
+        diff(
+            "clipboard_monitoring", desired: desired.clipboardMonitoring,
+            current: current.clipboardMonitoring, into: &changes)
+        diff("keep_mac_awake", desired: desired.keepMacAwake, current: current.keepMacAwake, into: &changes)
+        guard !changes.isEmpty else { return }
+        actions.append(ConfigPlanAction(section: "chat", target: "chat", kind: .update, changes: changes))
+    }
+
+    private static func planApp(
+        _ desired: AppSection, current: AppSection?, into actions: inout [ConfigPlanAction]
+    ) {
+        let current = current ?? AppSection()
+        var changes: [String] = []
+        diff("hotkey", desired: desired.hotkey, current: current.hotkey, into: &changes)
+        diff("start_at_login", desired: desired.startAtLogin, current: current.startAtLogin, into: &changes)
+        diff(
+            "show_notifications", desired: desired.showNotifications,
+            current: current.showNotifications, into: &changes)
+        guard !changes.isEmpty else { return }
+        actions.append(ConfigPlanAction(section: "app", target: "app", kind: .update, changes: changes))
     }
 
     private static func planActiveAgent(
@@ -1322,6 +1382,15 @@ enum ConfigPlanner {
             }
         }
         diff("source_template", desired: entry.sourceTemplate, current: agent.sourceTemplateName, into: &changes)
+        if let names = entry.workflows {
+            let store = InstalledWorkflowStore.shared
+            let desired = Set(names.compactMap { store.workflow(named: $0)?.id })
+            let current = Set(agent.settings.enabledWorkflowIDs)
+            let added = desired.subtracting(current).compactMap { store.workflow(id: $0)?.name }.sorted()
+            let removed = current.subtracting(desired).compactMap { store.workflow(id: $0)?.name }.sorted()
+            if !added.isEmpty { changes.append("workflows: +\(added.joined(separator: ", "))") }
+            if !removed.isEmpty { changes.append("workflows: -\(removed.joined(separator: ", "))") }
+        }
         switch entry.workingFolder {
         case .absent:
             break
@@ -1335,6 +1404,9 @@ enum ConfigPlanner {
             if current != expanded || agent.workingFolderBookmark == nil {
                 changes.append("working_folder: \(display(agent.workingFolderPath)) -> \(raw)")
             }
+        }
+        if let readOnly = entry.workingFolderReadOnly, readOnly != agent.settings.workingFolderReadOnly {
+            changes.append("working_folder_read_only: \(agent.settings.workingFolderReadOnly) -> \(readOnly)")
         }
     }
 
@@ -1354,6 +1426,8 @@ enum ConfigPlanner {
     private static func summarizePortableSettings(_ entry: AgentEntry, into changes: inout [String]) {
         if entry.generationSettings.valueOrNil != nil { changes.append("generation_settings: configured") }
         if let show = entry.showResponseMetrics { changes.append("show_response_metrics: \(show)") }
+        if entry.followUpSuggestions == false { changes.append("follow_up_suggestions: false") }
+        if let avatar = entry.avatar, !avatar.isEmpty { changes.append("avatar: \(avatar)") }
         if let tools = entry.tools {
             if let mode = tools.mode { changes.append("tools.mode: \(mode)") }
             if let enabled = tools.enabled, !enabled.isEmpty {
@@ -1376,6 +1450,20 @@ enum ConfigPlanner {
         }
         if let folder = entry.workingFolder.valueOrNil {
             changes.append("working_folder: \(folder)")
+        }
+        if entry.workingFolderReadOnly == true { changes.append("working_folder_read_only: true") }
+        if let names = entry.workflows, !names.isEmpty {
+            changes.append("workflows: \(names.joined(separator: ", "))")
+        }
+        if let caps = entry.capabilities,
+            let data = try? JSONEncoder().encode(caps),
+            let toggles = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?
+                .compactMapValues({ $0 as? Bool })
+        {
+            let on = toggles.filter(\.value).keys.sorted()
+            let off = toggles.filter { !$0.value }.keys.sorted()
+            if !on.isEmpty { changes.append("capabilities on: \(on.joined(separator: ", "))") }
+            if !off.isEmpty { changes.append("capabilities off: \(off.joined(separator: ", "))") }
         }
     }
 
@@ -1413,6 +1501,14 @@ enum ConfigPlanner {
                 if let show = entry.showResponseMetrics, show != agent.settings.showResponseMetrics {
                     changes.append("show_response_metrics: \(agent.settings.showResponseMetrics) -> \(show)")
                 }
+                if let on = entry.followUpSuggestions, on != agent.settings.followUp.enabled {
+                    changes.append("follow_up_suggestions: \(agent.settings.followUp.enabled) -> \(on)")
+                }
+                if let avatar = entry.avatar?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    (avatar.isEmpty ? nil : avatar) != agent.avatar
+                {
+                    changes.append("avatar: \(display(agent.avatar)) -> \(avatar.isEmpty ? "initial" : avatar)")
+                }
                 if let caps = entry.capabilities {
                     diffCapabilities(caps, agent: agent, into: &changes, risks: &risks)
                 }
@@ -1421,6 +1517,9 @@ enum ConfigPlanner {
                     entry.runtime, claudeCode: entry.claudeCode,
                     currentRuntime: agent.runtime, currentClaudeCode: agent.claudeCode ?? .default,
                     agent: entry.name, into: &changes, risks: &risks)
+                if let desired = entry.sharedToolApproval, desired != (agent.sharedToolApproval ?? .deny) {
+                    changes.append(Self.sharedToolApprovalChange(desired))
+                }
                 if changes.isEmpty {
                     unchanged += 1
                 } else {
@@ -1518,6 +1617,21 @@ enum ConfigPlanner {
         diff(
             "render_chart_enabled", desired: caps.renderChartEnabled,
             current: agent.settings.renderChartEnabled, into: &changes)
+        diff(
+            "calculator_enabled", desired: caps.calculatorEnabled,
+            current: agent.settings.calculatorEnabled, into: &changes)
+        diff(
+            "redaction_tools_enabled", desired: caps.redactionToolsEnabled,
+            current: agent.settings.redactionToolsEnabled, into: &changes)
+        diff(
+            "task_checklist_enabled", desired: caps.taskChecklistEnabled,
+            current: agent.settings.taskChecklistEnabled, into: &changes)
+        diff(
+            "clarify_enabled", desired: caps.clarifyEnabled,
+            current: agent.settings.clarifyEnabled, into: &changes)
+        diff(
+            "artifacts_enabled", desired: caps.artifactsEnabled,
+            current: agent.settings.artifactsEnabled, into: &changes)
         let currentRelay = RelayConfigurationStore.load().isEnabled(for: agent.id)
         diff("relay_enabled", desired: caps.relayEnabled, current: currentRelay, into: &changes)
         if let desiredApps = Self.appleApps(from: caps) {
@@ -1575,6 +1689,9 @@ enum ConfigPlanner {
             }
             if registry.isGlobalEnabled(tool) != enabled {
                 changes.append("\(tool): \(enabled ? "enable" : "disable")")
+                if enabled, ToolRegistry.sandboxBackendAdapterToolNames.contains(tool) {
+                    risks.append(ConfigRisk.sandboxAdapterEnabled(tool))
+                }
             }
         }
         for (tool, raw) in (desired.policies ?? [:]).sorted(by: { $0.key < $1.key }) {
@@ -1583,7 +1700,8 @@ enum ConfigPlanner {
                 notes.append("tools.policies[\(tool)]: no such tool is currently registered — skipped.")
                 continue
             }
-            let current = registry.configuredPolicy(for: tool) ?? .ask
+            let current =
+                registry.configuredPolicy(for: tool) ?? registry.policyInfo(for: tool)?.defaultPolicy ?? .ask
             if current != policy {
                 changes.append("\(tool): policy \(current.rawValue) -> \(policy.rawValue)")
                 if policy == .auto {
@@ -1808,16 +1926,20 @@ enum ConfigPlanner {
                     risks: risks))
         }
 
-        for platform in ConfigChannelPlatform.allCases {
-            guard let section = platform.section(in: desired) else { continue }
-            let currentSection = platform.section(in: current) ?? ChannelPlatformSection()
+        let currentTargets = ConfigChannelPlatform.targets(in: current)
+        for target in ConfigChannelPlatform.targets(in: desired) {
+            let platform = target.platform
+            let section = target.section
+            let currentSection =
+                currentTargets.first { $0.platform == platform && $0.connectionId == target.connectionId }?.section
+                ?? ChannelPlatformSection()
             var changes: [String] = []
             var risks: [String] = []
             diff(
                 "write_enabled", desired: section.writeEnabled,
                 current: currentSection.writeEnabled, into: &changes)
             if section.writeEnabled == true && currentSection.writeEnabled != true {
-                risks.append(ConfigRisk.channelWrites(platform.rawValue))
+                risks.append(ConfigRisk.channelWrites(target.label))
             }
             diff(
                 "default_read_limit", desired: section.defaultReadLimit,
@@ -1834,28 +1956,6 @@ enum ConfigPlanner {
             diffList(
                 "sender_allowlist", desired: section.senderAllowlist,
                 current: currentSection.senderAllowlist, into: &changes)
-            diff(
-                "inbound_enabled", desired: section.inboundEnabled,
-                current: currentSection.inboundEnabled, into: &changes)
-            let desiredAgent: ConfigField<String> =
-                section.inboundAgent.valueOrNil.map { .value($0.lowercased()) }
-                ?? section.inboundAgent
-            let currentAgent: ConfigField<String> =
-                currentSection.inboundAgent.valueOrNil.map { .value($0.lowercased()) }
-                ?? currentSection.inboundAgent
-            diff("inbound_agent", desired: desiredAgent, current: currentAgent, into: &changes)
-            diff(
-                "require_mention", desired: section.requireMention,
-                current: currentSection.requireMention, into: &changes)
-            diff(
-                "continue_threads", desired: section.continueThreads,
-                current: currentSection.continueThreads, into: &changes)
-            diff(
-                "auto_reply_enabled", desired: section.autoReplyEnabled,
-                current: currentSection.autoReplyEnabled, into: &changes)
-            if section.autoReplyEnabled == true && currentSection.autoReplyEnabled != true {
-                risks.append(ConfigRisk.channelAutoReply(platform.rawValue))
-            }
             if let raw = section.botTokenRef, case .success(let ref) = ConfigSecretRef.parse(raw) {
                 changes.append("bot_token: store from \(ref.display)")
             }
@@ -1865,7 +1965,7 @@ enum ConfigPlanner {
             guard !changes.isEmpty else { continue }
             actions.append(
                 ConfigPlanAction(
-                    section: "channels", target: platform.rawValue, kind: .update,
+                    section: "channels", target: target.label, kind: .update,
                     changes: changes, risks: risks))
         }
     }
@@ -2362,177 +2462,6 @@ enum ConfigPlanner {
                         section: "search_providers", target: "ranking", kind: .update,
                         changes: ["ranking: \(currentRanking.joined(separator: " > ")) -> "
                             + "\(ranking.joined(separator: " > ")) (unlisted keep relative order)"]))
-            }
-        }
-    }
-
-    // MARK: - Schedules
-
-    private static func planSchedules(
-        _ entries: [ScheduleEntry], document: OsaurusConfigDocument, prune: Bool,
-        into actions: inout [ConfigPlanAction]
-    ) {
-        let existing = ScheduleManager.shared.schedules
-        var matched = Set<UUID>()
-
-        for entry in entries {
-            let key = entry.name.lowercased()
-            if let schedule = existing.first(where: { $0.name.lowercased() == key }) {
-                matched.insert(schedule.id)
-                var changes: [String] = []
-                if let agent = entry.agent {
-                    let currentAgent = ConfigAgentTargetReference.currentLabel(schedule.target)
-                    if agent.lowercased() != currentAgent.lowercased() {
-                        changes.append("agent: \(currentAgent) -> \(agent)")
-                    }
-                }
-                diff(
-                    "instructions", desired: entry.instructions,
-                    current: schedule.instructions, into: &changes)
-                if let frequency = entry.frequency {
-                    // Canonicalize BOTH sides through parse -> components so
-                    // lenient input ("Daily", "Monday", hourly `0`) never
-                    // shows as a change against the exported normal form.
-                    // Validation already rejected unparseable triples.
-                    let currentParts = ConfigScheduleFrequency.components(of: schedule.frequency)
-                    let desiredParts: (frequency: String, value: String?, timeOfDay: String?)
-                    switch ConfigScheduleFrequency.parse(
-                        frequency: frequency,
-                        value: entry.frequencyValue,
-                        timeOfDay: entry.frequencyTimeOfDay
-                    ) {
-                    case .success(let parsed):
-                        desiredParts = ConfigScheduleFrequency.components(of: parsed)
-                    case .failure:
-                        desiredParts = (frequency, entry.frequencyValue, entry.frequencyTimeOfDay)
-                    }
-                    if desiredParts != currentParts {
-                        changes.append(
-                            "frequency: \(describeTriple(currentParts)) -> "
-                                + describeTriple(desiredParts))
-                    }
-                }
-                diff("enabled", desired: entry.enabled, current: schedule.isEnabled, into: &changes)
-                if !changes.isEmpty {
-                    actions.append(
-                        ConfigPlanAction(
-                            section: "schedules", target: entry.name, kind: .update, changes: changes))
-                }
-            } else {
-                var changes = ["create schedule for agent `\(entry.agent ?? "?")`"]
-                if let frequency = entry.frequency {
-                    changes.append(
-                        "frequency: "
-                            + describeTriple((frequency, entry.frequencyValue, entry.frequencyTimeOfDay)))
-                }
-                actions.append(
-                    ConfigPlanAction(
-                        section: "schedules", target: entry.name, kind: .create, changes: changes))
-            }
-        }
-
-        if prune {
-            for schedule in existing where !matched.contains(schedule.id) {
-                actions.append(
-                    ConfigPlanAction(
-                        section: "schedules", target: schedule.name, kind: .delete,
-                        changes: ["delete schedule"],
-                        risks: [ConfigRisk.deleteSchedule(schedule.name)]))
-            }
-        }
-    }
-
-    private static func describeTriple(
-        _ triple: (frequency: String, value: String?, timeOfDay: String?)
-    ) -> String {
-        var parts = [triple.frequency]
-        if let v = triple.value { parts.append(v) }
-        if let t = triple.timeOfDay { parts.append("at \(t)") }
-        return parts.joined(separator: " ")
-    }
-
-    // MARK: - Watchers
-
-    private static func planWatchers(
-        _ entries: [WatcherEntry], document: OsaurusConfigDocument, prune: Bool,
-        into actions: inout [ConfigPlanAction]
-    ) {
-        let existing = WatcherManager.shared.watchers
-        var matched = Set<UUID>()
-
-        for entry in entries {
-            let key = entry.name.lowercased()
-            if let watcher = existing.first(where: { $0.name.lowercased() == key }) {
-                matched.insert(watcher.id)
-                var changes: [String] = []
-                if let agent = entry.agent {
-                    let currentAgent = ConfigAgentTargetReference.currentLabel(watcher.target)
-                    if agent.lowercased() != currentAgent.lowercased() {
-                        changes.append("agent: \(currentAgent) -> \(agent)")
-                    }
-                }
-                diff(
-                    "instructions", desired: entry.instructions,
-                    current: watcher.instructions, into: &changes)
-                if let raw = entry.path {
-                    let expanded = (raw as NSString).expandingTildeInPath
-                    diff("path", desired: expanded, current: watcher.watchPath, into: &changes)
-                }
-                diff("recursive", desired: entry.recursive, current: watcher.recursive, into: &changes)
-                diff(
-                    "responsiveness", desired: entry.responsiveness?.lowercased(),
-                    current: watcher.responsiveness.rawValue, into: &changes)
-                diff("enabled", desired: entry.enabled, current: watcher.isEnabled, into: &changes)
-                if !changes.isEmpty {
-                    actions.append(
-                        ConfigPlanAction(
-                            section: "watchers", target: entry.name, kind: .update, changes: changes))
-                }
-            } else {
-                let path = (entry.path.map { ($0 as NSString).expandingTildeInPath }) ?? "?"
-                // Same-path advisory: a model that thinks its last create
-                // "didn't work" retries under a variant name ("Voice Memos
-                // Watcher" next to "Voice Memo Watcher") — observed live,
-                // yielding two near-identical watchers on one folder. The
-                // create still proceeds (different-name creations are
-                // legitimate and never refused); the plan just names the
-                // existing watcher so an accidental duplicate becomes an
-                // update-by-that-name instead. Carried in `changes`, NOT in
-                // `risks`: risks are the high-risk escalation channel (forced
-                // approval; HTTP apply 409s without confirm_high_risk), which
-                // would have turned this advisory into exactly the refusal it
-                // promises not to be. Comparison is case-insensitive on a
-                // standardized path so trivial spelling/symlink variants
-                // still match; misses are only ever a lost hint.
-                var changes = ["watch \(path) with agent `\(entry.agent ?? "?")`"]
-                let normalizedNew = URL(fileURLWithPath: path)
-                    .standardizedFileURL.path.lowercased()
-                if let duplicate = existing.first(where: { candidate in
-                    guard let existingPath = candidate.watchPath else { return false }
-                    let normalizedExisting = URL(fileURLWithPath: existingPath)
-                        .standardizedFileURL.path.lowercased()
-                    return normalizedExisting == normalizedNew
-                        && candidate.name.lowercased() != entry.name.lowercased()
-                }) {
-                    changes.append(
-                        "note: watcher `\(duplicate.name)` already watches this path — if you "
-                            + "meant to change it, reuse that exact name to update it instead "
-                            + "of creating a duplicate.")
-                }
-                actions.append(
-                    ConfigPlanAction(
-                        section: "watchers", target: entry.name, kind: .create,
-                        changes: changes))
-            }
-        }
-
-        if prune {
-            for watcher in existing where !matched.contains(watcher.id) {
-                actions.append(
-                    ConfigPlanAction(
-                        section: "watchers", target: watcher.name, kind: .delete,
-                        changes: ["delete watcher"],
-                        risks: [ConfigRisk.deleteWatcher(watcher.name)]))
             }
         }
     }

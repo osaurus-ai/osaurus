@@ -121,6 +121,8 @@ enum SeatbeltExecutor {
         let stdoutTee: (any Writer)?
         let stderrTee: (any Writer)?
         let onProcessStarted: (@Sendable (ProcessHandle) -> Void)?
+        /// Exported as `TMPDIR`; must be the scratch the profile grants.
+        var scratchDir: String = SeatbeltSandbox.scratchDir
     }
 
     /// Bytes collected from one pipe plus the last-output clock the
@@ -128,7 +130,7 @@ enum SeatbeltExecutor {
     /// behind the lock.
     private final class Collector: @unchecked Sendable {
         private let lock = NSLock()
-        private var data = Data()
+        private var capture = ExecOutputCapture()
         private let tee: (any Writer)?
         private let touch: @Sendable () -> Void
 
@@ -139,9 +141,7 @@ enum SeatbeltExecutor {
 
         func append(_ chunk: Data) {
             guard !chunk.isEmpty else { return }
-            lock.lock()
-            data.append(chunk)
-            lock.unlock()
+            lock.withLock { capture.append(chunk) }
             touch()
             // Observer failures never disturb collection (same
             // contract as TeeWriter's secondary).
@@ -149,9 +149,11 @@ enum SeatbeltExecutor {
         }
 
         var string: String {
-            lock.lock()
-            defer { lock.unlock() }
-            return String(data: data, encoding: .utf8) ?? ""
+            lock.withLock { capture.string }
+        }
+
+        var truncated: Bool {
+            lock.withLock { capture.truncated }
         }
     }
 
@@ -212,7 +214,7 @@ enum SeatbeltExecutor {
         // Point tools' scratch writes at a directory the profile
         // actually allows, instead of the user's default $TMPDIR
         // (which is deny-listed).
-        let scratch = SeatbeltSandbox.scratchDir
+        let scratch = request.scratchDir
         try? FileManager.default.createDirectory(
             atPath: scratch, withIntermediateDirectories: true)
         // This is a confinement boundary, not a caller preference. An
@@ -346,7 +348,8 @@ enum SeatbeltExecutor {
         return ContainerExecResult(
             stdout: stdoutCollector.string,
             stderr: stderrCollector.string,
-            exitCode: process.terminationStatus
+            exitCode: process.terminationStatus,
+            outputTruncated: stdoutCollector.truncated || stderrCollector.truncated
         )
     }
 }

@@ -76,6 +76,10 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// O(1) render-cache key for replacements as well as streamed appends.
     /// Equal-length status updates (e.g. 10/16 → 11/16) still change the text.
     private(set) var contentRevision: UInt64 = 0
+
+    /// A reply another device is streaming into this chat, shown until its
+    /// message arrives. Never saved.
+    var isRemotePreview = false
     /// Cached `visibleContent` — the display cleaners (leaked action JSON,
     /// Gemini metadata, channel label) are O(n·braces) and the property is
     /// read several times per block build on the main thread. Invalidated
@@ -325,8 +329,14 @@ final class ChatTurn: ObservableObject, Identifiable {
     @Published var sharedArtifacts: [SharedArtifact] = []
     /// Assistant-issued tool calls attached to this turn (OpenAI compatible)
     @Published var toolCalls: [ToolCall]? = nil {
-        didSet { Self.bumpTokenEstimateRevision() }
+        didSet {
+            Self.bumpTokenEstimateRevision()
+            toolStateRevision &+= 1
+        }
     }
+    /// Bumped whenever `toolCalls`, `toolResults` or `toolCallDurations`
+    /// change, so per-sync tool-state checks can skip comparing their values.
+    private(set) var toolStateRevision: UInt64 = 0
     /// OpenAI Responses reasoning item captured for this assistant turn: the
     /// opaque `id` and `encrypted_content`. Re-emitted before the turn's
     /// function_call(s) next request so a reasoning model resumes its chain.
@@ -375,14 +385,33 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// prefix cache. Nil on assistant/tool turns and on turns sent before
     /// this field existed.
     var injectedContextPrefix: String? = nil
+    /// Who wrote this turn in a multi-party conversation (teammate, remote
+    /// agent, channel sender, the owner in a hosted chat). Nil for ordinary
+    /// one-person chats. See `ChatTurnData.author`.
+    var author: ParticipantRef? = nil
+    /// Id of the host's `osaurus_participant_message` this turn shows, so a
+    /// replayed stream doesn't show it twice. Not persisted.
+    var remoteParticipantMessageId: String? = nil
+    /// On a user turn sent to an agent hosted on another device: the run
+    /// request. See `ChatTurnData.hostRun`.
+    var hostRun: HostRunRequest? = nil
+    /// See `ChatTurnData.origin`.
+    var origin: ChatTurnOrigin? = nil
+    /// See `ChatTurnData.runLocation`.
+    var runLocation: ChatRunLocation? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
     @Published var toolResults: [String: String] = [:] {
-        didSet { Self.bumpTokenEstimateRevision() }
+        didSet {
+            Self.bumpTokenEstimateRevision()
+            toolStateRevision &+= 1
+        }
     }
     /// Wall-clock duration (seconds) each tool call took to finish, keyed by call
     /// id. Recorded by `setToolResult(_:for:)` and persisted so a reloaded chat
     /// still shows "· 1.2s" next to the tool title.
-    @Published var toolCallDurations: [String: TimeInterval] = [:]
+    @Published var toolCallDurations: [String: TimeInterval] = [:] {
+        didSet { toolStateRevision &+= 1 }
+    }
     /// Finished Computer Use / AppleScript step logs by call id, captured
     /// when the result lands (the live feed is dropped seconds later).
     var toolCallLogs: [String: SubagentRunLog] = [:]
@@ -428,6 +457,10 @@ final class ChatTurn: ObservableObject, Identifiable {
     var isReasoningActive: Bool { thinkingStartedAt != nil }
     /// Request-owned prompt progress; never restored as a live phase.
     var prefillProgress: PrefillProgressState?
+    /// True while this turn's request waits on a cold model load; never saved.
+    var isLoadingModel = false
+    /// The diffusion step an on-device image run is on; never saved.
+    var imageStep: (step: Int, total: Int)?
     /// Tool name detected during streaming before the full invocation is ready.
     var pendingToolName: String? = nil {
         didSet {
@@ -589,9 +622,10 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// saw its "started" (some peers may only emit terminal traces) and stamps a
     /// sanitized success/failure result so the chip flips to done/failed. The
     /// failure case uses a `ToolEnvelope` error so the row renders red without
-    /// ever exposing the remote's raw tool output.
+    /// ever exposing the remote's raw tool output. A `failureMessage` marks a
+    /// policy refusal the caller has already put into Osaurus's own words.
     @MainActor
-    func noteRemoteToolFinished(callId: String, name: String, isError: Bool) {
+    func noteRemoteToolFinished(callId: String, name: String, isError: Bool, failureMessage: String? = nil) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !remoteToolActivity.contains(where: { $0.id == callId }) {
             remoteToolActivity.append(
@@ -606,11 +640,48 @@ final class ChatTurn: ObservableObject, Identifiable {
         remoteToolResults[callId] =
             isError
             ? ToolEnvelope.failure(
-                kind: .executionError,
-                message: "The remote agent reported this tool call failed.",
+                kind: failureMessage == nil ? .executionError : .rejected,
+                message: failureMessage ?? "The remote agent reported this tool call failed.",
                 tool: trimmed.isEmpty ? nil : trimmed
             )
             : Self.remoteToolSuccessResult
+        remoteToolActivityTick &+= 1
+    }
+
+    /// The remote host's owner is deciding on one of its tool calls
+    /// (`osaurus_owner_approval`): a row that shimmers "Waiting for @owner to
+    /// approve <tool>" and settles to approved / declined.
+    @MainActor
+    func noteRemoteOwnerApproval(_ status: StreamingOwnerApprovalHint.Status) {
+        let rowId = "owner-approval-\(status.approvalId)"
+        var fields = ["owner": status.owner, "tool": status.name]
+        if status.phase != "waiting" { fields["phase"] = status.phase }
+        let arguments =
+            (try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let call = ToolCall(
+            id: rowId,
+            type: "function",
+            function: ToolCallFunction(name: ToolDisplayName.ownerApprovalRowName, arguments: arguments)
+        )
+        if let index = remoteToolActivity.firstIndex(where: { $0.id == rowId }) {
+            remoteToolActivity[index] = call
+        } else {
+            remoteToolActivity.append(call)
+        }
+        switch status.phase {
+        case "waiting":
+            remoteToolResults.removeValue(forKey: rowId)
+        case "approved":
+            remoteToolResults[rowId] = L("Allowed by \(status.owner).")
+        default:
+            remoteToolResults[rowId] = ToolEnvelope.failure(
+                kind: .executionError,
+                message: status.phase == "timed_out"
+                    ? "The owner didn't answer in time." : "The owner denied this tool call.",
+                tool: status.name
+            )
+        }
         remoteToolActivityTick &+= 1
     }
 
@@ -625,7 +696,12 @@ final class ChatTurn: ObservableObject, Identifiable {
         for call in remoteToolActivity
             where remoteToolResults[call.id] == nil && remoteToolUnobservedResults[call.id] == nil
         {
-            remoteToolUnobservedResults[call.id] = reason
+            if call.function.name == ToolDisplayName.ownerApprovalRowName {
+                remoteToolResults[call.id] = ToolEnvelope.failure(
+                    kind: .executionError, message: "The run ended before the owner answered.", tool: nil)
+            } else {
+                remoteToolUnobservedResults[call.id] = reason
+            }
             changed = true
         }
         if changed { remoteToolActivityTick &+= 1 }
@@ -741,6 +817,8 @@ extension ChatTurn {
         let toolCallId: String?
         var injectedContextPrefix: String? = nil
         var modelContextExcluded: Bool? = nil
+        var author: ParticipantRef? = nil
+        var remoteParticipantMessageId: String? = nil
         var reasoningItemId: String? = nil
         var reasoningEncrypted: String? = nil
         var responsesOutputItems: [JSONValue]? = nil
@@ -762,6 +840,8 @@ extension ChatTurn {
             toolCallId: toolCallId,
             injectedContextPrefix: injectedContextPrefix,
             modelContextExcluded: modelContextExcluded ? true : nil,
+            author: author,
+            remoteParticipantMessageId: remoteParticipantMessageId,
             reasoningItemId: reasoningItemId,
             reasoningEncrypted: reasoningEncrypted,
             responsesOutputItems: responsesOutputItems.isEmpty ? nil : responsesOutputItems,
@@ -791,6 +871,8 @@ extension ChatTurn {
         turn.toolCallId = p.toolCallId
         turn.injectedContextPrefix = p.injectedContextPrefix
         turn.modelContextExcluded = p.modelContextExcluded ?? false
+        turn.author = p.author
+        turn.remoteParticipantMessageId = p.remoteParticipantMessageId
         turn.reasoningItemId = p.reasoningItemId
         turn.reasoningEncrypted = p.reasoningEncrypted
         turn.responsesOutputItems = p.responsesOutputItems ?? []

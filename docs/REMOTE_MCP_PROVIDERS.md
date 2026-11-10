@@ -101,7 +101,7 @@ Used by GitHub Copilot MCP.
 - A **Where do I get my key?** link that opens the vendor's docs.
 - Paste the key, click **Add Provider**.
 
-The key is written to your macOS Keychain (never to disk in plaintext) and sent on every request as `Authorization: Bearer <key>`.
+The key is saved in General → Keys (macOS Keychain, never on disk in plaintext) and sent on every request as `Authorization: Bearer <key>`. An agent with its own value for the same key uses that instead when it calls the server; see [CREDENTIALS.md](CREDENTIALS.md).
 
 #### No Auth
 
@@ -129,6 +129,8 @@ includes credentials, env values, headers, request bodies, or tokens.
 ## Provider Catalog
 
 The catalog is hardcoded in [`MCPProviderTemplate.swift`](../Packages/OsaurusCore/Models/Configuration/MCPProviderTemplate.swift). Templates are pure UI prefills — saving from one produces an `MCPProvider` record identical to one you would build by hand, so removing or editing a template later never affects already-saved providers.
+
+Workflow and agent template files name MCP servers by name and may carry `mcp_server_hints` (a `directory_id`, endpoint or command, and the names of headers and environment variables, never their values). Workflow setup matches each named server to one here by name, endpoint, or command, and otherwise offers **Add <Service>** from this catalog or **Set Up** from the hint, both through the same add sheet. See [AGENT_TEMPLATES.md](AGENT_TEMPLATES.md#mcp-server-hints).
 
 | Service | Category | Auth | Subscription | Endpoint |
 | --- | --- | --- | --- | --- |
@@ -325,12 +327,12 @@ remote MCP providers and is not exposed through external tool surfaces.
 | Mode             | Description                                                                                                                                |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | **None**         | No `Authorization` header added.                                                                                                           |
-| **Bearer Token** | Token sent as `Authorization: Bearer <token>`. Stored in macOS Keychain.                                                                   |
+| **Bearer Token** | Token sent as `Authorization: Bearer <token>`. Saved in General → Keys.                                                                    |
 | **OAuth**        | RFC 9728 PRM + RFC 8414 ASM discovery, Client ID Metadata Documents or RFC 7591 DCR, RFC 8252 loopback redirect, PKCE S256, RFC 8707 resource indicators, RFC 9207 `iss` check, auto refresh. |
 
 ### Custom Headers
 
-Add arbitrary HTTP headers. Mark a header as a **secret** to store its value in Keychain instead of `mcp.json`.
+Add arbitrary HTTP headers. Mark a header as a **secret** to save its value in General → Keys instead of `mcp.json`.
 
 ### Advanced
 
@@ -665,8 +667,8 @@ Use the **Insights** tab to monitor MCP provider activity:
 
 ### Token Storage
 
-- Bearer tokens, OAuth access tokens, OAuth refresh tokens, and DCR client secrets all live in the macOS Keychain — encrypted at rest, scoped to your login, never written to `mcp.json`.
-- Custom headers marked **secret** are stored in Keychain too.
+- OAuth access tokens, OAuth refresh tokens, and DCR client secrets live in the macOS Keychain with the server's sign-in — encrypted at rest, scoped to your login, never written to `mcp.json`.
+- Bearer tokens, secret env vars, and custom headers marked **secret** are saved in General → Keys (also the Keychain). Each is shared by all agents unless an agent has its own value; an agent whose value differs gets its own client for that server (up to 8 per server, least recently used closed first), and an agent whose value matches the shared one uses the shared client. Removing a server keeps its keys, since other servers or agents may use them.
 
 ### Loopback Redirect
 
@@ -689,7 +691,8 @@ only), timeouts, `authType` (`none` | `bearerToken` | `oauth`), `transport`
 (`http` | `stdio`), and — for OAuth — non-secret discovery metadata
 (`oauth.clientId`, `oauth.scopes`, `oauth.authorizationEndpoint`, etc.). Stdio
 records also carry non-secret `command`, `args`, `env`, execution host, and
-working-directory fields. Secret stdio env values live in Keychain.
+working-directory fields. Secret env values, secret headers, and bearer tokens
+are saved in General → Keys; `mcp.json` only lists which ones the server needs.
 
 Existing pre-OAuth `mcp.json` files keep working unchanged; missing fields default to `bearerToken` for backwards compatibility.
 

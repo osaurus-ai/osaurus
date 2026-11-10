@@ -1,0 +1,17 @@
+{
+  "id": "prompt_surface.custom-agent-opt-in-tools",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • calculator and redaction opt-ins add exactly their tools",
+  "query": "",
+  "notes": "The same custom host-folder agent with `calculatorEnabled` and `redactionToolsEnabled` on: `calculate`, `detect_pii`, and `redact_file` join the schema, and the composition stays byte-deterministic (one prefix per availability state).",
+  "fixtures": {
+    "agentCapabilities": { "calculatorEnabled": true, "redactionToolsEnabled": true }
+  },
+  "expect": {
+    "promptSurface": {
+      "composeModel": "OsaurusAI/Raptor-0.6-4B-JANG_6M",
+      "expectDeterministic": true,
+      "mustIncludeTools": ["calculate", "detect_pii", "redact_file", "file_read"]
+    }
+  }
+}

@@ -198,4 +198,20 @@ struct StringCleaningTests {
         #expect(elapsed < .seconds(1), "took \(elapsed)")
     }
 
+    // MARK: - stoppedReplyText (a reply stopped mid-generation)
+
+    @Test func stoppedReplyDropsAHalfWrittenToolCall() {
+        let input = #"Let me look that up.<tool_call>{"name":"set_secret","arguments":{"value":"sk-live-12"#
+        #expect(StringCleaning.stoppedReplyText(input) == "Let me look that up.")
+    }
+
+    @Test func stoppedReplyRemovesCompleteToolCalls() {
+        let input = "Before\n<tool_call>{\"name\":\"t\",\"arguments\":{\"k\":\"v\"}}</tool_call>\nAfter"
+        #expect(StringCleaning.stoppedReplyText(input) == "Before\n\nAfter")
+    }
+
+    @Test func stoppedReplyKeepsPlainText() {
+        let input = "Here is the first half of the answer"
+        #expect(StringCleaning.stoppedReplyText(input) == input)
+    }
 }

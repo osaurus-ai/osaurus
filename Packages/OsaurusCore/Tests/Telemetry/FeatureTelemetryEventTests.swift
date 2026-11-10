@@ -37,7 +37,7 @@ struct FeatureTelemetryEventTests {
     /// `TelemetryService.track`) so per-event shape assertions stay focused on
     /// the event-specific props.
     private func business(_ props: [String: Any]) -> [String: Any] {
-        props.filter { $0.key != "total_memory_gb" }
+        props.filter { $0.key != "total_memory_gb" && $0.key != "build_channel" }
     }
 
     /// A granted + started service whose sends are captured.
@@ -1141,5 +1141,77 @@ struct FeatureTelemetryEventTests {
         #expect(bucket != nil)
         let allowed: Set<String> = ["8", "16", "18", "24", "32", "36", "48", "64", "96", "128", "128+"]
         #expect(allowed.contains(bucket ?? ""))
+    }
+
+    @Test func everyEvent_carries_closed_build_channel() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.serverStarted(service: service)
+
+        let channel = rec.events[0].props["build_channel"] as? String
+        #expect(TelemetryService.buildChannels.contains(channel ?? ""))
+    }
+
+    @Test func buildChannel_separatesShippedProofAndDevBuilds() {
+        let shipped = "/Applications/Osaurus.app"
+        #expect(TelemetryService.buildChannel(bundleID: "com.dinoki.osaurus", bundlePath: shipped, isDebug: false) == "release")
+        #expect(TelemetryService.buildChannel(bundleID: "com.dinoki.osaurus", bundlePath: shipped, isDebug: true) == "debug")
+        #expect(
+            TelemetryService.buildChannel(
+                bundleID: "com.dinoki.osaurus.sandboxpodproof", bundlePath: "/tmp/proof/Osaurus.app", isDebug: false)
+                == "proof")
+        #expect(
+            TelemetryService.buildChannel(
+                bundleID: "com.dinoki.osaurus",
+                bundlePath: "/Users/x/Library/Developer/Xcode/DerivedData/osaurus-abc/Build/Products/Release/osaurus.app",
+                isDebug: false) == "dev")
+        #expect(TelemetryService.buildChannel(bundleID: nil, bundlePath: "/repo/.build/debug", isDebug: false) == "dev")
+        #expect(TelemetryService.buildChannel(bundleID: "com.example.fork", bundlePath: shipped, isDebug: false) == "dev")
+        #expect(
+            TelemetryService.buildChannel(
+                bundleID: "com.dinoki.osaurus.beta", bundlePath: "/Applications/Osaurus Beta.app", isDebug: false)
+                == "beta")
+    }
+
+    @Test func sandboxBoot_emitsClosedDominantPhase() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        let sample = SandboxBootSample(
+            kind: .cold, startedAt: Date(), assetResolution: 40, containerCreate: 90,
+            vmBoot: 2, configure: 1, totalToRunning: 133)
+        #expect(sample.dominantPhase == "create")
+        FeatureTelemetry.sandboxBoot(
+            kind: sample.kind.rawValue, durationBucket: "60-300s", dominantPhase: sample.dominantPhase, service: service)
+
+        let props = business(rec.events[0].props)
+        #expect(Set(props.keys) == ["kind", "duration_bucket", "dominant_phase"])
+        #expect(props["dominant_phase"] as? String == "create")
+        let unmeasured = SandboxBootSample(
+            kind: .warm, startedAt: Date(), assetResolution: nil, containerCreate: nil,
+            vmBoot: nil, configure: nil, totalToRunning: 1)
+        #expect(unmeasured.dominantPhase == "unknown")
+        #expect(SandboxBootSample.dominantPhases.contains(unmeasured.dominantPhase))
+    }
+
+    @Test func sandboxProvisionFailure_attachesOwnerStateAndBootstrapStepOnlyWhenKnown() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.sandboxProvisionFailure(
+            category: "vmnet_in_use", backend: "vm", phase: "vm_ownership", errorClass: "sandbox_ownership_conflict",
+            trigger: "launch_autostart", coldStart: false, ownerState: "osaurus_alive", service: service)
+        FeatureTelemetry.sandboxProvisionFailure(
+            category: "agent_provision_failed", backend: "vm", phase: "agent_provision.bootstrap_script",
+            errorClass: "sandbox_user_creation_failed", trigger: "agent_switch", coldStart: false,
+            bootstrapStep: "adduser", service: service)
+
+        let conflict = business(rec.events[0].props)
+        #expect(conflict["owner_state"] as? String == "osaurus_alive")
+        #expect(conflict["bootstrap_step"] == nil)
+        let script = business(rec.events[1].props)
+        #expect(script["bootstrap_step"] as? String == "adduser")
+        #expect(script["owner_state"] == nil)
     }
 }

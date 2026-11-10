@@ -67,6 +67,12 @@ app: cli
 	# Killable out-of-process native plugin host (see PluginProcessHost.swift).
 	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-plugin-host" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
+	@echo "Building workflow code-node helper (osaurus-js-host)…"
+	xcodebuild -workspace $(WORKSPACE) -scheme osaurus-js-host -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
+	@echo "Embedding code-node helper into App Bundle (Helpers)…"
+	# JavaScriptCore runner for workflow code nodes (see CodeNodeExecutor.swift).
+	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-js-host" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-js-host"
+	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-js-host"
 	@echo "Bundling sandbox kernel (Resources/SandboxRuntime)…"
 	./scripts/build/fetch_sandbox_kernel.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Resources/SandboxRuntime"
 
@@ -277,6 +283,27 @@ evals: evals-prep
 		$(EVALS_FLOOR_FLAG) \
 		$(if $(MODEL),--model $(MODEL),) \
 		$(if $(FILTER),--filter $(FILTER),)
+
+# The Architect lane on a frontier model, hermetic: workflows talk to the
+# cases' loopback fixture APIs, secrets stay in memory, and every case runs
+# EVALS_REPEAT times with transcripts. Export the provider key (e.g.
+# XAI_API_KEY) in the shell only.
+#   make evals-architect LABEL=baseline
+ARCHITECT_MODEL ?= xai/grok-4.7
+ARCHITECT_LABEL ?= $(if $(LABEL),$(LABEL),$(shell date -u +%Y%m%dT%H%M%SZ))
+.PHONY: evals-architect
+evals-architect:
+	@mkdir -p build/evals/architect
+	swift build --package-path Packages/OsaurusCore --product osaurus-js-host
+	OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 OSAURUS_TEST_ROOT=/tmp/osaurus-test OSU_MODELS_DIR=/tmp/osaurus-test-models \
+	OSAURUS_JS_HOST_PATH=$$(swift build --package-path Packages/OsaurusCore --show-bin-path)/osaurus-js-host \
+	swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+		--suite $(EVALS_ROOT)/Architect \
+		--model $(ARCHITECT_MODEL) \
+		--repeat $(if $(EVALS_REPEAT),$(EVALS_REPEAT),3) \
+		--transcripts \
+		$(if $(FILTER),--filter $(FILTER),) \
+		--out build/evals/architect/$(ARCHITECT_LABEL).json
 
 # Discover installed bundles using the same Core scanner as the app; each
 # image-capable bundle runs the strict real-media suite in an isolated process.

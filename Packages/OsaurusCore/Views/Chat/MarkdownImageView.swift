@@ -68,8 +68,8 @@ struct MarkdownImageView: View {
 
             if !isGenericCaption(altText), loadedImage != nil {
                 Text(altText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .textStyle(.caption, weight: 500)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(2)
             }
         }
@@ -95,13 +95,13 @@ struct MarkdownImageView: View {
 
     private func placeholderContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         ZStack {
-            imageClipShape.fill(theme.secondaryBackground)
+            imageClipShape.fill(theme.surface.subtle)
             content()
         }
         .frame(maxWidth: maxImageWidth)
         .frame(height: 160)
         .clipShape(imageClipShape)
-        .overlay(imageClipShape.strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5))
+        .overlay(imageClipShape.strokeBorder(theme.border.subtle, lineWidth: theme.hairline))
     }
 
     private func loadedImageView(_ image: NSImage) -> some View {
@@ -111,22 +111,17 @@ struct MarkdownImageView: View {
             .aspectRatio(contentMode: .fit)
             .frame(width: size.width, height: size.height)
             .clipShape(imageClipShape)
-            .overlay(imageClipShape.strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5))
+            .overlay(imageClipShape.strokeBorder(theme.border.subtle, lineWidth: theme.hairline))
             .overlay(alignment: .topTrailing) {
                 if isHovered {
                     ImageHoverToolbar(image: image)
                         .transition(.opacity)
                 }
             }
-            .contextMenu { ImageContextMenuItems(image: image) { showFullScreen = true } }
-            .shadow(
-                color: theme.shadowColor.opacity(isHovered ? 0.15 : 0.08),
-                radius: isHovered ? 12 : 6,
-                x: 0,
-                y: isHovered ? 6 : 3
-            )
+            .assignedContextMenu { ImageContextMenuItems(image: image) { showFullScreen = true } }
+            .themeElevation(isHovered ? theme.elevation.overlay : theme.elevation.raised)
             .scaleEffect(isHovered ? 1.01 : 1.0)
-            .animation(.easeInOut(duration: 0.2), value: isHovered)
+            .animation(theme.motion.quick, value: isHovered)
             .onHover { isHovered = $0 }
             .transition(.opacity.combined(with: .scale(scale: 0.98)))
     }
@@ -135,27 +130,27 @@ struct MarkdownImageView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .scaleEffect(0.8)
-                .progressViewStyle(CircularProgressViewStyle(tint: theme.tertiaryText))
+                .progressViewStyle(CircularProgressViewStyle(tint: theme.text.tertiary))
             Text("Loading image...", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.caption)
+                .foregroundColor(theme.text.tertiary)
         }
     }
 
     private func errorView(_ error: Error) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "photo.badge.exclamationmark")
-                .font(.system(size: 32, weight: .light))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(32, weight: .light)
+                .foregroundColor(theme.text.tertiary)
 
             VStack(spacing: 4) {
                 Text("Failed to load image", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.label)
+                    .foregroundColor(theme.text.secondary)
                 if !altText.isEmpty {
                     Text(altText)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .textStyle(.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
             }
@@ -163,14 +158,14 @@ struct MarkdownImageView: View {
             Button(action: loadImage) {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .medium))
+                        .glyphSize(11, weight: .medium)
                     Text("Retry", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .textStyle(.caption, weight: 500)
                 }
-                .foregroundColor(theme.accentColor)
+                .foregroundColor(theme.status.info.foreground)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Capsule().fill(theme.accentColor.opacity(0.1)))
+                .background(Capsule().fill(theme.status.info.background))
             }
             .buttonStyle(.plain)
         }
@@ -188,14 +183,14 @@ struct MarkdownImageView: View {
                 let image = try await ImageLoader.load(from: src)
                 ThreadCache.shared.setImage(image, for: src)
                 await MainActor.run {
-                    withAnimation(.easeOut(duration: 0.3)) {
+                    withAnimation(theme.motion.standard) {
                         self.loadedImage = image
                         self.isLoading = false
                     }
                 }
             } catch {
                 await MainActor.run {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(theme.motion.quick) {
                         self.loadError = error
                         self.isLoading = false
                     }
@@ -267,6 +262,7 @@ enum ImageLoader {
 // MARK: - Shared Image Interaction Helpers
 
 struct ImageHoverToolbar: View {
+    @Environment(\.theme) private var theme
     let image: NSImage
 
     var body: some View {
@@ -278,11 +274,10 @@ struct ImageHoverToolbar: View {
                 ImageActions.copyImageToClipboard(image)
             }
         }
-        .foregroundColor(.white)
+        .foregroundColor(FixedPalette.onMedia)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .dark)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(FixedPalette.mediaScrim(0.6))
         )
         .padding(8)
     }
@@ -290,7 +285,7 @@ struct ImageHoverToolbar: View {
     private func imageToolbarButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
+                .glyphSize(12, weight: .semibold)
                 .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
@@ -380,9 +375,11 @@ enum ImageActions {
     /// it, so nothing heavy touches the main thread for a file-backed image.
     static func copyImageFileToClipboard(at url: URL) {
         Task.detached(priority: .userInitiated) {
-            let data = try? Data(contentsOf: url)
-            let type: NSPasteboard.PasteboardType =
-                url.pathExtension.lowercased() == "png" ? .png : .tiff
+            let ext = url.pathExtension.lowercased()
+            let type: NSPasteboard.PasteboardType = ext == "tif" || ext == "tiff" ? .tiff : .png
+            // JPEG, WebP, HEIC, ... are re-encoded: pasting their bytes as
+            // PNG or TIFF gives the receiving app data it cannot read.
+            let data = ext == "png" || type == .tiff ? try? Data(contentsOf: url) : pngData(from: url)
             await MainActor.run {
                 guard let data else {
                     NSSound.beep()
@@ -394,6 +391,18 @@ enum ImageActions {
                 ToastManager.shared.success(L("Image Copied to Clipboard"))
             }
         }
+    }
+
+    nonisolated static func pngData(from url: URL) -> Data? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return nil }
+        let data = NSMutableData()
+        guard let out = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(out, image, nil)
+        return CGImageDestinationFinalize(out) ? data as Data : nil
     }
 
     private static func writeImageDataToPasteboard(tiff: Data?) async {
@@ -436,6 +445,9 @@ final class MarkdownSegmentImageView: NSImageView {
     private let downloadButton = NSButton()
     private var trackingAreaRef: NSTrackingArea?
     private var rightEdgeConstraint: NSLayoutConstraint?
+    private var displayedImageWidth: CGFloat = 0
+    private var imageCornerRadius: CGFloat = 0
+    private let displayedImageMask = CAShapeLayer()
 
     /// Clicking the image opens it in the full-screen lightbox. The owner
     /// forwards the already-decoded `NSImage` up to `ChatView`, which presents
@@ -460,6 +472,7 @@ final class MarkdownSegmentImageView: NSImageView {
     }
 
     private func configureDownloadButton() {
+        let theme = ThemeManager.shared.chatTheme
         downloadButton.translatesAutoresizingMaskIntoConstraints = false
         downloadButton.isBordered = false
         downloadButton.bezelStyle = .regularSquare
@@ -467,11 +480,12 @@ final class MarkdownSegmentImageView: NSImageView {
         downloadButton.image = NSImage(
             systemSymbolName: "arrow.down.to.line",
             accessibilityDescription: "Save Image"
-        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+        )?.withSymbolConfiguration(theme.symbolConfiguration(.caption, weight: .semibold))
+        // Sits on arbitrary image pixels: a scrim chip with a white glyph.
         downloadButton.contentTintColor = .white
         downloadButton.wantsLayer = true
-        downloadButton.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
-        downloadButton.layer?.cornerRadius = 6
+        downloadButton.layer?.backgroundColor = NSColor(theme.scrim).cgColor
+        downloadButton.layer?.cornerRadius = theme.radius.medium
         downloadButton.target = self
         downloadButton.action = #selector(saveImageTapped)
         downloadButton.isHidden = true
@@ -503,10 +517,33 @@ final class MarkdownSegmentImageView: NSImageView {
     /// bounds if `displayedWidth` overshoots, so the rounded-corner mask can't
     /// shear its right corners.
     func setImageRightEdge(_ displayedWidth: CGFloat) {
+        displayedImageWidth = displayedWidth
+        updateImageMask()
         let target = max(Self.buttonSize + Self.inset, displayedWidth) - Self.inset
         if let c = rightEdgeConstraint, abs(c.constant - target) > 0.5 {
             c.constant = target
         }
+    }
+
+    func setImageCornerRadius(_ radius: CGFloat) {
+        imageCornerRadius = max(0, radius)
+        updateImageMask()
+    }
+
+    override func layout() {
+        super.layout()
+        updateImageMask()
+    }
+
+    private func updateImageMask() {
+        guard let layer, bounds.height > 0, displayedImageWidth > 0 else { return }
+        // The image can be narrower than this full-width segment. Clip the
+        // displayed pixels, so its right corners obey the same radius as its left.
+        let rect = CGRect(x: 0, y: 0, width: min(bounds.width, displayedImageWidth), height: bounds.height)
+        displayedImageMask.frame = bounds
+        displayedImageMask.path = CGPath(roundedRect: rect, cornerWidth: imageCornerRadius,
+            cornerHeight: imageCornerRadius, transform: nil)
+        layer.mask = displayedImageMask
     }
 
     @objc private func saveImageTapped() {
@@ -576,7 +613,7 @@ struct ImageFullScreenView: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.9)
+            FixedPalette.mediaScrim(0.9)
                 .ignoresSafeArea()
                 .onTapGesture { close() }
 
@@ -595,12 +632,12 @@ struct ImageFullScreenView: View {
                             .onChanged { if scale > 1.0 { offset = $0.translation } }
                             .onEnded { _ in
                                 if scale <= 1.0 {
-                                    withAnimation(.spring()) { offset = .zero }
+                                    withAnimation(theme.motion.springAnimation) { offset = .zero }
                                 }
                             }
                     )
                     .onTapGesture(count: 2) {
-                        withAnimation(.spring()) {
+                        withAnimation(theme.motion.springAnimation) {
                             if scale > 1.0 {
                                 scale = 1.0
                                 offset = .zero
@@ -619,18 +656,18 @@ struct ImageFullScreenView: View {
                             ImageActions.saveImageToFile(image)
                         } label: {
                             Image(systemName: "arrow.down.to.line.circle.fill")
-                                .font(.system(size: 28))
-                                .foregroundColor(.white.opacity(0.8))
-                                .shadow(radius: 4)
+                                .glyphSize(28)
+                                .foregroundColor(FixedPalette.onMedia.opacity(0.8))
+                                .themeElevation(theme.elevation.overlay)
                         }
                         .buttonStyle(.plain)
                         .localizedHelp("Save Image")
                     }
                     Button(action: { close() }) {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 28))
-                            .foregroundColor(.white.opacity(0.8))
-                            .shadow(radius: 4)
+                            .glyphSize(28)
+                            .foregroundColor(FixedPalette.onMedia.opacity(0.8))
+                            .themeElevation(theme.elevation.overlay)
                     }
                     .buttonStyle(.plain)
                     .padding()
@@ -640,11 +677,11 @@ struct ImageFullScreenView: View {
 
                 if !isGenericCaption(altText) {
                     Text(altText)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white.opacity(0.9))
+                        .textStyle(.label)
+                        .foregroundColor(FixedPalette.onMedia.opacity(0.9))
                         .padding(.horizontal, 20)
                         .padding(.vertical, 10)
-                        .background(Capsule().fill(Color.black.opacity(0.5)))
+                        .background(Capsule().fill(FixedPalette.mediaScrim(0.5)))
                         .padding(.bottom, 40)
                 }
             }
@@ -687,7 +724,7 @@ extension View {
             }
             .padding()
             .frame(width: 700)
-            .background(Color(hex: "0f0f10"))
+            .background(CustomizableTheme.dark().surface.canvas)
         }
     }
 #endif

@@ -488,7 +488,7 @@ public enum SystemPromptTemplates {
 
         \(pluginDependenciesBullet)
         - `secrets`: names whose values come from Keychain — registration fails up front if a declared secret has no value yet.
-        - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is forced to `false`.
+        - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is not honored; host inference follows the agent's own setting.
         4. **Write the scripts.** Parameters arrive as `$PARAM_{NAME}` (uppercased) env vars, secrets as `$NAME` env vars; print JSON to stdout, errors to stderr, exit non-zero on failure.
         5. **Register and verify.** Call `sandbox_plugin_register(plugin_id: "{service}")` — it installs deps, runs setup, and makes the tools available immediately (and persists them). Call one to confirm; on failure read stderr, fix, and re-register. Then tell the user what's now available.
 
@@ -1801,17 +1801,27 @@ public enum SystemPromptTemplates {
     /// Minimum trusted-workspace contract. Tool schemas carry operation detail;
     /// this section only establishes cwd, confinement, and user-authored
     /// project instructions.
-    public static func leanFolderContext(from folder: FolderContext) -> String {
-        var section = """
-            ## Working directory
-            **Path:** \(folder.rootPath.path)
-            \(treeTruncationLine(for: folder).map { $0 + "\n" } ?? "")Native execution is trusted for this workspace. Writes are confined to this folder and temporary directories. Use relative paths.
-            Use the workspace tools to complete requested work now; do not only describe or promise it.
-            After creating or changing runnable code, run an available syntax/build/test/behavior check before saying it works; a successful file mutation proves only that bytes were saved.
-            To append while preserving a file, call file_write with mode append and put only the new bytes in content.
-            file_write content has no length limit; if your own output would be cut short on a very large text file, write it in parts with mode append.
-            \(folderDocumentFormatsLine)
-            """
+    /// `toolNames` is the resolved schema: lines that name an optional tool
+    /// appear only when that tool is callable.
+    public static func leanFolderContext(
+        from folder: FolderContext,
+        toolNames: Set<String> = []
+    ) -> String {
+        var lines = [
+            "## Working directory",
+            "**Path:** \(folder.rootPath.path)",
+        ]
+        if let truncation = treeTruncationLine(for: folder) { lines.append(truncation) }
+        lines += [
+            "Native execution is trusted for this workspace. Writes are confined to this folder and temporary directories. Use relative paths.",
+            "Use the workspace tools to complete requested work now; do not only describe or promise it.",
+            batchReadLine,
+        ]
+        if folder.projectType != .unknown { lines.append(runnableCodeCheckLine) }
+        lines.append(folderDocumentFormatsLine)
+        if toolNames.contains("share_artifact") { lines.append(folderShareArtifactLine) }
+        if toolNames.contains("redact_file") { lines.append(folderRedactionLine) }
+        var section = lines.joined(separator: "\n")
         if let contextFiles = folder.contextFiles, !contextFiles.isEmpty {
             section += """
 
@@ -1824,6 +1834,18 @@ public enum SystemPromptTemplates {
     }
 
     // MARK: - Folder Building Blocks
+
+    static let batchReadLine =
+        "To read several files, use one `file_read` call (the first in `path`, the rest in `paths`) instead of one file per turn."
+
+    static let runnableCodeCheckLine =
+        "After creating or changing runnable code, run an available syntax/build/test/behavior check before saying it works; a successful file mutation proves only that bytes were saved."
+
+    static let folderShareArtifactLine =
+        "Files you write stay in the working folder; call `share_artifact` when the user should see a finished deliverable in the chat."
+
+    static let folderRedactionLine =
+        "To mask names, emails, phone numbers, or other personal data across a file, use `redact_file` (preview matches with `detect_pii`) instead of editing occurrences one by one."
 
     /// One-line format contract for the file tools. Lives in the prompt (not
     /// only in tool descriptions) because models otherwise fall back to

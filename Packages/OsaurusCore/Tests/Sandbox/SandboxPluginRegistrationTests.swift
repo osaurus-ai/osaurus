@@ -142,7 +142,7 @@ struct SandboxPluginRegistrationTests {
         try AgentSecretsKeychain._withInMemoryStoreForTesting {
             let agentId = UUID()
             let key = "OSAURUS_TEST_REGISTRATION_SECRET_\(UUID().uuidString.prefix(8))"
-            AgentSecretsKeychain.saveSecret("value", id: key, agentId: agentId)
+            AgentSecretsKeychain._testSeedSecret("value", id: key, agentId: agentId)
 
             var plugin = SandboxPlugin(
                 name: "Has Secret",

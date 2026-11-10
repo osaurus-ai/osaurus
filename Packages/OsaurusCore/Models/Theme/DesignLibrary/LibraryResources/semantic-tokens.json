@@ -1,0 +1,1866 @@
+{
+  "version": "1.0.0-review",
+  "status": "Engineering wiring only. Temporary starting values; not the final visual design.",
+  "modes": [
+    "light",
+    "dark"
+  ],
+  "units": {
+    "colors": "sRGB #RRGGBB; #RRGGBBAA only for intentional transparency",
+    "dimensions": "native points",
+    "duration": "seconds"
+  },
+  "implementation": "Named semantic colors may be implemented using color assets or typed Swift theme properties. No separate primitive palette is required.",
+  "source": {
+    "repository": "https://github.com/osaurus-ai/osaurus",
+    "revision": "6673ecf0b03090bb9a045f4a81f01537c2dbc152",
+    "date": "2026-10-12",
+    "betaInternal21Match": "unverified"
+  },
+  "semanticTokens": {
+    "color.surface.canvas": {
+      "type": "color",
+      "light": "#F5F5F7",
+      "dark": "#1C1C1E",
+      "use": "Opaque main-content surface when needed, and solid window fallback. The normal base window uses the material treatment instead.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.primaryBackground",
+          "background.solidColor"
+        ],
+        "valuesChange": "colors.primaryBackground: Light: unchanged; Dark: unchanged; background.solidColor: Old value inherited; now explicitly specified",
+        "engineerInstructions": "Replace the old reference with color.surface.canvas. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated. Replace the optional custom solid-background override with the explicit light/dark canvas role. A nil old override inherited the configured primary background."
+      }
+    },
+    "color.surface.subtle": {
+      "type": "color",
+      "light": "#ECECF0",
+      "dark": "#2C2C2E",
+      "use": "Inset or quiet supporting container; does not automatically define secondary actions.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.secondaryBackground"
+        ],
+        "valuesChange": "colors.secondaryBackground: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with color.surface.subtle. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.surface.raised": {
+      "type": "color",
+      "light": "#FFFFFF",
+      "dark": "#2C2C2E",
+      "use": "Opaque cards and grouped settings.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.cardBackground",
+          "colors.inputBackground"
+        ],
+        "valuesChange": "colors.cardBackground: Light: unchanged; Dark: unchanged; colors.inputBackground: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with color.surface.raised. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.surface.overlay": {
+      "type": "color",
+      "light": "#FFFFFF",
+      "dark": "#3A3A3C",
+      "use": "Popover and dialog surface",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.tertiaryBackground"
+        ],
+        "valuesChange": "colors.tertiaryBackground: Light: changes; Dark: unchanged",
+        "engineerInstructions": "For hovered neutral rows use color.surface.hover. For popovers/dialogs use color.surface.overlay. Inspect each use before replacing it."
+      }
+    },
+    "color.surface.sidebar": {
+      "type": "color",
+      "light": "#E9E9ED",
+      "dark": "#252527",
+      "use": "Opaque navigation container when a solid sidebar is needed. A sidebar sharing the base material has no additional fill.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.sidebarBackground"
+        ],
+        "valuesChange": "colors.sidebarBackground: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Use color.surface.sidebar for a solid sidebar. If sharing the base-window material, omit a separate sidebar fill."
+      }
+    },
+    "color.surface.code": {
+      "type": "color",
+      "light": "#F2F2F7",
+      "dark": "#1C1C1E",
+      "use": "Code blocks and monospaced output",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.codeBlockBackground"
+        ],
+        "valuesChange": "colors.codeBlockBackground: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with color.surface.code. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.surface.hover": {
+      "type": "color",
+      "light": "#E4E4E9",
+      "dark": "#3A3A3C",
+      "use": "Hovered neutral row or selectable item. Button hover uses its own action role.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.tertiaryBackground"
+        ],
+        "valuesChange": "colors.tertiaryBackground: Light: changes; Dark: unchanged",
+        "engineerInstructions": "For hovered neutral rows use color.surface.hover. For popovers/dialogs use color.surface.overlay. Inspect each use before replacing it."
+      }
+    },
+    "color.surface.pressed": {
+      "type": "color",
+      "light": "#DADAE0",
+      "dark": "#48484A",
+      "use": "Pressed neutral row or selectable item. Button press uses its own action role.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.surface.pressed to the shared definitions. Pressed neutral row or selectable item. Button press uses its own action role."
+      }
+    },
+    "color.surface.selected": {
+      "type": "color",
+      "light": "#E4E4E9",
+      "dark": "#48484A",
+      "use": "Selected navigation row; pair with primary text and a checkmark or another non-color indicator.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.sidebarSelectedBackground"
+        ],
+        "valuesChange": "colors.sidebarSelectedBackground: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.surface.selected. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.surface.disabled": {
+      "type": "color",
+      "light": "#ECECF0",
+      "dark": "#2C2C2E",
+      "use": "Disabled controls",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.surface.disabled to the shared definitions. Disabled controls"
+      }
+    },
+    "color.text.primary": {
+      "type": "color",
+      "light": "#1D1D1F",
+      "dark": "#F5F5F7",
+      "use": "Main content and labels",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.primaryText"
+        ],
+        "valuesChange": "colors.primaryText: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with color.text.primary. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.text.secondary": {
+      "type": "color",
+      "light": "#515154",
+      "dark": "#D1D1D6",
+      "use": "Supporting content",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.secondaryText"
+        ],
+        "valuesChange": "colors.secondaryText: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with color.text.secondary. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.text.tertiary": {
+      "type": "color",
+      "light": "#5F5F64",
+      "dark": "#B8B8C0",
+      "use": "Metadata and lower-emphasis readable text",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.tertiaryText"
+        ],
+        "valuesChange": "colors.tertiaryText: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.text.tertiary. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.text.placeholder": {
+      "type": "color",
+      "light": "#5F5F64",
+      "dark": "#B8B8C0",
+      "use": "Empty-field instructions; readable against input surface",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.placeholderText"
+        ],
+        "valuesChange": "colors.placeholderText: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.text.placeholder. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.text.disabled": {
+      "type": "color",
+      "light": "#8E8E93",
+      "dark": "#727278",
+      "use": "Unavailable controls only; never ordinary metadata",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.text.disabled to the shared definitions. Unavailable controls only; never ordinary metadata"
+      }
+    },
+    "color.text.inverse": {
+      "type": "color",
+      "light": "#F5F5F7",
+      "dark": "#1D1D1F",
+      "use": "Text on inverse surfaces",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.text.inverse to the shared definitions. Text on inverse surfaces"
+      }
+    },
+    "color.text.onDanger": {
+      "type": "color",
+      "light": "#FFFFFF",
+      "dark": "#101012",
+      "use": "Text on the filled destructive button",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.text.onDanger to the shared definitions. Text on the filled destructive button"
+      }
+    },
+    "color.border.subtle": {
+      "type": "color",
+      "light": "#D1D1D6",
+      "dark": "#38383A",
+      "use": "Decorative separators; not the sole indicator of a control",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.primaryBorder"
+        ],
+        "valuesChange": "colors.primaryBorder: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with color.border.subtle. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.border.default": {
+      "type": "color",
+      "light": "#C7C7CC",
+      "dark": "#48484A",
+      "use": "Decorative container outlines",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.secondaryBorder",
+          "colors.cardBorder"
+        ],
+        "valuesChange": "colors.secondaryBorder: Light: unchanged; Dark: unchanged; colors.cardBorder: Light: changes; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with color.border.default. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.border.strong": {
+      "type": "color",
+      "light": "#85858B",
+      "dark": "#85858D",
+      "use": "Input or control boundary when needed for identification",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.buttonBorder",
+          "colors.inputBorder"
+        ],
+        "valuesChange": "colors.buttonBorder: Light: changes; Dark: changes; colors.inputBorder: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.border.strong. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.border.focus": {
+      "type": "color",
+      "light": "#000000",
+      "dark": "#FFFFFF",
+      "use": "Keyboard focus ring; never substitute hover",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.focusBorder"
+        ],
+        "valuesChange": "colors.focusBorder: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.border.focus. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.border.error": {
+      "type": "color",
+      "light": "#B42318",
+      "dark": "#FF6B62",
+      "use": "Invalid input boundary",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.border.error to the shared definitions. Invalid input boundary"
+      }
+    },
+    "color.text.link": {
+      "type": "color",
+      "light": "#000000",
+      "dark": "#FFFFFF",
+      "use": "Links on neutral backgrounds; underline where context needs it",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.text.link to the shared definitions. Links on neutral backgrounds; underline where context needs it"
+      }
+    },
+    "color.text.linkHover": {
+      "type": "color",
+      "light": "#262626",
+      "dark": "#E5E5E5",
+      "use": "Hovered link",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.accentColorLight"
+        ],
+        "valuesChange": "colors.accentColorLight: Light: changes; Dark: changes",
+        "engineerInstructions": "For primary-button hover use color.action.primary.hover.background; for hovered links use color.text.linkHover. Do not reuse one lighter-accent setting for both."
+      }
+    },
+    "color.selection.background": {
+      "type": "color",
+      "light": "#E4E4E9",
+      "dark": "#48484A",
+      "use": "Text selection background; explicit opaque value",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.selectionColor"
+        ],
+        "valuesChange": "colors.selectionColor: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.selection.background. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.selection.foreground": {
+      "type": "color",
+      "light": "#1D1D1F",
+      "dark": "#F5F5F7",
+      "use": "Selected text foreground",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.selection.foreground to the shared definitions. Selected text foreground"
+      }
+    },
+    "color.cursor": {
+      "type": "color",
+      "light": "#000000",
+      "dark": "#FFFFFF",
+      "use": "Insertion caret",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.cursorColor"
+        ],
+        "valuesChange": "colors.cursorColor: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.cursor. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.scrim": {
+      "type": "color",
+      "light": "#00000066",
+      "dark": "#00000080",
+      "use": "Modal overlay over app content",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.scrim to the shared definitions. Modal overlay over app content"
+      }
+    },
+    "color.shadow": {
+      "type": "color",
+      "light": "#000000",
+      "dark": "#000000",
+      "use": "Base shadow color; use with elevation recipe",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.shadowColor"
+        ],
+        "valuesChange": "colors.shadowColor: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with color.shadow. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.status.success.foreground": {
+      "type": "color",
+      "light": "#1B6D31",
+      "dark": "#60D980",
+      "use": "Readable success text or icon on its status surface or a neutral surface",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.successColor"
+        ],
+        "valuesChange": "colors.successColor: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.status.success.foreground. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.status.success.background": {
+      "type": "color",
+      "light": "#EAF7ED",
+      "dark": "#15351F",
+      "use": "Subtle success message fill",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.status.success.background to the shared definitions. Subtle success message fill"
+      }
+    },
+    "color.status.success.border": {
+      "type": "color",
+      "light": "#39834B",
+      "dark": "#60D980",
+      "use": "Boundary for success message or indicator",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.status.success.border to the shared definitions. Boundary for success message or indicator"
+      }
+    },
+    "color.status.warning.foreground": {
+      "type": "color",
+      "light": "#805000",
+      "dark": "#FFC15C",
+      "use": "Readable warning text or icon on its status surface or a neutral surface",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.warningColor"
+        ],
+        "valuesChange": "colors.warningColor: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.status.warning.foreground. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.status.warning.background": {
+      "type": "color",
+      "light": "#FFF4D6",
+      "dark": "#3E2B0D",
+      "use": "Subtle warning message fill",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.status.warning.background to the shared definitions. Subtle warning message fill"
+      }
+    },
+    "color.status.warning.border": {
+      "type": "color",
+      "light": "#976000",
+      "dark": "#FFC15C",
+      "use": "Boundary for warning message or indicator",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.status.warning.border to the shared definitions. Boundary for warning message or indicator"
+      }
+    },
+    "color.status.error.foreground": {
+      "type": "color",
+      "light": "#B42318",
+      "dark": "#FF6B62",
+      "use": "Readable error text or icon on its status surface or a neutral surface",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.errorColor"
+        ],
+        "valuesChange": "colors.errorColor: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.status.error.foreground. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.status.error.background": {
+      "type": "color",
+      "light": "#FEEDEC",
+      "dark": "#401E1B",
+      "use": "Subtle error message fill",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.status.error.background to the shared definitions. Subtle error message fill"
+      }
+    },
+    "color.status.error.border": {
+      "type": "color",
+      "light": "#B42318",
+      "dark": "#FF6B62",
+      "use": "Boundary for error message or indicator",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.status.error.border to the shared definitions. Boundary for error message or indicator"
+      }
+    },
+    "color.status.info.foreground": {
+      "type": "color",
+      "light": "#005FCC",
+      "dark": "#80B9FF",
+      "use": "Readable info text or icon on its status surface or a neutral surface",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.infoColor"
+        ],
+        "valuesChange": "colors.infoColor: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with color.status.info.foreground. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.status.info.background": {
+      "type": "color",
+      "light": "#E6F0FF",
+      "dark": "#173457",
+      "use": "Subtle info message fill",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.status.info.background to the shared definitions. Subtle info message fill"
+      }
+    },
+    "color.status.info.border": {
+      "type": "color",
+      "light": "#005FCC",
+      "dark": "#80B9FF",
+      "use": "Boundary for info message or indicator",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.status.info.border to the shared definitions. Boundary for info message or indicator"
+      }
+    },
+    "color.danger.default": {
+      "type": "color",
+      "light": "#B42318",
+      "dark": "#FF6B62",
+      "use": "Filled destructive action",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.danger.default to the shared definitions. Filled destructive action"
+      }
+    },
+    "color.danger.hover": {
+      "type": "color",
+      "light": "#951D14",
+      "dark": "#FF8982",
+      "use": "Hovered destructive action",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.danger.hover to the shared definitions. Hovered destructive action"
+      }
+    },
+    "color.danger.pressed": {
+      "type": "color",
+      "light": "#7B180F",
+      "dark": "#FFA59F",
+      "use": "Pressed destructive action",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.danger.pressed to the shared definitions. Pressed destructive action"
+      }
+    },
+    "space.0": {
+      "type": "dimension",
+      "light": 0,
+      "dark": 0,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.0 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.2": {
+      "type": "dimension",
+      "light": 2,
+      "dark": 2,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.2 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.4": {
+      "type": "dimension",
+      "light": 4,
+      "dark": 4,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.4 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.6": {
+      "type": "dimension",
+      "light": 6,
+      "dark": 6,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.6 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.8": {
+      "type": "dimension",
+      "light": 8,
+      "dark": 8,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.8 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.12": {
+      "type": "dimension",
+      "light": 12,
+      "dark": 12,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.12 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.16": {
+      "type": "dimension",
+      "light": 16,
+      "dark": 16,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.16 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.24": {
+      "type": "dimension",
+      "light": 24,
+      "dark": 24,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.24 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.32": {
+      "type": "dimension",
+      "light": 32,
+      "dark": 32,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.32 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.40": {
+      "type": "dimension",
+      "light": 40,
+      "dark": 40,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.40 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.48": {
+      "type": "dimension",
+      "light": 48,
+      "dark": 48,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.48 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "space.64": {
+      "type": "dimension",
+      "light": 64,
+      "dark": 64,
+      "use": "Spacing primitive in points; component aliases select the appropriate step",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add space.64 to the shared definitions. Spacing primitive in points; component aliases select the appropriate step"
+      }
+    },
+    "radius.none": {
+      "type": "dimension",
+      "light": 0,
+      "dark": 0,
+      "use": "Corner radius in points",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add radius.none to the shared definitions. Corner radius in points"
+      }
+    },
+    "radius.small": {
+      "type": "dimension",
+      "light": 4,
+      "dark": 4,
+      "use": "Corner radius in points",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add radius.small to the shared definitions. Corner radius in points"
+      }
+    },
+    "radius.medium": {
+      "type": "dimension",
+      "light": 8,
+      "dark": 8,
+      "use": "Corner radius in points",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "borders.inputCornerRadius"
+        ],
+        "valuesChange": "borders.inputCornerRadius: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with radius.medium. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "radius.large": {
+      "type": "dimension",
+      "light": 12,
+      "dark": 12,
+      "use": "Corner radius in points",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "borders.cardCornerRadius"
+        ],
+        "valuesChange": "borders.cardCornerRadius: Light: changes; Dark: changes",
+        "engineerInstructions": "Use radius.large for cards/settings groups and radius.xlarge for popovers. Confirm each container type before replacing the old shared radius."
+      }
+    },
+    "radius.xlarge": {
+      "type": "dimension",
+      "light": 16,
+      "dark": 16,
+      "use": "Corner radius in points",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "borders.cardCornerRadius"
+        ],
+        "valuesChange": "borders.cardCornerRadius: Light: changes; Dark: changes",
+        "engineerInstructions": "Use radius.large for cards/settings groups and radius.xlarge for popovers. Confirm each container type before replacing the old shared radius."
+      }
+    },
+    "radius.bubble": {
+      "type": "dimension",
+      "light": 18,
+      "dark": 18,
+      "use": "Corner radius in points",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "messages.bubbleCornerRadius"
+        ],
+        "valuesChange": "messages.bubbleCornerRadius: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with radius.bubble. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "radius.pill": {
+      "type": "shape",
+      "light": "capsule",
+      "dark": "capsule",
+      "use": "Capsule geometry, not a large magic radius",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add radius.pill to the shared definitions. Capsule geometry, not a large magic radius"
+      }
+    },
+    "stroke.none": {
+      "type": "dimension",
+      "light": 0,
+      "dark": 0,
+      "use": "Stroke width in points",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add stroke.none to the shared definitions. Stroke width in points"
+      }
+    },
+    "stroke.default": {
+      "type": "dimension",
+      "light": 1,
+      "dark": 1,
+      "use": "Stroke width in points",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "borders.defaultWidth"
+        ],
+        "valuesChange": "borders.defaultWidth: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with stroke.default. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "stroke.focus": {
+      "type": "dimension",
+      "light": 2,
+      "dark": 2,
+      "use": "Stroke width in points",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add stroke.focus to the shared definitions. Stroke width in points"
+      }
+    },
+    "stroke.hairline": {
+      "type": "dimensionRule",
+      "light": {
+        "formula": "1 / backingScaleFactor",
+        "unit": "pt"
+      },
+      "dark": {
+        "formula": "1 / backingScaleFactor",
+        "unit": "pt"
+      },
+      "use": "One physical pixel, resolved for the destination display",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "messages.borderWidth"
+        ],
+        "valuesChange": "messages.borderWidth: Individual setting replaced by complete recipe",
+        "engineerInstructions": "Resolve stroke.hairline from the destination display scale so it is one physical pixel; do not retain a fixed point width."
+      }
+    },
+    "focus.offset": {
+      "type": "dimension",
+      "light": 2,
+      "dark": 2,
+      "use": "Gap between control bounds and outer focus ring",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add focus.offset to the shared definitions. Gap between control bounds and outer focus ring"
+      }
+    },
+    "font.family.ui": {
+      "type": "fontFamily",
+      "light": "system",
+      "dark": "system",
+      "use": "System UI font used by interface text styles.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "typography.primaryFont"
+        ],
+        "valuesChange": "typography.primaryFont: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with font.family.ui. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "font.family.code": {
+      "type": "fontFamily",
+      "light": "systemMonospaced",
+      "dark": "systemMonospaced",
+      "use": "System monospaced font used by code text style.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "typography.monoFont"
+        ],
+        "valuesChange": "typography.monoFont: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace the old reference with font.family.code. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "type.display": {
+      "type": "typography",
+      "light": {
+        "family": "system",
+        "size": 40,
+        "weight": 700,
+        "lineHeight": 48,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "dark": {
+        "family": "system",
+        "size": 40,
+        "weight": 700,
+        "lineHeight": 48,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "use": "Complete display text style. Scale once with user font zoom; line height is a target minimum, not a clipping box.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add type.display to the shared definitions. Complete display text style. Scale once with user font zoom; line height is a target minimum, not a clipping box."
+      }
+    },
+    "type.title": {
+      "type": "typography",
+      "light": {
+        "family": "system",
+        "size": 26,
+        "weight": 600,
+        "lineHeight": 32,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "dark": {
+        "family": "system",
+        "size": 26,
+        "weight": 600,
+        "lineHeight": 32,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "use": "Complete title text style. Scale once with user font zoom; line height is a target minimum, not a clipping box.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "typography.titleSize"
+        ],
+        "valuesChange": "typography.titleSize: Font size unchanged; adds the full text style",
+        "engineerInstructions": "Apply the complete named text style, including family, size, weight, line height and tracking. Remove separate call-site overrides and apply user text scaling once."
+      }
+    },
+    "type.heading": {
+      "type": "typography",
+      "light": {
+        "family": "system",
+        "size": 18,
+        "weight": 600,
+        "lineHeight": 24,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "dark": {
+        "family": "system",
+        "size": 18,
+        "weight": 600,
+        "lineHeight": 24,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "use": "Complete heading text style. Scale once with user font zoom; line height is a target minimum, not a clipping box.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "typography.headingSize"
+        ],
+        "valuesChange": "typography.headingSize: Font size unchanged; adds the full text style",
+        "engineerInstructions": "Apply the complete named text style, including family, size, weight, line height and tracking. Remove separate call-site overrides and apply user text scaling once."
+      }
+    },
+    "type.body": {
+      "type": "typography",
+      "light": {
+        "family": "system",
+        "size": 15,
+        "weight": 400,
+        "lineHeight": 22,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "dark": {
+        "family": "system",
+        "size": 15,
+        "weight": 400,
+        "lineHeight": 22,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "use": "Complete body text style. Scale once with user font zoom; line height is a target minimum, not a clipping box.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "typography.bodySize"
+        ],
+        "valuesChange": "typography.bodySize: Font size unchanged; adds the full text style",
+        "engineerInstructions": "Apply the complete named text style, including family, size, weight, line height and tracking. Remove separate call-site overrides and apply user text scaling once."
+      }
+    },
+    "type.bodySmall": {
+      "type": "typography",
+      "light": {
+        "family": "system",
+        "size": 14,
+        "weight": 400,
+        "lineHeight": 20,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "dark": {
+        "family": "system",
+        "size": 14,
+        "weight": 400,
+        "lineHeight": 20,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "use": "Complete bodySmall text style. Scale once with user font zoom; line height is a target minimum, not a clipping box.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "typography.smallBodySize"
+        ],
+        "valuesChange": "typography.smallBodySize: Font size unchanged; adds the full text style",
+        "engineerInstructions": "Apply the complete named text style, including family, size, weight, line height and tracking. Remove separate call-site overrides and apply user text scaling once."
+      }
+    },
+    "type.label": {
+      "type": "typography",
+      "light": {
+        "family": "system",
+        "size": 13,
+        "weight": 500,
+        "lineHeight": 18,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "dark": {
+        "family": "system",
+        "size": 13,
+        "weight": 500,
+        "lineHeight": 18,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "use": "Complete label text style. Scale once with user font zoom; line height is a target minimum, not a clipping box.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "messages.agentNameSize"
+        ],
+        "valuesChange": "messages.agentNameSize: Font size unchanged; adds the full text style",
+        "engineerInstructions": "Apply the complete named text style, including family, size, weight, line height and tracking. Remove separate call-site overrides and apply user text scaling once."
+      }
+    },
+    "type.caption": {
+      "type": "typography",
+      "light": {
+        "family": "system",
+        "size": 12,
+        "weight": 400,
+        "lineHeight": 16,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "dark": {
+        "family": "system",
+        "size": 12,
+        "weight": 400,
+        "lineHeight": 16,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "use": "Complete caption text style. Scale once with user font zoom; line height is a target minimum, not a clipping box.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "typography.captionSize"
+        ],
+        "valuesChange": "typography.captionSize: Font size unchanged; adds the full text style",
+        "engineerInstructions": "Apply the complete named text style, including family, size, weight, line height and tracking. Remove separate call-site overrides and apply user text scaling once."
+      }
+    },
+    "type.code": {
+      "type": "typography",
+      "light": {
+        "family": "systemMonospaced",
+        "size": 13,
+        "weight": 400,
+        "lineHeight": 20,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "dark": {
+        "family": "systemMonospaced",
+        "size": 13,
+        "weight": 400,
+        "lineHeight": 20,
+        "tracking": 0,
+        "unit": "pt"
+      },
+      "use": "Complete code text style. Scale once with user font zoom; line height is a target minimum, not a clipping box.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "typography.codeSize"
+        ],
+        "valuesChange": "typography.codeSize: Font size unchanged; adds the full text style",
+        "engineerInstructions": "Apply the complete named text style, including family, size, weight, line height and tracking. Remove separate call-site overrides and apply user text scaling once."
+      }
+    },
+    "motion.duration.quick": {
+      "type": "duration",
+      "light": 0.15,
+      "dark": 0.15,
+      "use": "Seconds; resolve to zero for nonessential animation with Reduce Motion",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "animationConfig.durationQuick"
+        ],
+        "valuesChange": "animationConfig.durationQuick: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with motion.duration.quick. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "motion.duration.standard": {
+      "type": "duration",
+      "light": 0.25,
+      "dark": 0.25,
+      "use": "Seconds; resolve to zero for nonessential animation with Reduce Motion",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "animationConfig.durationMedium"
+        ],
+        "valuesChange": "animationConfig.durationMedium: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with motion.duration.standard. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "motion.duration.slow": {
+      "type": "duration",
+      "light": 0.35,
+      "dark": 0.35,
+      "use": "Seconds; resolve to zero for nonessential animation with Reduce Motion",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "animationConfig.durationSlow"
+        ],
+        "valuesChange": "animationConfig.durationSlow: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with motion.duration.slow. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "motion.spring": {
+      "type": "spring",
+      "light": {
+        "response": 0.35,
+        "dampingFraction": 0.82
+      },
+      "dark": {
+        "response": 0.35,
+        "dampingFraction": 0.82
+      },
+      "use": "Default spring; use instant state change for nonessential motion with Reduce Motion",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "animationConfig.springResponse",
+          "animationConfig.springDamping"
+        ],
+        "valuesChange": "animationConfig.springResponse: Individual setting replaced by complete recipe; animationConfig.springDamping: Individual setting replaced by complete recipe",
+        "engineerInstructions": "Use the shared spring recipe; update response and damping together and honor Reduce Motion."
+      }
+    },
+    "motion.easing": {
+      "type": "easing",
+      "light": "easeInOut",
+      "dark": "easeInOut",
+      "use": "Standard timing for non-spring transitions",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add motion.easing to the shared definitions. Standard timing for non-spring transitions"
+      }
+    },
+    "elevation.none": {
+      "type": "shadow",
+      "light": {
+        "x": 0,
+        "y": 0,
+        "blur": 0,
+        "opacity": 0,
+        "color": "#000000"
+      },
+      "dark": {
+        "x": 0,
+        "y": 0,
+        "blur": 0,
+        "opacity": 0,
+        "color": "#000000"
+      },
+      "use": "Shadow recipe in points; omit for panels already receiving a window-server shadow",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add elevation.none to the shared definitions. Shadow recipe in points; omit for panels already receiving a window-server shadow"
+      }
+    },
+    "elevation.raised": {
+      "type": "shadow",
+      "light": {
+        "x": 0,
+        "y": 2,
+        "blur": 8,
+        "opacity": 0.12,
+        "color": "#000000"
+      },
+      "dark": {
+        "x": 0,
+        "y": 3,
+        "blur": 10,
+        "opacity": 0.32,
+        "color": "#000000"
+      },
+      "use": "Shadow recipe in points; omit for panels already receiving a window-server shadow",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "shadows.shadowOpacity",
+          "shadows.cardShadowRadius",
+          "shadows.cardShadowY"
+        ],
+        "valuesChange": "shadows.shadowOpacity: Individual setting replaced by complete recipe; shadows.cardShadowRadius: Individual setting replaced by complete recipe; shadows.cardShadowY: Individual setting replaced by complete recipe",
+        "engineerInstructions": "Use the full elevation recipe for the relevant container; remove individual shadow offset/blur/opacity overrides."
+      }
+    },
+    "elevation.overlay": {
+      "type": "shadow",
+      "light": {
+        "x": 0,
+        "y": 6,
+        "blur": 16,
+        "opacity": 0.12,
+        "color": "#000000"
+      },
+      "dark": {
+        "x": 0,
+        "y": 6,
+        "blur": 16,
+        "opacity": 0.35,
+        "color": "#000000"
+      },
+      "use": "Shadow recipe in points; omit for panels already receiving a window-server shadow",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "shadows.shadowOpacity"
+        ],
+        "valuesChange": "shadows.shadowOpacity: Individual setting replaced by complete recipe",
+        "engineerInstructions": "Use the full elevation recipe for the relevant container; remove individual shadow offset/blur/opacity overrides."
+      }
+    },
+    "color.action.primary.default.background": {
+      "type": "color",
+      "light": "#000000",
+      "dark": "#FFFFFF",
+      "use": "Primary action background, default state.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.accentColor",
+          "colors.buttonBackground"
+        ],
+        "valuesChange": "colors.accentColor: Light: changes; Dark: changes; colors.buttonBackground: Light: changes; Dark: changes",
+        "engineerInstructions": "Use color.action.primary.default.background for primary actions. Migrate links, selection, cursor and focus to their own named roles rather than deriving them from this action fill. Replace each button reference by its variant: primary uses color.action.primary.default.background; secondary uses color.action.secondary.default.background. Tertiary uses its new transparent default role. Wire hover, pressed, disabled and focus separately."
+      }
+    },
+    "color.action.primary.default.foreground": {
+      "type": "color",
+      "light": "#FFFFFF",
+      "dark": "#000000",
+      "use": "Primary action foreground, default state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.primary.default.foreground to the shared definitions. Primary action foreground, default state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.primary.hover.background": {
+      "type": "color",
+      "light": "#262626",
+      "dark": "#E5E5E5",
+      "use": "Primary action background, hover state.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.accentColorLight"
+        ],
+        "valuesChange": "colors.accentColorLight: Light: changes; Dark: changes",
+        "engineerInstructions": "For primary-button hover use color.action.primary.hover.background; for hovered links use color.text.linkHover. Do not reuse one lighter-accent setting for both."
+      }
+    },
+    "color.action.primary.hover.foreground": {
+      "type": "color",
+      "light": "#FFFFFF",
+      "dark": "#000000",
+      "use": "Primary action foreground, hover state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.primary.hover.foreground to the shared definitions. Primary action foreground, hover state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.primary.pressed.background": {
+      "type": "color",
+      "light": "#404040",
+      "dark": "#CCCCCC",
+      "use": "Primary action background, pressed state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.primary.pressed.background to the shared definitions. Primary action background, pressed state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.primary.pressed.foreground": {
+      "type": "color",
+      "light": "#FFFFFF",
+      "dark": "#000000",
+      "use": "Primary action foreground, pressed state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.primary.pressed.foreground to the shared definitions. Primary action foreground, pressed state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.primary.disabled.background": {
+      "type": "color",
+      "light": "#ECECF0",
+      "dark": "#2C2C2E",
+      "use": "Primary action background, disabled state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.primary.disabled.background to the shared definitions. Primary action background, disabled state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.primary.disabled.foreground": {
+      "type": "color",
+      "light": "#8E8E93",
+      "dark": "#727278",
+      "use": "Primary action foreground, disabled state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.primary.disabled.foreground to the shared definitions. Primary action foreground, disabled state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.secondary.default.background": {
+      "type": "color",
+      "light": "#ECECF0",
+      "dark": "#2C2C2E",
+      "use": "Secondary action background, default state.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.buttonBackground"
+        ],
+        "valuesChange": "colors.buttonBackground: Light: changes; Dark: changes",
+        "engineerInstructions": "Replace each button reference by its variant: primary uses color.action.primary.default.background; secondary uses color.action.secondary.default.background. Tertiary uses its new transparent default role. Wire hover, pressed, disabled and focus separately."
+      }
+    },
+    "color.action.secondary.default.foreground": {
+      "type": "color",
+      "light": "#1D1D1F",
+      "dark": "#F5F5F7",
+      "use": "Secondary action foreground, default state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.secondary.default.foreground to the shared definitions. Secondary action foreground, default state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.secondary.hover.background": {
+      "type": "color",
+      "light": "#E4E4E9",
+      "dark": "#3A3A3C",
+      "use": "Secondary action background, hover state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.secondary.hover.background to the shared definitions. Secondary action background, hover state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.secondary.hover.foreground": {
+      "type": "color",
+      "light": "#1D1D1F",
+      "dark": "#F5F5F7",
+      "use": "Secondary action foreground, hover state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.secondary.hover.foreground to the shared definitions. Secondary action foreground, hover state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.secondary.pressed.background": {
+      "type": "color",
+      "light": "#DADAE0",
+      "dark": "#48484A",
+      "use": "Secondary action background, pressed state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.secondary.pressed.background to the shared definitions. Secondary action background, pressed state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.secondary.pressed.foreground": {
+      "type": "color",
+      "light": "#1D1D1F",
+      "dark": "#F5F5F7",
+      "use": "Secondary action foreground, pressed state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.secondary.pressed.foreground to the shared definitions. Secondary action foreground, pressed state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.secondary.disabled.background": {
+      "type": "color",
+      "light": "#ECECF0",
+      "dark": "#2C2C2E",
+      "use": "Secondary action background, disabled state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.secondary.disabled.background to the shared definitions. Secondary action background, disabled state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.secondary.disabled.foreground": {
+      "type": "color",
+      "light": "#8E8E93",
+      "dark": "#727278",
+      "use": "Secondary action foreground, disabled state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.secondary.disabled.foreground to the shared definitions. Secondary action foreground, disabled state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.tertiary.default.background": {
+      "type": "color",
+      "light": "#00000000",
+      "dark": "#00000000",
+      "use": "Tertiary action background, default state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.tertiary.default.background to the shared definitions. Tertiary action background, default state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.tertiary.default.foreground": {
+      "type": "color",
+      "light": "#1D1D1F",
+      "dark": "#F5F5F7",
+      "use": "Tertiary action foreground, default state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.tertiary.default.foreground to the shared definitions. Tertiary action foreground, default state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.tertiary.hover.background": {
+      "type": "color",
+      "light": "#E4E4E9",
+      "dark": "#3A3A3C",
+      "use": "Tertiary action background, hover state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.tertiary.hover.background to the shared definitions. Tertiary action background, hover state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.tertiary.hover.foreground": {
+      "type": "color",
+      "light": "#1D1D1F",
+      "dark": "#F5F5F7",
+      "use": "Tertiary action foreground, hover state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.tertiary.hover.foreground to the shared definitions. Tertiary action foreground, hover state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.tertiary.pressed.background": {
+      "type": "color",
+      "light": "#DADAE0",
+      "dark": "#48484A",
+      "use": "Tertiary action background, pressed state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.tertiary.pressed.background to the shared definitions. Tertiary action background, pressed state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.tertiary.pressed.foreground": {
+      "type": "color",
+      "light": "#1D1D1F",
+      "dark": "#F5F5F7",
+      "use": "Tertiary action foreground, pressed state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.tertiary.pressed.foreground to the shared definitions. Tertiary action foreground, pressed state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.tertiary.disabled.background": {
+      "type": "color",
+      "light": "#00000000",
+      "dark": "#00000000",
+      "use": "Tertiary action background, disabled state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.tertiary.disabled.background to the shared definitions. Tertiary action background, disabled state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.tertiary.disabled.foreground": {
+      "type": "color",
+      "light": "#8E8E93",
+      "dark": "#727278",
+      "use": "Tertiary action foreground, disabled state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.tertiary.disabled.foreground to the shared definitions. Tertiary action foreground, disabled state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.destructive.default.background": {
+      "type": "color",
+      "light": "#B42318",
+      "dark": "#FF6B62",
+      "use": "Destructive action background, default state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.destructive.default.background to the shared definitions. Destructive action background, default state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.destructive.default.foreground": {
+      "type": "color",
+      "light": "#FFFFFF",
+      "dark": "#101012",
+      "use": "Destructive action foreground, default state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.destructive.default.foreground to the shared definitions. Destructive action foreground, default state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.destructive.hover.background": {
+      "type": "color",
+      "light": "#951D14",
+      "dark": "#FF8982",
+      "use": "Destructive action background, hover state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.destructive.hover.background to the shared definitions. Destructive action background, hover state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.destructive.hover.foreground": {
+      "type": "color",
+      "light": "#FFFFFF",
+      "dark": "#101012",
+      "use": "Destructive action foreground, hover state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.destructive.hover.foreground to the shared definitions. Destructive action foreground, hover state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.destructive.pressed.background": {
+      "type": "color",
+      "light": "#7B180F",
+      "dark": "#FFA59F",
+      "use": "Destructive action background, pressed state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.destructive.pressed.background to the shared definitions. Destructive action background, pressed state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.destructive.pressed.foreground": {
+      "type": "color",
+      "light": "#FFFFFF",
+      "dark": "#101012",
+      "use": "Destructive action foreground, pressed state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.destructive.pressed.foreground to the shared definitions. Destructive action foreground, pressed state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.destructive.disabled.background": {
+      "type": "color",
+      "light": "#ECECF0",
+      "dark": "#2C2C2E",
+      "use": "Destructive action background, disabled state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.destructive.disabled.background to the shared definitions. Destructive action background, disabled state. Transparent borders reserve no visible outline."
+      }
+    },
+    "color.action.destructive.disabled.foreground": {
+      "type": "color",
+      "light": "#8E8E93",
+      "dark": "#727278",
+      "use": "Destructive action foreground, disabled state.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.destructive.disabled.foreground to the shared definitions. Destructive action foreground, disabled state. Transparent borders reserve no visible outline."
+      }
+    },
+    "material.window.tint": {
+      "type": "color",
+      "light": "#F5F5F7",
+      "dark": "#1C1C1E",
+      "use": "Canvas-colored tint above one native behind-window base material.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.glassTintOverlay",
+          "glass.tintColor"
+        ],
+        "valuesChange": "colors.glassTintOverlay: Shared window treatment replaces old material settings; glass.tintColor: Shared window treatment replaces old material settings",
+        "engineerInstructions": "Replace the old alpha-bearing overlay with the specified tint color plus its separate 0.75 tint opacity. Do not retain both overlays. Use the canvas-colored material.window.tint in the active mode. Do not also apply the old glassTintOverlay."
+      }
+    },
+    "material.window.tintOpacity": {
+      "type": "number",
+      "light": 0.75,
+      "dark": 0.75,
+      "use": "Working tint opacity, applied to base only, never entire window or its children.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "colors.glassTintOverlay",
+          "glass.tintOpacity"
+        ],
+        "valuesChange": "colors.glassTintOverlay: Shared window treatment replaces old material settings; glass.tintOpacity: Shared window treatment replaces old material settings",
+        "engineerInstructions": "Replace the old alpha-bearing overlay with the specified tint color plus its separate 0.75 tint opacity. Do not retain both overlays. Apply 0.75 opacity to the tint fill only, in both modes. Do not apply 0.75 to the entire window or to text/content."
+      }
+    },
+    "material.window.nativeMaterial": {
+      "type": "materialRole",
+      "light": "underWindowBackground",
+      "dark": "underWindowBackground",
+      "use": "Initial native material candidate. Confirm visually in the Mac app; it is not a numeric blur radius.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "glass.material"
+        ],
+        "valuesChange": "glass.material: Shared window treatment replaces old material settings",
+        "engineerInstructions": "Use one NSVisualEffectView behind the window content with behindWindow blending. Start with underWindowBackground and visually match the reviewed material; the native material implementation must be verified."
+      }
+    },
+    "material.window.blending": {
+      "type": "enum",
+      "light": "behindWindow",
+      "dark": "behindWindow",
+      "use": "Behind-window blending against the actual desktop; requires a transparent window backing.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add material.window.blending to the shared definitions. Blend against actual desktop behind the window."
+      }
+    },
+    "material.window.fallback": {
+      "type": "color",
+      "light": "#F5F5F7",
+      "dark": "#1C1C1E",
+      "use": "Opaque canvas color used when Reduce Transparency is enabled or native material is unavailable. Disable the blur and tint overlay in this fallback.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add material.window.fallback to the shared definitions. Opaque fallback for Reduce Transparency or unavailable material."
+      }
+    },
+    "color.action.border": {
+      "type": "color",
+      "light": "#00000000",
+      "dark": "#00000000",
+      "use": "No visible border on filled primary/secondary or text tertiary actions. Use a separate focus ring for keyboard focus.",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add color.action.border to the shared definitions. No visible border on filled primary/secondary or text tertiary actions. Use a separate focus ring for keyboard focus."
+      }
+    },
+    "size.control.compactHeight": {
+      "type": "dimension",
+      "light": 28,
+      "dark": 28,
+      "use": "Minimum control height in points; grow with font zoom",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add size.control.compactHeight to the shared definitions. Minimum control height in points; grow with font zoom"
+      }
+    },
+    "size.control.defaultHeight": {
+      "type": "dimension",
+      "light": 32,
+      "dark": 32,
+      "use": "Minimum standard control height in points; grow with font zoom",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add size.control.defaultHeight to the shared definitions. Minimum standard control height in points; grow with font zoom"
+      }
+    },
+    "size.row.minimumHeight": {
+      "type": "dimension",
+      "light": 36,
+      "dark": 36,
+      "use": "Minimum navigation or picker row height; grow with wrapped text",
+      "migration": {
+        "whatChanges": "New token",
+        "oldTokens": [],
+        "valuesChange": "New explicit values",
+        "engineerInstructions": "Add size.row.minimumHeight to the shared definitions. Minimum navigation or picker row height; grow with wrapped text"
+      }
+    },
+    "size.chat.avatar": {
+      "type": "dimension",
+      "light": 24,
+      "dark": 24,
+      "use": "Inline avatar diameter in points",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "messages.inlineAvatarSize"
+        ],
+        "valuesChange": "messages.inlineAvatarSize: Light: unchanged; Dark: unchanged",
+        "engineerInstructions": "Replace the old reference with size.chat.avatar. Use its light/dark value from the shared specification; remove the old field after all consumers are migrated."
+      }
+    },
+    "color.chat.user.background": {
+      "type": "color",
+      "light": "#E4E4E9",
+      "dark": "#48484A",
+      "use": "Opaque user message surface. Independent of navigation selection and main canvas colors.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "messages.userBubbleColor"
+        ],
+        "valuesChange": "messages.userBubbleColor: Old value inherited; now explicitly specified and opaque",
+        "engineerInstructions": "Use color.chat.user.background for this message surface. Remove message background-opacity multiplication; keep text fully opaque. The old nil value inherited styling and was not a transparent color."
+      }
+    },
+    "color.chat.assistant.background": {
+      "type": "color",
+      "light": "#F5F5F7",
+      "dark": "#1C1C1E",
+      "use": "Opaque assistant message surface. Independent of navigation selection and main canvas colors.",
+      "migration": {
+        "whatChanges": "Update the listed old settings",
+        "oldTokens": [
+          "messages.assistantBubbleColor"
+        ],
+        "valuesChange": "messages.assistantBubbleColor: Old value inherited; now explicitly specified and opaque",
+        "engineerInstructions": "Use color.chat.assistant.background for this message surface. Remove message background-opacity multiplication; keep text fully opaque. The old nil value inherited styling and was not a transparent color."
+      }
+    }
+  },
+  "requirements": {
+    "purpose": "Wire shared semantic roles and components. Final visual design and UX are separate work.",
+    "componentGlass": "Remove all Apple Liquid Glass and custom component glass styling.",
+    "baseBackground": "Retain one transparent blurred base with 75% tint in light/dark and the 25px browser visual reference. Classic native base material is permitted; no component material layers.",
+    "acceptance": "Audit direct APIs, shared wrappers and OS-conditional paths; inspect rendered app-owned components in both modes; verify opaque Reduce Transparency fallback."
+  }
+}

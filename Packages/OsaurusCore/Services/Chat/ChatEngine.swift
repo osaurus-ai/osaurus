@@ -319,7 +319,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             modelOptions: modelOptions
         )
 
-        let params = GenerationParameters(
+        var params = GenerationParameters(
             temperature: temperature,
             maxTokens: maxTokens,
             maxTokensExplicit: request.generation.maxOutputTokens != nil,
@@ -356,6 +356,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             collectCompleteToolResponse: inferenceSource == .httpAPI && !request.context.isAgentRequest,
             responsesProviderOptions: request.providerOptions
         )
+        if request.context.runAsRemoteAgent { params.remoteAgentCallerId = request.context.remoteAgentCallerId }
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
         // never by the model string. A stale `selectedModel` left over from
@@ -795,7 +796,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         startTime: Date,
         inferenceSource: InferenceSource,
         temperature: Float?,
-        maxTokens: Int,
+        maxTokens: Int?,
         tokensPerSecond: Double? = nil,
         completionTokens: Int? = nil,
         cachedInputTokens: Int? = nil,
@@ -903,7 +904,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 path: logPath ?? "/chat/completions",
                 agentId: attribution.agentId,
                 agentName: attribution.agentName,
-                sessionId: attribution.sessionId
+                sessionId: attribution.sessionId,
+                workflowRunId: attribution.workflowRunId,
+                workflowNodeId: attribution.workflowNodeId,
+                taskId: attribution.taskId
             )
         }
 
@@ -954,13 +958,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         }()
         let loggedModel = connection?.info.mode == .remoteAgentRun
             ? request.context.remoteAgentLogModel?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        // Record caller overrides, not the dispatch placeholder. An omitted
+        // limit is resolved later from runtime/bundle defaults; logging 16K
+        // here would misrepresent that inherited request as an explicit cap.
         return wrapStreamWithLogging(inner, logEvent: Self.responsesLogEvent,
             source: source, turnId: turnID, parentTurnId: parentTurnID,
             requestId: request.context.idempotencyKey,
             model: loggedModel?.isEmpty == false ? loggedModel! : effectiveModel,
             inputTokens: estimateInputTokens(request.input),
             temperature: request.generation.temperature,
-            maxTokens: request.generation.maxOutputTokens ?? 16384,
+            maxTokens: request.generation.maxOutputTokens,
             requestBodyJSON: shouldLog ? Self.serializeResponseRequestForLog(request) : nil,
             connection: connection?.info, logPath: connection?.path ?? "/responses",
             wireProbe: probe,
@@ -1041,7 +1048,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         // Pulled out for logging convenience; the actual dispatch values
         // (incl. these two) live on `dispatch.params`.
         let temperature = request.temperature
-        let maxTokens = request.resolvedMaxTokens ?? 16384
+        let maxTokens = request.resolvedMaxTokens
 
         let dispatch = try await prepareDispatch(request: request, trace: trace)
         let params = dispatch.params
@@ -1363,7 +1370,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         model: String,
         inputTokens: Int,
         temperature: Float?,
-        maxTokens: Int,
+        maxTokens: Int?,
         requestBodyJSON: String? = nil,
         connection: RequestConnectionInfo? = nil,
         logPath: String? = nil,
@@ -1668,6 +1675,25 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 finishReason = .toolCalls
                 continuation.finish(throwing: inv)
             } catch {
+                if let usage = ResponsesToolChoiceContract.rejectedCompletionUsage(in: error) {
+                    // Validation withheld the successful completion event, not
+                    // the work already measured by the runtime/provider. Keep
+                    // the error and account for those counts using the same
+                    // monotonic budget rule as an accepted terminal above.
+                    lifecycle.observeTerminalStats()
+                    if let count = usage.inputTokens { recordInputTokens(count) }
+                    if let count = usage.outputTokens {
+                        authoritativeOutputTokens = count
+                        outputTokenCount = count
+                        if let bgId, count > reportedOutputTokens {
+                            let delta = count - reportedOutputTokens
+                            reportedOutputTokens = count
+                            Task { @MainActor in
+                                BackgroundTaskManager.shared.recordUsage(backgroundId: bgId, tokensOutDelta: delta)
+                            }
+                        }
+                    }
+                }
                 // Check if this is a CancellationError (expected when consumer stops)
                 if Task.isCancelled || error is CancellationError {
                     print("[Osaurus][Stream] Stream cancelled after \(deltaCount) deltas")
@@ -1746,7 +1772,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     privacy: wireProbe?.privacyOutcome,
                     agentId: attribution.agentId,
                     agentName: attribution.agentName,
-                    sessionId: attribution.sessionId
+                    sessionId: attribution.sessionId,
+                    workflowRunId: attribution.workflowRunId,
+                    workflowNodeId: attribution.workflowNodeId,
+                    taskId: attribution.taskId
                 )
             }
         }
@@ -1792,7 +1821,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         let messages = request.messages
         let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature
-        let maxTokens = request.resolvedMaxTokens ?? 16384
+        let maxTokens = request.resolvedMaxTokens
         let shouldLogToInsights = Self.shouldLogInferenceToInsights(
             source: loggedSource,
             warmupPrefill: request.warmupPrefill
@@ -1984,7 +2013,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                             path: loggedPath,
                             agentId: attribution.agentId,
                             agentName: attribution.agentName,
-                            sessionId: attribution.sessionId
+                            sessionId: attribution.sessionId,
+                            workflowRunId: attribution.workflowRunId,
+                            workflowNodeId: attribution.workflowNodeId,
+                            taskId: attribution.taskId
                         )
                     }
 
@@ -2149,7 +2181,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     path: loggedPath,
                     agentId: attribution.agentId,
                     agentName: attribution.agentName,
-                    sessionId: attribution.sessionId
+                    sessionId: attribution.sessionId,
+                    workflowRunId: attribution.workflowRunId,
+                    workflowNodeId: attribution.workflowNodeId,
+                    taskId: attribution.taskId
                 )
             }
 

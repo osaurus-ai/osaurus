@@ -10,6 +10,30 @@ import Testing
 
 struct MLXModelTests {
 
+    @Test func localManifestSizeCanonicalizesParentsAndKeepsLinkedShards() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bundle = root.appendingPathComponent("snapshot", isDirectory: true)
+        let engram = bundle.appendingPathComponent("engram", isDirectory: true)
+        let fm = FileManager.default
+        try fm.createDirectory(at: engram, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let blob = root.appendingPathComponent("blob")
+        try Data(repeating: 7, count: 4097).write(to: blob)
+        try fm.createSymbolicLink(at: bundle.appendingPathComponent("model.safetensors"), withDestinationURL: blob)
+        try Data(repeating: 7, count: 517).write(to: engram.appendingPathComponent("table.safetensors"))
+        try Data("{}".utf8).write(to: bundle.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: bundle.appendingPathComponent("tokenizer.json"))
+        let link = root.appendingPathComponent("managed-link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: bundle)
+        let expectedDownloadBytes: Int64 = 4097 + 517 + 2 + 2
+        for directory in [bundle, URL(fileURLWithPath: bundle.path, isDirectory: false), link] {
+            let downloaded = try #require(MLXModel.localBundleDownloadSizeBytes(at: directory))
+            let weights = try #require(MLXModel.localBundleWeightSizeBytes(at: directory))
+            #expect(downloaded == expectedDownloadBytes)
+            #expect(weights == 4097)
+        }
+    }
+
     @Test func localDirectory_buildsNestedPathFromRepoId() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -297,4 +321,19 @@ struct MLXModelTests {
         )
         #expect(model.releasedAt == date)
     }
+    @Test func realFileSizesOverrideStaleIndexAndResolveShardSymlinks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bundle = root.appendingPathComponent("bundle")
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"metadata":{"total_size":999999}}"#.utf8)
+            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        let blob = root.appendingPathComponent("blob")
+        try Data(count: 17).write(to: blob)
+        try FileManager.default.createSymbolicLink(
+            at: bundle.appendingPathComponent("model.safetensors"), withDestinationURL: blob)
+        try Data(count: 23).write(to: bundle.appendingPathComponent("jangtq_runtime.safetensors"))
+        #expect(MLXModel.localBundleWeightSizeBytes(at: bundle) == 40)
+    }
+
 }

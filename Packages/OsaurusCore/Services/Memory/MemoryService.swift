@@ -547,7 +547,7 @@ public actor MemoryService {
 
     // MARK: - Chat-history Backfill
 
-    /// Walk every session in `chat_history.db`, buffer its turns into
+    /// Walk every session in the conversation store, buffer its turns into
     /// `pending_signals`, then drain everything via `syncNow()` so each
     /// session becomes an episode.
     ///
@@ -561,8 +561,8 @@ public actor MemoryService {
     /// column from a pre-shipping schema iteration. Every `bufferTurn`
     /// hit `SQLITE_CONSTRAINT_NOTNULL` (extended 1299) and the silent
     /// `executeUpdate` swallowed the failure, so for affected installs
-    /// the entire chat history accumulated in `chat_history.db` without
-    /// ever reaching the memory pipeline. This backfill closes the gap.
+    /// the entire chat history accumulated without ever reaching the
+    /// memory pipeline. This backfill closes the gap.
     ///
     /// - Parameters:
     ///   - distillAfterBuffering: when true (default), runs `syncNow()`
@@ -589,12 +589,7 @@ public actor MemoryService {
             return snapshot
         }
 
-        // Gather candidate sessions on the MainActor (ChatSessionStore
-        // / ChatHistoryDatabase are MainActor-anchored on entry, but
-        // their queue.sync internals are Sendable).
-        let sessionMetadata: [ChatSessionData] = await MainActor.run {
-            ChatHistoryDatabase.shared.loadAllMetadata()
-        }
+        let sessionMetadata: [ChatSessionData] = ConversationStores.current.loadAllMetadata()
 
         // Pre-compute dedupe sets so we don't pay one DB round-trip
         // per session.
@@ -635,9 +630,7 @@ public actor MemoryService {
             // the database queue once per call, which is fine — the
             // backfill is a one-shot UX action, not a hot path.
             guard
-                let full = await MainActor.run(body: {
-                    ChatHistoryDatabase.shared.loadSession(id: meta.id)
-                })
+                let full = ConversationStores.current.loadSession(id: meta.id)
             else {
                 snapshot.sessionsSkipped += 1
                 continue
@@ -1390,12 +1383,16 @@ public actor MemoryService {
         currentIdentity: Identity,
         model: String
     ) {
-        let existing = Set(currentIdentity.overrides.map { $0.lowercased() })
         var updated = currentIdentity
         var added = 0
         for raw in facts {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !existing.contains(trimmed.lowercased()) else { continue }
+            guard !trimmed.isEmpty,
+                !updated.overrides.contains(where: { $0.lowercased() == trimmed.lowercased() })
+            else { continue }
+            if let slot = MemoryDistillateScreen.identitySlot(trimmed) {
+                updated.overrides.removeAll { MemoryDistillateScreen.identitySlot($0) == slot }
+            }
             updated.overrides.append(trimmed)
             added += 1
         }

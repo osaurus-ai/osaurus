@@ -60,6 +60,71 @@ struct ModelManagerTests {
         )
     }
 
+    @Test("Hub refreshes cannot overwrite installed bundle storage measurements")
+    @MainActor
+    func resolvedHubSizesPreserveInstalledFacts() async {
+        let local = MLXModel(id: "publisher/Future-125B-JANGHT1.8", name: "local", description: "", downloadURL: "",
+            downloadSizeBytes: 5000, ssdResidentBytes: 1000, rootDirectory: URL(fileURLWithPath: "/fixture"))
+        let remote = MLXModel(id: local.id, name: "catalog", description: "", downloadURL: "")
+        let manager = ModelManager()
+        manager.availableModels = [local]
+        manager.suggestedModels = [remote]
+        manager.applyResolvedDownloadSize(9000, for: local.id)
+        manager.applyResolvedSSDResidentBytes(7000, for: local.id)
+        #expect(manager.availableModels.first?.downloadSizeBytes == 5000)
+        #expect(manager.availableModels.first?.ssdResidentBytes == 1000)
+        #expect(manager.suggestedModels.first?.downloadSizeBytes == 9000)
+        #expect(manager.suggestedModels.first?.ssdResidentBytes == 7000)
+        #expect(await manager.estimateDownloadSize(for: local) == 5000)
+    }
+
+    @Test("local inventory retains the logical model symlink instead of its external target")
+    func localSymlinkInventoryPreservesManagedPath() throws {
+        let fm = FileManager.default
+        let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = temp.appendingPathComponent("models")
+        let target = temp.appendingPathComponent("external")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: temp) }
+        try Data("{}".utf8).write(to: target.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: target.appendingPathComponent("tokenizer.json"))
+        try Data(count: 1).write(to: target.appendingPathComponent("model.safetensors"))
+        let link = root.appendingPathComponent("Renamed-JANGHT2.4")
+        try fm.createSymbolicLink(at: link, withDestinationURL: target)
+        let model = try #require(ModelManager.scanLocalModels(at: root).first)
+        #expect(model.hasLocalInstallationEvidence)
+        #expect(model.localDirectory.standardizedFileURL.path == link.standardizedFileURL.path)
+        try fm.removeItem(at: model.localDirectory)
+        #expect(fm.fileExists(atPath: target.appendingPathComponent("model.safetensors").path))
+    }
+
+    @Test("nested local inventory retains one publisher component and remains installed")
+    func nestedLocalSymlinkInventoryPreservesInstalledPath() throws {
+        let fm = FileManager.default
+        let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = temp.appendingPathComponent("models")
+        let publisher = root.appendingPathComponent("publisher")
+        let target = temp.appendingPathComponent("external")
+        try fm.createDirectory(at: publisher, withIntermediateDirectories: true)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: temp) }
+        try Data("{}".utf8).write(to: target.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: target.appendingPathComponent("tokenizer.json"))
+        try Data(count: 1).write(to: target.appendingPathComponent("model.safetensors"))
+        let link = publisher.appendingPathComponent("Example-JANGHT1.8")
+        try fm.createSymbolicLink(at: link, withDestinationURL: target)
+        let model = try #require(ModelManager.scanLocalModels(at: root).first)
+        #expect(model.id == "publisher/Example-JANGHT1.8")
+        #expect(model.localDirectory.standardizedFileURL.path == link.standardizedFileURL.path)
+        #expect(model.computeIsDownloadedFromDisk())
+        #expect(model.isDownloaded)
+        #expect(ModelManager.installedModels(among: [model]).count == 1)
+        #expect(model.weightSizeBytes == 1)
+        try fm.removeItem(at: model.localDirectory)
+        #expect(fm.fileExists(atPath: target.appendingPathComponent("model.safetensors").path))
+    }
+
     @Test("installed matcher prefers full ids and rejects ambiguous short aliases")
     func installedMatcherUsesStableIdentity() {
         let models = [
@@ -671,6 +736,57 @@ struct ModelManagerTests {
         #expect(diagnostic["status"] as? String == "failed")
         #expect(diagnostic["model_count"] as? Int == 0)
         #expect((diagnostic["error"] as? String)?.contains("missing") == true)
+    }
+
+    @Test func downloadedInventorySummaryPairsCountAndBytes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: root) }
+        var models: [MLXModel] = []
+        for name in ["First", "Second", "Missing"] {
+            let directory = root.appendingPathComponent(name)
+            if name != "Missing" {
+                try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+                try Data("{}".utf8).write(to: directory.appendingPathComponent("config.json"))
+                try Data("{}".utf8).write(to: directory.appendingPathComponent("tokenizer.json"))
+                try Data(repeating: 7, count: 8193).write(to: directory.appendingPathComponent("model.safetensors"))
+            }
+            models.append(MLXModel(
+                id: "publisher/\(name)", name: name, description: "",
+                downloadURL: "https://example.com/\(name)", bundleDirectory: directory))
+        }
+        let snapshot = ModelDownloadService.measureDownloadedInventory(models)
+        let expectedBytes = try #require(ModelDownloadService.directoryAllocatedSize(at: models[0].localDirectory))
+            + #require(ModelDownloadService.directoryAllocatedSize(at: models[1].localDirectory))
+        #expect(snapshot.modelCount == 2)
+        #expect(snapshot.allocatedBytes == expectedBytes)
+        #expect(snapshot.allocatedBytes > 0)
+        let missing = ModelDownloadService.measureDownloadedInventory([models[2]])
+        #expect(missing.modelCount == 0)
+        #expect(missing.allocatedBytes == 0)
+    }
+
+    @Test func downloadedSizeFollowsBundleAndShardSymlinks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let target = root.appendingPathComponent("external")
+        let nested = target.appendingPathComponent("engram")
+        let mirror = root.appendingPathComponent("hf-snapshot")
+        let fm = FileManager.default
+        try fm.createDirectory(at: nested, withIntermediateDirectories: true)
+        try fm.createDirectory(at: mirror.appendingPathComponent("engram"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        for (path, count) in [("model.safetensors", 8193), ("engram/table.safetensors", 4097)] {
+            try Data(repeating: 7, count: count).write(to: target.appendingPathComponent(path))
+            try fm.createSymbolicLink(
+                at: mirror.appendingPathComponent(path), withDestinationURL: target.appendingPathComponent(path))
+        }
+        let linkedBundle = root.appendingPathComponent("publisher/managed-model")
+        try fm.createDirectory(at: linkedBundle.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: linkedBundle, withDestinationURL: target)
+        let direct = try #require(ModelDownloadService.directoryAllocatedSize(at: target))
+        #expect(direct > 0)
+        #expect(ModelDownloadService.directoryAllocatedSize(at: linkedBundle) == direct)
+        #expect(ModelDownloadService.directoryAllocatedSize(at: mirror) == direct)
     }
 
     @Test func deleteModel_removesDirectoryAndResetsState() async throws {

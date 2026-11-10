@@ -526,6 +526,36 @@ public enum SubagentSession {
         postAdmissionLocalCapacityOverride:
             (@Sendable (PreparedSubagentRun, ResidencyPlan) async -> Int)? = nil
     ) async -> String {
+        let host = {
+            await runPreparedHost(
+                prepared,
+                presentation: suppliedPresentation,
+                skipAdmission: skipAdmission,
+                handoffOverride: handoffOverride,
+                captureProcessCacheSnapshot: captureProcessCacheSnapshot,
+                admissionController: admissionController,
+                postAdmissionLocalCapacityOverride: postAdmissionLocalCapacityOverride
+            )
+        }
+        guard activeKindId == nil else { return await host() }
+        let taskId = SubagentTaskRecorder.record(
+            title: prepared.kind.feedTitle, scope: prepared.scope, model: prepared.resolved.name)
+        let envelope = await ChatExecutionContext.$currentTaskId.withValue(taskId) { await host() }
+        let interrupted = Task.isCancelled || suppliedPresentation?.interrupt.isInterrupted == true
+        SubagentTaskRecorder.recordFinished(taskId, envelope: envelope, interrupted: interrupted)
+        return envelope
+    }
+
+    private static func runPreparedHost(
+        _ prepared: PreparedSubagentRun,
+        presentation suppliedPresentation: SubagentRunPresentation? = nil,
+        skipAdmission: Bool = false,
+        handoffOverride: (any SubagentHandoff)? = nil,
+        captureProcessCacheSnapshot: Bool = true,
+        admissionController: SubagentAdmission = .shared,
+        postAdmissionLocalCapacityOverride:
+            (@Sendable (PreparedSubagentRun, ResidencyPlan) async -> Int)? = nil
+    ) async -> String {
         if let active = activeKindId {
             return ToolEnvelope.failure(
                 kind: .rejected,
@@ -573,7 +603,7 @@ public enum SubagentSession {
                     onWait: { nestedPresentation.feed.emitPhase("waiting for local GPU", detail: "another subagent") }
                 ) {
                     await SubagentAdmissionContext.$current.withValue(nil) {
-                        await runPrepared(
+                        await runPreparedHost(
                             prepared,
                             presentation: SubagentRunPresentation(
                                 feed: nestedPresentation.feed,
@@ -1178,7 +1208,7 @@ public enum SubagentSession {
                         + "check. Do not retry this turn — tell the user the "
                         + "delegation could not run; it may succeed after memory or "
                         + "settings change. The user can disable Check memory before "
-                        + "delegating in Settings → Orchestrator → Local Models & Memory "
+                        + "delegating in Settings → Agents → Delegation → Local Models & Memory "
                         + "to bypass the delegation RAM check, accepting possible allocation "
                         + "failure or a crash. Separate Server Memory Safety load budgets "
                         + "and explicit concurrency limits still apply."
@@ -1228,6 +1258,9 @@ public enum SubagentSession {
                             try await ChatExecutionContext.$currentToolCallId.withValue(
                                 prepared.scope.toolCallId
                             ) {
+                                try await ChatExecutionContext.$workflowGrantedToolNames.withValue(
+                                    prepared.scope.workflowGrantedToolNames
+                                ) {
                                 try await SubagentSession.$activeKindId.withValue(
                                     prepared.kind.capability.id
                                 ) {
@@ -1260,6 +1293,7 @@ public enum SubagentSession {
                                             throw error
                                         }
                                     }
+                                }
                                 }
                             }
                         }
@@ -1298,9 +1332,7 @@ public enum SubagentSession {
                 endedAt: Date()
             )
             if !phases.isEmpty {
-                residency["phases"] = Dictionary(
-                    uniqueKeysWithValues: phases.map { ($0.phase, ($0.seconds * 100).rounded() / 100) }
-                )
+                residency["phases"] = Self.phaseTotals(phases)
                 residency["phase_order"] = phases.map(\.phase)
                 let summary = phases.map { String(format: "%@ %.1fs", $0.phase, $0.seconds) }
                     .joined(separator: " · ")
@@ -1528,6 +1560,13 @@ public enum SubagentSession {
             timings.append((phase: event.title, seconds: seconds))
         }
         return timings
+    }
+
+    /// Seconds per phase title, rounded to centiseconds. A phase can recur
+    /// (a worker waits for the GPU more than once), so repeats add up.
+    static func phaseTotals(_ timings: [(phase: String, seconds: Double)]) -> [String: Double] {
+        Dictionary(timings.map { ($0.phase, $0.seconds) }, uniquingKeysWith: +)
+            .mapValues { ($0 * 100).rounded() / 100 }
     }
 
     /// Map a thrown error to the canonical failure envelope. `SubagentError`

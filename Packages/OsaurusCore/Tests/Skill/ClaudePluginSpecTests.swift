@@ -1032,20 +1032,20 @@ struct ClaudePluginSpecTests {
             // Foreign plugin id — also ignored.
             Skill(name: "Sandbox", pluginId: "sandbox-plugin:unrelated"),
         ]
-        let schedules: [Schedule] = [
-            Schedule(
+        let schedules: [OsaurusEvent] = [
+            OsaurusEvent(
                 name: "Daily summary",
-                instructions: "Summarize the day's contracts.",
-                parameters: [ScheduleManager.pluginIdParameterKey: pluginA],
-                folderPath: "/tmp/work",
-                frequency: .daily(hour: 9, minute: 0)
+                source: .schedule(ScheduleSourceConfig(frequency: .daily(hour: 9, minute: 0))),
+                action: .agent(
+                    AgentEventAction(instructions: "Summarize the day's contracts.", folderPath: "/tmp/work")),
+                parameters: [OsaurusEvent.pluginIdParameterKey: pluginA]
             ),
-            Schedule(
+            OsaurusEvent(
                 name: "Hourly check",
-                instructions: "check",
-                parameters: [ScheduleManager.pluginIdParameterKey: pluginB],
-                frequency: .hourly(minute: 0),
-                isEnabled: false
+                isEnabled: false,
+                source: .schedule(ScheduleSourceConfig(frequency: .hourly(minute: 0))),
+                action: .agent(AgentEventAction(instructions: "check")),
+                parameters: [OsaurusEvent.pluginIdParameterKey: pluginB]
             ),
         ]
         let commands: [SlashCommand] = [

@@ -118,10 +118,9 @@ struct KnowledgeWriteHistoryView: View {
 
             Toggle(isOn: $showsReverted) {
                 Text("Show reverted", bundle: .module)
-                    .font(.system(size: 11))
+                    .font(SettingsFont.rowDescription)
             }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
+            .settingsSwitch(showsLabel: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -132,27 +131,20 @@ struct KnowledgeWriteHistoryView: View {
     /// than the button's intrinsic size, and the control centers inside it,
     /// which is what pushed it out of alignment with the rows below.
     private var collectionMenu: some View {
-        Picker(selection: $collectionFilter) {
+        SettingsMenuPicker(selection: $collectionFilter) {
             Text("All Collections", bundle: .module).tag("")
             ForEach(collectionOptions, id: \.id) { option in
                 Text(option.name).tag(option.id)
             }
-        } label: {
-            Text("Collection", bundle: .module)
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
+        .accessibilityLabel(Text("Collection", bundle: .module))
         .fixedSize()
     }
 
     private var emptyState: some View {
         // Reachable only by filtering everything out: the tab itself is
         // hidden until an agent has written something.
-        Text("No changes match these filters.", bundle: .module)
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 12)
+        SettingsEmptyState(inline: "line.3.horizontal.decrease.circle", title: "No changes match these filters.")
     }
 
     // MARK: - Filtering
@@ -190,17 +182,15 @@ struct KnowledgeWriteHistoryView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 Image(systemName: run.isFullyReverted ? "arrow.uturn.backward.circle" : "doc.badge.gearshape")
-                    .font(.system(size: 13))
-                    .foregroundColor(run.isFullyReverted ? theme.tertiaryText : theme.accentColor)
+                    .glyphSize(13)
+                    .foregroundColor(run.isFullyReverted ? theme.text.tertiary : theme.text.link)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(headline(for: run))
-                        .font(
-                            run.records.count == 1
-                                ? theme.monoFont(size: 11.5) : .system(size: 12, weight: .medium)
-                        )
+                        .textStyle(run.records.count == 1 ? .code : .caption)
+                        .fontWeight(run.records.count == 1 ? .regular : .medium)
                         .foregroundColor(
-                            run.isFullyReverted ? theme.tertiaryText : theme.primaryText
+                            run.isFullyReverted ? theme.text.tertiary : theme.text.primary
                         )
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -208,13 +198,13 @@ struct KnowledgeWriteHistoryView: View {
                     // Collection, operation and time: what actually tells two
                     // otherwise identical rows apart.
                     Text(subtitle(for: run))
-                        .font(.system(size: 10.5))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
 
                     if !run.rationale.isEmpty {
                         Text(run.rationale)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(2)
                     }
                 }
@@ -229,10 +219,10 @@ struct KnowledgeWriteHistoryView: View {
                         toggle(run.id)
                     } label: {
                         Image(systemName: expanded.contains(run.id) ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
+                            .glyphSize(10, weight: .semibold)
                     }
                     .buttonStyle(.plain)
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(theme.text.secondary)
                 }
 
                 if !run.isFullyReverted {
@@ -243,7 +233,7 @@ struct KnowledgeWriteHistoryView: View {
                             run.records.count > 1 ? "Revert all" : "Revert",
                             bundle: .module
                         )
-                        .font(.system(size: 11, weight: .medium))
+                        .font(SettingsFont.smallLabel)
                     }
                 }
             }
@@ -254,25 +244,20 @@ struct KnowledgeWriteHistoryView: View {
                         recordRow(record)
                     }
                 }
-                .padding(.leading, 24)
+                .padding(.leading, theme.space.s24)
             }
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     private func recordRow(_ record: KnowledgeWriteRecord) -> some View {
         HStack(spacing: 6) {
-            Text(label(for: record.operation))
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(color(for: record.operation))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(color(for: record.operation).opacity(0.15)))
+            StatusChip(label(for: record.operation), tint: color(for: record.operation))
 
             Text(record.relPath)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(record.isReverted ? theme.tertiaryText : theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(record.isReverted ? theme.text.tertiary : theme.text.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
@@ -280,20 +265,20 @@ struct KnowledgeWriteHistoryView: View {
 
             if record.isReverted {
                 Text("Reverted", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             } else {
                 Button {
                     onRevertRecord(record)
                 } label: {
                     Text("Revert", bundle: .module)
-                        .font(.system(size: 10))
+                        .font(SettingsFont.footnote)
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(theme.accentColor)
+                .foregroundColor(theme.text.link)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, theme.space.s4)
     }
 
     // MARK: - Helpers
@@ -352,9 +337,9 @@ struct KnowledgeWriteHistoryView: View {
 
     private func color(for operation: KnowledgeWriteOperation) -> Color {
         switch operation {
-        case .create: return theme.successColor
-        case .replace: return theme.accentColor
-        case .delete: return theme.errorColor
+        case .create: return theme.status.success.foreground
+        case .replace: return theme.action.primary.default.background
+        case .delete: return theme.status.error.foreground
         }
     }
 

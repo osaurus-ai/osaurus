@@ -1,5 +1,5 @@
 {
-  "originHash": "beb97974f70a8e7cc471c41e6e7d3bf222ffe4eb0e8b411790fd7771c83e5524",
+  "originHash": "4b8a3f4bfdd8bba46f969032ab08413a0347e4971cad2d9ac4e4c8dffd23fab7",
   "pins": [
     {
       "identity": "aachartkit-swift",
@@ -15,8 +15,7 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/aptabase/aptabase-swift.git",
       "state": {
-        "revision": "cfd67fac2a228d448d9d2ac92ffc71589cc3ef00",
-        "version": "0.3.11"
+        "revision": "a55267506ca9e9413e242cff00309f91bda16679"
       }
     },
     {
@@ -33,8 +32,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/apple/containerization.git",
       "state": {
-        "revision": "5427fd21ded4b84034126caef5b3182900b4776d",
-        "version": "0.41.0"
+        "revision": "baf212e5a8e432e539beee325050aa26443a154d",
+        "version": "0.54.0"
       }
     },
     {
@@ -98,6 +97,15 @@
       "state": {
         "revision": "528c83521d7304b3e851090d43c1d45df4de29bf",
         "version": "2.5.0"
+      }
+    },
+    {
+      "identity": "rive-ios",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/rive-app/rive-ios",
+      "state": {
+        "revision": "ec9ae3662d260ce92ac31b471d500d323d3d2bcf",
+        "version": "6.29.0"
       }
     },
     {
@@ -374,7 +382,7 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/osaurus-ai/vmlx-swift",
       "state": {
-        "revision": "61ad90ff83248492fac541cee7a52d6e99cf610b"
+        "revision": "1bcd74ad182103a3b83941f61e57ee0bac23b330"
       }
     },
     {

@@ -125,6 +125,7 @@ struct SystemPromptComposerToolResolutionTests {
     /// keeps it off the Default-agent allowlist path so the only thing
     /// under test is the per-capability gate.
     private func makeSnapshot(
+        agentId: UUID = UUID(),
         toolMode: ToolSelectionMode = .auto,
         manualToolNames: [String]? = nil,
         autonomousConfig: AutonomousExecConfig? = nil,
@@ -134,10 +135,16 @@ struct SystemPromptComposerToolResolutionTests {
         browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
-        spawnableAgentIDs: [UUID] = []
+        spawnableAgentIDs: [UUID] = [],
+        calculatorEnabled: Bool = false,
+        redactionToolsEnabled: Bool = false,
+        taskChecklistEnabled: Bool = true,
+        clarifyEnabled: Bool = true,
+        artifactsEnabled: Bool = true,
+        workingFolderReadOnly: Bool = false
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
-            agentId: UUID(),
+            agentId: agentId,
             toolsDisabled: false,
             memoryDisabled: true,
             autonomousConfig: autonomousConfig,
@@ -153,7 +160,13 @@ struct SystemPromptComposerToolResolutionTests {
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
-            spawnableAgentNames: []
+            spawnableAgentNames: [],
+            calculatorEnabled: calculatorEnabled,
+            redactionToolsEnabled: redactionToolsEnabled,
+            taskChecklistEnabled: taskChecklistEnabled,
+            clarifyEnabled: clarifyEnabled,
+            artifactsEnabled: artifactsEnabled,
+            workingFolderReadOnly: workingFolderReadOnly
         )
     }
 
@@ -774,7 +787,7 @@ struct SystemPromptComposerToolResolutionTests {
         // Regression guard for the warmup/send divergence: warmup and the
         // context popover used to compose WITHOUT the session source bound,
         // so a channel-bound agent's warmup built a prompt with no publish
-        // tool and no Channel Destinations section while the send built both.
+        // tool and no Where It Can Post section while the send built both.
         // The warmed prefill diverged mid-schema and re-prefilled every send.
         // Warmup and the popover now bind the session's source before
         // composing; this test pins that all source-bound composes agree,
@@ -874,19 +887,125 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     /// The folder prompt tells the model to review and undo with these; the
-    /// real request must carry them, not just the five-tool core.
+    /// real request must carry them, not just the five-tool core. Redaction
+    /// is a per-agent opt-in.
     @Test
-    func hostFolderSchemaCarriesHistoryCopyAndRedactionTools() {
+    func hostFolderSchemaCarriesHistoryAndCopyTools_redactionOnlyWhenEnabled() {
         withRegisteredFolderTools { folder in
-            let tools = SystemPromptComposer.resolveTools(
-                snapshot: makeSnapshot(),
-                executionMode: .hostFolder(folder),
-                query: "Undo the last change to report.docx"
+            let lean = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(),
+                    executionMode: .hostFolder(folder),
+                    query: "Undo the last change to report.docx"
+                ).map(\.function.name)
             )
-            let names = Set(tools.map(\.function.name))
-            for name in ["file_undo", "file_operation_history", "file_copy", "redact_file", "detect_pii"] {
-                #expect(names.contains(name), "missing \(name)")
+            for name in ["file_undo", "file_operation_history", "file_copy"] {
+                #expect(lean.contains(name), "missing \(name)")
             }
+            #expect(lean.isDisjoint(with: ToolRegistry.redactionToolNames))
+
+            let optedIn = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(redactionToolsEnabled: true),
+                    executionMode: .hostFolder(folder),
+                    query: "Undo the last change to report.docx"
+                ).map(\.function.name)
+            )
+            #expect(optedIn.isSuperset(of: ToolRegistry.redactionToolNames))
+        }
+    }
+
+    /// A read-only working folder keeps the read tools and loses every
+    /// write, in auto and manual mode, even when the write is ticked or
+    /// loaded this session.
+    @Test
+    func readOnlyFolder_stripsEveryWriteTool_withNoBypass() {
+        withRegisteredFolderTools { folder in
+            let writes = ToolRegistry.readOnlyFolderBlockedToolNames
+            for mode in [ToolSelectionMode.auto, .manual] {
+                let names = Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: makeSnapshot(
+                            toolMode: mode, manualToolNames: Array(writes), redactionToolsEnabled: true,
+                            workingFolderReadOnly: true),
+                        executionMode: .hostFolder(folder),
+                        additionalToolNames: LoadedTools(writes)
+                    ).map(\.function.name))
+                #expect(names.isDisjoint(with: writes), "\(mode): \(names.intersection(writes))")
+                #expect(names.isDisjoint(with: ToolRegistry.hostFolderHistoryToolNames), "\(mode)")
+                #expect(names.isSuperset(of: ["file_read", "file_search"]), "\(mode)")
+            }
+            let writable = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(redactionToolsEnabled: true), executionMode: .hostFolder(folder)
+                ).map(\.function.name))
+            #expect(writable.isSuperset(of: ["file_write", "file_edit", "shell_run", "redact_file"]))
+            #expect(writable.isSuperset(of: ToolRegistry.hostFolderHistoryToolNames))
+        }
+    }
+
+    @Test("A read-only working folder refuses a write at execute, folder bound")
+    func readOnlyFolder_refusesAWriteAtExecute() async {
+        await SandboxTestLock.runWithStoragePaths {
+            var agent = Agent(name: "ReadOnlyProbe-\(UUID().uuidString.prefix(6))")
+            agent.settings.workingFolderReadOnly = true
+            AgentManager.shared.add(agent)
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ro-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let result = await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
+                await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+                    (try? await ToolRegistry.shared.execute(
+                        name: "file_write", argumentsJSON: #"{"path":"a.txt","content":"x"}"#)) ?? ""
+                }
+            }
+            #expect(result.contains("read only"), "\(result)")
+            #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("a.txt").path))
+            FolderToolManager.shared._unregisterAllForTesting()
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    @Test
+    func calculatorIsOptInForCustomAgents() {
+        withRegisteredFolderTools { folder in
+            @MainActor func names(_ snapshot: AgentConfigSnapshot) -> Set<String> {
+                Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: snapshot,
+                        executionMode: .hostFolder(folder),
+                        query: "Total the April statement"
+                    ).map(\.function.name)
+                )
+            }
+            #expect(!names(makeSnapshot()).contains(CalculatorTool.toolName))
+            #expect(names(makeSnapshot(calculatorEnabled: true)).contains(CalculatorTool.toolName))
+        }
+    }
+
+    @Test
+    func agentLoopToolsCanBeSwitchedOffPerAgent() {
+        withRegisteredFolderTools { folder in
+            @MainActor func names(_ snapshot: AgentConfigSnapshot) -> Set<String> {
+                Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: snapshot,
+                        executionMode: .hostFolder(folder),
+                        query: "Refactor the parser in three steps"
+                    ).map(\.function.name)
+                )
+            }
+            let defaults = names(makeSnapshot())
+            #expect(defaults.isSuperset(of: ["todo", "complete", "clarify", "share_artifact"]))
+            let off = names(
+                makeSnapshot(taskChecklistEnabled: false, clarifyEnabled: false, artifactsEnabled: false)
+            )
+            #expect(off.isDisjoint(with: ["todo", "complete", "clarify", "share_artifact"]))
+            // A manual pick still keeps a switched-off tool.
+            let manual = names(
+                makeSnapshot(toolMode: .manual, manualToolNames: ["todo"], taskChecklistEnabled: false)
+            )
+            #expect(manual.contains("todo"))
         }
     }
 
@@ -1702,7 +1821,7 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(
                     propertyNames("file_read") == [
                         "path", "max_depth", "sheet_name", "start_line", "end_line",
-                        "tail_lines", "max_chars", "max_rows", "max_columns", "mode",
+                        "tail_lines", "max_chars", "max_rows", "max_columns", "mode", "paths", "pages",
                     ]
                 )
                 let readDescription = byName["file_read"]?.function.description ?? ""
@@ -1710,7 +1829,7 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(readDescription.contains("do not unzip"))
                 #expect(
                     propertyNames("file_search") == [
-                        "pattern", "path", "target", "file_pattern", "max_results",
+                        "pattern", "path", "target", "file_pattern", "max_results", "offset",
                     ]
                 )
                 #expect(
@@ -1875,16 +1994,16 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func defaultAgentKeepsTodoAndCurrentTimeTogether() {
+    func defaultAgentGetsOnlyTheRoutingSurface() {
         let tools = SystemPromptComposer.resolveTools(
             snapshot: makeSnapshotForDefaultAgent(),
             executionMode: .none
         )
         let names = Set(tools.map { $0.function.name })
-        #expect(names.contains("todo"))
-        #expect(names.contains("complete"))
+        #expect(names.isSubset(of: ToolRegistry.orchestratorAllowedToolNames))
         #expect(names.contains("clarify"))
-        #expect(names.contains("get_current_time"))
+        #expect(!names.contains("todo"))
+        #expect(!names.contains("get_current_time"))
     }
 
     @Test
@@ -2207,9 +2326,6 @@ struct SystemPromptComposerToolResolutionTests {
     @Test("frozen delegation schema stays byte-stable while launcher settings are unchanged")
     func frozenDelegationSchemaIsStableForUnchangedSettings() async {
         await withSubagentSandbox {
-            // A real custom target: the launcher itself is always filtered
-            // out of its own enum, so the built-in Osaurus id would never
-            // surface here.
             let manager = AgentManager.shared
             let worker = Agent(
                 name: "Frozen delegation target",
@@ -2225,7 +2341,7 @@ struct SystemPromptComposerToolResolutionTests {
             saveServerBatchLimit(4)
             SubagentConfigurationStore.save(config)
 
-            let snapshot = makeSnapshotForDefaultAgent()
+            let snapshot = makeSnapshot(spawnDelegationEnabled: true, spawnableAgentIDs: [worker.id])
             let first = SystemPromptComposer.resolveTools(
                 snapshot: snapshot,
                 executionMode: .none,
@@ -2262,8 +2378,7 @@ struct SystemPromptComposerToolResolutionTests {
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
             manager.add(worker)
-            SubagentConfigurationStore.save(SubagentConfiguration(spawnableAgentIDs: [worker.id]))
-            let snapshot = makeSnapshotForDefaultAgent()
+            let snapshot = makeSnapshot(spawnDelegationEnabled: true, spawnableAgentIDs: [worker.id])
             let first = SystemPromptComposer.resolveTools(
                 snapshot: snapshot, executionMode: .none, spawnTargets: runnableTargets([])
             )
@@ -2299,8 +2414,7 @@ struct SystemPromptComposerToolResolutionTests {
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
             manager.add(worker)
-            SubagentConfigurationStore.save(SubagentConfiguration(spawnableAgentIDs: [worker.id]))
-            let snapshot = makeSnapshotForDefaultAgent()
+            let snapshot = makeSnapshot(spawnDelegationEnabled: true, spawnableAgentIDs: [worker.id])
             let first = SystemPromptComposer.resolveTools(
                 snapshot: snapshot, executionMode: .none, spawnTargets: runnableTargets([worker])
             )
@@ -2348,9 +2462,10 @@ struct SystemPromptComposerToolResolutionTests {
             saveServerBatchLimit(2)
             SubagentConfigurationStore.save(original)
 
-            let snapshot = makeSnapshotForDefaultAgent()
+            let launcherId = UUID()
             let frozen = SystemPromptComposer.resolveTools(
-                snapshot: snapshot,
+                snapshot: makeSnapshot(
+                    agentId: launcherId, spawnDelegationEnabled: true, spawnableAgentIDs: [oldAgent.id]),
                 executionMode: .none,
                 spawnTargets: runnableTargets([oldAgent])
             )
@@ -2365,7 +2480,8 @@ struct SystemPromptComposerToolResolutionTests {
             SubagentConfigurationStore.save(updated)
 
             let refreshed = SystemPromptComposer.resolveTools(
-                snapshot: snapshot,
+                snapshot: makeSnapshot(
+                    agentId: launcherId, spawnDelegationEnabled: true, spawnableAgentIDs: [newAgent.id]),
                 executionMode: .none,
                 frozenAlwaysLoadedNames: Set(frozen.map(\.function.name)),
                 frozenToolSpecs: frozen,

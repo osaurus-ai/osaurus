@@ -1,0 +1,143 @@
+{
+  "id": "workflow.dialog-then-inference",
+  "domain": "workflow",
+  "label": "workflow \u2022 dialog answers flow into a downstream inference node",
+  "query": "dialog answers flow into a downstream inference node",
+  "notes": "The harness answers the form as the user (plan Pro, contact Sam). Pins dialog pause/resume through DialogCoordinator, answer validation, and binding of dialog output into a later node and the workflow output.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [
+          {
+            "from": "ask",
+            "to": "welcome"
+          }
+        ],
+        "examples": [],
+        "input_schema": {
+          "properties": {
+            "client": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "client"
+          ],
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "dialog": {
+              "fields": [
+                {
+                  "key": "plan",
+                  "label": "Plan",
+                  "options": [
+                    "Starter",
+                    "Pro"
+                  ],
+                  "persistence": "always_ask",
+                  "required": true,
+                  "type": "choice"
+                },
+                {
+                  "key": "contact",
+                  "label": "Contact name",
+                  "persistence": "always_ask",
+                  "required": true,
+                  "type": "text"
+                }
+              ],
+              "message": "Which plan did {{input.client}} buy?",
+              "title": "New client"
+            },
+            "id": "ask",
+            "input": {},
+            "kind": "dialog",
+            "name": "Ask Plan",
+            "output_schema": {
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 1
+            },
+            "timeout": 120
+          },
+          {
+            "id": "welcome",
+            "inference": {
+              "instructions": "Write a two-sentence welcome email to {{nodes.ask.output.contact}} at {{input.client}} for the {{nodes.ask.output.plan}} plan.",
+              "mode": "generate",
+              "model_slot": "writer"
+            },
+            "input": {
+              "client": "{{input.client}}",
+              "plan": "{{nodes.ask.output.plan}}"
+            },
+            "kind": "inference",
+            "name": "Write Welcome",
+            "output_schema": {
+              "properties": {
+                "welcome": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "welcome"
+              ],
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 1
+            },
+            "timeout": 120
+          }
+        ],
+        "output": {
+          "plan": "{{nodes.ask.output.plan}}",
+          "welcome": "{{nodes.welcome.output.welcome}}"
+        },
+        "output_schema": {
+          "properties": {
+            "plan": {
+              "type": "string"
+            },
+            "welcome": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "plan",
+            "welcome"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {
+        "client": "Acme Robotics"
+      },
+      "answers": {
+        "plan": "Pro",
+        "contact": "Sam"
+      },
+      "nodeStatuses": {
+        "ask": "done",
+        "welcome": "done"
+      },
+      "outputKeys": [
+        "welcome"
+      ],
+      "outputValues": {
+        "plan": [
+          "Pro"
+        ]
+      }
+    }
+  }
+}

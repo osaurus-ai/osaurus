@@ -201,17 +201,6 @@ public final class ModelManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Model Deprecation
-
-    struct DeprecationNotice: Identifiable {
-        let id: String
-        let oldId: String
-        let newId: String
-    }
-
-    /// Maps deprecated model IDs to their recommended OsaurusAI replacements.
-    nonisolated static let deprecatedModelReplacements: [String: String] = [:]
-
     // MARK: - Published Properties
     @Published var availableModels: [MLXModel] = []
     @Published var isLoadingModels: Bool = false
@@ -231,7 +220,6 @@ public final class ModelManager: NSObject, ObservableObject {
     var ownsModelUpdatePolling = false
     var modelUpdatePollingTask: Task<Void, Never>?
     let automaticModelUpdateSweep = ModelUpdateSweep()
-    @Published var deprecationNotices: [DeprecationNotice] = []
 
     /// True while a refresh of the OsaurusAI org listing is in flight. Drives
     /// the spinner on the Recommended tab's refresh button.
@@ -301,6 +289,8 @@ public final class ModelManager: NSObject, ObservableObject {
         // a cached Hub measurement still replaces it here.
         let curated = Self.curatedSuggestedModels.map { model in
             model.withDownloadSize(ModelSizeCache.bytes(forId: model.id))
+                .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
+                .withSSDResidentBytes(ModelSSDResidency.cachedBytes(repoId: model.id))
         }
 
         suggestedModels = curated
@@ -329,26 +319,10 @@ public final class ModelManager: NSObject, ObservableObject {
 
         isLoadingModels = false
 
-        checkForDeprecatedModels()
-
         let allModels = availableModels + suggestedModels
         Task { [downloadService] in
             await downloadService.topUpCompletedModels(allModels)
         }
-    }
-
-    /// Scans locally installed models for deprecated entries and populates deprecation notices.
-    func checkForDeprecatedModels() {
-        deprecationNotices = Self.deprecatedModelReplacements.compactMap { oldId, newId in
-            let probe = MLXModel(id: oldId, name: "", description: "", downloadURL: "")
-            guard probe.isDownloaded else { return nil }
-            return DeprecationNotice(id: oldId, oldId: oldId, newId: newId)
-        }
-    }
-
-    /// Returns the replacement model ID if the given model is deprecated, nil otherwise.
-    nonisolated static func replacementForDeprecatedModel(_ modelId: String) -> String? {
-        deprecatedModelReplacements[modelId]
     }
 
     /// Re-evaluate download states for all known models against the current
@@ -372,7 +346,6 @@ public final class ModelManager: NSObject, ObservableObject {
                 with: localModels,
                 refreshLocalInstallationMetadata: true
             )
-            self.checkForDeprecatedModels()
             self.refreshTotalDownloadedSize()
         }
     }
@@ -626,7 +599,8 @@ public final class ModelManager: NSObject, ObservableObject {
     func deleteModel(_ model: MLXModel) async { await downloadService.delete(model) }
 
     func estimateDownloadSize(for model: MLXModel) async -> Int64? {
-        await downloadService.estimateSize(for: model)
+        if model.hasLocalInstallationEvidence, let bytes = model.downloadSizeBytes, bytes > 0 { return bytes }
+        return await downloadService.estimateSize(for: model)
     }
 
     /// Publish a size resolved on demand by the detail sheet back into the
@@ -640,7 +614,8 @@ public final class ModelManager: NSObject, ObservableObject {
         func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
             var changed = false
             let updated = models.map { model in
-                guard model.id.caseInsensitiveCompare(modelId) == .orderedSame, model.ssdResidentBytes != bytes
+                guard !model.hasLocalInstallationEvidence,
+                    model.id.caseInsensitiveCompare(modelId) == .orderedSame, model.ssdResidentBytes != bytes
                 else { return model }
                 changed = true
                 return model.withSSDResidentBytes(bytes)
@@ -659,11 +634,13 @@ public final class ModelManager: NSObject, ObservableObject {
         func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
             var changed = false
             let updated = models.map { model in
-                guard model.id.caseInsensitiveCompare(modelId) == .orderedSame,
+                guard !model.hasLocalInstallationEvidence,
+                    model.id.caseInsensitiveCompare(modelId) == .orderedSame,
                     model.downloadSizeBytes != bytes
                 else { return model }
                 changed = true
                 return model.withDownloadSize(bytes)
+                    .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
             }
             return (updated, changed)
         }
@@ -686,6 +663,7 @@ public final class ModelManager: NSObject, ObservableObject {
     var downloadStates: [String: DownloadState] { downloadService.downloadStates }
     var downloadMetrics: [String: ModelDownloadService.DownloadMetrics] { downloadService.downloadMetrics }
     var totalDownloadedSize: Int64 { downloadService.totalDownloadedSize }
+    var totalDownloadedModelCount: Int { downloadService.totalDownloadedModelCount }
     var totalDownloadedSizeString: String { downloadService.totalDownloadedSizeString }
     var activeDownloadsCount: Int { downloadService.activeDownloadsCount }
     var downloadAlert: ModelDownloadService.DownloadAlertInfo? {
@@ -862,8 +840,8 @@ extension ModelManager {
     }
 
     /// Fully curated models with descriptions we control.
-    /// Order is a fallback only — `ModelDownloadView.filteredSuggestedModels`
-    /// sorts by curated-first → top-pick → `releasedAt` desc → name.
+    /// Order is a fallback only — `LanguageModelCatalog.makeLists` sorts by
+    /// top-pick → `releasedAt` desc → name.
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
         // MARK: Gemma 4 — multimodal
         //
@@ -1552,6 +1530,21 @@ extension ModelManager {
         guard let tag = pipelineTag?.lowercased(), !tag.isEmpty else { return true }
         return chatCapablePipelineTags.contains(tag)
     }
+
+    /// Decision bundles are downloadable local models, but never chat models.
+    /// Require the publisher's task declaration and decision artifacts rather
+    /// than inferring the task from a repo name or its chat-capable backbone.
+    nonisolated static func isDecisionCatalogEligible(
+        id: String, pipelineTag: String?, tags: [String]?, files: [String]?
+    ) -> Bool {
+        guard !panelOwnedOrgIds.contains(id.lowercased()), !isGGUFRepo(id: id, tags: tags),
+            pipelineTag?.lowercased() == "zero-shot-classification",
+            tags?.contains(where: { $0.lowercased() == "decision-model" }) == true,
+            let files
+        else { return false }
+        return Set(["jang_config.json", "decision/decision_config.json", "decision/readout.safetensors"])
+            .isSubset(of: Set(files))
+    }
 }
 
 // MARK: - Installed models helpers for services
@@ -1681,10 +1674,11 @@ extension ModelManager {
 // MARK: - Hugging Face discovery helpers
 
 extension ModelManager {
-    fileprivate struct HFModel: Decodable, Sendable {
+    struct HFModel: Decodable, Sendable {
         let id: String
         let tags: [String]?
         let pipeline_tag: String?
+        let siblings: [HuggingFaceService.RepoFile]?
         let lastModified: String?
         let downloads: Int?
     }
@@ -1723,13 +1717,15 @@ extension ModelManager {
         repoId: String,
         revision: String?
     ) async -> Int64? {
-        if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision) {
+        if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision),
+            ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(repoId), matchingRevision: revision) != nil {
             return cached
         }
         let fetched = await HuggingFaceService.shared.estimateTotalSize(
             repoId: repoId,
             patterns: ModelDownloadService.downloadFilePatterns,
-            excludedFiles: ModelDownloadService.downloadExcludedFiles
+            excludedFiles: ModelDownloadService.downloadExcludedFiles,
+            revision: revision
         )
         if let fetched {
             ModelSizeCache.record(id: repoId, bytes: fetched, revision: revision)
@@ -1914,8 +1910,11 @@ extension ModelManager {
     /// The use-case pill is inferred where the HF metadata supports it
     /// (multimodal tags → Vision) so auto-fetched cards aren't all blank
     /// next to curated ones.
-    nonisolated fileprivate static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
+    nonisolated static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
         let modelType = inferModelType(from: hf.tags)
+        let isDecision = Self.isDecisionCatalogEligible(
+            id: hf.id, pipelineTag: hf.pipeline_tag, tags: hf.tags, files: hf.siblings?.map(\.rfilename)
+        )
         let isMultimodal =
             modelType.map { VLMDetection.isVLM(modelType: $0) } ?? false
             || (hf.pipeline_tag?.lowercased() == "image-text-to-text")
@@ -1927,7 +1926,8 @@ extension ModelManager {
             modelType: modelType,
             releasedAt: parseHFTimestamp(hf.lastModified),
             downloads: hf.downloads,
-            useCase: isMultimodal ? .vision : nil
+            useCase: isMultimodal && !isDecision ? .vision : nil,
+            isDecision: isDecision
         )
     }
 
@@ -1946,12 +1946,15 @@ extension ModelManager {
         let fetched = (try? await Self.requestHFModels(at: url)) ?? []
         guard !fetched.isEmpty else { return }
 
-        // Drop repos that other Settings panels own (rampart PII guard,
-        // embeddings, image/speech pipelines) before they can become chat
-        // cards. Curated entries never pass through this gate — they merge
-        // from `curatedSuggestedModels` directly.
+        // Other panels own guards, embeddings and image/speech pipelines.
+        // Decision bundles share this downloader, but carry their task so
+        // chat selectors continue to exclude them. Curated entries merge
+        // separately and never pass through this discovery gate.
         let raw = fetched.filter {
             Self.isChatCatalogEligible(id: $0.id, pipelineTag: $0.pipeline_tag, tags: $0.tags)
+                || Self.isDecisionCatalogEligible(
+                    id: $0.id, pipelineTag: $0.pipeline_tag, tags: $0.tags, files: $0.siblings?.map(\.rfilename)
+                )
         }
         guard !raw.isEmpty else { return }
 
@@ -2011,32 +2014,32 @@ extension ModelManager {
             return collected
         }
 
-        // Repos whose architecture ships an SSD-resident n-gram table (Qwen4Exp: Flash-Next, Allosaurus): size
-        // that table too so the RAM verdict excludes it. Only these repos are touched; cached per revision.
-        var ngramCandidates = raw.filter { ModelSSDResidency.mayHaveNGramTable(modelType: nil, tags: $0.tags) }
-            .map(\.id)
-        for model in Self.curatedSuggestedModels
-        where ModelSSDResidency.mayHaveNGramTable(modelType: model.modelType, tags: nil)
-            && !ngramCandidates.contains(where: { $0.caseInsensitiveCompare(model.id) == .orderedSame })
-        {
-            ngramCandidates.append(model.id)
-        }
-        let ssdById: [String: Int64] = await withTaskGroup(of: (String, Int64?).self) { group in
-            for repoId in ngramCandidates {
+        // Discover table storage from tensor metadata for every repo. Tags and product names are not
+        // reliable architecture contracts; negative results are revision-cached too.
+        let ngramCandidates = repoIdsToSize
+        let cachedSSD = Dictionary(uniqueKeysWithValues: ngramCandidates.compactMap { repoId -> (String, Int64)? in
+            let key = repoId.lowercased()
+            guard let bytes = ModelSSDResidency.cachedBytes(repoId: repoId, revision: revisionById[key]) else { return nil }
+            return (key, bytes)
+        })
+        // Publish catalog sizes immediately. Header inspections must not delay first paint or downloads.
+        applyOsaurusOrgFetch(
+            autoFetched: autoFetched, statsById: statsById, sizesById: sizesById, ssdById: cachedSSD)
+        await withTaskGroup(of: (String, Int64?).self) { group in
+            var pending = ngramCandidates.makeIterator()
+            func add(_ repoId: String) {
                 let revision = revisionById[repoId.lowercased()]
                 group.addTask {
                     (repoId.lowercased(), await ModelSSDResidency.remoteNGramBytes(repoId: repoId, revision: revision))
                 }
             }
-            var collected: [String: Int64] = [:]
+            // Header responses are bounded but may be large; cap concurrent inspections.
+            for _ in 0..<8 { if let repoId = pending.next() { add(repoId) } }
             for await (key, value) in group {
-                if let value { collected[key] = value }
+                if let value { applyResolvedSSDResidentBytes(value, for: key) }
+                if let repoId = pending.next() { add(repoId) }
             }
-            return collected
         }
-
-        applyOsaurusOrgFetch(
-            autoFetched: autoFetched, statsById: statsById, sizesById: sizesById, ssdById: ssdById)
     }
 
     /// Replace the auto-fetched portion of `suggestedModels` while preserving
@@ -2059,6 +2062,7 @@ extension ModelManager {
                 model
                 .withDownloads(statsById[key] ?? model.downloads)
                 .withDownloadSize(sizesById[key])
+                .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
                 .withSSDResidentBytes(ssdById[key])
         }
         let curated = Self.curatedSuggestedModels.map(enrich)
@@ -2360,6 +2364,9 @@ extension ModelManager {
         diagnosticHandler: (([String: Any]) -> Void)? = nil
     ) -> [MLXModel] {
         let fm = FileManager.default
+        // Nested scans shadow `root` with the publisher directory. Keep the inventory root
+        // for logical bundle paths so <root>/<publisher>/<model> never duplicates publisher.
+        let inventoryRoot = root
         var rootIsDir: ObjCBool = false
         let rootExists = fm.fileExists(atPath: root.path, isDirectory: &rootIsDir)
         let rootReadable = access(root.path, R_OK | X_OK) == 0
@@ -2554,13 +2561,16 @@ extension ModelManager {
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
                         downloadURL: "https://huggingface.co/\(id)",
-                        downloadSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        downloadSizeBytes: MLXModel.localBundleDownloadSizeBytes(at: resolved)
+                            ?? MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        weightSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
                         ssdResidentBytes: ModelSSDResidency.localSSDResidentBytes(at: resolved),
                         // The scan already runs off-main. Preserve the bundle's
                         // architecture tag here so hot UI paths can distinguish
                         // image-only from video-capable local VLMs without
                         // re-reading config.json during SwiftUI layout.
-                        modelType: VLMDetection.readModelType(at: resolved)
+                        modelType: VLMDetection.readModelType(at: resolved),
+                        bundleDirectory: inventoryRoot.appendingPathComponent(id, isDirectory: true)
                     )
                     models.append(model)
                 }

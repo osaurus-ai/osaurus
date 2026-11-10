@@ -1834,6 +1834,7 @@ struct MLXBatchAdapter {
             topP: effective.topP,
             topK: effective.topK,
             minP: effective.minP,
+            suppressTokens: effective.modelDefaults.suppressTokens ?? [],
             repetitionPenalty: effective.repetitionPenalty,
             // Use the same resolved mode and request precedence as the other
             // sampler fields; never re-read the unselected bundle snapshot.

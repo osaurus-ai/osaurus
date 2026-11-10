@@ -20,28 +20,54 @@ struct DocumentChip: View {
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isOnComposerInputSurface) private var isOnComposerInputSurface
 
     private var isPasted: Bool { attachment.isPastedContent }
     private var businessSummary: BusinessDocumentSummary? { attachment.businessDocumentSummary }
 
     var body: some View {
-        HStack(spacing: 6) {
+        let border = AttachmentInspectionStyle.color("border", theme.border.subtle, theme)
+        let borderWidth = AttachmentInspectionStyle.metric("borderWidth", theme.hairline, theme)
+        #if OSAURUS_DESIGN_SYSTEM
+        let needsComposerBoundary = isOnComposerInputSurface && !theme.isDark && isEnabled
+        #else
+        let needsComposerBoundary = false
+        #endif
+        HStack(spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.body.horizontalGap", inheriting: AttachmentInspectionStyle.metric("gap", 6, theme))) {
             chipContent
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        }.catalogLayoutTarget("component.library.24.elements.layout.documentChip.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.body.paddingX", inheriting: AttachmentInspectionStyle.metric("padding", 8, theme))).catalogLayoutTarget("component.library.24.elements.layout.documentChip.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.body.paddingY", inheriting: AttachmentInspectionStyle.metric("padding", 5, theme))).catalogLayoutTarget("component.library.24.elements.layout.documentChip.body.paddingY")
+        .modifier(AttachmentMinimumHeight())
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(
-                    (onRemove != nil ? theme.tertiaryBackground : theme.secondaryBackground)
-                        .opacity(isHovered ? 0.9 : 0.7)
-                )
+            RoundedRectangle(cornerRadius: AttachmentInspectionStyle.metric("radius", theme.radius.medium, theme), style: .continuous)
+                .fill(chipBackground)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AttachmentInspectionStyle.metric("radius", theme.radius.medium, theme), style: .continuous)
+                .strokeBorder(
+                    needsComposerBoundary ? theme.assignedColor("color.border.control", fallback: theme.border.strong) : border,
+                    lineWidth: needsComposerBoundary ? max(theme.stroke.default, borderWidth) : borderWidth
+                )
         )
+        .overlay(alignment: .topTrailing) {
+            if let onRemove {
+                SettingsIconButton("xmark", help: "Remove attachment", size: .extraExtraSmall, role: .secondary, action: onRemove)
+                    .accessibilityLabel("Remove \(attachment.filename ?? "attachment")")
+                    .offset(x: theme.space.s4, y: -theme.space.s4)
+                    .pointingHandCursor()
+            }
+        }
         .onHover { isHovered = $0 }
+    }
+
+    private var chipBackground: Color {
+        #if OSAURUS_DESIGN_SYSTEM
+        AttachmentInspectionStyle.color(!isEnabled ? "disabledBackground" : isHovered ? "hover" : "background", theme.surface.subtle, theme)
+        #else
+        (onRemove != nil ? theme.surface.hover : theme.surface.subtle).opacity(isHovered ? 0.9 : 0.7)
+        #endif
     }
 
     @ViewBuilder
@@ -49,7 +75,8 @@ struct DocumentChip: View {
         Group {
             if let onTap {
                 Button(action: onTap) { labelStack }
-                    .buttonStyle(.plain)
+                    .assignedBasePlainButtonStyle()
+                    .assignedBaseKeyboardButton(24, action: onTap)
                     .pointingHandCursor()
             } else {
                 labelStack
@@ -60,28 +87,34 @@ struct DocumentChip: View {
             // A labeled button, not a bare icon: users did not discover the
             // icon-only version and asked for a way to undo the collapse
             // (#3271).
+            let shape = RoundedRectangle(
+                cornerRadius: AttachmentInspectionStyle.metric("radius", theme.radius.medium, theme),
+                style: .continuous
+            )
             Button(action: onInline) {
-                // Same fill, stroke, height and text color as the circular
-                // edit / remove buttons beside it, and the chip's own 8pt corner
-                // radius, so the row reads as one set.
+                // Same fill, stroke, height and ink as the circular edit /
+                // remove buttons beside it, and the chip's own corner radius,
+                // so the row reads as one set.
                 HStack(spacing: 3) {
                     Image(systemName: "text.insert")
-                        .font(.system(size: 10, weight: .semibold))
+                        .glyphSize(10, weight: .semibold)
                     Text("Insert as Text", bundle: .module)
-                        .font(theme.font(size: 10, weight: .semibold))
+                        .attachmentTextStyle(.micro, property: "caption", weight: 600)
                         .lineLimit(1)
                 }
-                .foregroundColor(theme.secondaryText)
+                .attachmentInk("accent", fallback: theme.text.secondary)
                 .padding(.horizontal, 7)
                 .frame(height: 20)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.primaryBackground.opacity(0.6)))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(theme.primaryBorder.opacity(0.25), lineWidth: 0.5)
+                .background(
+                    shape.fill(AttachmentInspectionStyle.color(isEnabled ? "background" : "disabledBackground", theme.surface.canvas, theme))
                 )
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    shape.strokeBorder(AttachmentInspectionStyle.color("border", theme.border.subtle, theme), lineWidth: AttachmentInspectionStyle.metric("borderWidth", theme.hairline, theme))
+                )
+                .contentShape(shape)
             }
-            .buttonStyle(.plain)
+            .assignedBasePlainButtonStyle()
+            .assignedBaseKeyboardButton(24, action: onInline)
             .pointingHandCursor()
             .localizedHelp("Insert into message")
         }
@@ -91,21 +124,18 @@ struct DocumentChip: View {
                 .localizedHelp("Edit pasted content")
         }
 
-        if let onRemove {
-            circularButton(systemName: "xmark", action: onRemove)
-        }
     }
 
     private var labelStack: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.labelStack.horizontalGap", inheriting: AttachmentInspectionStyle.metric("gap", 5, theme))) {
             Image(systemName: isPasted ? "doc.on.clipboard" : businessSummary?.systemImageName ?? attachment.fileIcon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(11, weight: .medium)
+                .attachmentInk("accent", fallback: theme.text.secondary)
 
             if let name = attachment.filename {
                 Text(name)
-                    .font(theme.font(size: 11, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .attachmentTextStyle(.footnote, property: "text", weight: 500)
+                    .attachmentInk("foreground", fallback: theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: onRemove != nil ? 120 : nil)
@@ -114,33 +144,46 @@ struct DocumentChip: View {
             if isPasted {
                 if let lines = attachment.pastedContentLineCount {
                     Text("\(lines) lines")
-                        .font(theme.font(size: 9, weight: .regular))
-                        .foregroundColor(onRemove != nil ? theme.secondaryText : theme.tertiaryText)
+                        .attachmentTextStyle(.micro, property: "caption")
+                        .attachmentInk("secondary", fallback: onRemove != nil ? theme.text.secondary : theme.text.tertiary)
                 }
             } else if let detail = businessSummary?.chipDetailLabel ?? attachment.fileSizeFormatted {
                 Text(detail)
-                    .font(theme.font(size: 9, weight: .regular))
-                    .foregroundColor(onRemove != nil ? theme.secondaryText : theme.tertiaryText)
+                    .attachmentTextStyle(.micro, property: "caption")
+                    .attachmentInk("secondary", fallback: onRemove != nil ? theme.text.secondary : theme.text.tertiary)
                     .lineLimit(1)
             }
-        }
+        }.catalogLayoutTarget("component.library.24.elements.layout.documentChip.labelStack.horizontalGap")
     }
 
     private func circularButton(systemName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(10, weight: .semibold)
+                .attachmentInk("accent", fallback: theme.text.secondary)
                 .frame(width: 20, height: 20)
                 .background(
-                    Circle().fill(theme.primaryBackground.opacity(0.6))
+                    Circle().fill(AttachmentInspectionStyle.color(isEnabled ? "background" : "disabledBackground", theme.surface.canvas, theme))
                 )
                 .overlay(
-                    Circle().strokeBorder(theme.primaryBorder.opacity(0.25), lineWidth: 0.5)
+                    Circle().strokeBorder(AttachmentInspectionStyle.color("border", theme.border.subtle, theme), lineWidth: AttachmentInspectionStyle.metric("borderWidth", theme.hairline, theme))
                 )
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .assignedBasePlainButtonStyle()
+        .assignedBaseKeyboardButton(24, action: action)
         .pointingHandCursor()
+        .accessibilityLabel(systemName == "pencil" ? "Edit pasted content" : "Insert into message")
+    }
+}
+
+private struct AttachmentMinimumHeight: ViewModifier {
+    @Environment(\.theme) private var theme
+    @ViewBuilder func body(content: Content) -> some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        content.frame(minHeight: AttachmentInspectionStyle.documentHeight(theme))
+        #else
+        content
+        #endif
     }
 }

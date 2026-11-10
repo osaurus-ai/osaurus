@@ -10,7 +10,7 @@
 //    - scrubs credentials and clips bodies,
 //    - applies the user's content policy (`ActivityLogSettings`),
 //    - keeps a small hot cache so synchronous callers (`hasLog`, `focus`,
-//      Remote Connections activity) answer instantly for recent rows,
+//      Guests activity) answer instantly for recent rows,
 //    - writes through to the store off the main thread, and
 //    - publishes paged, filtered rows + a summary for the Insights tab.
 //
@@ -25,7 +25,7 @@ final class InsightsService: ObservableObject {
     // MARK: - Configuration
 
     /// Hot-cache size. Recent rows are kept in memory so the per-message
-    /// "Insights" button and Remote Connections usage can answer
+    /// "Insights" button and Guests usage can answer
     /// synchronously; everything older is served from the store.
     private let maxLogCount: Int = 500
 
@@ -495,6 +495,78 @@ final class InsightsService: ObservableObject {
         return true
     }
 
+    /// Reveal a workflow run's row. False when the run never reached the
+    /// log (still running, or written before runs were logged).
+    @discardableResult
+    func focus(workflowRunId: UUID) -> Bool {
+        if let match = logs.first(where: { $0.workflowRunId == workflowRunId && $0.category == .workflowRun }) {
+            focus(log: match)
+            return true
+        }
+        guard storeAvailable, let match = try? store.find(workflowRunId: workflowRunId) else { return false }
+        focus(log: match)
+        return true
+    }
+
+    func hasLog(workflowRunId: UUID) -> Bool {
+        if logs.contains(where: { $0.workflowRunId == workflowRunId && $0.category == .workflowRun }) { return true }
+        guard storeAvailable else { return false }
+        return ((try? store.find(workflowRunId: workflowRunId)) ?? nil) != nil
+    }
+
+    /// Narrow the list to every row of one workflow run.
+    func showRun(_ workflowRunId: UUID) {
+        filter = ActivityFilter(workflowRunId: workflowRunId)
+    }
+
+    /// Show the Interactions list: every request and message that needed
+    /// the owner, and how it was answered.
+    func showInteractions() {
+        filter = ActivityFilter(categories: [.interaction])
+    }
+
+    /// Show the Interactions list and reveal one attention item's row when
+    /// it is in the loaded page.
+    func showInteraction(attentionId: UUID) {
+        filter = ActivityFilter(categories: [.interaction])
+        if let match = logs.first(where: { $0.egress?.details["attention_id"] == attentionId.uuidString }) {
+            focus(log: match)
+        }
+    }
+
+    /// Narrow the list to every row one participant drove or answered.
+    func showParticipant(_ key: String) {
+        filter = ActivityFilter(participantKey: key)
+    }
+
+    /// Narrow the list to everything one agent took part in. An agent on
+    /// this Mac is matched by its id (its own runs); any other by address.
+    func showAgent(address: String) {
+        let lowered = address.lowercased()
+        if let local = AgentManager.shared.agents.first(where: { $0.agentAddress?.lowercased() == lowered }) {
+            filter = ActivityFilter(agentId: local.id)
+        } else {
+            filter = ActivityFilter(agentAddress: lowered)
+        }
+    }
+
+    /// Narrow the list to every row of one task.
+    func showTask(_ taskId: UUID) {
+        filter = ActivityFilter(taskId: taskId)
+    }
+
+    /// Reveal a task's row. False when the task has not ended yet.
+    @discardableResult
+    func focus(taskId: UUID) -> Bool {
+        if let match = logs.first(where: { $0.taskId == taskId && $0.category == .task }) {
+            focus(log: match)
+            return true
+        }
+        guard storeAvailable, let match = try? store.find(taskId: taskId) else { return false }
+        focus(log: match)
+        return true
+    }
+
     // MARK: - In-memory fallbacks
 
     nonisolated static func filterInMemory(_ logs: [RequestLog], _ f: ActivityFilter) -> [RequestLog] {
@@ -513,6 +585,14 @@ final class InsightsService: ObservableObject {
             if let host = f.destinationHost, (log.egress?.destinationHost ?? EgressInfo.host(from: log.connection?.remoteEndpoint)) != host { return false }
             if let model = f.model, log.model != model { return false }
             if let agentId = f.agentId, log.agentId != agentId { return false }
+            if let runId = f.workflowRunId, log.workflowRunId != runId { return false }
+            if let taskId = f.taskId, log.taskId != taskId { return false }
+            if let key = f.participantKey, log.participant?.key != key { return false }
+            if let address = f.agentAddress?.lowercased(),
+                log.relatedAgentAddress != address, log.participant?.key.lowercased() != address
+            {
+                return false
+            }
             switch f.status {
             case .all: break
             case .success: if log.isError { return false }
@@ -567,7 +647,7 @@ final class InsightsService: ObservableObject {
 }
 
 /// Aggregate usage for a remote connection. Used by `RemoteAgentDetailView`
-/// (outbound, by providerId) and the host-side Remote Connections view
+/// (outbound, by providerId) and the host-side Guests list
 /// (inbound, by accessKeyId / audience).
 struct ConnectionActivitySummary: Equatable {
     var requestCount: Int = 0
@@ -682,6 +762,11 @@ extension InsightsService {
         return redacted
     }
 
+    nonisolated static func truncateBody(_ body: String?) -> String? {
+        var status: [String: Bool] = [:]
+        return truncateBody(body, field: "body", status: &status)
+    }
+
     private nonisolated static func truncateBody(
         _ body: String?,
         field: String,
@@ -731,8 +816,19 @@ extension InsightsService {
         agentId: UUID? = nil,
         agentName: String? = nil,
         sessionId: UUID? = nil,
-        clientIP: String? = nil
+        clientIP: String? = nil,
+        workflowRunId: UUID? = nil,
+        workflowNodeId: String? = nil,
+        taskId: UUID? = nil,
+        participant: ParticipantRef? = nil
     ) {
+        // Read on the caller's task: work inside a workflow step is filed
+        // under its run even when the emitter doesn't know about workflows,
+        // and work inside a task under that task.
+        let workflowRunId = workflowRunId ?? ChatExecutionContext.currentWorkflowRunId
+        let workflowNodeId = workflowNodeId ?? ChatExecutionContext.currentWorkflowNodeId
+        let taskId = taskId ?? ChatExecutionContext.currentTaskId
+        let participant = participant ?? ChatExecutionContext.currentParticipant
         var bodyTruncation: [String: Bool] = [:]
         let trimmedRequest = truncateBody(requestBody, field: "requestBody", status: &bodyTruncation)
         let trimmedResponse = truncateBody(responseBody, field: "responseBody", status: &bodyTruncation)
@@ -799,7 +895,11 @@ extension InsightsService {
                 agentId: agentId,
                 agentName: agentName,
                 sessionId: sessionId,
-                clientIP: clientIP
+                clientIP: clientIP,
+                workflowRunId: workflowRunId,
+                workflowNodeId: workflowNodeId,
+                taskId: taskId,
+                participant: participant
             )
             shared.log(log)
         }
@@ -841,7 +941,11 @@ extension InsightsService {
             egress: egress,
             agentId: attribution.agentId,
             agentName: attribution.agentName,
-            sessionId: attribution.sessionId
+            sessionId: attribution.sessionId,
+            workflowRunId: attribution.workflowRunId,
+            workflowNodeId: attribution.workflowNodeId,
+            taskId: attribution.taskId,
+            participant: attribution.participant
         )
     }
 
@@ -853,19 +957,35 @@ extension InsightsService {
         var agentId: UUID?
         var agentName: String?
         var sessionId: UUID?
+        var workflowRunId: UUID?
+        var workflowNodeId: String?
+        var taskId: UUID?
+        var participant: ParticipantRef?
 
         static let none = ActivityAttribution()
 
-        init(agentId: UUID? = nil, agentName: String? = nil, sessionId: UUID? = nil) {
+        init(
+            agentId: UUID? = nil, agentName: String? = nil, sessionId: UUID? = nil,
+            workflowRunId: UUID? = nil, workflowNodeId: String? = nil, taskId: UUID? = nil,
+            participant: ParticipantRef? = nil
+        ) {
+            self.participant = participant
             self.agentId = agentId
             self.agentName = agentName ?? agentId.flatMap { AgentManager.agentDisplayName(for: $0) }
             self.sessionId = sessionId
+            self.workflowRunId = workflowRunId
+            self.workflowNodeId = workflowNodeId
+            self.taskId = taskId
         }
 
         nonisolated static func current() -> ActivityAttribution {
             ActivityAttribution(
                 agentId: ChatExecutionContext.currentAgentId,
-                sessionId: ChatExecutionContext.currentSessionId.flatMap(UUID.init(uuidString:))
+                sessionId: ChatExecutionContext.currentSessionId.flatMap(UUID.init(uuidString:)),
+                workflowRunId: ChatExecutionContext.currentWorkflowRunId,
+                workflowNodeId: ChatExecutionContext.currentWorkflowNodeId,
+                taskId: ChatExecutionContext.currentTaskId,
+                participant: ChatExecutionContext.currentParticipant
             )
         }
     }
@@ -874,7 +994,9 @@ extension InsightsService {
     /// Accepts optional `requestBody`/`responseBody` so Chat UI inferences
     /// can surface the same level of detail as HTTP API requests in the
     /// Insights detail pane (system prompt, tools, accumulated assistant
-    /// text). Defaults are nil to preserve existing call-site ergonomics.
+    /// text). An omitted caller output limit remains absent; runtime dispatch
+    /// placeholders are not explicit request settings. Defaults are nil to
+    /// preserve existing call-site ergonomics.
     nonisolated static func logInference(
         source: RequestSource,
         turnId: UUID? = nil,
@@ -887,7 +1009,7 @@ extension InsightsService {
         outputTokenSource: RequestLog.TokenCountSource? = nil,
         durationMs: Double,
         temperature: Float?,
-        maxTokens: Int,
+        maxTokens: Int?,
         toolCalls: [ToolCallLog]? = nil,
         finishReason: RequestLog.FinishReason = .stop,
         errorMessage: String? = nil,
@@ -902,7 +1024,10 @@ extension InsightsService {
         privacy: WireTransportProbe.PrivacyOutcome? = nil,
         agentId: UUID? = nil,
         agentName: String? = nil,
-        sessionId: UUID? = nil
+        sessionId: UUID? = nil,
+        workflowRunId: UUID? = nil,
+        workflowNodeId: String? = nil,
+        taskId: UUID? = nil
     ) {
         var resolvedEgress = egress ?? Self.inferenceEgress(connection: connection, requestBody: requestBody)
         if let privacy, resolvedEgress != nil {
@@ -948,7 +1073,10 @@ extension InsightsService {
             egress: resolvedEgress,
             agentId: agentId,
             agentName: agentName,
-            sessionId: sessionId
+            sessionId: sessionId,
+            workflowRunId: workflowRunId,
+            workflowNodeId: workflowNodeId,
+            taskId: taskId
         )
     }
 

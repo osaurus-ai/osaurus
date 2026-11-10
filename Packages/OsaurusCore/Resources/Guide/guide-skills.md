@@ -28,6 +28,7 @@ Osaurus ships nine: Web Researcher, Content Summarizer, Mac Automator, Personal 
 
 - From GitHub: Import → From GitHub → enter `owner/repo` → pick skills → Import Selected (discovers via the repo's Claude plugin marketplace manifest). Unauthenticated GitHub rate limit is 60 requests/hour.
 - From file: Import → From File — `.md`/`SKILL.md`, `.json`, or `.zip` (with `SKILL.md` plus optional `references/` and `assets/`).
+- From chat: paste a `SKILL.md` link, a GitHub link, or the skill's text and ask Osaurus to set it up. A review card lists what was found before anything installs; see the Importing from Chat topic. In a New Agent chat, the skill installs when you click Create Agent.
 
 ## On disk and caveats
 

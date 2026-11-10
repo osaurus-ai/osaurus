@@ -27,31 +27,8 @@ struct ModelPickerItemCacheTests {
 
     /// These ordering tests need a fixed catalog, not an in-progress scan of
     /// this Mac's model folders or fixtures being changed by another suite.
-    private func withStableCatalog(
-        _ body: @MainActor @Sendable () async throws -> Void
-    ) async rethrows {
-        try await StoragePathsTestLock.shared.run {
-            try await RemoteProviderTestLock.shared.run {
-                let previousScan = ModelManager.scanLocalModelsOverrideForTests
-                let previousExternal = ExternalModelLocator.testRootsOverride
-                defer {
-                    ModelManager.scanLocalModelsOverrideForTests = previousScan
-                    ExternalModelLocator.testRootsOverride = previousExternal
-                    ExternalModelLocator.invalidateInMemory()
-                    ModelManager.invalidateLocalModelsCache()
-                }
-                ExternalModelLocator.testRootsOverride = []
-                ExternalModelLocator.invalidateInMemory()
-                ExternalModelLocator.rescan()
-                ModelManager.scanLocalModelsOverrideForTests = { _ in
-                    [MLXModel(id: "fixture/stable-chat-model", name: "Stable Chat",
-                              description: "fixture", downloadURL: "https://example.invalid/chat")]
-                }
-                ModelManager.invalidateLocalModelsCache()
-                await ModelManager.awaitLocalModelsCacheReadyForDispatch()
-                try await body()
-            }
-        }
+    private var stableItems: [ModelPickerItem] {
+        [ModelPickerItem(id: "fixture/stable-chat-model", displayName: "Stable Chat", source: .local)]
     }
 
     /// Hammer the cache from many concurrent tasks. Because the underlying
@@ -63,35 +40,47 @@ struct ModelPickerItemCacheTests {
     /// order, so callers could disagree about whether remote models were
     /// present.
     @Test func concurrentCallers_returnIdenticalResults() async throws {
-        try await withStableCatalog {
-            // Establish a baseline so we know what to compare against, and so
-            // any work needed to populate the cache (e.g. local model
-            // discovery) doesn't perturb the concurrent run below.
-            let baselineItems = await ModelPickerItemCache.shared.buildModelPickerItems()
-            let baselineIds = baselineItems.map(\.id)
+        let fixedItems = stableItems
+        var activeLoads = 0
+        var peakLoads = 0
+        let cache = ModelPickerItemCache._makeForTesting(
+            loadChatAndCloudItems: {
+                activeLoads += 1
+                peakLoads = max(peakLoads, activeLoads)
+                await Task.yield()
+                activeLoads -= 1
+                return fixedItems
+            },
+            loadLocalMediaItems: { [] }
+        )
+        // Establish a baseline so we know what to compare against, and so
+        // any work needed to populate the cache (e.g. local model
+        // discovery) doesn't perturb the concurrent run below.
+        let baselineItems = await cache.buildModelPickerItems()
+        let baselineIds = baselineItems.map(\.id)
 
-            // Spawn many detached tasks that each call into the @MainActor
-            // cache. Detached tasks are deliberately used so the calls hop
-            // back into the MainActor at the await point and exercise the
-            // serialized rebuild path the way real callers do (notification
-            // observer Tasks, the AppDelegate prewarm Task, ChatView's
-            // refresh Task, and so on).
-            var tasks: [Task<[String], Never>] = []
-            for _ in 0 ..< 32 {
-                tasks.append(
-                    Task.detached {
-                        let items = await ModelPickerItemCache.shared.buildModelPickerItems()
-                        return items.map(\.id)
-                    }
-                )
-            }
-
-            for task in tasks {
-                let ids = await task.value
-                #expect(ids == baselineIds)
-            }
-            #expect(ModelPickerItemCache.shared.isLoaded)
+        // Spawn many detached tasks that each call into the @MainActor
+        // cache. Detached tasks are deliberately used so the calls hop
+        // back into the MainActor at the await point and exercise the
+        // serialized rebuild path the way real callers do (notification
+        // observer Tasks, the AppDelegate prewarm Task, ChatView's
+        // refresh Task, and so on).
+        var tasks: [Task<[String], Never>] = []
+        for _ in 0 ..< 32 {
+            tasks.append(
+                Task.detached {
+                    let items = await cache.buildModelPickerItems()
+                    return items.map(\.id)
+                }
+            )
         }
+
+        for task in tasks {
+            let ids = await task.value
+            #expect(ids == baselineIds)
+        }
+        #expect(cache.isLoaded)
+        #expect(peakLoads == 1, "catalog rebuilds must not execute concurrently")
     }
 
     /// Posting a burst of `.remoteProviderModelsChanged` notifications used
@@ -102,47 +91,53 @@ struct ModelPickerItemCacheTests {
     /// asserts the invariant that, once populated, `items` never goes
     /// empty across rebuilds.
     @Test func notificationBurst_doesNotTransientlyEmptyItems() async throws {
-        try await withStableCatalog {
-            let cache = ModelPickerItemCache.shared
+        let fixedItems = stableItems
+        let cache = ModelPickerItemCache._makeForTesting(
+            observeChanges: true,
+            loadChatAndCloudItems: {
+                await Task.yield()
+                return fixedItems
+            },
+            loadLocalMediaItems: { [] }
+        )
 
-            // The fixed fixture guarantees this test exercises a populated
-            // list on CI as well as Macs with installed models.
-            _ = await cache.buildModelPickerItems()
-            try #require(!cache.items.isEmpty)
-            let initialCount = cache.items.count
+        // The fixed fixture guarantees this test exercises a populated
+        // list on CI as well as Macs with installed models.
+        _ = await cache.buildModelPickerItems()
+        try #require(!cache.items.isEmpty)
+        let initialCount = cache.items.count
 
-            // Spam many notifications. Each one schedules an observer Task
-            // that calls `buildModelPickerItems()`. Pre-fix, each Task would
-            // first set `items = []` and `isLoaded = false`.
-            for _ in 0 ..< 50 {
-                NotificationCenter.default.post(
-                    name: .remoteProviderModelsChanged,
-                    object: nil
-                )
-            }
-
-            // Drain the observer Tasks by repeatedly yielding the MainActor
-            // and sampling `items`. With the fix, every sample must be
-            // non-empty - the rebuild only assigns `items` when it has the
-            // full list.
-            var samples: [Int] = []
-            for _ in 0 ..< 200 {
-                samples.append(cache.items.count)
-                try? await Task.sleep(nanoseconds: 200_000)  // 0.2ms
-            }
-
-            #expect(
-                !samples.contains(0),
-                "items must remain populated during rebuilds; observed sample counts: \(samples)"
+        // Spam many notifications. Each one schedules an observer Task
+        // that calls `buildModelPickerItems()`. Pre-fix, each Task would
+        // first set `items = []` and `isLoaded = false`.
+        for _ in 0 ..< 50 {
+            NotificationCenter.default.post(
+                name: .remoteProviderModelsChanged,
+                object: nil
             )
-
-            // After the burst settles, the cache should still hold a
-            // populated list (state hasn't actually changed, so it should
-            // match the initial count).
-            let final = await cache.buildModelPickerItems()
-            #expect(!final.isEmpty)
-            #expect(final.count == initialCount)
         }
+
+        // Drain the observer Tasks by repeatedly yielding the MainActor
+        // and sampling `items`. With the fix, every sample must be
+        // non-empty - the rebuild only assigns `items` when it has the
+        // full list.
+        var samples: [Int] = []
+        for _ in 0 ..< 200 {
+            samples.append(cache.items.count)
+            try? await Task.sleep(nanoseconds: 200_000)  // 0.2ms
+        }
+
+        #expect(
+            !samples.contains(0),
+            "items must remain populated during rebuilds; observed sample counts: \(samples)"
+        )
+
+        // After the burst settles, the cache should still hold a
+        // populated list (state hasn't actually changed, so it should
+        // match the initial count).
+        let final = await cache.buildModelPickerItems()
+        #expect(!final.isEmpty)
+        #expect(final.count == initialCount)
     }
 
     /// Embedding/encoder-only bundles (e.g. potion-base-4M pulled into the
@@ -246,15 +241,21 @@ struct ModelPickerItemCacheTests {
     @Test func remoteModelItems_attachesGeminiReasoningOnlyOnHonoringRoutes() throws {
         let providers = [
             Self.providerEntry(
-                name: "OpenRouter", type: .openaiLegacy, host: "openrouter.ai",
+                name: "OpenRouter",
+                type: .openaiLegacy,
+                host: "openrouter.ai",
                 models: ["openrouter/google/gemini-3.8-flash", "openrouter/google/gemini-3-pro-image-preview"]
             ),
             Self.providerEntry(
-                name: "Google", type: .gemini, host: "generativelanguage.googleapis.com",
+                name: "Google",
+                type: .gemini,
+                host: "generativelanguage.googleapis.com",
                 models: ["google/gemini-3-pro-preview"]
             ),
             Self.providerEntry(
-                name: "Proxy", type: .openaiLegacy, host: "litellm.internal",
+                name: "Proxy",
+                type: .openaiLegacy,
+                host: "litellm.internal",
                 models: ["proxy/gemini-3.8-flash"]
             ),
         ]

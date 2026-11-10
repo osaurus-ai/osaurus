@@ -350,7 +350,7 @@ final class TextSubagentKind:
         case .agent:
             return
                 "Delegating to a different local agent requires \"Swap local models for subagents\" "
-                + "enabled in Settings → Subagents (so the chat model can unload to make room)."
+                + "enabled in Settings → Agents → Delegation (so the chat model can unload to make room)."
         case .workspaceAgent:
             // Never thrown: a workspace run touches no local residency.
             return "Workspace agent runs do not use local model residency."
@@ -1523,6 +1523,8 @@ final class TextSubagentKind:
         // grounding plus `share_artifact`, the worker's only path for
         // delivering generated files to the user.
         var names: Set<String> = ToolRegistry.spawnedWorkerBaselineToolNames
+        if !caps.calculatorEnabled { names.remove(CalculatorTool.toolName) }
+        if !caps.artifactsEnabled { names.remove("share_artifact") }
         if caps.webSearchEnabled {
             names.formUnion(["web_search", "search_and_extract"])
         }
@@ -1724,7 +1726,7 @@ final class TextSubagentKind:
         isDefault: Bool
     ) -> String {
         isDefault
-            ? "\(kind) '\(name)' is not spawnable. Add it in Settings → Orchestrator → Allowed subagents."
+            ? "\(kind) '\(name)' is not spawnable. Add it in Settings → Agents → Delegation → Allowed subagents."
             : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Subagents tab."
     }
 

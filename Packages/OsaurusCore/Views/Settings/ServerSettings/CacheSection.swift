@@ -33,26 +33,24 @@ struct CacheSection: View {
             blurb:
                 "One place for conversation limits, live KV retention, paged RAM, and SSD-backed prefix reuse. Model maximum and conversation budget are not KV-cache capacity."
         ) {
-            SettingsSubsection(label: "Context & KV Policy") {
+            SettingsFieldRow(label: "Context & KV Policy") {
                 contextAndKVPolicyControls
             }
 
-            SettingsDivider()
 
             SettingsToggle(
-                title: L("Prefix Cache"),
+                title: "Prefix Cache",
                 description:
                     "Reuse cached prompt prefixes across requests for faster TTFT. When off, GPU and disk reuse are also disabled.",
                 isOn: $draft.cache.prefix.enabled
             )
             .settingsLandingAnchor("settings.server.prefixCache")
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "GPU Cache (Paged KV)") {
+            SettingsFieldRow(label: "GPU Cache (Paged KV)") {
                 VStack(alignment: .leading, spacing: 12) {
                     SettingsToggle(
-                        title: L("Enable GPU Cache"),
+                        title: "Enable GPU Cache",
                         description:
                             "Optional hot tier held in GPU memory. SSD cache can still restore prefixes across requests when this is off.",
                         isOn: $draft.cache.pagedKV.enabled
@@ -77,31 +75,27 @@ struct CacheSection: View {
                 }
             }
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "SSD Cache (L2)") {
+            SettingsFieldRow(label: "SSD Cache (L2)") {
                 diskCacheControls
             }
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "On-the-fly Compression") {
+            SettingsFieldRow(label: "On-the-fly Compression") {
                 liveKVCodecControls
             }
 
-            SettingsDivider()
 
             SettingsToggle(
-                title: L("Re-derive SSM State After Generation"),
+                title: "Re-derive SSM State After Generation",
                 description:
                     "Hybrid Mamba models only. On by default so SSM companion state can be restored with prefix/L2 cache hits.",
                 isOn: $draft.cache.enableSSMReDerive
             )
             .settingsLandingAnchor("settings.server.ssmReDerive")
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "Planned Cache Controls") {
+            SettingsFieldRow(label: "Planned Cache Controls") {
                 plannedControls
             }
         }
@@ -187,7 +181,6 @@ struct CacheSection: View {
                 format: "%.2f"
             )
 
-            SettingsDivider()
 
             policyRow(
                 label: "Saved metadata fallback",
@@ -299,7 +292,7 @@ struct CacheSection: View {
     private var diskCacheControls: some View {
         VStack(alignment: .leading, spacing: 12) {
             SettingsToggle(
-                title: L("Disk Cache"),
+                title: "Disk Cache",
                 description:
                     "Persist content-addressed prompt checkpoints on SSD. Works with paged RAM cache off and restores the longest matching prefix after restart; turn off to disable disk reuse.",
                 isOn: $draft.cache.blockDisk.enabled
@@ -324,8 +317,8 @@ struct CacheSection: View {
                 && draft.cache.blockDisk.maxSizeGB == nil && draft.cache.legacyDisk.maxSizeGB == nil)
             .settingsLandingAnchor("settings.server.diskCacheAutomatic")
             Text(verbatim: resolvedDiskCacheLabel)
-                .font(.system(size: 10))
-                .foregroundColor(hasDiskSpaceWarning ? theme.errorColor : .secondary)
+                .font(SettingsFont.footnote)
+                .foregroundColor(hasDiskSpaceWarning ? theme.status.error.foreground : .secondary)
             HStack(spacing: 10) {
                 Button {
                     Task {
@@ -354,20 +347,20 @@ struct CacheSection: View {
                 .settingsLandingAnchor("settings.server.clearDiskCache")
                 if let clearedCacheSummary {
                     Text(verbatim: clearedCacheSummary)
-                        .font(.caption)
+                        .textStyle(.micro)
                         .foregroundStyle(.secondary)
                 }
             }
             if hasUnsavedDiskCacheDirectory {
                 Text("Save directory changes before clearing the SSD cache.", bundle: .module)
-                    .font(.caption)
+                    .textStyle(.micro)
                     .foregroundStyle(.secondary)
             }
             Text(
                 "Clears indexed conversation cache files. Chats and models are not deleted. Unrecognized files are left untouched; future replies may rebuild a cold cache.",
                 bundle: .module
             )
-            .font(.caption)
+            .textStyle(.micro)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
@@ -384,19 +377,17 @@ struct CacheSection: View {
     @ViewBuilder
     private var liveKVCodecControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SettingsField(
-                label: "Codec",
-                hint:
+            SettingsRow(
+                title: "Codec",
+                description:
                     "Compress KV cache entries in memory. TurboQuant trades quality for footprint and needs explicit bit widths."
             ) {
-                Picker("", selection: $draft.cache.liveKVCodec) {
+                SettingsMenuPicker(selection: $draft.cache.liveKVCodec) {
                     ForEach(VMLXKVCacheCodec.allCases, id: \.self) { codec in
                         Text(codec.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
                             .tag(codec)
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
             }
 
             if draft.cache.liveKVCodec == .turboQuant {
@@ -428,23 +419,21 @@ struct CacheSection: View {
             )
 
             SettingsToggle(
-                title: L("Legacy Entry-Count Cache"),
+                title: "Legacy Entry-Count Cache",
                 description:
                     "Use the older entry-count prefix cache instead of the new heap-based one.",
                 isOn: $draft.cache.prefix.legacyEntryCountCache
             )
 
-            SettingsField(
-                label: "Stored KV Codec",
-                hint: "Codec used when serializing KV blocks to disk."
+            SettingsRow(
+                title: "Stored KV Codec",
+                description: "Codec used when serializing KV blocks to disk."
             ) {
-                Picker("", selection: $draft.cache.storedKVCodec) {
+                SettingsMenuPicker(selection: $draft.cache.storedKVCodec) {
                     ForEach(VMLXStoredKVCacheCodec.allCases, id: \.self) { codec in
                         Text(codec.rawValue.capitalized).tag(codec)
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
             }
         }
     }
@@ -488,23 +477,20 @@ struct CacheSection: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text(value)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(SettingsFont.monoSmall)
                     .multilineTextAlignment(.trailing)
                     .textSelection(.enabled)
             }
             Text(LocalizedStringKey(detail), bundle: .module)
-                .font(.system(size: 10))
+                .font(SettingsFont.footnote)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(0.04))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 }

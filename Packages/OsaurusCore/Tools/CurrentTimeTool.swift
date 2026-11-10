@@ -13,10 +13,9 @@ import Foundation
 public final class CurrentTimeTool: OsaurusTool, @unchecked Sendable {
     public let name = "get_current_time"
     public let description =
-        "Get the current date and time. Call this whenever the user asks what "
-        + "the time or date is — you have no clock otherwise, so never guess. "
-        + "Optionally pass an IANA `timezone` (e.g. \"America/New_York\"); "
-        + "defaults to the host's local timezone."
+        "Current date/time when the message lacks a `[Current Time]` block. "
+        + "Also call it for another IANA `timezone` (e.g. \"America/New_York\") — never guess. "
+        + "Defaults to the host's local timezone."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),

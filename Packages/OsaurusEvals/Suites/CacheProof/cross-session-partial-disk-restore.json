@@ -3,7 +3,7 @@
   "domain": "cache_proof",
   "label": "cache proof • a new chat restores the longest valid partial prefix from SSD",
   "query": "Reply with exactly the words ALPHA REFERENCE STORED.",
-  "notes": "True disk-only new-chat proof. Both chats share the same long system/tool boundary but use different user instructions. This is a processor-valid prefix checkpoint, unlike an arbitrary matching substring inside a changed user message. Run with OSAURUS_EVALS_KV_REGIME=disk-l2 and OSAURUS_EVALS_PAGED_KV=off. The score requires vMLX's structured cacheRestore event to report tier=disk, at least 128 restored tokens, and a nonzero remaining prefill. Aggregate hit counters or UI color alone cannot pass this row.",
+  "notes": "Explicit disk-read lifecycle: the model is drained and unloaded before each configured fresh session, then loaded by the next request. TTFT includes reload; ordinary chat/tool turns keep nonblocking write-behind. True disk-only new-chat proof. Both chats share the same long system/tool boundary but use different user instructions. This is a processor-valid prefix checkpoint, unlike an arbitrary matching substring inside a changed user message. Run with OSAURUS_EVALS_KV_REGIME=disk-l2 and OSAURUS_EVALS_PAGED_KV=off. The score requires vMLX's structured cacheRestore event to report tier=disk, at least 128 restored tokens, and a nonzero remaining prefill. Aggregate hit counters or UI color alone cannot pass this row.",
   "fixtures": {},
   "expect": {
     "cacheProof": {
@@ -13,6 +13,7 @@
       ],
       "maxTokens": 512,
       "startNewSessionBeforeTurns": [2],
+      "reloadModelOnNewSession": true,
       "minDiskL2HitsDelta": 1,
       "minDiskL2StoresDelta": 1,
       "minCacheRestoredTokens": 128,
@@ -22,6 +23,7 @@
       "requireFinalDiskCacheRestore": true,
       "requirePrefillProgressAccounting": true,
       "requireNonEmptyVisibleTurns": true,
+      "requiredVisibleTextPerTurn": ["ALPHA REFERENCE STORED", "OMEGA PARTIAL RESTORE"],
       "requireClosedReasoning": true,
       "requireCompanionOnHybrid": true,
       "requireDiskL2EvidenceOnHybrid": true

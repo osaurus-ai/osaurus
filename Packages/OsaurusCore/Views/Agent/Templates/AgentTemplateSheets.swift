@@ -3,8 +3,8 @@
 //  osaurus
 //
 //  Save-as-template from an agent card, and rename. Import lives in
-//  `TemplateImportSheet`. All share the `AgentSheetHeader` /
-//  `AgentSheetFooter` chrome so they sit next to the Create Agent sheet.
+//  `TemplateImportSheet`. All share the `SettingsSheetHeader` /
+//  `SettingsSheetFooter` chrome so they sit next to the Create Agent sheet.
 //
 
 import AppKit
@@ -18,7 +18,10 @@ struct SaveAgentTemplateSheet: View {
     @ObservedObject private var store = TemplateStore.shared
 
     let agent: Agent
+    /// Done after saving, or closing the Saved state.
     let onSaved: (AgentTemplate) -> Void
+    /// Share… after saving.
+    let onShare: (AgentTemplate) -> Void
     let onCancel: () -> Void
 
     @State private var name: String = ""
@@ -30,6 +33,7 @@ struct SaveAgentTemplateSheet: View {
     @State private var draft: AgentTemplate?
     @State private var errorMessage: String?
     @State private var hasAppeared = false
+    @State private var saved: AgentTemplate?
 
     /// A library template with the same name. Saving over it adds a new
     /// version to that template rather than forking a second one.
@@ -44,119 +48,23 @@ struct SaveAgentTemplateSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AgentSheetHeader(
-                icon: "square.on.square.dashed",
-                title: "Save as Template",
+            SettingsSheetHeader(
+                icon: saved == nil ? "square.on.square.dashed" : "checkmark.circle",
+                title: saved == nil ? "Save as Template" : "Saved",
                 subtitleText: agent.name,
-                onClose: onCancel
+                onClose: { if let saved { onSaved(saved) } else { onCancel() } }
             )
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        AgentSheetSectionLabel("Template Name")
-                        StyledTextField(placeholder: L("e.g., Cloud Agent"), text: $name, icon: "textformat")
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(theme.warningColor.opacity(collision == nil ? 0 : 0.7), lineWidth: 1)
-                            )
-                        if let collision {
-                            // Inline, under the field it concerns: the footer
-                            // button reads Replace Template while this shows.
-                            HStack(alignment: .top, spacing: 6) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .padding(.top, 1)
-                                Text("A template named \"\(collision.name)\" already exists. Saving adds version \(collision.version + 1); earlier versions stay in its history.", bundle: .module)
-                                    .font(.system(size: 11))
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .foregroundColor(theme.warningColor)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        AgentSheetSectionLabel("Summary")
-                        StyledTextField(
-                            placeholder: L("One line about what this agent is for"), text: $summary,
-                            icon: "text.alignleft")
-                    }
-                    includeSection
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Available to the Orchestrator", bundle: .module)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                            Text(
-                                "Lets the Orchestrator base new agents on this template when you ask for it by name.",
-                                bundle: .module
-                            )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer(minLength: 12)
-                        Toggle("", isOn: $availableToOrchestrator)
-                            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                            .labelsHidden()
-                    }
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.6)))
-                    if let draft, !draft.requires.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            AgentSheetSectionLabel("Travels With the Template")
-                            Text(
-                                "Whoever imports this will be asked to set these up on their Mac.",
-                                bundle: .module
-                            )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            ForEach(draft.requires) { requirement in
-                                HStack(spacing: 8) {
-                                    Image(systemName: requirement.kind.icon)
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundColor(theme.tertiaryText)
-                                        .frame(width: 14)
-                                    Text(requirement.kind.title)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(theme.secondaryText)
-                                    Text(requirement.label ?? requirement.value)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(theme.tertiaryText)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-                            }
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(theme.tertiaryBackground.opacity(0.6)))
-                    }
-                    if let errorMessage {
-                        Text(errorMessage).font(.system(size: 12)).foregroundColor(theme.errorColor)
-                    }
-                    Text(
-                        "Secrets, folder access and knowledge files never travel. Only the configuration does.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                }
-                .padding(20)
+            if let saved {
+                savedBody(saved)
+            } else {
+                form
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            AgentSheetFooter(
-                primary: AgentSheetFooter.Action(
-                    label: collision == nil ? "Save Template" : "Save New Version",
-                    isEnabled: canSave, handler: save),
-                secondary: AgentSheetFooter.Action(label: "Cancel", handler: onCancel),
-                hint: nil
-            )
         }
-        .fittedSheetFrame(width: 560, height: 660)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1))
+        .fittedSheetFrame(width: 560, height: saved == nil ? 660 : 320)
+        .settingsSheetSurface()
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.xlarge).stroke(theme.border.subtle, lineWidth: theme.stroke.default))
         .opacity(hasAppeared ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: hasAppeared)
+        .animation(theme.motion.quick, value: hasAppeared)
         .onAppear {
             hasAppeared = true
             if name.isEmpty {
@@ -169,28 +77,171 @@ struct SaveAgentTemplateSheet: View {
         }
     }
 
+    /// After Save: the template is in the library. Share opens the same
+    /// sheet as the card's Share button, so the next step is one click.
+    @ViewBuilder
+    private func savedBody(_ template: AgentTemplate) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "checkmark.seal.fill")
+                    .glyphSize(18, weight: .medium)
+                    .foregroundColor(theme.status.success.foreground)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(template.name)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
+                    Text(
+                        template.version > 1
+                            ? L("Version \(template.version) is in your Templates. Share it as a file, or publish a page you control.")
+                            : L("It's in your Templates. Share it as a file, or publish a page you control.")
+                    )
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(theme.space.s12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .settingsChrome(.inset)
+            .settingsLandingAnchor("agents.templates.shareAfterSave")
+        }
+        .padding(theme.settingsSheetInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        SettingsSheetFooter(
+            primary: SettingsSheetFooter.Action(label: "Share…", handler: { onShare(template) }),
+            secondary: SettingsSheetFooter.Action(label: "Done", handler: { onSaved(template) }),
+            hint: nil
+        )
+    }
+
+    @ViewBuilder
+    private var form: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    SettingsFieldLabel("Template Name")
+                    SettingsTextField(placeholder: L("e.g., Cloud Agent"), text: $name, icon: "textformat")
+                        .overlay(
+                            RoundedRectangle(cornerRadius: theme.radius.medium)
+                                .stroke(
+                                    (collision == nil ? theme.status.warning.background : theme.status.warning.foreground),
+                                    lineWidth: theme.stroke.default
+                                )
+                        )
+                    if let collision {
+                        // Inline, under the field it concerns: the footer
+                        // button reads Replace Template while this shows.
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .glyphSize(10, weight: .semibold)
+                                .padding(.top, theme.space.s2)
+                            Text("A template named \"\(collision.name)\" already exists. Saving adds version \(collision.version + 1); earlier versions stay in its history.", bundle: .module)
+                                .font(SettingsFont.rowDescription)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .foregroundColor(theme.status.warning.foreground)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    SettingsFieldLabel("Summary")
+                    SettingsTextField(
+                        placeholder: L("One line about what this agent is for"), text: $summary,
+                        icon: "text.alignleft")
+                }
+                includeSection
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Available to the Orchestrator", bundle: .module)
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.primary)
+                        Text(
+                            "Lets the Orchestrator base new agents on this template when you ask for it by name.",
+                            bundle: .module
+                        )
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("", isOn: $availableToOrchestrator)
+                        .settingsSwitch()
+                }
+                .padding(theme.space.s8)
+                .settingsChrome(.inset)
+                if let draft, !draft.requires.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        SettingsFieldLabel("Travels With the Template")
+                        Text(
+                            "Whoever imports this will be asked to set these up on their Mac.",
+                            bundle: .module
+                        )
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
+                        ForEach(draft.requires) { requirement in
+                            HStack(spacing: 8) {
+                                Image(systemName: requirement.kind.icon)
+                                    .glyphSize(10, weight: .medium)
+                                    .foregroundColor(theme.text.tertiary)
+                                    .frame(width: 14)
+                                Text(requirement.kind.title)
+                                    .font(SettingsFont.smallLabel)
+                                    .foregroundColor(theme.text.secondary)
+                                Text(requirement.label ?? requirement.value)
+                                    .font(SettingsFont.rowDescription)
+                                    .foregroundColor(theme.text.tertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                    }
+                    .padding(theme.space.s12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .settingsChrome(.inset)
+                }
+                if let errorMessage {
+                    Text(errorMessage).font(SettingsFont.caption).foregroundColor(theme.status.error.foreground)
+                }
+                Text(
+                    "Secrets, folder access and knowledge files never travel. Only the configuration does.",
+                    bundle: .module
+                )
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
+            }
+            .padding(theme.space.s16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        SettingsSheetFooter(
+            primary: SettingsSheetFooter.Action(
+                label: collision == nil ? "Save Template" : "Save New Version",
+                isEnabled: canSave, handler: save),
+            secondary: SettingsSheetFooter.Action(label: "Cancel", handler: onCancel),
+            hint: nil
+        )
+    }
+
     /// What goes into the JSON. Everything but Actions is on by default; a user who
     /// wants to share a tool setup but keep the prompt private, or drop the
     /// folder hint, flips the section off here.
     private var includeSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Include in Template")
+            SettingsFieldLabel("Include in Template")
             VStack(spacing: 0) {
                 ForEach(Array(availableSections.enumerated()), id: \.element) { index, section in
                     if index > 0 { Divider().opacity(0.4) }
                     HStack(spacing: 12) {
                         Image(systemName: Self.icon(for: section))
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
+                            .glyphSize(11, weight: .medium)
+                            .foregroundColor(theme.text.tertiary)
                             .frame(width: 16)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(Self.title(for: section))
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(theme.primaryText)
+                                .font(SettingsFont.compactLabel)
+                                .foregroundColor(theme.text.primary)
                             if let preview = preview(for: section) {
                                 Text(preview)
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.tertiaryText)
+                                    .font(SettingsFont.footnote)
+                                    .foregroundColor(theme.text.tertiary)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                             }
@@ -201,14 +252,13 @@ struct SaveAgentTemplateSheet: View {
                             set: { on in
                                 if on { excluded.remove(section) } else { excluded.insert(section) }
                             }))
-                            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                            .labelsHidden()
+                            .settingsSwitch()
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, theme.space.s8)
+                    .padding(.vertical, theme.space.s8)
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.6)))
+            .settingsChrome(.inset)
         }
     }
 
@@ -230,6 +280,7 @@ struct SaveAgentTemplateSheet: View {
             case .knowledge: return entry.capabilities?.knowledgeEnabled == true || !draft.knowledgeCollectionNames.isEmpty
             case .pluginInstructions: return !(entry.pluginInstructions ?? [:]).isEmpty
             case .actions: return !(draft.actions ?? []).isEmpty
+            case .workflows: return !draft.workflowReferences.isEmpty
             }
         }
     }
@@ -259,6 +310,12 @@ struct SaveAgentTemplateSheet: View {
         case .actions:
             let count = draft?.actions?.count ?? 0
             return count == 1 ? L("1 quick action") : L("\(count) quick actions")
+        case .workflows:
+            let names = draft?.bundled.map(\.name) ?? []
+            let count = draft?.workflowReferences.count ?? 0
+            return names.isEmpty
+                ? (count == 1 ? L("1 workflow") : L("\(count) workflows"))
+                : L("Bundles \(names.joined(separator: ", "))")
         }
     }
 
@@ -274,6 +331,7 @@ struct SaveAgentTemplateSheet: View {
         case .knowledge: return L("Enable Knowledge")
         case .pluginInstructions: return L("Plugin Instructions")
         case .actions: return L("Actions")
+        case .workflows: return L("Include Workflows")
         }
     }
 
@@ -289,6 +347,7 @@ struct SaveAgentTemplateSheet: View {
         case .knowledge: return "books.vertical"
         case .pluginInstructions: return "puzzlepiece.extension"
         case .actions: return "bolt"
+        case .workflows: return "flowchart"
         }
     }
 
@@ -302,8 +361,8 @@ struct SaveAgentTemplateSheet: View {
         ).excluding(excluded)
         template.availableToOrchestrator = availableToOrchestrator
         do {
-            let saved = try store.save(template, changelog: collision == nil ? L("Saved from \(agent.name)") : nil)
-            onSaved(saved)
+            let stored = try store.save(template, changelog: collision == nil ? L("Saved from \(agent.name)") : nil)
+            withAnimation(theme.motion.quick) { saved = stored }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -331,32 +390,31 @@ struct RenameAgentTemplateSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AgentSheetHeader(icon: "pencil", title: "Rename Template", subtitleText: template.name, onClose: onDone)
+            SettingsSheetHeader(icon: "pencil", title: "Rename Template", subtitleText: template.name, onClose: onDone)
             VStack(alignment: .leading, spacing: 8) {
-                AgentSheetSectionLabel("New Name")
-                StyledTextField(placeholder: L("Template Name"), text: $name, icon: "textformat")
+                SettingsFieldLabel("New Name")
+                SettingsTextField(placeholder: L("Template Name"), text: $name, icon: "textformat")
                 if collides {
                     Text("Another template already uses this name.", bundle: .module)
-                        .font(.system(size: 11)).foregroundColor(theme.warningColor)
+                        .font(SettingsFont.rowDescription).foregroundColor(theme.status.warning.foreground)
                 }
                 if let errorMessage {
-                    Text(errorMessage).font(.system(size: 11)).foregroundColor(theme.errorColor)
+                    Text(errorMessage).font(SettingsFont.rowDescription).foregroundColor(theme.status.error.foreground)
                 }
             }
-            .padding(20)
+            .padding(theme.space.s16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            AgentSheetFooter(
-                primary: AgentSheetFooter.Action(
+            SettingsSheetFooter(
+                primary: SettingsSheetFooter.Action(
                     label: "Rename", isEnabled: !trimmed.isEmpty && !collides && trimmed != template.name,
                     handler: rename),
-                secondary: AgentSheetFooter.Action(label: "Cancel", handler: onDone),
+                secondary: SettingsSheetFooter.Action(label: "Cancel", handler: onDone),
                 hint: nil
             )
         }
         .fittedSheetFrame(width: 440, height: 240)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1))
+        .settingsSheetSurface()
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.xlarge).stroke(theme.border.subtle, lineWidth: theme.stroke.default))
         .onAppear { if name.isEmpty { name = template.name } }
     }
 
@@ -384,7 +442,12 @@ extension TemplateRequirement.Kind {
         case .secret: return L("Secret")
         case .network: return L("Network")
         case .tool: return L("Tool")
+        case .dependency: return L("Dependency")
+        case .folder: return L("Folder")
+        case .mediaModel: return L("Media Model")
+        case .agent: return L("Agent")
         case .skill: return L("Skill")
+        case .integrity: return L("Review")
         }
     }
 
@@ -399,7 +462,12 @@ extension TemplateRequirement.Kind {
         case .secret: return "key"
         case .network: return "network"
         case .tool: return "wrench.and.screwdriver"
+        case .dependency: return "shippingbox"
+        case .folder: return "folder"
+        case .mediaModel: return "photo.on.rectangle.angled"
+        case .agent: return "person.2"
         case .skill: return "lightbulb"
+        case .integrity: return "exclamationmark.shield"
         }
     }
 }

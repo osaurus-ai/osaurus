@@ -46,6 +46,13 @@ enum ToolResultMediaBridge {
                 return attachment(reference: ref)
             }
         }
+        if payload["kind"] as? String == "files", let files = payload["files"] as? [[String: Any]] {
+            return files.compactMap { file in
+                guard file["kind"] as? String == "image", let ref = file["image_ref"] as? [String: Any]
+                else { return nil }
+                return attachment(reference: ref)
+            }
+        }
         guard payload["kind"] as? String == "image", let ref = payload["image_ref"] as? [String: Any]
         else { return [] }
         return attachment(reference: ref).map { [$0] } ?? []

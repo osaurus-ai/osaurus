@@ -20,7 +20,6 @@ struct PluginConfigView: View {
     @State private var values: [String: String] = [:]
     @State private var errors: [String: String] = [:]
     @State private var isDirty = false
-    @State private var focusedField: String?
     @State private var editedSecrets: Set<String> = []
 
     @State private var saveIndicator: String?
@@ -37,6 +36,11 @@ struct PluginConfigView: View {
     /// under securityd contention (a recurring app-hang source).
     @State private var cachedTunnelURL: String = ""
     @State private var cachedServerPort: Int = 0
+    /// Saved values of secret fields. Delivered to the plugin but never put
+    /// in the form; a blank secret field keeps the saved value.
+    @State private var secretValues: [String: String] = [:]
+    /// Keys-page names of the declared secrets, for the field hint.
+    @State private var keyNames: [String: String] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -51,11 +55,11 @@ struct PluginConfigView: View {
                     if let indicator = saveIndicator {
                         HStack(spacing: 4) {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 10))
+                                .glyphSize(10)
                             Text(indicator)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(SettingsFont.smallLabel)
                         }
-                        .foregroundColor(theme.successColor)
+                        .foregroundColor(theme.status.success.foreground)
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                     }
 
@@ -67,18 +71,10 @@ struct PluginConfigView: View {
                         }
                     } label: {
                         Text("Save Changes", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.accentColor)
-                            )
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .assignedSettingsButtonStyle(.primary)
                 }
-                .padding(.top, 4)
+                .padding(.top, theme.space.s4)
             }
         }
         .onAppear { loadConfig() }
@@ -87,47 +83,22 @@ struct PluginConfigView: View {
                 let id = info["pluginId"] as? String, id == pluginId,
                 let key = info["key"] as? String
             else { return }
-            values[key] = info["value"] as? String
+            if findField(key: key)?.type == .secret {
+                secretValues[key] = info["value"] as? String
+            } else {
+                values[key] = info["value"] as? String
+            }
         }
     }
 
     // MARK: - Section
 
-    @ViewBuilder
     private func configSection(_ section: PluginManifest.ConfigSection) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-
-                Text(section.title.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
+        SettingsSection(title: section.title, verbatimTitle: true) {
+            ForEach(Array(section.fields.enumerated()), id: \.offset) { _, field in
+                configField(field)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-
-            VStack(spacing: 14) {
-                ForEach(Array(section.fields.enumerated()), id: \.offset) { idx, field in
-                    if idx > 0 {
-                        Divider().opacity(0.3)
-                    }
-                    configField(field)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Field Dispatch
@@ -156,58 +127,21 @@ struct PluginConfigView: View {
 
             if let error = errors[field.key] {
                 Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(.red)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.error.foreground)
             }
         }
+        .padding(.vertical, field.type.isStacked ? theme.space.s8 : 0)
     }
 
     // MARK: - Text Field
 
-    @ViewBuilder
     private func textField(_ field: PluginManifest.ConfigField) -> some View {
-        let isFocused = focusedField == field.key
-        VStack(alignment: .leading, spacing: 6) {
-            Text(field.label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            HStack(spacing: 10) {
-                ZStack(alignment: .leading) {
-                    if (values[field.key] ?? field.default?.stringValue ?? "").isEmpty {
-                        Text(field.placeholder ?? "")
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.placeholderText)
-                            .allowsHitTesting(false)
-                    }
-                    TextField(
-                        "",
-                        text: binding(for: field.key, default: field.default?.stringValue ?? ""),
-                        onEditingChanged: { editing in
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                focusedField = editing ? field.key : nil
-                            }
-                        }
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.primaryText)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                errors[field.key] != nil
-                                    ? Color.red.opacity(0.5)
-                                    : isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
+        SettingsFieldRow(label: field.label, verbatimLabel: true) {
+            SettingsTextField(
+                placeholder: field.placeholder ?? "",
+                text: binding(for: field.key, default: field.default?.stringValue ?? ""),
+                isInvalid: errors[field.key] != nil
             )
         }
     }
@@ -216,133 +150,63 @@ struct PluginConfigView: View {
 
     @ViewBuilder
     private func secretField(_ field: PluginManifest.ConfigField) -> some View {
-        let isFocused = focusedField == field.key
-        let placeholder =
-            hasStoredSecret(field.key)
-            ? "Configured (saved in Keychain)"
-            : (field.placeholder ?? "")
-
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "key.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                Text(field.label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+        SettingsFieldRow(label: field.label, verbatimLabel: true) {
+            if let keyName = keyNames[field.key] {
+                CredentialField(
+                    key: keyName,
+                    isSet: hasStoredSecret(field.key),
+                    value: binding(for: field.key, trackSecretEdit: true),
+                    placeholder: field.placeholder ?? "",
+                    isInvalid: errors[field.key] != nil
+                )
+            } else {
+                SettingsTextField(
+                    placeholder: hasStoredSecret(field.key) ? L("Unchanged") : (field.placeholder ?? ""),
+                    text: binding(for: field.key, trackSecretEdit: true),
+                    icon: "key.fill",
+                    isSecure: true,
+                    isInvalid: errors[field.key] != nil
+                )
             }
-
-            HStack(spacing: 10) {
-                ZStack(alignment: .leading) {
-                    if (values[field.key] ?? "").isEmpty {
-                        Text(placeholder)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.placeholderText)
-                            .allowsHitTesting(false)
-                    }
-                    SecureField(
-                        "",
-                        text: binding(for: field.key, trackSecretEdit: true)
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.primaryText)
-                    .onSubmit {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            focusedField = nil
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                errors[field.key] != nil
-                                    ? Color.red.opacity(0.5)
-                                    : isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
-            )
         }
     }
 
     // MARK: - Toggle Field
 
-    @ViewBuilder
     private func toggleField(_ field: PluginManifest.ConfigField) -> some View {
         let defaultVal = field.default?.stringValue ?? "false"
-        HStack {
-            Text(field.label)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
-
-            Spacer()
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { (values[field.key] ?? defaultVal) == "true" },
-                    set: { newVal in
-                        values[field.key] = newVal ? "true" : "false"
-                        isDirty = true
-                    }
-                )
+        return SettingsToggle(
+            title: field.label,
+            verbatim: true,
+            isOn: Binding(
+                get: { (values[field.key] ?? defaultVal) == "true" },
+                set: { newVal in
+                    values[field.key] = newVal ? "true" : "false"
+                    isDirty = true
+                }
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
         )
     }
 
     // MARK: - Select Field
 
-    @ViewBuilder
     private func selectField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(field.label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            Picker("", selection: binding(for: field.key, default: field.default?.stringValue ?? "")) {
+        SettingsRow(title: field.label, description: "", verbatimTitle: true) {
+            SettingsMenuPicker(selection: binding(for: field.key, default: field.default?.stringValue ?? "")) {
                 ForEach(field.options ?? [], id: \.value) { option in
-                    Text(option.label).tag(option.value)
+                    Text(verbatim: option.label).tag(option.value)
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
         }
     }
 
     // MARK: - Multiselect Field
 
-    @ViewBuilder
     private func multiselectField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(field.label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            let selectedValues = parseMultiselectValues(values[field.key] ?? field.default?.stringValue ?? "[]")
-
-            VStack(spacing: 0) {
-                ForEach(Array((field.options ?? []).enumerated()), id: \.element.value) { idx, option in
-                    if idx > 0 {
-                        Divider().opacity(0.3)
-                    }
+        let selectedValues = parseMultiselectValues(values[field.key] ?? field.default?.stringValue ?? "[]")
+        return SettingsFieldRow(label: field.label, verbatimLabel: true) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                ForEach(field.options ?? [], id: \.value) { option in
                     Toggle(
                         isOn: Binding(
                             get: { selectedValues.contains(option.value) },
@@ -356,118 +220,39 @@ struct PluginConfigView: View {
                             }
                         )
                     ) {
-                        Text(option.label)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.primaryText)
+                        Text(verbatim: option.label)
+                            .font(SettingsFont.body)
+                            .foregroundColor(theme.text.primary)
                     }
-                    .toggleStyle(.checkbox)
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 10)
+                    .settingsCheckbox()
                 }
             }
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
         }
     }
 
     // MARK: - Number Field
 
-    @ViewBuilder
     private func numberField(_ field: PluginManifest.ConfigField) -> some View {
-        let isFocused = focusedField == field.key
-        VStack(alignment: .leading, spacing: 6) {
-            Text(field.label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            HStack(spacing: 10) {
-                ZStack(alignment: .leading) {
-                    if (values[field.key] ?? field.default?.stringValue ?? "").isEmpty {
-                        Text(field.placeholder ?? "0")
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(theme.placeholderText)
-                            .allowsHitTesting(false)
-                    }
-                    TextField(
-                        "",
-                        text: binding(for: field.key, default: field.default?.stringValue ?? ""),
-                        onEditingChanged: { editing in
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                focusedField = editing ? field.key : nil
-                            }
-                        }
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                errors[field.key] != nil
-                                    ? Color.red.opacity(0.5)
-                                    : isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
+        SettingsFieldRow(label: field.label, verbatimLabel: true) {
+            SettingsTextField(
+                placeholder: field.placeholder ?? "0",
+                text: binding(for: field.key, default: field.default?.stringValue ?? ""),
+                monospaced: true,
+                isInvalid: errors[field.key] != nil
             )
         }
     }
 
     // MARK: - Readonly Field
 
-    @ViewBuilder
     private func readonlyField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(field.label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            HStack {
-                let displayValue = resolveTemplate(field.value_template ?? "", pluginId: pluginId)
-                Text(displayValue)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .textSelection(.enabled)
-
-                Spacer()
-
-                if field.copyable == true {
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(displayValue, forType: .string)
-                    } label: {
-                        Image(systemName: "doc.on.clipboard")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .buttonStyle(.plain)
-                    .localizedHelp("Copy to clipboard")
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-        }
+        SettingsValueRow(
+            title: field.label,
+            value: resolveTemplate(field.value_template ?? "", pluginId: pluginId),
+            monospaced: true,
+            copyable: field.copyable == true,
+            verbatimTitle: true
+        )
     }
 
     // MARK: - Status Field
@@ -476,38 +261,42 @@ struct PluginConfigView: View {
     private func statusField(_ field: PluginManifest.ConfigField) -> some View {
         let isConnected: Bool = {
             guard let connKey = field.connected_when else { return false }
-            return values[connKey] != nil && !(values[connKey]?.isEmpty ?? true)
+            return values[connKey]?.isEmpty == false || secretValues[connKey]?.isEmpty == false
         }()
 
-        HStack(spacing: 12) {
-            Text(field.label)
-                .font(.system(size: 13))
-                .foregroundColor(theme.primaryText)
-
-            Spacer()
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(isConnected ? Color.green : theme.tertiaryText.opacity(0.4))
-                    .frame(width: 8, height: 8)
-                Text(isConnected ? "Connected" : "Not Connected")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isConnected ? .green : theme.tertiaryText)
+        SettingsRow(title: field.label, description: "", verbatimTitle: true) {
+            HStack(spacing: theme.space.s8) {
+                StatusChip(
+                    isConnected ? L("Connected") : L("Not Connected"),
+                    tone: isConnected ? .success : .neutral,
+                    showsDot: true
+                )
+                statusAction(field, isConnected: isConnected)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(isConnected ? Color.green.opacity(0.1) : theme.tertiaryBackground)
-            )
+        }
+    }
 
-            if isConnected {
-                if let disconnectAction = field.disconnect_action {
-                    Button {
-                        if let keys = disconnectAction.clear_keys {
-                            for key in keys {
-                                values.removeValue(forKey: key)
-                                ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: agentId)
+    @ViewBuilder
+    private func statusAction(_ field: PluginManifest.ConfigField, isConnected: Bool) -> some View {
+        if isConnected {
+            if let disconnectAction = field.disconnect_action {
+                Button {
+                    if let keys = disconnectAction.clear_keys {
+                        for key in keys {
+                            values.removeValue(forKey: key)
+                            secretValues.removeValue(forKey: key)
+                        }
+                        let pluginId = pluginId
+                        let agentId = agentId
+                        let plugin = plugin
+                        Task { @MainActor in
+                            await CredentialStore.current.perform { store in
+                                for key in keys
+                                where !PluginCredentials.configWrite(
+                                    pluginId: pluginId, key: key, value: nil, agentId: agentId, store: store)
+                                {
+                                    _ = ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: agentId)
+                                }
                             }
                             // Without notifying the plugin, its in-memory
                             // state (HTTP clients, webhook registrations,
@@ -519,49 +308,33 @@ struct PluginConfigView: View {
                                 keys.map { (key: $0, value: "") }
                             plugin?.notifyConfigBatch(cleared, agentId: agentId)
                         }
-                        isDirty = false
-                    } label: {
-                        Text("Disconnect", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.red)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.red.opacity(0.1))
-                            )
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    isDirty = false
+                } label: {
+                    Text("Disconnect", bundle: .module)
                 }
-            } else {
-                if let connectAction = field.connect_action,
-                    connectAction.type == "oauth",
-                    let routeId = connectAction.url_route
-                {
-                    Button {
-                        let base = Self.resolveBaseURL(for: pluginId, agentId: agentId)
-                        let urlString = "\(base)/plugins/\(pluginId)/\(routeId)"
-                        guard let url = URL(string: urlString) else {
-                            NSLog(
-                                "[PluginConfigView] Skipping OAuth connect — malformed URL: %@",
-                                urlString
-                            )
-                            return
-                        }
-                        NSWorkspace.shared.open(url)
-                    } label: {
-                        Text("Connect", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.accentColor)
-                            )
+                .assignedSettingsButtonStyle(.destructive, size: .compact)
+            }
+        } else {
+            if let connectAction = field.connect_action,
+                connectAction.type == "oauth",
+                let routeId = connectAction.url_route
+            {
+                Button {
+                    let base = Self.resolveBaseURL(for: pluginId, agentId: agentId)
+                    let urlString = "\(base)/plugins/\(pluginId)/\(routeId)"
+                    guard let url = URL(string: urlString) else {
+                        NSLog(
+                            "[PluginConfigView] Skipping OAuth connect — malformed URL: %@",
+                            urlString
+                        )
+                        return
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    Text("Connect", bundle: .module)
                 }
+                .assignedSettingsButtonStyle(.primary, size: .compact)
             }
         }
     }
@@ -591,35 +364,104 @@ struct PluginConfigView: View {
     }
 
     private func hasStoredSecret(_ key: String) -> Bool {
-        !editedSecrets.contains(key)
-            && ToolSecretsKeychain.hasSecret(id: key, for: pluginId, agentId: agentId)
+        !editedSecrets.contains(key) && secretValues[key]?.isEmpty == false
+    }
+
+    /// The manifest facts `readConfig` needs, without the non-Sendable spec.
+    private struct FieldInfo: Sendable {
+        let key: String
+        let isSecret: Bool
+        let loadsStoredValue: Bool
+        let connectedWhen: String?
+        let defaultValue: String?
+    }
+
+    private struct LoadedConfig: Sendable {
+        var tunnelURL = ""
+        var serverPort = 0
+        var values: [String: String] = [:]
+        var secretValues: [String: String] = [:]
+        var keyNames: [String: String] = [:]
+    }
+
+    /// Declared secrets come from Keys; other fields are plugin config.
+    nonisolated private static func storedValue(
+        _ key: String, pluginId: String, agentId: UUID, store: CredentialStore
+    ) -> String? {
+        if PluginCredentials.isDeclaredSecret(pluginId: pluginId, key: key) {
+            return PluginCredentials.value(pluginId: pluginId, specId: key, agentId: agentId, store: store)
+        }
+        return ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: agentId)
+    }
+
+    /// Every Keychain and disk read the form needs. Runs off the main thread.
+    nonisolated private static func readConfig(
+        pluginId: String, agentId: UUID, fields: [FieldInfo], store: CredentialStore
+    ) -> LoadedConfig {
+        var loaded = LoadedConfig()
+        loaded.tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId, agentId: agentId) ?? ""
+        loaded.serverPort = loadServerPort()
+        let secretKeys = Set(fields.filter(\.isSecret).map(\.key))
+        for (key, value) in ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
+        where !PluginCredentials.isDeclaredSecret(pluginId: pluginId, key: key) {
+            if secretKeys.contains(key) { loaded.secretValues[key] = value } else { loaded.values[key] = value }
+        }
+        for field in fields {
+            if field.isSecret {
+                if PluginCredentials.isDeclaredSecret(pluginId: pluginId, key: field.key) {
+                    loaded.keyNames[field.key] = PluginCredentials.slot(pluginId: pluginId, specId: field.key)
+                        .effectiveKey(in: store)
+                }
+                if loaded.secretValues[field.key] == nil,
+                    let value = storedValue(field.key, pluginId: pluginId, agentId: agentId, store: store)
+                {
+                    loaded.secretValues[field.key] = value
+                }
+            } else if loaded.values[field.key] == nil, field.loadsStoredValue,
+                let value = storedValue(field.key, pluginId: pluginId, agentId: agentId, store: store)
+            {
+                loaded.values[field.key] = value
+            }
+            if loaded.values[field.key] == nil, loaded.secretValues[field.key] == nil, let def = field.defaultValue {
+                loaded.values[field.key] = def
+            }
+            if let connKey = field.connectedWhen, !secretKeys.contains(connKey), loaded.values[connKey] == nil,
+                let value = storedValue(connKey, pluginId: pluginId, agentId: agentId, store: store)
+            {
+                loaded.values[connKey] = value
+            }
+        }
+        return loaded
     }
 
     private func loadConfig() {
-        cachedTunnelURL =
-            ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId, agentId: agentId) ?? ""
-        cachedServerPort = Self.loadServerPort()
-        values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
-
-        for section in configSpec.sections {
-            for field in section.fields {
-                if values[field.key] == nil, field.type != .readonly, field.type != .status,
-                    let val = ToolSecretsKeychain.getSecret(id: field.key, for: pluginId, agentId: agentId)
-                {
-                    values[field.key] = val
-                }
-                if values[field.key] == nil, let def = field.default {
-                    values[field.key] = def.stringValue
-                }
-                if let connKey = field.connected_when, values[connKey] == nil,
-                    let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId, agentId: agentId)
-                {
-                    values[connKey] = val
-                }
-            }
+        let pluginId = pluginId
+        let agentId = agentId
+        let fields = configSpec.sections.flatMap(\.fields).map { field in
+            FieldInfo(
+                key: field.key,
+                isSecret: field.type == .secret,
+                loadsStoredValue: field.type != .readonly && field.type != .status,
+                connectedWhen: field.connected_when,
+                defaultValue: field.default?.stringValue)
         }
+        Task { @MainActor in
+            let loaded = await CredentialStore.current.perform { store in
+                Self.readConfig(pluginId: pluginId, agentId: agentId, fields: fields, store: store)
+            }
+            apply(loaded)
+        }
+    }
 
-        let changes = values.compactMap { (key, value) in
+    private func apply(_ loaded: LoadedConfig) {
+        cachedTunnelURL = loaded.tunnelURL
+        cachedServerPort = loaded.serverPort
+        secretValues = loaded.secretValues
+        keyNames = loaded.keyNames
+        // Edits made while the load was in flight win.
+        values = isDirty ? loaded.values.merging(values) { _, edited in edited } : loaded.values
+
+        let changes = values.merging(secretValues) { value, _ in value }.compactMap { (key, value) in
             findField(key: key) != nil ? (key: key, value: value) : nil
         }
         // Skip the round-trip when nothing has changed since the last
@@ -649,19 +491,38 @@ struct PluginConfigView: View {
         guard !hasErrors else { return }
 
         var batch: [(key: String, value: String)] = []
+        var writes: [(key: String, value: String)] = []
         for (key, value) in values {
-            if findField(key: key)?.type == .secret && hasStoredSecret(key) {
-                batch.append(
-                    (key: key, value: ToolSecretsKeychain.getSecret(id: key, for: pluginId, agentId: agentId) ?? "")
-                )
+            let isSecret = findField(key: key)?.type == .secret
+            if isSecret, hasStoredSecret(key) {
+                batch.append((key: key, value: secretValues[key] ?? ""))
                 continue
             }
-            ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
+            writes.append((key: key, value: value))
             batch.append((key: key, value: value))
+            if isSecret {
+                // The saved value moves out of the form, like a loaded one.
+                secretValues[key] = value
+                values[key] = nil
+            }
         }
-        plugin?.notifyConfigBatch(batch, agentId: agentId)
         editedSecrets.removeAll()
         isDirty = false
+        let pluginId = pluginId
+        let agentId = agentId
+        let plugin = plugin
+        let pending = writes
+        Task { @MainActor in
+            await CredentialStore.current.perform { store in
+                for (key, value) in pending
+                where !PluginCredentials.configWrite(
+                    pluginId: pluginId, key: key, value: value, agentId: agentId, store: store)
+                {
+                    _ = ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
+                }
+            }
+            plugin?.notifyConfigBatch(batch, agentId: agentId)
+        }
     }
 
     @discardableResult
@@ -765,11 +626,22 @@ struct PluginConfigView: View {
         return Set(arr)
     }
 
-    private static func loadServerPort() -> Int {
+    nonisolated private static func loadServerPort() -> Int {
         let url = OsaurusPaths.serverConfigFile()
         guard let data = try? Data(contentsOf: url),
             let config = try? JSONDecoder().decode(ServerConfiguration.self, from: data)
         else { return 1337 }
         return config.port
+    }
+}
+
+extension PluginManifest.ConfigFieldType {
+    /// Label-above-control fields, which need breathing room inside a group
+    /// that inline rows get from their min height.
+    fileprivate var isStacked: Bool {
+        switch self {
+        case .text, .secret, .multiselect, .number: return true
+        case .toggle, .select, .readonly, .status: return false
+        }
     }
 }

@@ -233,6 +233,11 @@ public final class RelayTunnelManager: ObservableObject {
     /// `addAgentToTunnel()` clobber the `connect()` handler, permanently
     /// stalling tunnel auth.
     private var pendingNonceHandlers: [(String) -> Void] = []
+    /// Agents waiting to be added to the live tunnel, one at a time (see
+    /// `RelayAddAgentQueue`), and the timer on the one in flight.
+    private var addQueue = RelayAddAgentQueue()
+    private var addTimeoutTask: Task<Void, Never>?
+    private static let addAgentTimeout: TimeInterval = 15
     /// Bounded retry budget for `auth_error` frames (e.g. transient clock
     /// skew). Reset on a successful auth.
     private var authErrorRetries = 0
@@ -296,11 +301,15 @@ public final class RelayTunnelManager: ObservableObject {
             clearSuperseded(agentId)
             agentStatuses[agentId] = .connecting
             if isConnected {
-                Task { await addAgentToTunnel(agentId: agentId) }
+                addAgentToTunnel(agentId: agentId)
             } else {
                 Task { await connect() }
             }
         } else {
+            if addQueue.remove(agentId) {
+                addTimeoutTask?.cancel()
+                pumpAddQueue()
+            }
             if isConnected {
                 removeAgentFromTunnel(agentId: agentId)
             }
@@ -341,7 +350,7 @@ public final class RelayTunnelManager: ObservableObject {
             cancelInFlightRequests(forAgentUUID: agentId.uuidString)
             cancelPublicCheck(for: agentId)
         }
-        Task { await addAgentToTunnel(agentId: agentId) }
+        addAgentToTunnel(agentId: agentId)
     }
 
     /// Whether the relay handed this agent's address to another device's
@@ -367,7 +376,7 @@ public final class RelayTunnelManager: ObservableObject {
         supersededAddresses.removeAll()
         let enabled = configuration.enabledAgentIds
         guard !enabled.isEmpty else {
-            MobileConnectLog.write("relay: no agent has Reach From Anywhere on, not opening a tunnel")
+            MobileConnectLog.write("relay: no agent has remote access on, not opening a tunnel")
             return
         }
 
@@ -395,6 +404,7 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        cancelAddQueue()
         supersededAgentIds.removeAll()
         supersededAddresses.removeAll()
         cancelAllPublicChecks()
@@ -587,6 +597,11 @@ public final class RelayTunnelManager: ObservableObject {
             let errorMsg = json["error"] as? String ?? "unknown"
             print("[Relay] Error frame: \(errorMsg)")
             MobileConnectLog.write("relay: error frame from the relay: \(errorMsg)")
+            // The only frame the relay answers an `add_agent` with besides
+            // `agent_added`. Counted only once that add has gone out: an
+            // error before then is about something else, and the timeout
+            // still covers an add that never gets an answer.
+            if addQueue.isAwaitingRelay { failInFlightAdd(errorMsg) }
         default:
             break
         }
@@ -639,6 +654,7 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        cancelAddQueue()
         cancelAllPublicChecks()
 
         // An auth_error used to permanently kill the tunnel: the receive loop
@@ -673,6 +689,12 @@ public final class RelayTunnelManager: ObservableObject {
         if let agent = findAgent(byAddress: lower) {
             addressToAgentId[lower] = agent.id
             beginPublicRouteCheck(for: agent.id, url: url)
+        }
+        // Matched on the address the add was signed for, which is what the
+        // relay echoes, so a lookup miss can't stall the queue.
+        if addQueue.confirm(address: lower) != nil {
+            addTimeoutTask?.cancel()
+            pumpAddQueue()
         }
     }
 
@@ -1117,34 +1139,102 @@ public final class RelayTunnelManager: ObservableObject {
 
     // MARK: - Mid-Session Agent Management
 
-    private func addAgentToTunnel(agentId: UUID) async {
+    /// Adds an agent to the live tunnel once those queued before it are done:
+    /// the relay holds one challenge per tunnel, so adds sent together all
+    /// but the last fail with `invalid_nonce`. Off the tunnel there is
+    /// nothing to queue: the next `connect()` authenticates every enabled
+    /// agent in one frame.
+    private func addAgentToTunnel(agentId: UUID) {
+        guard isConnected else { return }
+        let restarting = addQueue.inFlight?.agentId == agentId
+        addQueue.enqueue(agentId)
+        if restarting { addTimeoutTask?.cancel() }
+        pumpAddQueue()
+    }
+
+    /// Starts the next queued add if none is in flight.
+    private func pumpAddQueue() {
+        guard isConnected, let attempt = addQueue.start() else { return }
+        Task { await sendAddAgent(attempt) }
+    }
+
+    /// Fails the attempt if the relay hasn't answered it in time. Started
+    /// once the challenge is asked for, so a slow keychain read doesn't count.
+    private func startAddTimeout(_ token: UUID) {
+        addTimeoutTask?.cancel()
+        addTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.addAgentTimeout * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.addQueue.isCurrent(token) else { return }
+            self.failInFlightAdd("no answer in \(Int(Self.addAgentTimeout))s")
+        }
+    }
+
+    /// The relay refused the in-flight add or never answered: try it again
+    /// while attempts remain, then show the error and move on. Its challenge
+    /// handler, if still queued, sees its token is stale and signs nothing.
+    private func failInFlightAdd(_ reason: String) {
+        addTimeoutTask?.cancel()
+        guard let failure = addQueue.fail() else { return }
+        let agentId = failure.id
+        if failure.willRetry {
+            MobileConnectLog.write("relay: adding \(agentId.uuidString) failed (\(reason)), trying again")
+        } else {
+            MobileConnectLog.write(
+                "relay: FAILED to add \(agentId.uuidString) after \(RelayAddAgentQueue.maxAttempts) tries (\(reason))"
+            )
+            agentStatuses[agentId] = .error(reason)
+        }
+        pumpAddQueue()
+    }
+
+    /// An add that can't be sent at all: report it and move on to the next.
+    private func abandonAdd(_ attempt: RelayAddAgentQueue.Attempt, _ reason: String) {
+        guard addQueue.isCurrent(attempt.token) else { return }
+        addTimeoutTask?.cancel()
+        addQueue.finish(attempt.token)
+        agentStatuses[attempt.agentId] = .error(reason)
+        pumpAddQueue()
+    }
+
+    /// Drops every queued add when the tunnel goes away.
+    private func cancelAddQueue() {
+        addQueue.reset()
+        addTimeoutTask?.cancel()
+        addTimeoutTask = nil
+    }
+
+    private func sendAddAgent(_ attempt: RelayAddAgentQueue.Attempt) async {
+        let agentId = attempt.agentId
+        let token = attempt.token
         ensureAgentIdentity(agentId)
 
         guard let agent = AgentManager.shared.agent(for: agentId),
             let keyPath = agent.agentKeyPath,
             let address = agent.agentAddress
         else {
-            agentStatuses[agentId] = .error("No identity")
+            abandonAdd(attempt, "No identity")
             return
         }
 
         guard let masterKey = await obtainMasterKey() else {
-            agentStatuses[agentId] = .error("No identity")
+            abandonAdd(attempt, "No identity")
+            return
+        }
+        // The tunnel dropped, or the attempt was dropped, while the key was read.
+        var keyBox: Data? = masterKey
+        guard addQueue.isCurrent(token), isConnected else {
+            keyBox?.zeroOut()
             return
         }
 
-        var keyBox: Data? = masterKey
+        // Every handler takes its challenge, current or not, so the ones
+        // after it stay paired with their own requests.
         pendingNonceHandlers.append { [weak self] nonce in
-            guard let self else {
-                keyBox?.zeroOut()
-                keyBox = nil
-                return
-            }
             defer {
                 keyBox?.zeroOut()
                 keyBox = nil
             }
-            guard let signingKey = keyBox else { return }
+            guard let self, let signingKey = keyBox, self.addQueue.isCurrent(token) else { return }
 
             let timestamp = Int(Date().timeIntervalSince1970)
             do {
@@ -1155,6 +1245,7 @@ public final class RelayTunnelManager: ObservableObject {
                     masterKey: signingKey,
                     agentKeyPath: keyPath
                 )
+                guard self.addQueue.markSent(token, address: address) else { return }
                 self.sendJSON([
                     "type": "add_agent",
                     "address": address,
@@ -1163,10 +1254,11 @@ public final class RelayTunnelManager: ObservableObject {
                     "timestamp": timestamp,
                 ])
             } catch {
-                self.agentStatuses[agentId] = .error("Signing failed")
+                self.abandonAdd(attempt, "Signing failed")
             }
         }
 
+        startAddTimeout(token)
         sendJSON(["type": "request_challenge"])
     }
 
@@ -1180,7 +1272,7 @@ public final class RelayTunnelManager: ObservableObject {
             "address": address,
         ]
         sendJSON(frame)
-        MobileConnectLog.write("relay: Reach From Anywhere turned off for \(address.lowercased())")
+        MobileConnectLog.write("relay: remote access turned off for \(address.lowercased())")
         let lower = address.lowercased()
         authenticatedAgents.remove(lower)
         addressToAgentId.removeValue(forKey: lower)
@@ -1207,6 +1299,7 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        cancelAddQueue()
         cancelAllPublicChecks()
 
         let stillOurs = configuration.enabledAgentIds.filter { !isSupersededAgent($0) }

@@ -270,8 +270,8 @@ public enum EvalRunner {
     /// stay telemetry-free instead of carrying a noisy process footprint.
     private static let resourceSampledDomains: Set<String> = [
         "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
-        "default_agent", "subagent", "apple_script", "micro_perf",
-        "reasoning_channel", "cache_proof", "memory", "http_api",
+        "default_agent", "orchestrator", "configurator", "subagent", "apple_script", "micro_perf",
+        "reasoning_channel", "cache_proof", "memory", "http_api", "agent_creation", "chat_import_reader",
     ]
 
     /// Wall-clock budget for any single tool execution in a
@@ -658,6 +658,8 @@ public enum EvalRunner {
             return runArgumentCoercionCase(testCase, modelId: modelId)
         case "sandbox_diagnostics":
             return runSandboxDiagnosticsCase(testCase, modelId: modelId)
+        case "onboarding":
+            return await runOnboardingCase(testCase, modelId: modelId)
         case "request_validation":
             // Retired: pure type-level accept/reject pins over
             // `unsupportedSamplerReason` moved to OsaurusCore's
@@ -698,7 +700,7 @@ public enum EvalRunner {
             )
         case "capability_claims":
             return await runCapabilityClaimsCase(testCase, modelId: modelId)
-        case "default_agent":
+        case "default_agent", "orchestrator", "configurator":
             return await runDefaultAgentCase(testCase, modelId: modelId)
         case "agent_loop":
             return await runAgentLoopCase(testCase, modelId: modelId)
@@ -716,6 +718,16 @@ public enum EvalRunner {
             return await runMemoryCase(testCase, modelId: modelId)
         case "agent_channels":
             return await runAgentChannelsCase(testCase, modelId: modelId)
+        case "workflow":
+            return await runWorkflowCase(testCase, modelId: modelId)
+        case "architect":
+            return await runArchitectCase(testCase, modelId: modelId)
+        case "architect_inline":
+            return await runArchitectInlineCase(testCase, modelId: modelId)
+        case "agent_creation":
+            return await runAgentCreationCase(testCase, modelId: modelId)
+        case "chat_import_reader":
+            return await runChatImportReaderCase(testCase, modelId: modelId)
         case "tools", "streaming", "contract":
             // Retired scaffolds: the live HTTP lane (`http_api`) covers
             // what these placeholders were reserved for. Kept as an
@@ -1792,18 +1804,21 @@ public enum EvalRunner {
         // removes both model-created entities and any fixture a dedicated
         // cleanup helper misses.
         let registriesBeforeCase = await MainActor.run { snapshotDefaultAgentRegistries() }
+        let windowsBeforeCase = await MainActor.run { Set(ChatWindowManager.shared.windows.keys) }
         let seededAgentIds = seedDefaultAgentFixtures(testCase.fixtures.seedAgents)
         let seededProviderIds = seedDefaultAgentProviderFixtures(testCase.fixtures.seedProviders)
         let seededScheduleIds = seedDefaultAgentScheduleFixtures(testCase.fixtures.seedSchedules)
+        let seededWorkflowIds = seedDefaultAgentWorkflowFixtures(testCase.fixtures.seedInstalledWorkflows)
         let seededMCPIds = seedDefaultAgentMCPFixtures(testCase.fixtures.seedMCPServers)
+        let teammateFolder = await seedTeammateFixtures(testCase.fixtures.seedTeammates)
         // The lane pins the RUN model per case instead of re-reading the
         // chat-config core-model binding: when the core model was still
         // declaratively writable, a case that rewrote it rebound every
         // later case in the run — grok silently became foundation
         // mid-suite, which strips the tool schema and fails every
-        // subsequent write case. The section is Settings-UI-only now, but
-        // the pin + restore stay as cheap insurance against any store
-        // mutation leaking into another lane sharing this process.
+        // subsequent write case. `model_defaults.core_model` is writable
+        // again, so the pin + restore are load-bearing: no case may leak a
+        // store mutation into another case or lane sharing this process.
         let chatConfigBeforeCase = await MainActor.run { ChatConfigurationStore.load() }
         // Same leak class, different store: a case whose apply ENABLES the
         // outbound privacy filter (settings-privacy-filter) blocks every
@@ -1812,26 +1827,66 @@ public enum EvalRunner {
         // loop; `.default` (filter off) is the pre-case state when the
         // store had never been written.
         let privacyConfigBeforeCase = PrivacyFilterStore.load()
+        // `chat` and `app` applies write UserDefaults switches and the toast
+        // store, outside `ChatConfiguration`.
+        let chatSwitchesBeforeCase = ChatSection.userDefaultsKeys.map {
+            ($0, UserDefaults.standard.object(forKey: $0))
+        }
+        let toastConfigBeforeCase = await MainActor.run { ToastManager.shared.configuration }
+        // A memory-disable apply would otherwise start the case's next
+        // trial with memory already off, where "nothing to change" is right.
+        let memoryConfigBeforeCase = MemoryConfigurationStore.load()
         // `modelId` is the run label: a routable id for explicit/foundation
         // selections, or the pre-run binding for keep-current ("(unset)"
         // when nothing was configured — fall back to the store for that).
         let pinnedModel = modelId == "(unset)" ? nil : modelId
         let transcript = await EvalDefaultAgentModelBinding.run(model: pinnedModel) {
-            await DefaultAgentConfigurationEvaluator.run(
+            // Seeded after the model pin, so the pin is part of every
+            // version rather than a change the first history read notices.
+            if let history = testCase.fixtures.seedConfigHistory {
+                do {
+                    try await Self.seedConfigHistory(history)
+                } catch {
+                    return CapabilityClaimsTranscript(
+                        toolCalls: [], finalText: "", iterations: 0, hitIterationCap: false, systemPrompt: "",
+                        loadedToolNames: [], error: "seedConfigHistory failed: \(error.localizedDescription)")
+                }
+            }
+            if testCase.domain == "configurator" {
+                return await ConfiguratorEvaluator.run(query: testCase.query, model: pinnedModel)
+            }
+            return await DefaultAgentConfigurationEvaluator.run(
                 query: testCase.query,
                 maxIterations: exp.maxIterations ?? 6,
                 model: pinnedModel
             )
         }
+        await MainActor.run { closeDefaultAgentCaseWindows(except: windowsBeforeCase) }
+        if testCase.fixtures.seedConfigHistory != nil { await ConfigHistoryFixtures.clear() }
         await MainActor.run { ChatConfigurationStore.save(chatConfigBeforeCase) }
         PrivacyFilterStore.save(privacyConfigBeforeCase ?? .default)
+        for (key, value) in chatSwitchesBeforeCase {
+            if let value {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        await MainActor.run { ToastManager.shared.updateConfiguration(toastConfigBeforeCase) }
+        MemoryConfigurationStore.save(memoryConfigBeforeCase)
         // Normalized latency: loop-only (judge timed separately below).
         let elapsed = Date().timeIntervalSince(started) * 1000
+        let createdAutomations = await MainActor.run {
+            EventManager.shared.events.filter { !registriesBeforeCase.eventIds.contains($0.id) }
+                .map(EvalAutomationSnapshot.init)
+        }
         cleanupDefaultAgentMCPFixtures(seededMCPIds)
         cleanupDefaultAgentScheduleFixtures(seededScheduleIds)
+        cleanupDefaultAgentWorkflowFixtures(seededWorkflowIds)
         cleanupDefaultAgentProviderFixtures(seededProviderIds)
         cleanupDefaultAgentFixtures(seededAgentIds)
         await MainActor.run { sweepDefaultAgentRegistries(before: registriesBeforeCase) }
+        if let teammateFolder { try? FileManager.default.removeItem(at: teammateFolder) }
         // A models prune this case applied can only unlink symlinks in the
         // isolated models store — re-seed them so the SERVING model stays
         // resolvable for every later case, then drop the stale catalog scan.
@@ -1933,6 +1988,19 @@ public enum EvalRunner {
                 notes.append(result.note)
             }
         }
+        for note in scoreAutomations(exp, created: createdAutomations) {
+            passed = passed && note.passed
+            notes.append(note.note)
+        }
+        if exp.settingsPathsMustBeGrounded == true {
+            let invented = Self.ungroundedSettingsPaths(in: transcript)
+            if invented.isEmpty {
+                notes.append("settings paths grounded")
+            } else {
+                passed = false
+                notes.append("settings paths not grounded: \(invented.joined(separator: " | "))")
+            }
+        }
 
         // LLM-judge rubric — every condition must pass.
         for (index, verdict) in verdicts.enumerated() {
@@ -1958,6 +2026,9 @@ public enum EvalRunner {
             "summary: toolCalls=[\(calledNames.joined(separator: ","))] "
                 + "iters=\(transcript.iterations)"
         )
+        if testCase.domain == "orchestrator" {
+            notes.append(StateCallScorecard.sourcePrefix + (transcript.stateSource ?? "none"))
+        }
         notes.append("final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))")
 
         return persistClaimsTranscript(
@@ -1977,6 +2048,44 @@ public enum EvalRunner {
             ),
             query: testCase.query
         )
+    }
+
+    /// Settings breadcrumbs in the final answer that appear nowhere in the
+    /// run's seed or tool results. A breadcrumb is a chain of two or more
+    /// Title Case segments (the settings-kit label rule) joined by `→`, `›`,
+    /// or `->`; each chain is compared with its
+    /// separators and surrounding markup normalized away, so `**Settings →
+    /// Agents**` matches a catalog row `Settings › Agents`.
+    nonisolated static func ungroundedSettingsPaths(in transcript: CapabilityClaimsTranscript) -> [String] {
+        func normalize(_ text: String) -> String {
+            text.lowercased()
+                .replacingOccurrences(of: "›", with: ">")
+                .replacingOccurrences(of: "→", with: ">")
+                .replacingOccurrences(of: "->", with: ">")
+                .components(separatedBy: CharacterSet(charactersIn: "*`_\"\u{201C}\u{201D}"))
+                .joined()
+                .components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+                .replacingOccurrences(of: " > ", with: ">")
+        }
+        let grounding = normalize(
+            ([transcript.systemPrompt] + transcript.toolCalls.compactMap(\.resultPreview)).joined(separator: "\n"))
+        guard
+            let pattern = try? NSRegularExpression(
+                pattern: #"[A-Z0-9][\w&/'.-]*(?: [A-Z0-9&][\w&/'.-]*)*(?:\s*(?:→|›|->)\s*[A-Z0-9][\w&/'.-]*(?: [A-Z0-9&][\w&/'.-]*)*)+"#)
+        else { return [] }
+        let text = transcript.finalText.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "`", with: "")
+        let range = NSRange(text.startIndex..., in: text)
+        return pattern.matches(in: text, range: range).compactMap { match -> String? in
+            guard let r = Range(match.range, in: text) else { return nil }
+            let path = text[r].trimmingCharacters(in: CharacterSet.whitespaces.union(.punctuationCharacters))
+            // Compare the last two segments: a sentence prefix ("Open
+            // Settings") must not fail an otherwise exact path.
+            let segments = normalize(path).components(separatedBy: ">")
+            let tail = segments.suffix(2).joined(separator: ">")
+            return grounding.contains(tail) ? nil : path
+        }
     }
 
     /// Pre-register the case's fixture agents in the isolated store so a
@@ -2001,6 +2110,18 @@ public enum EvalRunner {
         return ids
     }
 
+    /// Creates the fixture teammates in a scratch folder; returns the folder
+    /// to remove after the case. The registry sweep deletes the agents.
+    private static func seedTeammateFixtures(_ names: [String]?) async -> URL? {
+        let teammates = (names ?? []).compactMap(Teammate.init(rawValue:))
+        guard !teammates.isEmpty else { return nil }
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-evals-team-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        await TeamSeeder.create(teammates, workingFolder: folder.path)
+        return folder
+    }
+
     /// Remove fixture agents seeded by `seedDefaultAgentFixtures` (and, via
     /// `AgentStore.delete`, any schedules they own) so a created schedule
     /// doesn't leak across cases in the shared isolated root.
@@ -2023,10 +2144,24 @@ public enum EvalRunner {
         let agentIds: Set<UUID>
         let providerIds: Set<UUID>
         let mcpProviderIds: Set<UUID>
-        let scheduleIds: Set<UUID>
-        let watcherIds: Set<UUID>
+        let eventIds: Set<UUID>
         let commandIds: Set<UUID>
         let knowledgeCollectionIds: Set<UUID>
+    }
+
+    /// Close every chat window a case opened (an `architect_handoff` opens an
+    /// Architect chat and sends the brief). Closing alone detaches a running
+    /// chat into a background task, which would keep generating on the
+    /// served model through the next cases, so the run is cancelled first.
+    @MainActor
+    private static func closeDefaultAgentCaseWindows(except before: Set<UUID>) {
+        let manager = ChatWindowManager.shared
+        let tasks = BackgroundTaskManager.shared
+        for id in manager.windows.keys where !before.contains(id) {
+            tasks.detachChatWindow(windowId: id)
+            if let taskId = tasks.taskId(forWindowId: id) { tasks.cancelTask(taskId) }
+            manager.closeWindow(id: id)
+        }
     }
 
     @MainActor
@@ -2035,8 +2170,7 @@ public enum EvalRunner {
             agentIds: Set(AgentManager.shared.agents.map { $0.id }),
             providerIds: Set(RemoteProviderManager.shared.configuration.providers.map { $0.id }),
             mcpProviderIds: Set(MCPProviderManager.shared.configuration.providers.map { $0.id }),
-            scheduleIds: Set(ScheduleManager.shared.schedules.map { $0.id }),
-            watcherIds: Set(WatcherManager.shared.watchers.map { $0.id }),
+            eventIds: Set(EventManager.shared.events.map { $0.id }),
             commandIds: Set(SlashCommandRegistry.shared.customCommands.map { $0.id }),
             knowledgeCollectionIds: Set(KnowledgeManager.shared.collections.map { $0.id })
         )
@@ -2062,13 +2196,9 @@ public enum EvalRunner {
         where !before.mcpProviderIds.contains(provider.id) {
             MCPProviderManager.shared.removeProvider(id: provider.id)
         }
-        for schedule in ScheduleManager.shared.schedules
-        where !before.scheduleIds.contains(schedule.id) {
-            _ = ScheduleManager.shared.delete(id: schedule.id)
-        }
-        for watcher in WatcherManager.shared.watchers
-        where !before.watcherIds.contains(watcher.id) {
-            _ = WatcherManager.shared.delete(id: watcher.id)
+        for event in EventManager.shared.events
+        where !before.eventIds.contains(event.id) {
+            _ = EventManager.shared.delete(id: event.id)
         }
         for command in SlashCommandRegistry.shared.customCommands
         where !before.commandIds.contains(command.id) {
@@ -2094,16 +2224,152 @@ public enum EvalRunner {
             let parts = (seed.timeOfDay ?? "08:30").split(separator: ":")
             let hour = parts.first.flatMap { Int($0) } ?? 8
             let minute = parts.count > 1 ? (Int(parts[1]) ?? 30) : 30
-            let schedule = ScheduleManager.shared.create(
-                name: seed.name,
-                instructions: seed.instructions ?? "Seeded by OsaurusEvals; safe to delete.",
-                agentId: agentId,
-                frequency: .daily(hour: hour, minute: minute),
-                isEnabled: seed.enabled ?? true
+            let schedule = EventManager.shared.create(
+                OsaurusEvent(
+                    name: seed.name,
+                    isEnabled: seed.enabled ?? true,
+                    source: .schedule(ScheduleSourceConfig(frequency: .daily(hour: hour, minute: minute))),
+                    action: .agent(
+                        AgentEventAction(
+                            target: .local(agentId),
+                            instructions: seed.instructions ?? "Seeded by OsaurusEvals; safe to delete."))
+                )
             )
             ids.append(schedule.id)
         }
         return ids
+    }
+
+    /// Install the case's fixture workflows: no steps, string inputs, so an
+    /// automation can bind them (and their required inputs) for real.
+    @MainActor
+    private static func seedDefaultAgentWorkflowFixtures(
+        _ seeds: [EvalCase.SeedInstalledWorkflow]?
+    ) -> [UUID] {
+        guard let seeds, !seeds.isEmpty else { return [] }
+        var ids: [UUID] = []
+        for seed in seeds {
+            guard let id = UUID(uuidString: seed.id) else { continue }
+            let properties = Dictionary(
+                (seed.inputs ?? []).map { ($0, JSONValue.object(["type": .string("string")])) },
+                uniquingKeysWith: { first, _ in first })
+            var schema: [String: JSONValue] = ["type": .string("object"), "properties": .object(properties)]
+            if let required = seed.required, !required.isEmpty {
+                schema["required"] = .array(required.map { .string($0) })
+            }
+            let template = Template(
+                name: seed.name, summary: seed.summary ?? "Seeded by OsaurusEvals; safe to delete.",
+                payload: .workflow(WorkflowDefinition(inputSchema: .object(schema))))
+            let workflow = InstalledWorkflow(
+                id: id, template: template, bindings: InstallBindings(),
+                orchestratorVisible: seed.orchestratorVisible ?? true)
+            do {
+                try InstalledWorkflowStore.shared.save(workflow, reviewed: true)
+                ids.append(id)
+            } catch {
+                print("[OsaurusEvals] could not seed workflow \(seed.name): \(error)")
+            }
+        }
+        return ids
+    }
+
+    @MainActor
+    private static func cleanupDefaultAgentWorkflowFixtures(_ ids: [UUID]) {
+        for id in ids { InstalledWorkflowStore.shared.delete(id: id) }
+    }
+
+    /// What a created automation looks like, read before the post-case sweep
+    /// deletes it (names resolve while the seeded workflows still exist).
+    struct EvalAutomationSnapshot: Sendable {
+        var name: String
+        var sourceKind: String
+        var action: String
+        var workflow: String?
+        var agent: String?
+        var boundInputs: Set<String>
+        var cron: String?
+        var instructions: String?
+
+        init(
+            name: String, sourceKind: String, action: String, workflow: String? = nil, agent: String? = nil,
+            boundInputs: Set<String> = [], cron: String? = nil, instructions: String? = nil
+        ) {
+            self.name = name
+            self.sourceKind = sourceKind
+            self.action = action
+            self.workflow = workflow
+            self.agent = agent
+            self.boundInputs = boundInputs
+            self.cron = cron
+            self.instructions = instructions
+        }
+
+        @MainActor
+        init(_ event: OsaurusEvent) {
+            name = event.name
+            sourceKind = event.sourceKind.rawValue
+            action = event.action.kind.rawValue
+            workflow = event.action.workflow.flatMap { InstalledWorkflowStore.shared.workflow(id: $0.workflowID)?.name }
+            agent = event.agentId.flatMap { AgentManager.shared.agent(for: $0)?.name }
+            boundInputs = Set(
+                (event.action.workflow?.inputMapping ?? [:]).filter {
+                    !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }.keys)
+            if case .cron(let expression)? = event.source.schedule?.frequency { cron = expression }
+            instructions = event.action.agent?.instructions ?? event.action.prompt?.instructions
+        }
+
+        func matches(_ m: EvalCase.DefaultAgentExpectations.AutomationMatcher) -> Bool {
+            func same(_ a: String?, _ b: String?) -> Bool {
+                guard let b else { return true }
+                return a?.caseInsensitiveCompare(b) == .orderedSame
+            }
+            if let needle = m.nameContains, !name.lowercased().contains(needle.lowercased()) { return false }
+            if let needle = m.instructionsContain,
+                !(instructions ?? "").lowercased().contains(needle.lowercased())
+            {
+                return false
+            }
+            if let keys = m.inputKeys, !Set(keys).isSubset(of: boundInputs) { return false }
+            func collapsed(_ s: String) -> String { s.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+            if let want = m.cron, cron.map(collapsed) != collapsed(want) { return false }
+            return same(sourceKind, m.sourceKind) && same(action, m.action) && same(workflow, m.workflow)
+                && same(agent, m.agent)
+        }
+
+        var summary: String {
+            var parts = ["\(name): \(sourceKind) → \(action)"]
+            if let workflow { parts.append("workflow=\(workflow)") }
+            if let agent { parts.append("agent=\(agent)") }
+            if !boundInputs.isEmpty { parts.append("inputs=\(boundInputs.sorted().joined(separator: ","))") }
+            if let cron { parts.append("cron=\(cron)") }
+            return parts.joined(separator: " ")
+        }
+    }
+
+    static func scoreAutomations(
+        _ exp: EvalCase.DefaultAgentExpectations, created: [EvalAutomationSnapshot]
+    ) -> [(passed: Bool, note: String)] {
+        var out: [(passed: Bool, note: String)] = []
+        let shown = created.isEmpty ? "none" : created.map(\.summary).joined(separator: "; ")
+        if let count = exp.expectAutomationCount {
+            out.append(
+                created.count == count
+                    ? (true, "expectAutomationCount ok: \(count)")
+                    : (false, "expectAutomationCount: expected \(count), created \(created.count) [\(shown)]"))
+        }
+        for matcher in exp.expectAutomations ?? [] {
+            let label = [
+                matcher.nameContains.map { "name~\($0)" }, matcher.sourceKind, matcher.action,
+                matcher.workflow.map { "workflow=\($0)" }, matcher.agent.map { "agent=\($0)" },
+                matcher.cron.map { "cron=\($0)" },
+            ].compactMap { $0 }.joined(separator: " ")
+            out.append(
+                created.contains { $0.matches(matcher) }
+                    ? (true, "expectAutomations ok: \(label)")
+                    : (false, "expectAutomations missing: \(label) — created [\(shown)]"))
+        }
+        return out
     }
 
     /// Remove fixture schedules seeded by `seedDefaultAgentScheduleFixtures`.
@@ -2111,7 +2377,7 @@ public enum EvalRunner {
     /// the shared isolated root clean even if agent seeds change later.)
     @MainActor
     private static func cleanupDefaultAgentScheduleFixtures(_ ids: [UUID]) {
-        for id in ids { _ = ScheduleManager.shared.delete(id: id) }
+        for id in ids { _ = EventManager.shared.delete(id: id) }
     }
 
     /// Pre-register the case's fixture MCP servers so a mutation case (e.g.
@@ -2146,6 +2412,23 @@ public enum EvalRunner {
     /// Pre-register the case's fixture providers in the isolated config store
     /// so a `default_agent` rotation case can target a REAL provider (and
     /// demonstrate `set_credentials`) instead of dead-ending on a not-found id.
+    /// `fixtures.seedConfigHistory`: version 0 a day before the oldest step,
+    /// then each step at its age.
+    static func seedConfigHistory(_ history: EvalCase.SeedConfigHistory) async throws {
+        let now = Date()
+        let oldest = history.steps.map(\.hoursAgo).max() ?? 0
+        try await ConfigHistoryFixtures.seed(
+            history.steps.map { step in
+                ConfigHistoryFixtures.Step(
+                    yaml: step.yaml, prune: step.prune ?? false,
+                    caller: ConfigChangeCaller(kind: step.caller, detail: step.callerDetail),
+                    requestText: step.requestText, label: step.label,
+                    takenAt: now.addingTimeInterval(-step.hoursAgo * 3600))
+            },
+            foundAt: now.addingTimeInterval(-(oldest + 24) * 3600), foundLabel: history.foundLabel,
+            prepare: history.prepare)
+    }
+
     /// Providers are added non-ephemeral so the eval's ephemeral read filter
     /// still surfaces them, and `enabled:false, autoConnect:false` so they make
     /// no network call. The credential sheet that `set_credentials` (and

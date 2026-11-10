@@ -16,8 +16,8 @@
 //
 //  Both live in a top-anchored overlay over the message thread (see
 //  `ChatView.messageThread`) so the thread doesn't shrink when they
-//  appear. The chrome uses `.regularMaterial` for a translucent backing
-//  so conversation content stays visible behind the banner. The Todo
+//  appear. The chrome is an opaque `surface.raised` card with the
+//  `elevation.overlay` recipe (no component glass). The Todo
 //  pill reserves a small inset on the thread so the topmost message
 //  isn't hidden; the Done banner overlays content (it's a transient
 //  notification, not a layout fixture).
@@ -61,43 +61,42 @@ private enum Layout {
     static let stepIconWidth: CGFloat = 16
     static let bannerIconTopOffset: CGFloat = 2
     static let dismissButtonTopOffset: CGFloat = 1
-    static let smallIconSizeDelta: CGFloat = -2  // delta from caption size; used by chevron + xmark
     static let dismissButtonSize: CGFloat = 20
-    static let dismissHoverFillOpacity: Double = 0.45
-    static let glassShadowRadius: CGFloat = 12
-    static let glassShadowYOffset: CGFloat = 3
-    static let glassShadowOpacity: Double = 0.10
     static let pinIconRotationDegrees: Double = 30
-    static let dismissFadeDuration: Double = 0.22
-    static let hoverHighlightDuration: Double = 0.15
     static let hoverOutDebounce: Duration = .milliseconds(50)
 }
 
-// MARK: - Glass backing
+// MARK: - Floating chrome backing
 
-/// Translucent surface stack: `.regularMaterial` + theme-tinted overlay +
-/// soft border + drop shadow. Drives the floating-chrome look for both
-/// inline blocks.
-private struct FloatingGlassSurface: View {
+/// Opaque floating-chrome surface: semantic raised surface + optional status
+/// tint laid over it + border + the theme's overlay elevation. Drives the
+/// floating-chrome look for both inline blocks (no component glass).
+private struct FloatingChromeSurface: View {
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35, authoritative: true) }
     let tint: Color
     let borderColor: Color
+    var highlight: Color? = nil
+    var surfacePart = "todo"
 
     var body: some View {
         ZStack {
-            shape.fill(.regularMaterial)
+            #if OSAURUS_DESIGN_SYSTEM
+            shape.fill(highlight ?? AgentContentSurfaceAssignments.color(35, surfacePart, theme))
+                .nativeCatalogTarget([AgentContentSurfaceAssignments.key(35, surfacePart)], surfacePart == "completion" ? "Agent completion card" : "Agent task progress")
+            #else
+            shape.fill(highlight ?? theme.surface.raised)
+            #endif
+            #if !OSAURUS_DESIGN_SYSTEM
             shape.fill(tint)
-            shape.strokeBorder(borderColor, lineWidth: 1)
+            #endif
+            shape.strokeBorder(borderColor, lineWidth: theme.stroke.default)
         }
-        .shadow(
-            color: .black.opacity(Layout.glassShadowOpacity),
-            radius: Layout.glassShadowRadius,
-            x: 0,
-            y: Layout.glassShadowYOffset
-        )
+        .themeElevation(theme.elevation.overlay)
     }
 
     private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Layout.cornerRadius, style: .continuous)
+        RoundedRectangle(cornerRadius: AgentProgressInspectionStyle.metric("radius", Layout.cornerRadius, theme), style: .continuous)
     }
 }
 
@@ -150,7 +149,8 @@ extension View {
 struct InlineTodoBlock: View {
     let todo: AgentTodo
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35, authoritative: true) }
     @State private var isHovered = false
     @State private var isPinned = false
     @State private var debouncer = HoverDebouncer()
@@ -162,44 +162,47 @@ struct InlineTodoBlock: View {
             pillRow
             if isExpanded { stepRows }
         }
+        .frame(minHeight: AgentProgressInspectionStyle.metric("height", 0, theme))
         .background(
-            FloatingGlassSurface(
-                tint: theme.secondaryBackground.opacity(0.25),
-                borderColor: theme.primaryBorder.opacity(0.35)
+            FloatingChromeSurface(
+                tint: .clear,
+                borderColor: theme.border.default,
+                highlight: AgentProgressInspectionStyle.highlight(hovered: isHovered, pinned: isPinned, theme: theme)
             )
         )
         .padding(.horizontal, Layout.outerHorizontalMargin)
-        .animation(theme.springAnimation(), value: isExpanded)
-        .animation(theme.springAnimation(), value: todo.items.map(\.isDone))
+        .environment(\.theme, theme)
+        .animation(theme.motion.springAnimation, value: isExpanded)
+        .animation(theme.motion.springAnimation, value: todo.items.map(\.isDone))
         .chromeHover(
             isHovered: $isHovered,
             debouncer: debouncer,
-            animation: theme.springAnimation()
+            animation: theme.motion.springAnimation
         )
     }
 
     private var pillRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Layout.interItemSpacing) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.pillRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", Layout.interItemSpacing, theme))) {
             Image(systemName: "checklist")
-                .font(theme.font(size: CGFloat(theme.bodySize)))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(15)
+                .foregroundColor(theme.text.secondary)
 
             Text(localized: "Todo")
-                .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .agentProgressText(.label, fallback: .body, weight: 500, theme: theme)
+                .foregroundColor(theme.text.primary)
 
             if todo.totalCount > 0 {
                 Text("\(todo.doneCount)/\(todo.totalCount)")
-                    .font(theme.font(size: CGFloat(theme.captionSize)))
-                    .foregroundColor(theme.tertiaryText)
+                    .agentProgressText(.caption, fallback: .caption, theme: theme)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             Spacer()
 
             stateIcon
-        }
-        .padding(.horizontal, Layout.contentPaddingH)
-        .padding(.vertical, isExpanded ? Layout.expandedPaddingV : Layout.pillPaddingV)
+        }.catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.pillRow.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.pillRow.paddingX", inheriting: AgentProgressInspectionStyle.metric("padding", Layout.contentPaddingH, theme))).catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.pillRow.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.pillRow.paddingY", inheriting: isExpanded ? AgentProgressInspectionStyle.metric("padding", Layout.expandedPaddingV, theme) : AgentProgressInspectionStyle.metric("padding", Layout.pillPaddingV, theme))).catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.pillRow.paddingY")
         .contentShape(Rectangle())
         .onTapGesture(perform: togglePin)
         .help(isPinned ? Text(localized: "Unpin") : Text(localized: "Click to keep open"))
@@ -208,8 +211,8 @@ struct InlineTodoBlock: View {
     private var stateIcon: some View {
         let name = isPinned ? "pin.fill" : (isExpanded ? "chevron.up" : "chevron.down")
         return Image(systemName: name)
-            .font(theme.font(size: smallIconSize, weight: .bold))
-            .foregroundColor(isPinned ? theme.accentColor : theme.tertiaryText)
+            .glyphSize(10, weight: .bold)
+            .foregroundColor(isPinned ? theme.text.primary : theme.text.tertiary)
             .rotationEffect(.degrees(isPinned ? Layout.pinIconRotationDegrees : 0))
     }
 
@@ -217,42 +220,40 @@ struct InlineTodoBlock: View {
     private var stepRows: some View {
         if todo.items.isEmpty {
             Text(localized: "No checklist items parsed.")
-                .font(theme.font(size: CGFloat(theme.captionSize)))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.horizontal, Layout.contentPaddingH)
-                .padding(.bottom, Layout.stepRowsPaddingV)
+                .agentProgressText(.caption, fallback: .caption, theme: theme)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingX", inheriting: AgentProgressInspectionStyle.metric("padding", Layout.contentPaddingH, theme))).catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingX")
+                .padding(.bottom, theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingY", inheriting: AgentProgressInspectionStyle.metric("padding", Layout.stepRowsPaddingV, theme))).catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingY")
         } else {
-            Divider().padding(.horizontal, Layout.contentPaddingH)
-            VStack(alignment: .leading, spacing: Layout.stepRowSpacing) {
+            Rectangle().fill(theme.border.default)
+                .frame(height: AgentProgressInspectionStyle.metric("borderWidth", ThemeStrokes.hairline(forBackingScale: NSScreen.main?.backingScaleFactor ?? 2), theme))
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingX2", inheriting: AgentProgressInspectionStyle.metric("padding", Layout.contentPaddingH, theme))).catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingX2")
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.stepRows.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", Layout.stepRowSpacing, theme))) {
                 ForEach(todo.items, content: todoItemRow)
-            }
-            .padding(.horizontal, Layout.contentPaddingH)
-            .padding(.vertical, Layout.stepRowsPaddingV)
+            }.catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.stepRows.verticalGap")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingX3", inheriting: AgentProgressInspectionStyle.metric("padding", Layout.contentPaddingH, theme))).catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingX3")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingY2", inheriting: AgentProgressInspectionStyle.metric("padding", Layout.stepRowsPaddingV, theme))).catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.stepRows.paddingY2")
         }
     }
 
     private func todoItemRow(_ item: AgentTodoItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Layout.interItemSpacing) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.todoItemRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", Layout.interItemSpacing, theme))) {
             Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                .font(theme.font(size: CGFloat(theme.bodySize)))
-                .foregroundColor(item.isDone ? theme.successColor : theme.tertiaryText)
+                .glyphSize(15)
+                .foregroundColor(item.isDone ? theme.status.success.foreground : theme.text.tertiary)
                 .frame(width: Layout.stepIconWidth, alignment: .center)
 
             Text(item.text)
-                .font(theme.font(size: CGFloat(theme.bodySize)))
-                .foregroundColor(item.isDone ? theme.tertiaryText : theme.primaryText)
-                .strikethrough(item.isDone, color: theme.tertiaryText)
-        }
+                .agentProgressText(.body, fallback: .body, theme: theme)
+                .foregroundColor(item.isDone ? theme.text.tertiary : theme.text.primary)
+                .strikethrough(item.isDone, color: theme.text.tertiary)
+        }.catalogLayoutTarget("component.library.35.elements.layout.inlineTodoBlock.todoItemRow.horizontalGap")
     }
 
     private func togglePin() {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             isPinned.toggle()
         }
-    }
-
-    private var smallIconSize: CGFloat {
-        CGFloat(theme.captionSize) + Layout.smallIconSizeDelta
     }
 }
 
@@ -270,51 +271,55 @@ struct InlineCompleteBlock: View {
     let isBlocked: Bool
     var onDismiss: () -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35, authoritative: true) }
 
     private var statusColor: Color {
-        isBlocked ? theme.warningColor : theme.successColor
+        isBlocked ? theme.status.warning.foreground : theme.status.success.foreground
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: Layout.bannerIconSpacing) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.inlineCompleteBlock.body.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", Layout.bannerIconSpacing, theme))) {
             Image(systemName: isBlocked ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
                 .foregroundColor(statusColor)
                 .padding(.top, Layout.bannerIconTopOffset)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.inlineCompleteBlock.body.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", 4, theme))) {
                 Text(localized: isBlocked ? "Blocked" : "Done")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                    .agentProgressText(.heading, fallback: .caption, weight: 600, theme: theme)
                     .foregroundColor(statusColor)
                     .textCase(.uppercase)
 
                 Text(summary)
-                    .font(theme.font(size: CGFloat(theme.bodySize)))
-                    .foregroundColor(theme.primaryText)
+                    .agentProgressText(.body, fallback: .body, theme: theme)
+                    .foregroundColor(theme.text.primary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
+            }.catalogLayoutTarget("component.library.35.elements.layout.inlineCompleteBlock.body.verticalGap")
 
-            Spacer(minLength: Layout.interItemSpacing)
+            Spacer(minLength: AgentProgressInspectionStyle.metric("gap", Layout.interItemSpacing, theme))
 
             DismissButton(action: dismiss)
                 .padding(.top, Layout.dismissButtonTopOffset)
-        }
-        .padding(.horizontal, Layout.contentPaddingH)
-        .padding(.vertical, Layout.bannerPaddingV)
+        }.catalogLayoutTarget("component.library.35.elements.layout.inlineCompleteBlock.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.inlineCompleteBlock.body.paddingX", inheriting: AgentProgressInspectionStyle.metric("padding", Layout.contentPaddingH, theme))).catalogLayoutTarget("component.library.35.elements.layout.inlineCompleteBlock.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.inlineCompleteBlock.body.paddingY", inheriting: AgentProgressInspectionStyle.metric("padding", Layout.bannerPaddingV, theme))).catalogLayoutTarget("component.library.35.elements.layout.inlineCompleteBlock.body.paddingY")
+        .frame(minHeight: AgentProgressInspectionStyle.metric("height", 0, theme))
         .background(
-            FloatingGlassSurface(
+            FloatingChromeSurface(
                 tint: statusColor.opacity(0.10),
-                borderColor: statusColor.opacity(0.30)
+                borderColor: theme.assignedColor(AgentProgressInspectionStyle.key + "border", fallback: statusColor.opacity(0.30)),
+                surfacePart: "completion"
             )
         )
         .padding(.horizontal, Layout.outerHorizontalMargin)
+        .environment(\.theme, theme)
     }
 
     /// Eased fade reads as a clean "this is gone" — spring would
     /// overshoot the alpha curve and feel jittery for a pure
     /// opacity-only transition.
     private func dismiss() {
-        withAnimation(.easeOut(duration: Layout.dismissFadeDuration)) {
+        withAnimation(theme.motion.standard) {
             onDismiss()
         }
     }
@@ -328,32 +333,28 @@ struct InlineCompleteBlock: View {
 private struct DismissButton: View {
     var action: () -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35, authoritative: true) }
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .font(
-                    theme.font(
-                        size: CGFloat(theme.captionSize) + Layout.smallIconSizeDelta,
-                        weight: .bold
-                    )
-                )
-                .foregroundColor(isHovered ? theme.primaryText : theme.tertiaryText)
-                .frame(width: Layout.dismissButtonSize, height: Layout.dismissButtonSize)
+                .glyphSize(10, weight: .bold)
+                .foregroundColor(isHovered ? theme.text.primary : theme.text.tertiary)
+                .frame(width: AgentProgressInspectionStyle.metric("height", Layout.dismissButtonSize, theme), height: AgentProgressInspectionStyle.metric("height", Layout.dismissButtonSize, theme))
                 .background(
                     Circle().fill(
                         isHovered
-                            ? theme.primaryBorder.opacity(Layout.dismissHoverFillOpacity)
-                            : .clear
+                            ? theme.surface.hover
+                            : theme.assignedColor(AgentProgressInspectionStyle.key + "background", fallback: .clear)
                     )
                 )
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: Layout.hoverHighlightDuration)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }

@@ -13,7 +13,19 @@ import UniformTypeIdentifiers
 
 @preconcurrency import MLXLMCommon
 
+private struct ComposerAllowsWorkflowSelectionKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var composerAllowsWorkflowSelection: Bool {
+        get { self[ComposerAllowsWorkflowSelectionKey.self] }
+        set { self[ComposerAllowsWorkflowSelectionKey.self] = newValue }
+    }
+}
+
 struct FloatingInputCard: View {
+    @Environment(\.composerAllowsWorkflowSelection) private var allowsWorkflowSelection
     @ObservedObject private var alignmentPreparation = AlignmentPreparationState.shared
     @Binding var text: String
     @Binding var selectedModel: String?
@@ -64,6 +76,11 @@ struct FloatingInputCard: View {
     @Binding var imageComposerSettings: ImageComposerSettings
     let onSend: (String?) -> Void
     let onStop: () -> Void
+    var placeholderIdeas: [String] = []
+    var minimumEditorHeight: CGFloat = 52
+    var minimumCardHeight: CGFloat = 104
+    @State private var placeholderIdeaIndex = 0
+    @Environment(\.accessibilityReduceMotion) private var reducePlaceholderMotion
     /// Trigger to focus the input field (increment to focus)
     var focusTrigger: Int = 0
     /// Current agent ID (used for agent-specific settings)
@@ -128,7 +145,7 @@ struct FloatingInputCard: View {
     var onSendNow: (() -> Void)?
     /// Discard the queued send without sending it. Called by the chip's ×.
     var onCancelQueued: (() -> Void)?
-    /// Invoked by the wallet panel's "Add credits" button (opens the top-up sheet).
+    /// Invoked by the wallet panel's "Add Credits" button (opens the top-up sheet).
     var onAddCredits: (() -> Void)?
     /// Mode 2 (remote agent run): the model is pinned to the remote agent's own
     /// model and the user must not change it. Renders the model chip as a
@@ -153,6 +170,9 @@ struct FloatingInputCard: View {
     /// shape so the layout doesn't jump. The parent renders the explanation
     /// and any Retry action above the card.
     var composerLock: ComposerLock? = nil
+    /// Typing stays open but nothing sends: another of the user's devices is
+    /// replying in this chat. The parent explains above the card.
+    var sendBlocked: Bool = false
     /// Mode 2 (remote agent run): the conversation targets a discovered remote
     /// agent that executes its own tool loop, system prompt, and generation
     /// config server-side. Hides the composer's local-only affordances —
@@ -229,6 +249,7 @@ struct FloatingInputCard: View {
         pinnedModelLabel: String? = nil,
         remoteConnectionPending: Bool = false,
         composerLock: ComposerLock? = nil,
+        sendBlocked: Bool = false,
         isRemoteAgentRun: Bool = false,
         inputHistoryProvider: (() -> [String])? = nil,
         inputHistoryKey: UUID? = nil,
@@ -236,9 +257,15 @@ struct FloatingInputCard: View {
         canCompactConversation: Bool = false,
         onCompactConversation: (() -> Void)? = nil,
         warmupController: ChatWarmupController = ChatWarmupController(),
-        folderState: ChatFolderState? = nil
+        folderState: ChatFolderState? = nil,
+        placeholderIdeas: [String] = [],
+        minimumEditorHeight: CGFloat = 52,
+        minimumCardHeight: CGFloat = 104
     ) {
         self._text = text
+        self.placeholderIdeas = placeholderIdeas
+        self.minimumEditorHeight = minimumEditorHeight
+        self.minimumCardHeight = minimumCardHeight
         self._selectedModel = selectedModel
         self._pendingAttachments = pendingAttachments
         self._isContinuousVoiceMode = isContinuousVoiceMode
@@ -284,6 +311,7 @@ struct FloatingInputCard: View {
         self.pinnedModelLabel = pinnedModelLabel
         self.remoteConnectionPending = remoteConnectionPending
         self.composerLock = composerLock
+        self.sendBlocked = sendBlocked
         self.isRemoteAgentRun = isRemoteAgentRun
         self.inputHistoryProvider = inputHistoryProvider
         self.inputHistoryKey = inputHistoryKey
@@ -298,6 +326,7 @@ struct FloatingInputCard: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var harnessRuntimeStore = HarnessRuntimeStore.shared
     @State private var showHarnessFolderWarning = false
+    @State private var showSandboxPopover = false
     @State private var pendingHarnessFolderChange: (() -> Void)?
     /// The Default agent's runtime and Claude Code options live in a config
     /// file, not published state, so a change there would not redraw the
@@ -313,7 +342,16 @@ struct FloatingInputCard: View {
     // observation — the closure re-reads this live singleton state when the
     // scope re-renders. Everything else here calls them imperatively.
     private let sandboxState = SandboxManager.State.shared
-    private let clipboardService = ClipboardService.shared
+    private var clipboardService = ClipboardService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    private var inspectorContextMenuPart: Int?
+    func inspectorContextMenuOnly(_ part: Int, clipboard: ClipboardService.ClipboardContent = .text("Local menu verification text")) -> Self {
+        var copy = self
+        copy.inspectorContextMenuPart = part
+        copy.clipboardService = .inspectorMenuSample(content: clipboard)
+        return copy
+    }
+    #endif
     @ObservedObject private var appConfig = AppConfiguration.shared
     /// Drives the composer credits chip (balance + low-balance tinting) and the
     /// wallet panel's recent-activity list.
@@ -333,6 +371,7 @@ struct FloatingInputCard: View {
     /// Bumped when off-main bundle evidence lands so media gates re-evaluate.
     @State private var mediaEvidenceGeneration = 0
     @State private var slashSelectedIndex: Int = 0
+    @State private var slashMenuHeight: CGFloat = 0
     /// Slash query the user dismissed with Escape. Suppresses the popup for
     /// that exact query so the typed text survives; cleared as soon as the
     /// query changes (typing resumes) so the popup can reappear.
@@ -461,9 +500,30 @@ struct FloatingInputCard: View {
     /// the mutations that would otherwise let AppKit blur the field.
     @StateObject private var textViewFocusController = TextViewFocusController()
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var composerTheme: any ThemeProtocol {
+        theme.catalogFamily(21, enabled: componentEnabled && composerLock == nil, authoritative: true)
+    }
+    private var composerRadius: CGFloat { composerTheme.catalogMetric("radius", fallback: theme.radius.bubble) }
+    private var composerOpacity: Double {
+        #if OSAURUS_DESIGN_SYSTEM
+        1
+        #else
+        composerLock != nil ? 0.55 : 1
+        #endif
+    }
+    private var composerEditable: Bool {
+        #if OSAURUS_DESIGN_SYSTEM
+        componentEnabled && composerLock == nil
+        #else
+        composerLock == nil
+        #endif
+    }
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
+    @State private var showWorkflowPicker = false
+    @State private var workflowPickerHeight: CGFloat = 144
     @State private var modelPickerCardSize = CGSize(width: 532, height: 280)
     @State private var showCloudModelBrowser = false
     @ObservedObject private var chatModelFavorites = FavoriteModelsStore.shared
@@ -566,34 +626,17 @@ struct FloatingInputCard: View {
     @State private var lastLiveVoicePreencodeSampleCount: Int = 0
 
     // TextEditor should grow up to ~6 lines before scrolling
-    private var inputFontSize: CGFloat { CGFloat(theme.bodySize) }
     private let maxVisibleLines: CGFloat = 6
     private var maxHeight: CGFloat {
-        // Approximate line height from font metrics (ascender/descender/leading)
-        let lineHeight = Self.lineHeight(forFontSize: inputFontSize)
         // Small extra padding so the last line isn't cramped
-        return lineHeight * maxVisibleLines + 8
-    }
-
-    // `NSFont.systemFont(ofSize:)` plus the ascender/descender/leading reads run
-    // on the main thread inside `body`/`sizeThatFits` on every layout pass, and
-    // the underlying font-descriptor/dynamic-type lookups have shown up as app
-    // hangs during layout. Line height is a pure function of the point size, so
-    // memoize it and serve the memo thereafter.
-    private static let lineHeightCacheLock = NSLock()
-    private nonisolated(unsafe) static var lineHeightCache: [CGFloat: CGFloat] = [:]
-    private static func lineHeight(forFontSize size: CGFloat) -> CGFloat {
-        lineHeightCacheLock.lock()
-        defer { lineHeightCacheLock.unlock() }
-        if let cached = lineHeightCache[size] { return cached }
-        let font = NSFont.systemFont(ofSize: size)
-        let lineHeight = font.ascender - font.descender + font.leading
-        lineHeightCache[size] = lineHeight
-        return lineHeight
+        composerTheme.lineHeight(.body) * maxVisibleLines + 8
     }
     private let maxImageSize: Int = 10 * 1024 * 1024  // 10MB limit
 
     private var canSend: Bool {
+        #if OSAURUS_DESIGN_SYSTEM
+        guard componentEnabled else { return false }
+        #endif
         // While the slash command popup is visible, Enter selects a command — not sends
         guard !showSlashPopup else { return false }
 
@@ -605,6 +648,7 @@ struct FloatingInputCard: View {
         // Locked composer (offline team agent, read-only teammate chat):
         // nothing sends until the lock clears.
         guard composerLock == nil else { return false }
+        guard !sendBlocked else { return false }
 
         // Context estimates drive the chip's warning, never send admission.
         // Only the runtime's tokenizer/template can establish that a request
@@ -761,14 +805,7 @@ struct FloatingInputCard: View {
         // remote agent is still connecting — the chat isn't usable yet — then
         // ease it back in on connect with the resolved pinned-model chip.
         guard !remoteConnectionPending, composerLock == nil else { return false }
-        return pickerItems.count > 1
-            || isModelPinned
-            || (contextBudget.displayTokens > 0 && !isRemoteAgentRun)
-            || isSandboxAvailable
-            || isDefaultConfigAgent
-            || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
-            || showCreditsChip
-            || workspacePoolLabel != nil
+        return selectedImagePickerItem != nil || visibleToggleChipCount > 0 || workspacePoolLabel != nil
     }
 
     /// Whether the credits chip (and its wallet panel) is available at all:
@@ -786,7 +823,7 @@ struct FloatingInputCard: View {
     /// Visibility gate for the credits chip. On top of availability, a balance
     /// must have actually been fetched: with no server-confirmed balance
     /// (offline at fetch time, router outage, auth failure) the chip's $0 /
-    /// "Add credits" states would be lies, so it stays hidden entirely. Shown
+    /// "Add Credits" states would be lies, so it stays hidden entirely. Shown
     /// in every session (not just router-billed ones) because credits are the
     /// account-level wallet other routed services will draw from too.
     private var showCreditsChip: Bool {
@@ -821,7 +858,9 @@ struct FloatingInputCard: View {
                             }
                         }
                         .padding(.top, 8)
-                        .padding(.horizontal, 20)
+                        // Same inset as the card below, so the row's first
+                        // chip lines up with the card's edge.
+                        .padding(.horizontal, 12)
                         // Ease the row out while connecting and back in once
                         // connected, so the composer height changes smoothly
                         // instead of snapping.
@@ -863,28 +902,59 @@ struct FloatingInputCard: View {
                 // keeps its full size so the notice above it doesn't shove
                 // the transcript around when the lock toggles.
                 .disabled(composerLock != nil)
-                .opacity(composerLock != nil ? 0.55 : 1)
+                .opacity(composerOpacity)
             }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
+        .animation(theme.motion.springAnimation, value: showVoiceOverlay)
         // Smoothly collapse/reveal the selector row (model chip + balance) as
         // the remote-agent connection resolves, so the composer doesn't snap.
-        .animation(theme.springAnimation(), value: remoteConnectionPending)
-        .animation(theme.springAnimation(), value: composerLock == nil)
+        .animation(theme.motion.springAnimation, value: remoteConnectionPending)
+        .animation(theme.motion.springAnimation, value: composerLock == nil)
+    }
+
+    private var inputCardWithAnchoredMenus: some View {
+        inputCard
+        .anchoredCard(isPresented: $showWorkflowPicker, size: CGSize(width: 640, height: workflowPickerHeight),
+                      alignment: .leading, constrainToWindow: true, takesFocus: true,
+                      shadowPadding: 18, gap: 4,
+                      accessibilityLabel: L("Workflows")) {
+            WorkflowCommandPicker(
+                onSelect: { workflowID in
+                    showWorkflowPicker = false
+                    WorkflowRunLauncher.openTab(workflowID: workflowID, agentId: effectiveAgentId)
+                },
+                onOpenWorkflows: {
+                    showWorkflowPicker = false
+                    ChatWindowManager.shared.showWorkflowsSurface()
+                })
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    if abs(workflowPickerHeight - height) > 0.5 { workflowPickerHeight = max(1, height) }
+                }
+        }
+        .anchoredCard(isPresented: Binding(get: { showSlashPopup }, set: { presented in
+            if !presented { dismissedSlashQuery = activeSlashQuery; syncPopupVisibility() }
+        }), size: CGSize(width: 0, height: slashMenuHeight),
+            alignment: .leading, constrainToWindow: true, takesFocus: false,
+            shadowPadding: 18, gap: 4, accessibilityLabel: L("Commands")) {
+            SlashCommandPopup(commands: slashFilteredCommands,
+                selectedIndex: $slashSelectedIndex, onSelect: applySlashCommand,
+                fitsPresentedHeight: slashMenuHeight > 0,
+                onIdealHeightChange: { height in
+                    if abs(slashMenuHeight - height) > 0.5 { slashMenuHeight = max(1, height) }
+                })
+        }
     }
 
     private var composerContent: some View {
-        inputCard
-        // Float the slash / "@" menus above the card instead of stacking
-        // them in the layout, so opening one never shifts the selector row
-        // or the transcript. The `.top` guide lifts the overlay fully above
-        // the card's top edge.
+        inputCardWithAnchoredMenus
+        // File completion stays in its existing inline overlay. Slash commands
+        // use the window-aware presenter above, keeping the input layout fixed.
         .overlay(alignment: .top) {
             composerPopupOverlay
                 .alignmentGuide(.top) { dimensions in dimensions.height + 4 }
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 20)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
         .onDrop(of: dropAcceptedTypes, isTargeted: $isDragOver) { providers in
             handleFileDrop(providers)
         }
@@ -913,7 +983,24 @@ struct FloatingInputCard: View {
         }
     }
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if let part = inspectorContextMenuPart {
+            if part == 7 {
+                VStack(alignment: .leading) {
+                    clipboardToggleChip(compact: false)
+                    ComposerTextObservationScope(model: composerText) {
+                        Text("Local chip draft: " + (composerText.text.isEmpty ? "empty" : composerText.text))
+                    }
+                }
+            }
+            else { folderContextChip(compact: false) }
+        } else { normalBody }
+        #else
+        normalBody
+        #endif
+    }
+    @ViewBuilder private var normalBody: some View {
         let _ = ChatPerfTrace.shared.count("body.FloatingInputCard")
         mainContent
             // Refresh the router balance whenever the wallet becomes available
@@ -951,12 +1038,12 @@ struct FloatingInputCard: View {
                 ) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(L("Preparing this model for efficient loading. This may take a while."))
-                            .font(.callout.weight(.semibold))
+                            .textStyle(.caption, weight: 600)
                         Text(L("Normally needed once unless model files change."))
-                            .font(.caption)
-                        Text(verbatim: progress.shard.lastPathComponent).font(.caption)
+                            .textStyle(.micro)
+                        Text(verbatim: progress.shard.lastPathComponent).textStyle(.micro)
                         if progress.stage == .verifying {
-                            Text(L("Verifying model data before replacement…")).font(.caption)
+                            Text(L("Verifying model data before replacement…")).textStyle(.micro)
                         } else {
                             ProgressView(
                                 value: Double(progress.copiedBytes),
@@ -966,12 +1053,13 @@ struct FloatingInputCard: View {
                     }
                     .padding(14)
                     .frame(maxWidth: 340)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    .background(theme.surface.overlay, in: RoundedRectangle(cornerRadius: theme.radius.large))
+                    .overlay(RoundedRectangle(cornerRadius: theme.radius.large).strokeBorder(theme.border.default, lineWidth: theme.stroke.default))
                     .accessibilityIdentifier("alignment-preparation-progress")
                     .alignmentGuide(.top) { $0[.bottom] + 8 }
                 }
             }
-            .animation(.easeOut(duration: 0.2), value: configContextTooSmall)
+            .animation(theme.motion.quick, value: configContextTooSmall)
             .modifier(
                 MTPLayoutAdvisoryRearmModifier(
                     rearm: rearmMTPLayoutAdvisory
@@ -984,7 +1072,7 @@ struct FloatingInputCard: View {
                 // Execution choices are mutually exclusive in both behavior
                 // and presentation. Clear a restored folder if this agent
                 // already has Sandbox enabled when the chat appears.
-                if isSandboxEnabled {
+                if isSandboxEnabled, !folderState.isAdoptingHostFolder {
                     folderState.clearFolder()
                 }
                 refreshMTPLayoutAdvisory()
@@ -996,22 +1084,9 @@ struct FloatingInputCard: View {
                 // Focus immediately when view appears
                 isFocused = true
 
-                // Load voice config (cached after first load)
+                // Load voice config (cached after first load). The speech
+                // model itself loads on the first mic tap, not here.
                 loadVoiceConfig()
-
-                if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded
-                    && !speechService.isLoadingModel
-                    && speechService.microphonePermissionGranted
-                {
-                    if let model = SpeechModelManager.shared.selectedModel {
-                        print("[VoiceDebug] Kicking off model load for: \(model.id)")
-                        Task {
-                            try? await speechService.loadModelAutomatically(model.id)
-                        }
-                    } else {
-                        print("[VoiceDebug] No selected model — cannot load")
-                    }
-                }
 
                 if speechService.isRecording {
                     if voiceInputState == .idle {
@@ -1026,8 +1101,10 @@ struct FloatingInputCard: View {
             }
             .onChange(of: isSandboxEnabled) { _, enabled in
                 // The setting is agent-scoped, so this also clears folders in
-                // other visible chats when Sandbox is enabled elsewhere.
-                if enabled {
+                // other visible chats when Sandbox is enabled elsewhere. It
+                // also flips on an agent switch, while a project or agent
+                // default folder is still on its way to turning it off.
+                if enabled, !folderState.isAdoptingHostFolder {
                     folderState.clearFolder()
                 }
             }
@@ -1058,15 +1135,6 @@ struct FloatingInputCard: View {
             .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
                 // Reload voice config when settings change
                 loadVoiceConfig()
-
-                if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded
-                    && !speechService.isLoadingModel
-                    && speechService.microphonePermissionGranted
-                {
-                    if let model = SpeechModelManager.shared.selectedModel {
-                        Task { try? await speechService.loadModelAutomatically(model.id) }
-                    }
-                }
             }
             .onChange(of: isStreaming) { wasStreaming, nowStreaming in
                 // Safety net: if focus was lost during streaming (e.g.
@@ -1123,6 +1191,7 @@ struct FloatingInputCard: View {
                 }
             }
             .onChange(of: showSlashPopup) { _, _ in
+                if showSlashPopup { slashMenuHeight = 0 }
                 // Keep registry in sync so the global key monitor can suppress
                 // Escape from closing the window while either popup is open.
                 syncPopupVisibility()
@@ -1436,11 +1505,19 @@ extension FloatingInputCard {
         }
 
         guard isVoiceAvailable else {
-            print(
-                "[VoiceDebug] startVoiceInput called but isVoiceAvailable=false — triggering emergency load if possible"
-            )
-            if let model = SpeechModelManager.shared.selectedModel, !speechService.isLoadingModel {
-                Task { try? await speechService.loadModel(model.id) }
+            // The model loads on first use: load it, then start recording
+            // from this same tap. The mic button shows its loading state
+            // meanwhile; a failed load lands in `speechService.lastError`.
+            guard isVoiceConfigured, let model = SpeechModelManager.shared.selectedModel,
+                !speechService.isLoadingModel
+            else { return }
+            Task { @MainActor in
+                do {
+                    try await speechService.loadModel(model.id)
+                } catch {
+                    return
+                }
+                if isVoiceAvailable { startVoiceInput() }
             }
             return
         }
@@ -1495,6 +1572,8 @@ extension FloatingInputCard {
                     showVoiceOverlay = false
                     if case SpeechError.microphonePermissionDenied = error {
                         showMicPermissionAlert = true
+                    } else {
+                        speechService.lastError = error.localizedDescription
                     }
                 }
             }
@@ -1892,7 +1971,7 @@ extension FloatingInputCard {
         // Sending under a model-switch advisory accepts the new model, so the
         // advisory has nothing left to ask.
         if modelSwitchContinuityWarning != nil {
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(theme.motion.quick) {
                 onDismissModelSwitchContinuityWarning?()
             }
         }
@@ -2010,6 +2089,11 @@ extension FloatingInputCard {
             text = newText
             isFocused = true
             onSkillSelected?(command.id)
+        case .workflow:
+            let newText = replacingSlashToken(with: "")
+            localText = newText
+            text = newText
+            WorkflowRunLauncher.openTab(workflowID: command.id, agentId: effectiveAgentId)
         }
     }
 
@@ -2251,18 +2335,18 @@ extension FloatingInputCard {
             }()
             HStack(spacing: 5) {
                 Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(11, weight: .medium)
+                    .foregroundColor(theme.status.info.foreground)
                 Text("Queued:", bundle: .module)
-                    .font(theme.font(size: 11, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .textStyle(.footnote, weight: 600)
+                    .foregroundColor(theme.status.info.foreground)
                 Text(verbatim: preview)
-                    .font(theme.font(size: 11, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.footnote, weight: 500)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Button {
-                    withAnimation(theme.springAnimation()) {
+                    withAnimation(theme.motion.springAnimation) {
                         if let onCancelQueued {
                             onCancelQueued()
                         } else {
@@ -2271,10 +2355,10 @@ extension FloatingInputCard {
                     }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(7, weight: .bold)
+                        .foregroundColor(theme.text.secondary)
                         .padding(3)
-                        .background(Circle().fill(theme.tertiaryBackground))
+                        .background(Circle().fill(theme.surface.hover))
                 }
                 .buttonStyle(.plain)
                 .pointingHandCursor()
@@ -2283,12 +2367,12 @@ extension FloatingInputCard {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.accentColor.opacity(0.12))
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(theme.status.info.background)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .strokeBorder(theme.status.info.border, lineWidth: theme.hairline)
             )
         }
     }
@@ -2300,47 +2384,60 @@ extension FloatingInputCard {
         if let skillId = pendingSkillId,
             let skill = SkillManager.shared.skill(for: skillId)
         {
-            HStack(spacing: 5) {
+            SharedChipContent(spacing: theme.assignedMetric("component.library.23.gap", fallback: 5)) {
                 Image(systemName: "wand.and.stars")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(11, weight: .medium)
+                    .composerChipInk("secondary", fallback: theme.text.secondary)
                 Text(skill.name)
-                    .font(theme.font(size: 11, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .composerChipTextStyle(.footnote, weight: 500)
+                    .composerChipInk("foreground", fallback: theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Button {
-                    withAnimation(theme.springAnimation()) {
+                    withAnimation(theme.motion.springAnimation) {
                         pendingSkillId = nil
                     }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(7, weight: .bold)
+                        .composerChipInk("secondary", fallback: theme.text.secondary)
                         .padding(3)
-                        .background(Circle().fill(theme.tertiaryBackground))
+                        .background(Circle().fill(theme.surface.hover))
                 }
-                .buttonStyle(.plain)
+                .composerChipButtonStyle()
                 .pointingHandCursor()
             }
+            #if OSAURUS_DESIGN_SYSTEM
+            .composerChipSurface(selected: true)
+            #else
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.accentColor.opacity(0.1))
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(theme.surface.raised)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .strokeBorder(theme.border.default, lineWidth: theme.hairline)
             )
+            #endif
         }
     }
 
     // MARK: - Pending Attachments Preview (Inline)
 
+    private var pendingAttachmentRowHeight: CGFloat {
+        let documentHeight = max(AttachmentInspectionStyle.documentHeight(theme),
+            20 + 2 * AttachmentInspectionStyle.metric("padding", 5, theme))
+        if !pendingAttachments.contains(where: \.isImage) {
+            return documentHeight
+        }
+        return max(documentHeight, AttachmentInspectionStyle.imageHeight(theme, fallback: 40))
+    }
+
     private var inlinePendingAttachmentsPreview: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(alignment: .top, spacing: AttachmentInspectionStyle.rowGap(theme)) {
                 ForEach(pendingAttachments) { attachment in
                     switch attachment.kind {
                     case .image(let data):
@@ -2348,7 +2445,7 @@ extension FloatingInputCard {
                             imageData: data,
                             size: 40,
                             onRemove: {
-                                withAnimation(theme.springAnimation()) {
+                                withAnimation(theme.motion.springAnimation) {
                                     pendingAttachments.removeAll { $0.id == attachment.id }
                                 }
                             },
@@ -2366,7 +2463,7 @@ extension FloatingInputCard {
                                 imageData: data,
                                 size: 40,
                                 onRemove: {
-                                    withAnimation(theme.springAnimation()) {
+                                    withAnimation(theme.motion.springAnimation) {
                                         pendingAttachments.removeAll { $0.id == attachment.id }
                                     }
                                 },
@@ -2379,7 +2476,7 @@ extension FloatingInputCard {
                         DocumentChip(
                             attachment: attachment,
                             onRemove: {
-                                withAnimation(theme.springAnimation()) {
+                                withAnimation(theme.motion.springAnimation) {
                                     pendingAttachments.removeAll { $0.id == attachment.id }
                                 }
                             },
@@ -2403,15 +2500,20 @@ extension FloatingInputCard {
                         // round-trip through chat history. Same on-remove
                         // semantics as image/document chips.
                         DocumentChip(attachment: attachment) {
-                            withAnimation(theme.springAnimation()) {
+                            withAnimation(theme.motion.springAnimation) {
                                 pendingAttachments.removeAll { $0.id == attachment.id }
                             }
                         }
                     }
                 }
             }
+            .frame(maxHeight: .infinity, alignment: .topLeading)
+            // Reserve only the remove badges' outward overhang so the
+            // horizontal scroll viewport does not clip their top/right edges.
+            .padding(.top, theme.space.s4)
+            .padding(.trailing, theme.space.s4)
         }
-        .frame(height: 48)
+        .frame(height: pendingAttachmentRowHeight + theme.space.s4)
         .sheet(item: $pastedContentPreview) { attachment in
             PastedContentSheet(attachment: attachment) {
                 pastedContentPreview = nil
@@ -2447,7 +2549,7 @@ extension FloatingInputCard {
         } else {
             combined = existing + "\n" + content
         }
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             pendingAttachments.removeAll { $0.id == attachment.id }
         }
         localText = combined
@@ -2758,10 +2860,6 @@ extension FloatingInputCard {
 
     private var selectorRow: some View {
         HStack(spacing: 6) {
-            if !pickerItems.isEmpty || isModelPinned || isHarnessAgent || !pickerHarnessRuntimes.isEmpty {
-                modelSelectorChip
-            }
-
             // Image-generation models have no thinking, sandbox, folder or
             // token-budget semantics — those chips would all be inert. Swap
             // the whole row for the image config controls instead so they sit
@@ -2770,18 +2868,20 @@ extension FloatingInputCard {
                 // Scroll the config chips horizontally so a narrow (minimum-size)
                 // window can't compress them below their ideal width — that
                 // compression is what made the labels wrap character-by-character.
-                // The ScrollView fills the free space, leaving the negative-prompt
-                // button pinned to the right where the token meter normally sits.
+                // The negative prompt rides at the end of the same row: pinned
+                // outside, its free-length label squeezed the chips instead.
                 ScrollView(.horizontal, showsIndicators: false) {
-                    imageComposerChips
-                        .padding(.vertical, 2)
-                }
-                // The negative prompt sits where the token meter normally would,
-                // as a compact button that opens a themed editor on tap.
-                if selectedMediaPickerItem?.mediaModel != nil
-                    || imageComposerControls.negativePrompt
-                {
-                    negativePromptButton
+                    HStack(spacing: 6) {
+                        imageComposerChips
+                        // A compact button that opens a themed editor on tap.
+                        if selectedMediaPickerItem?.mediaModel != nil
+                            || imageComposerControls.negativePrompt
+                        {
+                            negativePromptButton
+                        }
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.vertical, 2)
                 }
             } else {
                 // The interactive toggle chips collapse to icon-only when the
@@ -2833,7 +2933,7 @@ extension FloatingInputCard {
     /// the sidebar open, which leaves the chat pane only ~260pt). Here the meta
     /// cluster gives up its lowest-priority pieces so the toggle chips still fit
     /// without being clipped mid-icon: the token readout is dropped and the
-    /// credits CTA shrinks to its glyph (hover/tap still opens the wallet).
+    /// credits CTA shrinks to its glyph (click opens the wallet).
     private var metaUltraCompact: Bool {
         selectorRowWidth > 0 && selectorRowWidth < 430
     }
@@ -2856,17 +2956,13 @@ extension FloatingInputCard {
     private var visibleToggleChipCount: Int {
         var count = 0
         if autoSpeakAssistant { count += 1 }
+        if isSandboxLeaseBlocked { count += 1 }
         // Configuration chip, or the folder chip once a folder is active.
-        if !isRemoteAgentRun, isDefaultConfigAgent || folderState.hasActiveFolder { count += 1 }
-        if AppConfiguration.shared.chatConfig.enableClipboardMonitoring
-            && clipboardService.hasNewContent
-        {
-            count += 1
-        }
+        if !isRemoteAgentRun, folderState.hasActiveFolder { count += 1 }
         return count
     }
 
-    /// The interactive toggle chips (auto-speak, sandbox, folder, clipboard)
+    /// The interactive toggle chips (auto-speak, sandbox, folder)
     /// as one horizontal group. Thinking is controlled from the model picker
     /// `Model Options` section and reflected as the brain glyph on the model
     /// chip, so changing reasoning mode always goes through the model-scoped
@@ -2881,6 +2977,10 @@ extension FloatingInputCard {
                 autoSpeakToggleChip(compact: compact)
             }
 
+            if isSandboxLeaseBlocked {
+                sandboxToggleChip(compact: compact)
+            }
+
             // Folder selection lives in the + attach menu now, so the chip
             // only appears once a folder is active (it still carries the
             // change/refresh/clear affordances). The Default (configuration)
@@ -2888,15 +2988,9 @@ extension FloatingInputCard {
             if !isRemoteAgentRun {
                 if folderState.hasActiveFolder {
                     folderContextChip(compact: compact)
-                } else if isDefaultConfigAgent {
-                    configurationOnlyChip(compact: compact)
                 }
             }
 
-            // Clipboard / paste chip — last in the left cluster.
-            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
-                clipboardToggleChip(compact: compact)
-            }
         }
     }
 
@@ -2911,7 +3005,6 @@ extension FloatingInputCard {
         // it's not actionable yet and competes with the connect affordance.
         // A remote agent's run (workspace or directly shared) never draws
         // from this Mac's wallet, so the personal balance is noise there.
-        let showCredits = showCreditsChip && !remoteConnectionPending && !isRemoteAgentRun
         // Pool-billed chat — a teammate's agent (billed by its host, relayed
         // live) or one of this Mac's own shared agents with "Bill the
         // workspace pool" on: show that spend explicitly rather than the
@@ -2923,15 +3016,6 @@ extension FloatingInputCard {
                 spendMicro: sessionSpendMicro,
                 metaCompact: metaCompact,
                 metaUltraCompact: metaUltraCompact
-            )
-        } else if showCredits {
-            FloatingCreditsChip(
-                isRouterBilledSession: isRouterBilledSession,
-                sessionSpendMicro: sessionSpendMicro,
-                sessionCachedInputLabel: sessionCachedInputLabel,
-                metaCompact: metaCompact,
-                metaUltraCompact: metaUltraCompact,
-                onAddCredits: onAddCredits
             )
         }
     }
@@ -3020,11 +3104,6 @@ extension FloatingInputCard {
         selectedMediaPickerItem != nil
     }
 
-    private var isSelectedModelDeprecated: Bool {
-        guard let id = selectedModel else { return false }
-        return ModelManager.replacementForDeprecatedModel(id) != nil
-    }
-
     private var isSelectedModelLocal: Bool {
         guard let id = selectedModel else { return false }
         // Cache-only lookup: this getter runs in view-body context (and on
@@ -3049,13 +3128,26 @@ extension FloatingInputCard {
     }
 
     private var modelWarmupDotColor: Color {
+        #if OSAURUS_DESIGN_SYSTEM
+        if !componentEnabled { return theme.assignedColor("component.library.23.disabledForeground", fallback: theme.text.disabled) }
+        #endif
         // Remote models and remote agent runs execute elsewhere — there is
         // no local load state to report.
-        guard isSelectedModelLocal, !isRemoteAgentRun else { return .green }
+        guard isSelectedModelLocal, !isRemoteAgentRun else {
+            #if OSAURUS_DESIGN_SYSTEM
+            return theme.status.success.foreground
+            #else
+            return .green
+            #endif
+        }
         // Lazy loading: readiness is residency. Green only while the model is
         // actually loaded — a merely selected model is gray until the first
         // Send loads it, and an idle unload turns it gray again.
+        #if OSAURUS_DESIGN_SYSTEM
+        return warmupController.selectedModelResident ? theme.status.success.foreground : theme.text.tertiary
+        #else
         return warmupController.selectedModelResident ? .green : .gray
+        #endif
     }
 
     /// Residency tooltip for the model chip, applied as a modifier so only
@@ -3063,7 +3155,6 @@ extension FloatingInputCard {
     /// and prefill progress is the ordinary inference progress UI
     /// (`InferenceProgressManager`); the tooltip states residency only.
     private struct ModelWarmupHelp: ViewModifier {
-        let isDeprecated: Bool
         /// `isSelectedModelLocal && !isRemoteAgentRun` — a local model whose
         /// load state is knowable.
         let isLocalModelRun: Bool
@@ -3078,13 +3169,7 @@ extension FloatingInputCard {
         }
 
         private var modelHelp: String {
-            let status = isDeprecated
-                ? String(
-                    localized: "This model is outdated. Click to switch to a newer version.",
-                    bundle: .module
-                )
-                : helpText
-            return [status, modelDetails].filter { !$0.isEmpty }.joined(separator: "\n")
+            [helpText, modelDetails].filter { !$0.isEmpty }.joined(separator: "\n")
         }
 
         private var helpText: String {
@@ -3113,27 +3198,60 @@ extension FloatingInputCard {
     /// plus the Claude Code model it launches with.
     private var harnessChipLabel: some View {
         let missing = harnessRuntime == nil
-        return HStack(spacing: 6) {
-            Image(systemName: missing ? "exclamationmark.triangle.fill" : "terminal.fill")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                .foregroundColor(missing ? theme.warningColor : theme.tertiaryText)
+        return SharedChipContent(spacing: theme.assignedMetric("component.library.23.gap", fallback: 6)) {
             Text(harnessRuntime?.displayName ?? L("Runtime missing"))
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(missing ? theme.warningColor : theme.secondaryText)
+                .composerChipTextStyle(.caption, weight: 500)
+                .composerChipInk(missing ? "error" : "foreground", fallback: missing ? theme.status.warning.foreground : theme.text.secondary)
                 .lineLimit(1)
             if let model = harnessClaudeModelLabel {
                 Text(verbatim: "· \(model)")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                    .foregroundColor(theme.tertiaryText)
+                    .composerChipTextStyle(.caption, property: "caption")
+                    .composerChipInk("secondary", fallback: theme.text.tertiary)
                     .lineLimit(1)
             }
+            Image(systemName: "chevron.up.chevron.down")
+                .composerChipTextStyle(.caption, property: "caption")
+                .composerChipInk("secondary", fallback: theme.text.tertiary)
         }
+        .modifier(CappedHuggingWidth(maxWidth: Self.modelChipMaxLabelWidth))
     }
 
     private var harnessClaudeModelLabel: String? {
         guard let runtime = harnessRuntime, runtime.kind == .claudeCode else { return nil }
-        let model = agentManager.effectiveClaudeCodeConfig(for: effectiveAgentId).resolvedModel
-        return ClaudeCodeModel(rawValue: model) != nil ? model.capitalized : model
+        let config = agentManager.effectiveClaudeCodeConfig(for: effectiveAgentId)
+        let model = config.resolvedModel
+        let label = ClaudeCodeModel(rawValue: model) != nil ? model.capitalized : model
+        guard let effort = config.resolvedEffort else { return label }
+        return "\(label) · \(effort.displayName)"
+    }
+
+    /// Claude Code's Reasoning Effort for the picker's options column. The
+    /// same `effort` the agent's Claude Code Options edit, so both stay in
+    /// step; the chat's process relaunches with it on the next message.
+    private var harnessPickerOptionsControl: ModelPickerOptionsControl? {
+        guard let runtime = harnessRuntime, runtime.kind == .claudeCode else { return nil }
+        let agentId = effectiveAgentId
+        let config = agentManager.effectiveClaudeCodeConfig(for: agentId)
+        let optionID = ClaudeCodeEffort.pickerOptionID
+        return ModelPickerOptionsControl(
+            capabilities: nil,
+            options: [ClaudeCodeEffort.pickerOption],
+            values: config.resolvedEffort.map { [optionID: .string($0.rawValue)] } ?? [:],
+            defaults: [optionID: .string(ModelOptionSegment.defaultID)],
+            onChange: { _, newValue in
+                // Deferred: the chip anchoring the popover renders the effort,
+                // and resizing it during the popover's own update crashes
+                // NSPopover.
+                DispatchQueue.main.async {
+                    var updated = agentManager.effectiveClaudeCodeConfig(for: agentId)
+                    let effort = ClaudeCodeEffort.storedValue(forSegment: newValue?.stringValue)
+                    guard updated.resolvedEffort?.rawValue != effort else { return }
+                    updated.effort = effort
+                    agentManager.updateClaudeCodeConfig(updated, for: agentId)
+                    harnessConfigRevision &+= 1
+                }
+            }
+        )
     }
 
     private var harnessChipHelp: String? {
@@ -3185,20 +3303,17 @@ extension FloatingInputCard {
     /// pinned to the remote agent's own model — no chevron, no popover, just the
     /// model name and a lock glyph. Styled to match the resting `SelectorChip`.
     private var pinnedModelChip: some View {
-        HStack(spacing: 6) {
+        SharedChipContent(spacing: theme.assignedMetric("component.library.23.gap", fallback: 6)) {
             Image(systemName: "lock.fill")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(10)
+                .composerChipInk("secondary", fallback: theme.text.tertiary)
             Text(pinnedModelLabel ?? selectedPickerItem?.displayName ?? L("Default"))
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .composerChipTextStyle(.caption, weight: 500)
+                .composerChipInk("foreground", fallback: theme.text.secondary)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(theme.secondaryBackground.opacity(0.8)))
-        .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1))
-        .clipShape(Capsule())
+        .modifier(CappedHuggingWidth(maxWidth: Self.modelChipMaxLabelWidth))
+        .modifier(QuietChipSurface(isActive: false, isHovered: false))
         .localizedHelp(
             "This chat runs on the remote agent's own model — chosen by the agent's owner and not changeable here."
         )
@@ -3211,7 +3326,8 @@ extension FloatingInputCard {
             providers: chatPickerProviders,
             selectedModel: selectedModel,
             optionsControl: modelPickerOptionsControl,
-            selectedHarnessID: selectedHarnessPickerID
+            selectedHarnessID: selectedHarnessPickerID,
+            harnessOptionsControl: harnessPickerOptionsControl
         )
         showModelPicker = true
     }
@@ -3238,7 +3354,7 @@ extension FloatingInputCard {
     }
 
     private var interactiveModelSelectorChip: some View {
-        SelectorChip(isActive: showModelPicker) {
+        SelectorChip(isActive: showModelPicker, quiet: true) {
             if showModelPicker { dismissModelPicker() }
             else { openModelPicker() }
         } content: {
@@ -3255,7 +3371,6 @@ extension FloatingInputCard {
         // Chip-wide hover target: the 6px dot alone is too small to hover.
         .modifier(
             ModelWarmupHelp(
-                isDeprecated: isSelectedModelDeprecated,
                 isLocalModelRun: isSelectedModelLocal && !isRemoteAgentRun,
                 selectedModel: selectedModel,
                 modelDetails: modelSelectorDetails,
@@ -3263,7 +3378,8 @@ extension FloatingInputCard {
                 warmupController: warmupController
             )
         )
-        .anchoredCard(isPresented: $showModelPicker, size: modelPickerCardSize, accessibilityLabel: L("Model picker")) {
+        .anchoredCard(isPresented: $showModelPicker, size: theme.assignedPickerCardSize(modelPickerCardSize),
+                      constrainToWindow: true, accessibilityLabel: L("Model picker")) {
             ChatModelPickerCard(
                 // `anchoredCard` builds this content on every body pass, open
                 // or not, and grouping + sorting every picker item is the
@@ -3272,6 +3388,7 @@ extension FloatingInputCard {
                 selectedModel: $selectedModel,
                 optionsControl: modelPickerOptionsControl,
                 selectedHarnessID: selectedHarnessPickerID,
+                harnessOptionsControl: harnessPickerOptionsControl,
                 runtimeSwitchLocked: isStreaming,
                 onSelectHarness: { selectHarness($0) },
                 onExploreLocal: {
@@ -3325,60 +3442,21 @@ extension FloatingInputCard {
     }
 
     private var builtInModelChipLabel: some View {
-        HStack(spacing: 6) {
-            if isSelectedModelDeprecated {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(.orange)
-                    .localizedHelp("This model is outdated. Click to switch to a newer version.")
-            } else {
-                // Tooltip comes from the chip-wide `.help` below — the
-                // 6px dot is too small to be its own hover target.
-                Circle()
-                    .fill(modelWarmupDotColor)
-                    .frame(width: 6, height: 6)
-            }
-
-            // Model name and reasoning text, without suffix icons.
-            if let option = selectedPickerItem {
-                HStack(spacing: 4) {
-                    Text(option.displayName)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(isSelectedModelDeprecated ? .orange : theme.secondaryText)
-                        .lineLimit(1)
-
-                    // Effective reasoning effort/mode for models with a
-                    // segmented reasoning option (Codex catalog, official
-                    // OpenAI GPT-5.6, DSV4/Mistral/Hy3 profiles),
-                    // matching ChatGPT's "model · effort" hierarchy.
-                    // Shows the catalog/profile default when no explicit
-                    // choice exists.
-                    if let suffix = inlineReasoningSuffix {
-                        Text(verbatim: "· \(suffix)")
-                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                    }
-
-                    if !isCompact, let params = option.parameterCount {
-                        Text(params)
-                            .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
-                            .foregroundColor(.blue.opacity(0.8))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(
-                                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                    .fill(Color.blue.opacity(0.12))
-                            )
-                    }
-                }
-            } else {
-                Text("Select Model", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
+        SharedChipContent(spacing: theme.assignedMetric("component.library.23.gap", fallback: 4)) {
+            Text(selectedPickerItem?.displayName ?? L("Select Model"))
+                .composerChipTextStyle(.caption)
+                .composerChipInk("foreground", fallback: theme.text.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Image(systemName: "chevron.up.chevron.down")
+                .composerChipTextStyle(.caption, property: "caption")
+                .composerChipInk("secondary", fallback: theme.text.tertiary)
         }
+        .modifier(CappedHuggingWidth(maxWidth: Self.modelChipMaxLabelWidth))
     }
+
+    /// Past this the model name truncates; below it the chip hugs the name.
+    static let modelChipMaxLabelWidth: CGFloat = 200
 
     private var cloudPickerItems: [ModelPickerItem] {
         pickerItems.filter {
@@ -3576,20 +3654,20 @@ extension FloatingInputCard {
     @ViewBuilder
     private func autoSpeakToggleChip(compact: Bool) -> some View {
         SelectorChip(isActive: autoSpeakAssistant) {
-            withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+            withAnimation(theme.motion.springAnimation) {
                 autoSpeakAssistant.toggle()
             }
         } content: {
-            HStack(spacing: 5) {
+            SharedChipContent(spacing: theme.assignedMetric("component.library.23.gap", fallback: 5)) {
                 Image(systemName: autoSpeakAssistant ? "checkmark.square.fill" : "square")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                    .foregroundColor(autoSpeakAssistant ? theme.accentColor : theme.tertiaryText)
+                    .glyphSize(11, weight: .semibold)
+                    .composerChipInk(autoSpeakAssistant ? "foreground" : "secondary", fallback: autoSpeakAssistant ? theme.text.primary : theme.text.tertiary)
                     .contentTransition(.symbolEffect(.replace))
 
                 if !compact {
                     Text("Auto-speak", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(autoSpeakAssistant ? theme.secondaryText : theme.tertiaryText)
+                        .composerChipTextStyle(.caption, weight: 500)
+                        .composerChipInk(autoSpeakAssistant ? "foreground" : "secondary", fallback: autoSpeakAssistant ? theme.text.secondary : theme.text.tertiary)
                         .lineLimit(1)
                         .fixedSize()
                 }
@@ -3619,7 +3697,7 @@ extension FloatingInputCard {
     /// when the selected model's window is too small (e.g. Foundation at
     /// 4K), configuration genuinely can't run and the send is blocked.
     private var configContextTooSmall: Bool {
-        guard isDefaultConfigAgent, let model = selectedModel else { return false }
+        guard isDefaultConfigAgent, !isRemoteAgentRun, let model = selectedModel else { return false }
         return ContextSizeResolver.resolve(modelId: model).sizeClass.disablesTools
     }
 
@@ -3643,20 +3721,14 @@ extension FloatingInputCard {
         return Int((progress * 100).rounded())
     }
 
-    /// True during the cold-path runtime fetch (kernel/initfs download + image
-    /// pull/unpack); warm boots skip these steps.
-    private var isSandboxDownloadingRuntime: Bool {
-        guard isSandboxLoading, let step = sandboxState.journey?.currentStepID else { return false }
-        switch step {
-        case .downloadKernel, .downloadInitFS, .createContainer:
-            return true
-        default:
-            return false
-        }
-    }
-
     private var sandboxChipLabel: LocalizedStringKey {
-        isSandboxDownloadingRuntime ? "Downloading runtime…" : "Sandbox"
+        if isSandboxLeaseBlocked { return "Sandbox unavailable" }
+        guard isSandboxLoading, let step = sandboxState.journey?.currentStepID else { return "Sandbox" }
+        switch step {
+        case .downloadKernel, .downloadInitFS: return "Downloading runtime…"
+        case .createContainer: return "Setting up sandbox…"
+        default: return "Sandbox"
+        }
     }
 
     private var isSandboxRunning: Bool {
@@ -3676,10 +3748,17 @@ extension FloatingInputCard {
         isSandboxEnabled && sandboxFailure != nil
     }
 
+    /// The composer has no sandbox chip; it appears only while another
+    /// Osaurus app holds the VM, since only the user can free it. The lease
+    /// is per user, so every sandbox chat is blocked, not just the agent the
+    /// registrar last published for.
+    private var isSandboxLeaseBlocked: Bool {
+        !isRemoteAgentRun && !isDefaultConfigAgent && isSandboxEnabled && sandboxFailure?.leaseOwner != nil
+    }
+
     /// True when the sandbox is on but outbound network is turned off for
-    /// this agent. Egress is the per-agent `sandboxNetworkEnabled` toggle,
-    /// reconciled onto the VM at boot — so this reflects what the sandbox
-    /// will actually permit. Surfaced on the chip so a network-less sandbox
+    /// this agent (its own `sandboxNetworkEnabled`, which the egress proxy
+    /// enforces per agent). Surfaced on the chip so a network-less sandbox
     /// is visible up front, instead of the model discovering it only when a
     /// `curl`/`urllib` call fails mid-task.
     private var isSandboxNetworkDisabled: Bool {
@@ -3696,18 +3775,19 @@ extension FloatingInputCard {
         }
     }
 
-    /// Primary tap on the sandbox chip. While the sandbox is starting
-    /// up — or has failed — we route the click into the Settings →
-    /// Sandbox tab so the user can see the real-time provisioning
-    /// journey (step list, byte progress, ETA, retry button) instead
-    /// of staring at an opaque pulsing pill. Toggling on/off only
-    /// makes sense once the sandbox is in a settled state.
+    /// Primary tap on the sandbox chip. Off: turn it on. A lease conflict:
+    /// the resolver, since only the user can quit the other app. Otherwise
+    /// the status popover, so a click never silently turns the sandbox off.
     private func handleSandboxChipTap() {
-        if isSandboxLoading || isSandboxFailed {
-            AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
+        guard isSandboxEnabled else {
+            toggleSandbox()
             return
         }
-        toggleSandbox()
+        if let owner = sandboxFailure?.leaseOwner {
+            SandboxLeaseConflictResolver.present(owner, agentId: effectiveAgentId)
+            return
+        }
+        showSandboxPopover = true
     }
 
     private func toggleSandbox() {
@@ -3732,6 +3812,10 @@ extension FloatingInputCard {
                 // model via SandboxToolRegistrar's unavailability notice.
                 debugLog(
                     "[Sandbox] Toggle failed for agent \(agentId): \(error.localizedDescription)"
+                )
+                _ = ToastManager.shared.error(
+                    newConfig.enabled ? L("Couldn't turn on the sandbox") : L("Couldn't turn off the sandbox"),
+                    message: error.localizedDescription
                 )
                 var rollback = newConfig
                 rollback.enabled.toggle()
@@ -3920,8 +4004,10 @@ extension FloatingInputCard {
 
     private var sandboxHelpText: String {
         let base: String
-        if let failure = sandboxFailure, isSandboxEnabled {
-            return "Sandbox unavailable: \(failure.message)\nClick to open Sandbox settings."
+        if isSandboxLeaseBlocked, let owner = sandboxFailure?.leaseOwner {
+            return SandboxLeaseConflictResolver.explanation(for: owner) + "\n" + L("Click to fix.")
+        } else if let failure = sandboxFailure, isSandboxEnabled {
+            return "Sandbox unavailable: \(failure.message)\nClick for details."
         } else if isSandboxLoading {
             // Name the live phase (e.g. "Downloading initfs…") when available.
             if let phase = sandboxState.provisioningPhase, !phase.isEmpty {
@@ -3929,18 +4015,16 @@ extension FloatingInputCard {
             }
             return "Sandbox is starting up — click to view progress."
         } else if isSandboxEnabled && isSandboxRunning {
-            base = "Sandbox is active — click to disable. Right-click for settings."
+            base = "Sandbox is on — click for status and options."
         } else if isSandboxEnabled {
-            base = "Sandbox enabled — container not running"
+            base = "Sandbox is on — it starts when this agent runs a command."
         } else {
             base = "Enable Sandbox for autonomous code execution"
         }
         // Spell out the egress restriction so the user understands the
-        // wifi.slash badge — and why the model can't fetch URLs. Takes
-        // effect on the next sandbox start.
+        // wifi.slash badge — and why the model can't fetch URLs.
         if isSandboxNetworkDisabled {
-            return base
-                + "\nOutbound network is off — enable it in Sandbox settings (applies on next sandbox start)."
+            return base + "\nNetwork is off for this agent — change it in the agent's Sandbox settings."
         }
         return base
     }
@@ -3949,10 +4033,15 @@ extension FloatingInputCard {
     /// briefly-flapping container that came up but failed to provision still
     /// reads as red.
     private var sandboxChipAccent: Color {
-        if isSandboxFailed { return .red }
-        if isSandboxLoading { return .orange }
-        if isSandboxEnabled && isSandboxRunning { return .green }
-        return theme.tertiaryText
+        sandboxChipStatus?.foreground ?? theme.text.tertiary
+    }
+
+    /// Status tone for the chip's current state; nil when idle.
+    private var sandboxChipStatus: ThemeStatusSet<Color>? {
+        if isSandboxFailed { return theme.status.error }
+        if isSandboxLoading { return theme.status.warning }
+        if isSandboxEnabled && isSandboxRunning { return theme.status.success }
+        return nil
     }
 
     private func sandboxToggleChip(compact: Bool) -> some View {
@@ -3961,25 +4050,25 @@ extension FloatingInputCard {
         // chip's subtree — not the whole card body.
         HoverScope { isSandboxHovered in
             Button(action: handleSandboxChipTap) {
-                HStack(spacing: 5) {
+                SharedChipContent(spacing: theme.space.s4) {
                     if isSandboxFailed {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.red)
+                            .glyphSize(8, weight: .bold)
+                            .foregroundColor(theme.status.error.foreground)
                     } else if isSandboxLoading {
                         ProgressView()
                             .controlSize(.mini)
                             .scaleEffect(0.6)
                             .frame(width: 8, height: 8)
-                            .tint(Color.orange)
+                            .tint(theme.status.warning.foreground)
                     } else if isSandboxEnabled && isSandboxRunning {
                         Circle()
-                            .fill(Color.green)
+                            .fill(theme.status.success.foreground)
                             .frame(width: 6, height: 6)
                     }
 
                     Image(systemName: isSandboxEnabled ? "shippingbox.fill" : "shippingbox")
-                        .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                        .glyphSize(10, weight: .medium)
                         .foregroundColor(sandboxChipAccent)
 
                     // Keep the label whenever it's carrying live status the icon
@@ -3987,13 +4076,13 @@ extension FloatingInputCard {
                     // in the compact row; otherwise collapse to the box icon.
                     if !compact || isSandboxLoading || isSandboxFailed {
                         Text(sandboxChipLabel, bundle: .module)
-                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                            .textStyle(.caption, weight: 500)
                             .foregroundColor(
                                 isSandboxFailed
-                                    ? .red
+                                    ? theme.status.error.foreground
                                     : (isSandboxEnabled
-                                        ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
-                                        : theme.tertiaryText)
+                                        ? (isSandboxRunning ? theme.text.primary : theme.text.secondary)
+                                        : theme.text.tertiary)
                             )
                             .lineLimit(1)
                             .fixedSize()
@@ -4003,8 +4092,8 @@ extension FloatingInputCard {
                     // Inline cold-path download/unpack progress.
                     if let pct = sandboxProgressPercent {
                         Text(verbatim: "\(pct)%")
-                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                            .textStyle(.caption, weight: 500)
+                            .foregroundColor(theme.text.secondary)
                             .monospacedDigit()
                     }
 
@@ -4013,26 +4102,16 @@ extension FloatingInputCard {
                     // states own the leading indicator + accent color).
                     if isSandboxNetworkDisabled && !isSandboxLoading && !isSandboxFailed {
                         Image(systemName: "wifi.slash")
-                            .font(.system(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                            .foregroundColor(.orange)
+                            .glyphSize(9, weight: .semibold)
+                            .foregroundColor(theme.status.warning.foreground)
                             .accessibilityLabel(Text("Outbound network disabled", bundle: .module))
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s4)
                 .background(sandboxChipBackground(isSandboxHovered: isSandboxHovered))
                 .clipShape(Capsule())
                 .overlay(sandboxChipBorder(isSandboxHovered: isSandboxHovered))
-                .shadow(
-                    color: isSandboxFailed
-                        ? Color.red.opacity(0.15)
-                        : (isSandboxEnabled && isSandboxRunning
-                            ? Color.green.opacity(0.12)
-                            : (isSandboxHovered ? theme.accentColor.opacity(0.1) : .clear)),
-                    radius: 4,
-                    x: 0,
-                    y: 1
-                )
             }
             .buttonStyle(.plain)
             .pointingHandCursor()
@@ -4042,7 +4121,26 @@ extension FloatingInputCard {
             // unfold. Toggling on/off is intercepted by
             // `handleSandboxChipTap` in that state.
             .help(sandboxHelpText)
-            .contextMenu {
+            .popover(isPresented: $showSandboxPopover, arrowEdge: .top) {
+                SandboxChipPopover(
+                    agentId: effectiveAgentId,
+                    failure: isSandboxEnabled ? sandboxFailure : nil,
+                    onRetry: {
+                        showSandboxPopover = false
+                        retrySandbox()
+                    },
+                    onTurnOff: {
+                        showSandboxPopover = false
+                        if isSandboxEnabled { toggleSandbox() }
+                    },
+                    onOpenSettings: {
+                        showSandboxPopover = false
+                        AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
+                    }
+                )
+                .environment(\.theme, theme)
+            }
+            .assignedContextMenu {
                 if isSandboxFailed {
                     Button {
                         retrySandbox()
@@ -4059,59 +4157,15 @@ extension FloatingInputCard {
         }
     }
 
-    @ViewBuilder
     private func sandboxChipBackground(isSandboxHovered: Bool) -> some View {
-        ZStack {
-            Capsule()
-                .fill(theme.secondaryBackground.opacity(isSandboxHovered || isSandboxEnabled ? 0.95 : 0.8))
-
-            if isSandboxFailed {
-                Capsule()
-                    .fill(Color.red.opacity(isSandboxHovered ? 0.16 : 0.10))
-            } else if isSandboxEnabled && isSandboxRunning {
-                Capsule()
-                    .fill(Color.green.opacity(isSandboxHovered ? 0.14 : 0.08))
-            } else if isSandboxLoading {
-                Capsule()
-                    .fill(Color.orange.opacity(0.06))
-            } else if isSandboxHovered {
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [theme.accentColor.opacity(0.06), Color.clear],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-        }
+        Capsule().fill(sandboxChipStatus?.background ?? (isSandboxHovered ? theme.surface.hover : theme.surface.subtle))
     }
 
-    @ViewBuilder
     private func sandboxChipBorder(isSandboxHovered: Bool) -> some View {
-        if isSandboxFailed {
-            Capsule()
-                .strokeBorder(Color.red.opacity(isSandboxHovered ? 0.45 : 0.30), lineWidth: 1)
-        } else if isSandboxEnabled && isSandboxRunning {
-            Capsule()
-                .strokeBorder(Color.green.opacity(isSandboxHovered ? 0.4 : 0.25), lineWidth: 1)
-        } else if isSandboxLoading {
-            Capsule()
-                .strokeBorder(Color.orange.opacity(isSandboxHovered ? 0.35 : 0.2), lineWidth: 1)
-        } else {
-            Capsule()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(isSandboxHovered ? 0.25 : 0.15),
-                            theme.primaryBorder.opacity(isSandboxHovered ? 0.2 : 0.12),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        }
+        Capsule().strokeBorder(
+            sandboxChipStatus?.border ?? (isSandboxHovered ? theme.border.default : theme.border.subtle),
+            lineWidth: theme.stroke.default
+        )
     }
 
     // MARK: - Clipboard Chip
@@ -4135,10 +4189,10 @@ extension FloatingInputCard {
 
     @ViewBuilder
     private func clipboardChipLabel(compact: Bool) -> some View {
-        HStack(spacing: 5) {
+        SharedChipContent(spacing: theme.assignedMetric("component.library.23.gap", fallback: 5)) {
             Image(systemName: clipboardChipIcon)
-                .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(10, weight: .medium)
+                .composerChipInk("accent", fallback: theme.status.info.foreground)
 
             // Collapsed, the chip is just its icon (hover names it) so it can't
             // be clipped mid-word in the narrow scroll region. Expanded, lead
@@ -4146,22 +4200,22 @@ extension FloatingInputCard {
             // ("Sandbox", "Folder"), with the source app as a quiet suffix.
             if !compact {
                 Text("Paste", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
-                    .foregroundColor(theme.accentColor)
+                    .composerChipTextStyle(.caption, weight: 700)
+                    .composerChipInk("accent", fallback: theme.status.info.foreground)
                     .lineLimit(1)
                     .fixedSize()
 
                 if let source = clipboardService.lastSourceApp {
                     Text(source)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .composerChipTextStyle(.caption, weight: 500)
+                        .composerChipInk("secondary", fallback: theme.text.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
 
                 Image(systemName: "chevron.right")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
-                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                    .glyphSize(8, weight: .bold)
+                    .composerChipInk("secondary", fallback: theme.text.tertiary)
                     .padding(.leading, 2)
             }
         }
@@ -4173,28 +4227,25 @@ extension FloatingInputCard {
         HoverScope { isClipboardHovered in
             Button(action: attachClipboardSnippet) {
                 clipboardChipLabel(compact: compact)
+                    #if OSAURUS_DESIGN_SYSTEM
+                    .composerChipSurface()
+                    #else
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
                         Capsule()
-                            .fill(theme.secondaryBackground.opacity(isClipboardHovered ? 0.95 : 0.8))
+                            .fill(isClipboardHovered ? theme.surface.hover : theme.surface.subtle)
                     )
                     .clipShape(Capsule())
                     .overlay(
                         // main static border
                         Capsule()
                             .strokeBorder(
-                                LinearGradient(
-                                    colors: [
-                                        theme.glassEdgeLight.opacity(isClipboardHovered ? 0.25 : 0.15),
-                                        theme.accentColor.opacity(isClipboardHovered ? 0.6 : 0.15),
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
+                                isClipboardHovered ? theme.border.focus : theme.border.subtle,
+                                lineWidth: theme.stroke.default
                             )
                     )
+                    #endif
                     .modifier(
                         ClipboardPulseSweep(
                             hovered: isClipboardHovered,
@@ -4202,10 +4253,11 @@ extension FloatingInputCard {
                         )
                     )
             }
-            .buttonStyle(.plain)
+            .composerChipButtonStyle()
+            .composerChipFocus()
             .pointingHandCursor()
             .help(Text(localized: "Attach snippet from \(clipboardService.lastSourceApp ?? "clipboard")"))
-            .contextMenu {
+            .assignedContextMenu {
                 Button {
                     clipboardService.markAsRead()
                 } label: {
@@ -4217,7 +4269,7 @@ extension FloatingInputCard {
                     case .text(let text):
                         Button {
                             if collapseLongPastes, text.utf8.count >= Self.pastedContentThreshold {
-                                withAnimation(theme.springAnimation()) {
+                                withAnimation(theme.motion.springAnimation) {
                                     pendingAttachments.append(.pastedContent(text))
                                 }
                             } else {
@@ -4255,14 +4307,14 @@ extension FloatingInputCard {
                 // Large paste → convert to a "pasted content" attachment.
                 // Lets the user view / remove the snippet without polluting
                 // the input field with hundreds of lines of text.
-                withAnimation(theme.springAnimation()) {
+                withAnimation(theme.motion.springAnimation) {
                     pendingAttachments.append(.pastedContent(text))
                     clipboardService.markAsRead()
                     isFocused = true
                 }
             } else {
                 // Inject directly into the text input area for better UX (editing)
-                withAnimation(theme.springAnimation()) {
+                withAnimation(theme.motion.springAnimation) {
                     if localText.isEmpty {
                         localText = text
                     } else {
@@ -4277,14 +4329,14 @@ extension FloatingInputCard {
             }
 
         case .image(let data):
-            withAnimation(theme.springAnimation()) {
+            withAnimation(theme.motion.springAnimation) {
                 pendingAttachments.append(.image(data))
                 clipboardService.markAsRead()
             }
 
         case .file(let url):
             if DocumentParser.isImageFile(url: url) {
-                let animation = theme.springAnimation()
+                let animation = theme.motion.springAnimation
                 Task { @MainActor in
                     // The image decode and PNG re-encode block for seconds
                     // on a large file, so they run off the main actor.
@@ -4302,7 +4354,7 @@ extension FloatingInputCard {
                     }
                 }
             } else if DocumentParser.canParse(url: url) {
-                let animation = theme.springAnimation()
+                let animation = theme.motion.springAnimation
                 Task.detached(priority: .userInitiated) {
                     do {
                         let attachments = try DocumentParser.parseAll(url: url)
@@ -4334,31 +4386,36 @@ extension FloatingInputCard {
         Button {
             AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
         } label: {
-            HStack(spacing: 4) {
+            SharedChipContent(spacing: theme.assignedMetric("component.library.23.gap", fallback: 4)) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(10, weight: .semibold)
+                    .composerChipInk("accent", fallback: theme.status.info.foreground)
 
                 if !compact {
                     Text("Orchestrator", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .composerChipTextStyle(.caption, weight: 500)
+                        .composerChipInk("secondary", fallback: theme.text.secondary)
                         .lineLimit(1)
                         .fixedSize()
                 }
             }
+            #if OSAURUS_DESIGN_SYSTEM
+            .composerChipSurface(selected: true)
+            #else
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(
                 Capsule()
-                    .fill(theme.accentColor.opacity(0.08))
+                    .fill(theme.status.info.background)
             )
             .overlay(
                 Capsule()
-                    .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1)
+                    .strokeBorder(theme.status.info.border, lineWidth: theme.stroke.default)
             )
+            #endif
         }
-        .buttonStyle(.plain)
+        .composerChipButtonStyle()
+        .composerChipFocus()
         .help(
             Text(
                 "The Orchestrator configures Osaurus and delegates work to your agents. It doesn't use the sandbox or a working folder. Click to open its settings.",
@@ -4397,17 +4454,17 @@ extension FloatingInputCard {
         var body: some View {
             let granted = permissionService.permissionStates[.accessibility] ?? false
             if granted, let app = frontmostApp.lastNonSelfAppName {
-                HStack(spacing: 5) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.23.elements.layout.screenContextIndicator.body.horizontalGap", inheriting: theme.assignedMetric("component.library.23.gap", fallback: 5))) {
                     Image(systemName: "viewfinder")
                         .symbolRenderingMode(.hierarchical)
-                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                        .foregroundColor(theme.accentColor.opacity(0.85))
+                        .glyphSize(11, weight: .medium)
+                        .composerChipInk("secondary", fallback: theme.text.secondary)
 
                     Text(app)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
+                        .composerChipTextStyle(.footnote, weight: 500)
+                        .composerChipInk("secondary", fallback: theme.text.tertiary)
                         .lineLimit(1)
-                }
+                }.catalogLayoutTarget("component.library.23.elements.layout.screenContextIndicator.body.horizontalGap")
                 .help(
                     Text(
                         "A read-only snapshot of \(app) is shared with this chat when you send. Manage it in Computer Use settings.",
@@ -4421,12 +4478,18 @@ extension FloatingInputCard {
 
     /// Floating wrapper for `configContextErrorBanner`: keeps the toast out of
     /// the layout flow (so it never shifts the card) and lifts it fully above
-    /// the card's top edge with a small gap via the `.top` alignment guide.
+    /// the card's top edge with a small gap, hung from a zero-height line at
+    /// that edge.
     @ViewBuilder
     private var configContextErrorOverlay: some View {
         if configContextTooSmall {
-            configContextErrorBanner
-                .alignmentGuide(.top) { dimensions in dimensions.height + 10 }
+            Color.clear
+                .frame(height: 0)
+                .overlay(alignment: .bottom) {
+                    configContextErrorBanner
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 10)
+                }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
     }
@@ -4467,7 +4530,7 @@ extension FloatingInputCard {
         next: String,
         pointerCenterX: CGFloat
     ) -> some View {
-        let tint = Color.orange
+        let tint = theme.status.warning.foreground
         let clampedX = min(
             max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
             Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
@@ -4481,22 +4544,22 @@ extension FloatingInputCard {
                 + Text(
                     "You switched from \(previous) to \(next) in this conversation.",
                     bundle: .module
-                ).foregroundColor(theme.primaryText))
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                ).foregroundColor(theme.text.primary))
+                .textStyle(.caption, weight: 500)
                 .fixedSize(horizontal: false, vertical: true)
             Text(
                 "Cached context from the previous model cannot be reused, and the new model may interpret earlier turns differently. Start a new chat for the most consistent results.",
                 bundle: .module
             )
-            .foregroundColor(theme.secondaryText)
-            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+            .foregroundColor(theme.text.secondary)
+            .textStyle(.caption, weight: 500)
             .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 10) {
                 // Switching back clears the advisory in the session's model
                 // sink. Dismiss explicitly too, since that sink skips changes
                 // made while a model is loading.
                 bannerPrimaryButton(String(localized: "Keep Using \(previous)", bundle: .module), tint: tint) {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(theme.motion.quick) {
                         selectedModel = previousModelId
                         onDismissModelSwitchContinuityWarning?()
                     }
@@ -4515,12 +4578,12 @@ extension FloatingInputCard {
         .padding(.bottom, 12 + RAMBannerShape.pointerHeight)
         .background(
             ZStack {
-                shape.fill(.regularMaterial)
+                shape.fill(theme.surface.overlay)
                 shape.fill(tint.opacity(0.12))
             }
         )
-        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: theme.stroke.default))
+        .themeElevation(theme.elevation.raised)
         .accessibilityLabel(
             Text(
                 "Model changed from \(previous) to \(next); cached context will be rebuilt",
@@ -4537,9 +4600,9 @@ extension FloatingInputCard {
     ) -> some View {
         Button(action: action) {
             Text(verbatim: title)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                .textStyle(.footnote, weight: 600)
                 .lineLimit(1)
-                .foregroundColor(.white)
+                .foregroundColor(FixedPalette.onMedia)
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity)
                 .background(Capsule().fill(tint.opacity(0.85)))
@@ -4554,10 +4617,10 @@ extension FloatingInputCard {
     private func bannerTextButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(verbatim: title)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                .textStyle(.footnote, weight: 600)
                 .lineLimit(1)
                 .fixedSize()
-                .foregroundColor(theme.secondaryText)
+                .foregroundColor(theme.text.secondary)
                 .padding(.vertical, 2)
                 .contentShape(Rectangle())
         }
@@ -4679,7 +4742,7 @@ extension FloatingInputCard {
         _ advisory: MTPLayoutAdvisory,
         pointerCenterX: CGFloat
     ) -> some View {
-        let tint = Color.orange
+        let tint = theme.status.warning.foreground
         let clampedX = min(
             max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
             Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
@@ -4694,15 +4757,15 @@ extension FloatingInputCard {
                     + Text(
                         "Delete this model's local files and download a fresh copy?",
                         bundle: .module
-                    ).foregroundColor(theme.primaryText))
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    ).foregroundColor(theme.text.primary))
+                    .textStyle(.caption, weight: 500)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(
                     "The download starts right after the delete. Until it finishes, this model can't be used.",
                     bundle: .module
                 )
-                .foregroundColor(theme.secondaryText)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.text.secondary)
+                .textStyle(.caption, weight: 500)
                 .fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 10) {
                     bannerPrimaryButton(
@@ -4712,7 +4775,7 @@ extension FloatingInputCard {
                         performMTPAdvisoryRedownload()
                     }
                     bannerTextButton(String(localized: "Cancel", bundle: .module)) {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withAnimation(theme.motion.quick) {
                             mtpAdvisoryConfirmingRedownload = false
                         }
                     }
@@ -4724,25 +4787,25 @@ extension FloatingInputCard {
                     .foregroundColor(tint)
                     + Text(verbatim: "  ")
                     + Text(verbatim: advisory.warningText)
-                    .foregroundColor(theme.primaryText))
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.text.primary))
+                    .textStyle(.caption, weight: 500)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(verbatim: advisory.reassuranceText)
-                    .foregroundColor(theme.secondaryText)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.text.secondary)
+                    .textStyle(.caption, weight: 500)
                     .fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 10) {
                     bannerPrimaryButton(
                         String(localized: "Re-download", bundle: .module),
                         tint: tint
                     ) {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withAnimation(theme.motion.quick) {
                             mtpAdvisoryConfirmingRedownload = true
                         }
                     }
                     bannerTextButton(String(localized: "Skip", bundle: .module)) {
                         MTPLayoutAdvisoryDismissals.recordDismissal(advisory.fingerprint)
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withAnimation(theme.motion.quick) {
                             mtpLayoutAdvisory = nil
                         }
                     }
@@ -4757,12 +4820,12 @@ extension FloatingInputCard {
         .padding(.bottom, 12 + RAMBannerShape.pointerHeight)
         .background(
             ZStack {
-                shape.fill(.regularMaterial)
+                shape.fill(theme.surface.overlay)
                 shape.fill(tint.opacity(0.12))
             }
         )
-        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: theme.stroke.default))
+        .themeElevation(theme.elevation.raised)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(verbatim: advisory.shortLabel))
     }
@@ -4776,13 +4839,13 @@ extension FloatingInputCard {
         guard let model = selectedModel,
             let installed = ModelManager.findInstalledMLXModelFromCache(named: model)
         else {
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(theme.motion.quick) {
                 mtpAdvisoryConfirmingRedownload = false
                 mtpLayoutAdvisory = nil
             }
             return
         }
-        withAnimation(.easeOut(duration: 0.2)) {
+        withAnimation(theme.motion.quick) {
             mtpAdvisoryConfirmingRedownload = false
             mtpLayoutAdvisory = nil
         }
@@ -4810,23 +4873,23 @@ extension FloatingInputCard {
         let ctxBlurb = ctx.map { " (~\(formatTokenCount($0)) ctx)" } ?? ""
         return HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: CGFloat(theme.captionSize)))
-                .foregroundColor(.orange)
+                .glyphSize(12)
+                .foregroundColor(theme.status.warning.foreground)
 
             Text(
                 "\(modelName)\(ctxBlurb) is too small to configure Osaurus.",
                 bundle: .module
             )
-            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-            .foregroundColor(theme.primaryText)
+            .textStyle(.caption, weight: 500)
+            .foregroundColor(theme.text.primary)
             .fixedSize(horizontal: false, vertical: true)
 
             Button {
                 openModelPicker()
             } label: {
                 Text("Choose model", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .textStyle(.caption, weight: 600)
+                    .foregroundColor(theme.text.link)
             }
             .buttonStyle(.plain)
             .pointingHandCursor()
@@ -4835,17 +4898,17 @@ extension FloatingInputCard {
         .padding(.vertical, 9)
         .background(
             ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.regularMaterial)
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.orange.opacity(0.12))
+                RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                    .fill(theme.surface.overlay)
+                RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                    .fill(theme.status.warning.background)
             }
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                .strokeBorder(theme.status.warning.border, lineWidth: theme.stroke.default)
         )
-        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .themeElevation(theme.elevation.raised)
         .frame(maxWidth: 560)
     }
 
@@ -4854,11 +4917,12 @@ extension FloatingInputCard {
     private func folderContextChip(compact: Bool) -> some View {
         let hasFolder = folderState.hasActiveFolder
 
-        return HStack(spacing: 4) {
+        return HStack(spacing: theme.catalogLayoutMetric("component.library.23.elements.layout.floatingInputCard.folderContextChip.horizontalGap", inheriting: theme.assignedMetric("component.library.23.gap", fallback: 4))) {
             Button(action: selectFolder) {
                 folderChipContent(hasFolder: hasFolder, canEdit: true, compact: compact)
             }
-            .buttonStyle(.plain)
+            .composerChipButtonStyle()
+            .composerChipFocus()
             .pointingHandCursor()
             .disabled(folderLockedByHarnessTurn)
             .help(
@@ -4875,7 +4939,7 @@ extension FloatingInputCard {
                 Text(verbatim: hasFolder ? (folderState.rootPath?.lastPathComponent ?? "") : "")
             )
             .accessibilityIdentifier("composer.folderChip")
-            .contextMenu {
+            .assignedContextMenu {
                 if hasFolder {
                     Button {
                         selectFolder()
@@ -4913,35 +4977,35 @@ extension FloatingInputCard {
                     clearFolderFromChip()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(8, weight: .bold)
+                        .composerChipInk("secondary", fallback: theme.text.tertiary)
                         .frame(width: 16, height: 16)
-                        .background(Circle().fill(theme.secondaryBackground.opacity(0.8)))
-                        .overlay(Circle().strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1))
+                        .background(Circle().fill(theme.surface.subtle))
+                        .overlay(Circle().strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default))
                 }
-                .buttonStyle(.plain)
+                .composerChipButtonStyle()
                 .pointingHandCursor()
                 .localizedHelp("Clear folder selection")
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
-        }
-        .animation(.easeOut(duration: 0.15), value: hasFolder)
+        }.catalogLayoutTarget("component.library.23.elements.layout.floatingInputCard.folderContextChip.horizontalGap")
+        .animation(theme.motion.quick, value: hasFolder)
     }
 
     @ViewBuilder
     private func folderChipContent(hasFolder: Bool, canEdit: Bool, compact: Bool = false) -> some View {
-        HStack(spacing: 4) {
+        SharedChipContent(spacing: theme.assignedMetric("component.library.23.gap", fallback: 4)) {
             Image(systemName: hasFolder ? "folder.fill" : "folder.badge.plus")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                .foregroundColor(hasFolder ? theme.accentColor : theme.tertiaryText)
+                .glyphSize(10)
+                .composerChipInk(hasFolder ? "foreground" : "secondary", fallback: hasFolder ? theme.text.primary : theme.text.tertiary)
                 .opacity(canEdit ? 1.0 : 0.7)
 
             // The selected folder name is live state, so keep it even when
             // compact; only the "Folder" placeholder collapses to the icon.
             if let context = folderState.context {
                 Text(context.rootPath.lastPathComponent)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
+                    .composerChipTextStyle(.caption, weight: 500)
+                    .composerChipInk(canEdit ? "foreground" : "secondary", fallback: canEdit ? theme.text.secondary : theme.text.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     // Cap the name so a long folder can't stretch the chip and
@@ -4953,8 +5017,8 @@ extension FloatingInputCard {
                     .frame(maxWidth: 150)
             } else if canEdit && !compact {
                 Text("Folder", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .composerChipTextStyle(.caption, weight: 500)
+                    .composerChipInk("secondary", fallback: theme.text.tertiary)
                     .fixedSize()
             }
 
@@ -4963,20 +5027,24 @@ extension FloatingInputCard {
             // is shown so the affordance to change folders stays visible.
             if canEdit && (!compact || folderState.context != nil) {
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(9, weight: .semibold)
+                    .composerChipInk("secondary", fallback: theme.text.tertiary)
             }
         }
+        #if OSAURUS_DESIGN_SYSTEM
+        .composerChipSurface(selected: hasFolder)
+        #else
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(
             Capsule()
-                .fill(theme.secondaryBackground.opacity(canEdit ? 0.6 : 0.4))
+                .fill((canEdit ? theme.surface.subtle : theme.surface.hover))
         )
         .overlay(
             Capsule()
-                .strokeBorder(theme.primaryBorder.opacity(canEdit ? 0.4 : 0.2), lineWidth: 0.5)
+                .strokeBorder(theme.border.subtle, lineWidth: theme.hairline)
         )
+        #endif
     }
 
     private func dismissModelPicker() {
@@ -4987,6 +5055,7 @@ extension FloatingInputCard {
 
     private var inputCard: some View {
         let hasChipRow = !pendingAttachments.isEmpty || pendingSkillId != nil || queuedSend != nil
+        let attachmentInset = composerTheme.catalogMetric("padding", fallback: 12)
         return VStack(alignment: .leading, spacing: 0) {
             if hasChipRow {
                 HStack(alignment: .center, spacing: 6) {
@@ -4996,50 +5065,50 @@ extension FloatingInputCard {
                         inlinePendingAttachmentsPreview
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
+                .padding(.horizontal, attachmentInset)
+                .padding(.top, attachmentInset)
             }
 
             textInputArea
-                .padding(.horizontal, 12)
-                .padding(.top, hasChipRow ? 6 : 10)
-                .padding(.bottom, 6)
+                .frame(minHeight: minimumEditorHeight, alignment: .topLeading)
+                .padding(.horizontal, theme.space.s8)
+                .padding(.top, theme.space.s8)
+                // Keep the last visible line clear of actions even when the
+                // native editor reaches its height cap and starts scrolling.
+                .padding(.bottom, max(12, theme.space.s12))
 
             buttonBar
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
+                .padding(.horizontal, theme.space.s8)
+                .padding(.bottom, theme.space.s8)
         }
+        .environment(\.isOnComposerInputSurface, true)
         .fixedSize(horizontal: false, vertical: true)
+        .frame(minHeight: minimumCardHeight, alignment: .top)
         .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: composerRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: composerRadius, style: .continuous)
                 .strokeBorder(
                     effectiveBorderStyle,
-                    lineWidth: isDragOver ? 2 : (inputStyle == .shadow ? 0.75 : (isFocused ? 1.5 : 0.5))
+                    lineWidth: composerTheme.catalogMetric("borderWidth", fallback: (isDragOver || isFocused) ? theme.stroke.focus : theme.stroke.default)
                 )
         )
-        .shadow(
-            color: inputStyle == .shadow ? shadowColor : .clear,
-            radius: inputStyle == .shadow ? (isFocused ? 4.9 : 4) : 0,
-            x: 0,
-            y: inputStyle == .shadow ? (theme.isDark ? 0 : (isFocused ? 3 : 1)) : 0
-        )
-        .animation(.easeOut(duration: 0.15), value: isFocused)
-        .animation(.easeOut(duration: 0.1), value: isDragOver)
+        // The Figma composer has one surface and border, without an extra shadow.
+        .animation(theme.motion.quick, value: isFocused)
+        .animation(theme.motion.quick, value: isDragOver)
     }
 
     // MARK: - Voice Input Button
 
     private func appendAttachment(_ attachment: Attachment) {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             pendingAttachments.append(attachment)
         }
     }
 
     private func parseAndAttach(url: URL) {
         let filename = url.lastPathComponent
-        let animation = theme.springAnimation()
+        let animation = theme.motion.springAnimation
         Task.detached(priority: .userInitiated) {
             do {
                 let attachments = try DocumentParser.parseAll(url: url)
@@ -5087,15 +5156,17 @@ extension FloatingInputCard {
         // snapshot so no branch here can fall through to a synchronous read.
         _ = mediaEvidenceGeneration
         let snapshot = localModel?.mediaCapabilitiesSnapshot
+        let runtime = harnessRuntime
         return ModelMediaCapabilities.composerDescriptor(
-            modelId: selectedModel,
+            modelId: runtime?.displayName ?? selectedModel,
             fallbackSupportsImages: supportsImages,
             localModelType: localModel?.modelType,
             localHasAudioTensors: snapshot?.supportsAudio ?? false,
             localCapabilities: snapshot,
             localImageEvidenceReason: localModel.flatMap {
                 LocalVisionEvidence.cachedOrWarm($0.localDirectory)?.reason
-            }
+            },
+            harnessKind: runtime?.kind
         )
     }
 
@@ -5292,11 +5363,9 @@ extension FloatingInputCard {
     private var audioExtensions: Set<String> { Self.audioExtensions }
     private var videoExtensions: Set<String> { Self.videoExtensions }
 
-    /// Attach audio bytes from a file URL. Reads inline; spillover to
-    /// the encrypted blob store is handled later in the chat-history
-    /// persistence layer (`AttachmentBlobStore.spillIfNeeded`) when
-    /// the turn is committed. Format string is the lowercased file
-    /// extension and flows directly into
+    /// Attach audio bytes from a file URL. Reads inline; the conversation
+    /// store moves large bytes to a blob once the turn is saved. Format
+    /// string is the lowercased file extension and flows directly into
     /// `MessageContentPart.audioInput.format`.
     private func attachAudio(url: URL, ext: String) {
         guard let data = try? Data(contentsOf: url) else {
@@ -5417,6 +5486,7 @@ extension FloatingInputCard {
     /// APPLE-MACOS-1E7), and the image check inspects attachment kinds
     /// instead of hydrating spilled image blobs from disk.
     private var placeholderText: String {
+        if !placeholderIdeas.isEmpty { return placeholderIdeas[placeholderIdeaIndex % placeholderIdeas.count] }
         if let media = selectedMediaPickerItem?.mediaModel {
             switch media.kind {
             case .image:
@@ -5552,11 +5622,9 @@ extension FloatingInputCard {
                         )
                         Text(imageComposerSettings.audio == true ? L("Audio") : L("Muted"))
                     }
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(chipBackground)
+                    .textStyle(.caption, weight: 500)
+                    .foregroundColor(theme.text.secondary)
+                    .modifier(ImageOptionChipSurface())
                 }
                 .buttonStyle(.plain)
                 .pointingHandCursor()
@@ -5592,22 +5660,18 @@ extension FloatingInputCard {
             }
             if let minimum = media.pricing?.minimumUSD {
                 Text("From \(OsaurusRouter.formatUSDAsCredits(minimum))", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(chipBackground)
+                    .textStyle(.caption, weight: 500)
+                    .foregroundColor(theme.text.secondary)
+                    .modifier(ImageOptionChipSurface())
             }
             if media.kind == .imageToVideo {
                 Label("1 source image", systemImage: "photo")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .textStyle(.caption, weight: 500)
                     .foregroundColor(
                         pendingAttachments.loadImages().count == 1
-                            ? theme.secondaryText : Color.orange
+                            ? theme.text.secondary : theme.status.warning.foreground
                     )
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(chipBackground)
+                    .modifier(ImageOptionChipSurface())
             }
         }
     }
@@ -5618,7 +5682,7 @@ extension FloatingInputCard {
         options: [String],
         selection: Binding<String?>
     ) -> some View {
-        Menu {
+        SettingsActionMenu(accessibilityLabel: title) {
             ForEach(options, id: \.self) { option in
                 Button {
                     selection.wrappedValue = option
@@ -5633,30 +5697,21 @@ extension FloatingInputCard {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 Text(selection.wrappedValue ?? title)
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(theme.text.secondary)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(9, weight: .semibold)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(chipBackground)
+            .textStyle(.caption, weight: 500)
+            .modifier(ImageOptionChipSurface())
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help(Text(verbatim: title))
     }
 
-    /// Shared pill backing so every composer control reads as one family of
-    /// chips instead of clashing system `.roundedBorder` / `.segmented` chrome.
-    private var chipBackground: some View {
-        Capsule()
-            .fill(theme.secondaryBackground.opacity(0.6))
-            .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.4), lineWidth: 0.5))
-    }
 
     /// A selectable output resolution with a one-line explanation of its
     /// speed / detail trade-off (bare pixel numbers don't tell the user what
@@ -5730,18 +5785,19 @@ extension FloatingInputCard {
         } content: {
             HStack(spacing: 5) {
                 Image(systemName: "aspectratio")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(10, weight: .medium)
+                    .foregroundColor(theme.text.tertiary)
                 Text(selectedSizeLabel)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.caption, weight: 500)
+                    .foregroundColor(theme.text.secondary)
                     .monospacedDigit()
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(9, weight: .semibold)
+                    .foregroundColor(theme.text.tertiary)
             }
+            .frame(height: ImageOptionChipSurface.contentHeight)
         }
-        .popover(isPresented: $showImageSizePicker, arrowEdge: .top) {
+        .assignedPopover(isPresented: $showImageSizePicker, width: 252, accessibilityLabel: L("Output image size"), arrowEdge: .top) {
             imageSizePopover
         }
         .localizedHelp("Output image size")
@@ -5750,8 +5806,8 @@ extension FloatingInputCard {
     private var imageSizePopover: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Image size", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.footnote, weight: 600)
+                .foregroundColor(theme.text.tertiary)
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
                 .padding(.bottom, 4)
@@ -5793,21 +5849,21 @@ extension FloatingInputCard {
                 } label: {
                     HStack(alignment: .top, spacing: 9) {
                         Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                            .glyphSize(12, weight: .medium)
+                            .foregroundColor(isSelected ? theme.text.primary : theme.text.tertiary)
                             .padding(.top, 1)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(option.title)
                                 .font(
                                     theme.font(
-                                        size: CGFloat(theme.captionSize),
+                                        size: theme.pointSize(.caption),
                                         weight: .semibold
                                     )
                                 )
-                                .foregroundColor(theme.primaryText)
+                                .foregroundColor(theme.text.primary)
                             Text(option.detail)
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                                .foregroundColor(theme.secondaryText)
+                                .textStyle(.micro)
+                                .foregroundColor(theme.text.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 0)
@@ -5815,8 +5871,8 @@ extension FloatingInputCard {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                     .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(isSelected ? theme.accentColor.opacity(0.08) : .clear)
+                        RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                            .fill(isSelected ? theme.surface.selected : .clear)
                     )
                     .contentShape(Rectangle())
                 }
@@ -5833,9 +5889,9 @@ extension FloatingInputCard {
     private func stepperButton(_ systemName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .bold))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 28, height: 28)
+                .glyphSize(10, weight: .bold)
+                .foregroundColor(theme.text.secondary)
+                .frame(width: 20, height: ImageOptionChipSurface.contentHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -5853,11 +5909,9 @@ extension FloatingInputCard {
     private var stepsChip: some View {
         if selectedImagePickerItem?.imageCanonicalName == "qwen-image-2.1-turbo" {
             Text("Fixed schedule", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(chipBackground)
+                .textStyle(.caption, weight: 600)
+                .foregroundColor(theme.text.secondary)
+                .modifier(ImageOptionChipSurface())
                 .localizedHelp("Turbo uses the fixed sampling schedule from its bundle.")
         } else {
             adjustableStepsChip
@@ -5865,7 +5919,7 @@ extension FloatingInputCard {
     }
 
     private var adjustableStepsChip: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             stepperButton("minus") {
                 imageComposerSettings.steps = max(1, imageComposerSettings.steps - 1)
             }
@@ -5876,28 +5930,26 @@ extension FloatingInputCard {
                         .multilineTextAlignment(.center)
                         .frame(width: 36)
                         .accessibilityLabel(Text("Denoising steps", bundle: .module))
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .textStyle(.caption, weight: 600)
+                        .foregroundColor(theme.text.primary)
                         .monospacedDigit()
                 } else {
-                Text("\(imageComposerSettings.steps)")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .monospacedDigit()
+                    Text("\(imageComposerSettings.steps)")
+                        .textStyle(.caption, weight: 600)
+                        .foregroundColor(theme.text.primary)
+                        .monospacedDigit()
                 }
                 Text("steps", bundle: .module)
                     .fixedSize()
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .textStyle(.footnote, weight: 500)
+                    .foregroundColor(theme.text.tertiary)
             }
             stepperButton("plus") {
                 imageComposerSettings.steps = selectedImagePickerItem?.imageCanonicalName == "flux3-image-klein"
                     ? imageComposerSettings.steps + 1 : min(50, imageComposerSettings.steps + 1)
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(chipBackground)
+        .modifier(ImageOptionChipSurface())
         .localizedHelp("Denoising steps")
         .settingsLandingAnchor("imageGeneration.steps")
     }
@@ -5905,8 +5957,8 @@ extension FloatingInputCard {
     private var cfgChip: some View {
         HStack(spacing: 5) {
             Text("CFG", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.footnote, weight: 500)
+                .foregroundColor(theme.text.tertiary)
             TextField(
                 "",
                 value: $imageComposerSettings.guidance,
@@ -5915,40 +5967,36 @@ extension FloatingInputCard {
             .textFieldStyle(.plain)
             .multilineTextAlignment(.trailing)
             .frame(width: 28)
-            .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-            .foregroundColor(theme.primaryText)
+            .textStyle(.caption, weight: 600)
+            .foregroundColor(theme.text.primary)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(chipBackground)
+        .modifier(ImageOptionChipSurface())
         .localizedHelp("Classifier-free guidance")
     }
 
     private var seedChip: some View {
         HStack(spacing: 5) {
             Image(systemName: "number")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(11, weight: .medium)
+                .foregroundColor(theme.text.tertiary)
             TextField("Seed", text: seedText)
                 .textFieldStyle(.plain)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .textStyle(.caption, weight: 500)
+                .foregroundColor(theme.text.primary)
                 // Hug the content so the chip starts compact and grows as the
                 // seed is typed, with a small floor so the placeholder fits.
                 .fixedSize()
                 .frame(minWidth: 34)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(chipBackground)
+        .modifier(ImageOptionChipSurface())
         .localizedHelp("Optional numeric seed")
     }
 
     private var strengthChip: some View {
         HStack(spacing: 5) {
             Text("Strength", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.footnote, weight: 500)
+                .foregroundColor(theme.text.tertiary)
             TextField(
                 "",
                 value: $imageComposerSettings.strength,
@@ -5957,12 +6005,10 @@ extension FloatingInputCard {
             .textFieldStyle(.plain)
             .multilineTextAlignment(.trailing)
             .frame(width: 32)
-            .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-            .foregroundColor(theme.primaryText)
+            .textStyle(.caption, weight: 600)
+            .foregroundColor(theme.text.primary)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(chipBackground)
+        .modifier(ImageOptionChipSurface())
         .localizedHelp("How strongly the prompt changes the source image")
     }
 
@@ -5973,28 +6019,29 @@ extension FloatingInputCard {
             in: .whitespacesAndNewlines
         )
         let hasValue = !value.isEmpty
+        // The chip row scrolls at its ideal width, so cap the label by length.
+        let maxLabelLength = 32
+        let label = value.count > maxLabelLength ? String(value.prefix(maxLabelLength - 1)) + "…" : value
         return Button {
             negativePromptDraft = imageComposerSettings.negativePrompt
             showNegativePromptAlert = true
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: hasValue ? "minus.circle.fill" : "minus.circle")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                    .foregroundColor(hasValue ? theme.accentColor : theme.tertiaryText)
-                Text(hasValue ? value : L("Add a negative prompt"))
+                    .glyphSize(11, weight: .medium)
+                    .foregroundColor(hasValue ? theme.text.primary : theme.text.tertiary)
+                Text(hasValue ? label : L("Add a negative prompt"))
                     .font(
                         theme.font(
-                            size: CGFloat(theme.captionSize),
+                            size: theme.pointSize(.caption),
                             weight: hasValue ? .medium : .regular
                         )
                     )
-                    .foregroundColor(hasValue ? theme.secondaryText : theme.tertiaryText)
+                    .foregroundColor(hasValue ? theme.text.secondary : theme.text.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(chipBackground)
+            .modifier(ImageOptionChipSurface())
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
@@ -6026,22 +6073,22 @@ extension FloatingInputCard {
             }
             .textFieldStyle(.plain)
             .lineLimit(3, reservesSpace: true)
-            .font(theme.font(size: CGFloat(theme.bodySize)))
-            .foregroundColor(theme.primaryText)
+            .textStyle(.body)
+            .foregroundColor(theme.text.primary)
             .focused($focused)
             .padding(10)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(0.6))
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(theme.surface.subtle)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                     .strokeBorder(
-                        focused ? theme.accentColor.opacity(0.8) : theme.primaryBorder.opacity(0.6),
-                        lineWidth: focused ? 1.5 : 1
+                        focused ? theme.border.focus : theme.border.default,
+                        lineWidth: focused ? theme.stroke.focus : theme.stroke.default
                     )
             )
-            .animation(.easeOut(duration: 0.15), value: focused)
+            .animation(theme.motion.quick, value: focused)
             .onAppear {
                 // Defer so the alert's present animation settles before the
                 // field grabs focus (otherwise the focus can be dropped).
@@ -6052,24 +6099,9 @@ extension FloatingInputCard {
         }
     }
 
-    /// The slash-command and "@" file menus, floated over the input card by
-    /// `composerContent`.
+    /// The existing "@" file menu, floated over the input card.
     private var composerPopupOverlay: some View {
         VStack(spacing: 4) {
-            if showSlashPopup {
-                SlashCommandPopup(
-                    commands: slashFilteredCommands,
-                    selectedIndex: $slashSelectedIndex,
-                    onSelect: applySlashCommand
-                )
-                .transition(
-                    .asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
-                        removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
-                    )
-                )
-            }
-
             atFileMenuPopupView
         }
     }
@@ -6097,17 +6129,28 @@ extension FloatingInputCard {
         }
     }
 
+    private var composerPlaceholderTopInset: CGFloat {
+        #if OSAURUS_DESIGN_SYSTEM
+        let font = composerTheme.assignedNativeFont("component.library.21.text", fallback: theme.nsFont(.body))
+        return 2 + ThemeTextMetrics.extraLeading(for: font,
+            lineHeight: composerTheme.assignedLineHeight("component.library.21.text", fallback: theme.lineHeight(.body))) / 2
+        #else
+        return 2 + theme.lineSpacing(.body) / 2
+        #endif
+    }
+
     private var textInputArea: some View {
         EditableTextView(
             text: localTextBinding,
-            fontSize: inputFontSize,
-            textColor: theme.primaryText,
-            cursorColor: theme.cursorColor,
+            theme: composerTheme,
+            typographyAssignment: "component.library.21.text",
+            textColor: composerTheme.text.primary,
+            cursorColor: composerCursorColor,
             isFocused: $isFocused,
             isComposing: $isComposing,
             maxHeight: maxHeight,
             focusController: textViewFocusController,
-            isEditable: composerLock == nil,
+            isEditable: composerEditable,
             spellCheckEnabled: spellCheckEnabled,
             onCommit: { handleInputCommit() },
             onShiftCommit: nil,
@@ -6120,7 +6163,7 @@ extension FloatingInputCard {
                 // paste and then read the field back over Accessibility need this
                 // (#3271).
                 guard collapseLongPastes, pasted.utf8.count >= Self.pastedContentThreshold else { return false }
-                withAnimation(theme.springAnimation()) {
+                withAnimation(theme.motion.springAnimation) {
                     pendingAttachments.append(.pastedContent(pasted))
                 }
                 return true
@@ -6137,11 +6180,33 @@ extension FloatingInputCard {
             // Placeholder - uses theme body size
             if showPlaceholder {
                 Text(placeholderText)
-                    .font(theme.font(size: inputFontSize, weight: .regular))
-                    .foregroundColor(theme.placeholderText)
+                    .id(placeholderIdeas.isEmpty ? "chat-placeholder" : placeholderText)
+                    .transition(.opacity)
+                    .composerPlaceholderTypography(theme: composerTheme)
+                    .foregroundColor(composerTheme.assignedColor("component.input.placeholder", fallback: theme.text.placeholder))
+                    .modifier(WorkflowPlaceholderGlimmer(
+                        phrase: placeholderText,
+                        enabled: !placeholderIdeas.isEmpty && !reducePlaceholderMotion,
+                        color: composerTheme.text.primary
+                    ))
                     .padding(.leading, 6)
-                    .padding(.top, 2)
+                    // TextKit sets the whole line-height gap above the first
+                    // line; the line box above splits it, so add the other half.
+                    .padding(.top, composerPlaceholderTopInset)
                     .allowsHitTesting(false)
+            }
+        }
+        .task(id: showPlaceholder && placeholderIdeas.count > 1 && !reducePlaceholderMotion) {
+            guard showPlaceholder, placeholderIdeas.count > 1, !reducePlaceholderMotion else {
+                placeholderIdeaIndex = 0
+                return
+            }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                guard !Task.isCancelled else { return }
+                withAnimation(theme.motion.quick) {
+                    placeholderIdeaIndex = (placeholderIdeaIndex + 1) % placeholderIdeas.count
+                }
             }
         }
         .background(
@@ -6149,7 +6214,7 @@ extension FloatingInputCard {
                 pasteTarget: { textViewFocusController.textView },
                 supportsImages: mediaCapabilities.supportsImage,
                 onImagePaste: { imageData in
-                    withAnimation(theme.springAnimation()) {
+                    withAnimation(theme.motion.springAnimation) {
                         pendingAttachments.append(.image(imageData))
                     }
                 },
@@ -6168,15 +6233,17 @@ extension FloatingInputCard {
     // MARK: - Button Bar
 
     private var buttonBar: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.22.elements.layout.floatingInputCard.buttonBar.horizontalGap", inheriting: theme.assignedMetric("component.library.22.gap", fallback: 8))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.22.elements.layout.floatingInputCard.buttonBar.horizontalGap2", inheriting: theme.assignedMetric("component.library.22.gap", fallback: 6))) {
                 mediaButton
-                slashCommandButton
-            }
+                if !pickerItems.isEmpty || isModelPinned || isHarnessAgent || !pickerHarnessRuntimes.isEmpty {
+                    modelSelectorChip
+                }
+            }.catalogLayoutTarget("component.library.22.elements.layout.floatingInputCard.buttonBar.horizontalGap2")
 
             Spacer()
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.22.elements.layout.floatingInputCard.buttonBar.horizontalGap3", inheriting: theme.assignedMetric("component.library.22.gap", fallback: 8))) {
                 contextBudgetRing
                 FloatingVoiceButton(
                     voiceInputEnabled: voiceConfig.voiceInputEnabled,
@@ -6184,43 +6251,27 @@ extension FloatingInputCard {
                     startVoiceInput: startVoiceInput
                 )
                 if isStreaming {
-                    // While the Privacy Filter review sheet is on screen,
-                    // suppress Stop — the sheet owns the cancel UX. The
-                    // streaming Task is suspended inside
-                    // `PrivacyReviewService.review`'s continuation; the
-                    // sheet's Cancel button resolves it cleanly. Outside
-                    // that sheet (including model load / prefill before the
-                    // first token), Stop stays available so the user can
-                    // cancel a long-running load.
-                    if !isPrivacyReviewSheetVisible {
-                        stopButton
-                    }
                     if queuedSend != nil {
                         sendNowButton
-                    } else {
-                        // No queue-during-review: the user hasn't even
-                        // committed the in-flight message yet.
-                        if !isPrivacyReviewSheetVisible {
-                            sendQueueButton
-                        }
+                    } else if !isPrivacyReviewSheetVisible && canSend {
+                        sendQueueButton
+                    }
+                    // The trailing Send position becomes Stop while working.
+                    // Privacy review keeps its existing sheet-owned Cancel action.
+                    if !isPrivacyReviewSheetVisible {
+                        stopButton
                     }
                 } else {
                     sendButton
                 }
-            }
-        }
+            }.catalogLayoutTarget("component.library.22.elements.layout.floatingInputCard.buttonBar.horizontalGap3")
+        }.catalogLayoutTarget("component.library.22.elements.layout.floatingInputCard.buttonBar.horizontalGap")
     }
 
     // MARK: - Action Buttons
 
-    private var mediaButton: some View {
-        InputActionMenuButton(
-            icon: "plus",
-            help: "Add folder or attach files",
-            items: [
-                .init(icon: "paperclip", title: Text("Attach Files", bundle: .module)) {
-                    pickAttachment()
-                },
+    private var mediaMenuItems: [InputActionMenuButton.Item] {
+        var items: [InputActionMenuButton.Item] = [
                 // Mode 2 (remote agent run): the turn executes on the host's
                 // machine and no local system prompt or tools are sent, so a
                 // folder picked here would never reach the agent. Keep the row
@@ -6228,7 +6279,7 @@ extension FloatingInputCard {
                 // silently accepting a folder that is then dropped.
                 .init(
                     icon: "folder",
-                    title: Text("Add Folder", bundle: .module),
+                    title: Text("Add folder", bundle: .module),
                     disabledReason: isRemoteAgentRun
                         ? Text("Shared agents can't use folders on this Mac.", bundle: .module)
                         : folderLockedByHarnessTurn
@@ -6237,32 +6288,45 @@ extension FloatingInputCard {
                 ) {
                     selectFolder()
                 },
-            ],
-            // Recently attached folders as a one-click list below a divider.
-            // Hidden for remote runs (same reason as Add Folder) and when
-            // there are none yet.
-            footer: isRemoteAgentRun || recentFolders.entries.isEmpty
-                ? nil
-                : { dismiss in recentFoldersList(dismiss: dismiss) }
+                .init(icon: "paperclip", title: Text("Attach files", bundle: .module)) {
+                    pickAttachment()
+                },
+        ]
+        if allowsWorkflowSelection {
+            items.append(.init(icon: "point.forward.to.point.capsulepath", title: Text("Add Workflow", bundle: .module)) {
+                showWorkflowPicker = true
+            })
+        }
+        items.append(.init(icon: "slash.forward", title: Text("Slash commands", bundle: .module)) {
+            openSlashCommands()
+        })
+        return items
+    }
+
+    private var mediaButton: some View {
+        InputActionMenuButton(
+            icon: "plus",
+            help: "Add to chat",
+            items: mediaMenuItems,
+            footer: nil
         )
+
+    }
+
+    private func openSlashCommands() {
+        guard !showSlashPopup else { return }
+        if localText.isEmpty { localText = "/" }
+        else if localText.last?.isWhitespace == true { localText += "/" }
+        else { localText += " /" }
+        isFocused = true
     }
 
     private var slashCommandButton: some View {
-        SlashCommandTriggerButton(isActive: showSlashPopup) {
-            guard !showSlashPopup else { return }
-            if localText.isEmpty {
-                localText = "/"
-            } else if localText.last?.isWhitespace == true {
-                localText += "/"
-            } else {
-                localText += " /"
-            }
-            isFocused = true
-        }
+        SlashCommandTriggerButton(isActive: showSlashPopup, action: openSlashCommands)
     }
 
     private var stopButton: some View {
-        StopButton(action: onStop)
+        SendButton(canSend: true, isStopping: true, action: onStop)
     }
 
     private var sendButton: some View {
@@ -6290,75 +6354,33 @@ extension FloatingInputCard {
 
     // MARK: - Card Styling
 
-    private var cardBackground: some View {
-        ZStack {
-            // NSVisualEffectView-backed glass behind everything, only when
-            // the prompt card's own glass toggle is on. The fill above is
-            // already semi-transparent so the material shows through.
-            if theme.glassInputEnabled {
-                ThemedGlassSurface(cornerRadius: 20)
-            }
-
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.82 : 0.94))
-
-            // subtle accent gradient at top (enhanced when focused)
-            LinearGradient(
-                colors: [
-                    theme.accentColor.opacity(isFocused ? 0.08 : (theme.isDark ? 0.04 : 0.025)),
-                    Color.clear,
-                ],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .opacity(inputStyle == .gradient ? 1 : 0)
-        }
+    /// Opaque raised surface (color.surface.raised). No component glass and no
+    /// accent wash; the window material behind the chat view is the only blur.
+    private var composerCursorColor: Color {
+        #if OSAURUS_DESIGN_SYSTEM
+        composerTheme.border.focus
+        #else
+        theme.cursor
+        #endif
     }
 
-    private var inputStyle: ThemeInputStyle { theme.customThemeConfig?.inputStyle ?? .gradient }
+    @ViewBuilder private var cardBackground: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        RoundedRectangle(cornerRadius: composerRadius, style: .continuous)
+            .fill(composerTheme.surface.raised)
+        #else
+        RoundedRectangle(cornerRadius: composerRadius, style: .continuous)
+            .fill(theme.surface.raised)
+        #endif
+    }
 
     private var effectiveBorderStyle: AnyShapeStyle {
         if isDragOver {
-            return AnyShapeStyle(theme.accentColor)
+            return AnyShapeStyle(composerTheme.border.focus)
         }
-        if inputStyle == .shadow {
-            return AnyShapeStyle(theme.primaryBorder.opacity(theme.isDark ? 0.8 : 0.7))
-        }
-        return borderGradient
+        return AnyShapeStyle(composerTheme.border.default)
     }
 
-    private var borderGradient: AnyShapeStyle {
-        if isFocused {
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [
-                        theme.accentColor.opacity(0.5),
-                        theme.accentColor.opacity(0.2),
-                        theme.glassEdgeLight.opacity(0.15),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-        } else {
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(theme.isDark ? 0.2 : 0.3),
-                        theme.primaryBorder.opacity(0.12),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-        }
-    }
-
-    private var shadowColor: Color {
-        let opacity = isFocused ? (theme.isDark ? 0.18 : 0.14) : 0.07
-        return (theme.isDark ? theme.accentColor : theme.shadowColor).opacity(opacity)
-    }
 }
 
 // MARK: - Clipboard Animation Shape
@@ -6368,14 +6390,15 @@ extension FloatingInputCard {
 /// wrapped subtree. Hover state on `FloatingInputCard` itself re-evaluates the
 /// card's entire body per mouse transition (Sentry app-hang cluster).
 private struct HoverScope<Content: View>: View {
-    var animation: Animation = .easeOut(duration: 0.15)
+    @Environment(\.theme) private var theme
+    var animation: Animation?
     @ViewBuilder let content: (Bool) -> Content
     @State private var hovered = false
 
     var body: some View {
         content(hovered)
             .onHover { hovering in
-                withAnimation(animation) {
+                withAnimation(animation ?? theme.motion.quick) {
                     hovered = hovering
                 }
             }
@@ -6386,6 +6409,7 @@ private struct HoverScope<Content: View>: View {
 /// lives here (not on the card), and `.task(id:)` cancels the loop when
 /// `active` flips or the view leaves the hierarchy.
 private struct PulsingOpacity: ViewModifier {
+    @Environment(\.theme) private var theme
     let active: Bool
     @State private var amount: CGFloat = 1.0
 
@@ -6398,10 +6422,10 @@ private struct PulsingOpacity: ViewModifier {
                     return
                 }
                 while !Task.isCancelled {
-                    withAnimation(.easeInOut(duration: 0.8)) { amount = 0.4 }
+                    withAnimation(theme.motion.slow) { amount = 0.4 }
                     try? await Task.sleep(nanoseconds: 800_000_000)
                     guard !Task.isCancelled else { break }
-                    withAnimation(.easeInOut(duration: 0.8)) { amount = 1.0 }
+                    withAnimation(theme.motion.slow) { amount = 1.0 }
                     try? await Task.sleep(nanoseconds: 800_000_000)
                 }
             }
@@ -6426,15 +6450,8 @@ private struct ClipboardPulseSweep: ViewModifier {
                 ClipboardSweepShape()
                     .trim(from: 0, to: amount)
                     .stroke(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(0.8),
-                                theme.accentColor,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                        theme.action.primary.default.background,
+                        style: StrokeStyle(lineWidth: theme.stroke.default, lineCap: .round)
                     )
                     .opacity(opacity)
             )
@@ -6442,15 +6459,9 @@ private struct ClipboardPulseSweep: ViewModifier {
                 // accompanying glow that follows the sweep
                 ClipboardSweepShape()
                     .trim(from: 0, to: amount)
-                    .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .stroke(theme.border.focus, style: StrokeStyle(lineWidth: theme.stroke.focus * 1.5, lineCap: .round))
                     .opacity(opacity * 0.4)
                     .blur(radius: 3)
-            )
-            .shadow(
-                color: theme.accentColor.opacity(hovered ? 0.35 : (0.05 + opacity * 0.2)),
-                radius: hovered ? 6 : (4 + opacity * 4),
-                x: 0,
-                y: 1
             )
             .onAppear {
                 if trigger { pulse() }
@@ -6467,18 +6478,18 @@ private struct ClipboardPulseSweep: ViewModifier {
 
         // small delay to ensure the window transition is complete
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            withAnimation(.easeIn(duration: 0.1)) {
+            withAnimation(theme.motion.quick) {
                 opacity = 1.0
             }
 
             // animate the stroke clockwise around the capsule
-            withAnimation(.easeInOut(duration: 0.8)) {
+            withAnimation(theme.motion.slow) {
                 amount = 1.0
             }
 
             // fade out after completion
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                withAnimation(.easeOut(duration: 0.4)) {
+                withAnimation(theme.motion.slow) {
                     opacity = 0
                 }
             }
@@ -6539,43 +6550,38 @@ struct CachedImageThumbnail: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        Group {
             if let nsImage = cachedImage {
-                let thumbSize = AttachmentThumbnailLayout.size(for: nsImage, longAxis: size)
+                let imageHeight = max(1, AttachmentInspectionStyle.imageHeight(theme, fallback: size) - 2 * AttachmentInspectionStyle.imageMetric("padding", 0, theme))
+                let thumbSize = AttachmentThumbnailLayout.size(for: nsImage, height: imageHeight)
                 Image(nsImage: nsImage)
                     .resizable()
+                    .renderingMode(.original)
                     .aspectRatio(contentMode: .fit)
                     .frame(width: thumbSize.width, height: thumbSize.height)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: AttachmentInspectionStyle.imageMetric("radius", theme.radius.medium, theme), style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: AttachmentInspectionStyle.imageMetric("radius", theme.radius.medium, theme), style: .continuous)
+                            .strokeBorder(AttachmentInspectionStyle.imageColor("border", theme.border.subtle, theme), lineWidth: AttachmentInspectionStyle.imageMetric("borderWidth", theme.stroke.default, theme))
                     )
-                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: AttachmentInspectionStyle.imageMetric("radius", theme.radius.medium, theme), style: .continuous))
                     .modifier(TappableThumbnailModifier(onTap: onTap))
             } else {
                 // Square placeholder — aspect is unknown until decode completes.
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.secondaryBackground)
-                    .frame(width: size, height: size)
+                RoundedRectangle(cornerRadius: AttachmentInspectionStyle.imageMetric("radius", theme.radius.medium, theme), style: .continuous)
+                    .fill(AttachmentInspectionStyle.imageColor("background", theme.surface.subtle, theme))
+                    .frame(width: max(1, AttachmentInspectionStyle.imageHeight(theme, fallback: size) - 2 * AttachmentInspectionStyle.imageMetric("padding", 0, theme)),
+                        height: max(1, AttachmentInspectionStyle.imageHeight(theme, fallback: size) - 2 * AttachmentInspectionStyle.imageMetric("padding", 0, theme)))
             }
 
-            Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(theme.font(size: 16, weight: .regular))
-                    .foregroundColor(.white)
-                    .background(
-                        Circle()
-                            .fill(Color.black.opacity(0.6))
-                            .frame(width: 18, height: 18)
-                    )
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-            .offset(x: 4, y: -4)
         }
-        .padding(.top, 4)
-        .padding(.trailing, 4)
+        .overlay(alignment: .topTrailing) {
+            SettingsIconButton("xmark", help: "Remove image attachment", size: .extraExtraSmall, role: .secondary, action: onRemove)
+                .pointingHandCursor()
+                .offset(x: theme.space.s4, y: -theme.space.s4)
+        }
+        .padding(AttachmentInspectionStyle.imageMetric("padding", 0, theme))
+        .modifier(AttachmentImageChrome())
         .task(id: imageData) {
             cachedImage = NSImage(data: imageData)
         }
@@ -6802,103 +6808,37 @@ extension NSImage {
 
 // MARK: - Popover Card Chrome
 
-/// Shared rounded glass card chrome for the composer's hover/selector popovers
+/// Shared rounded card chrome for the composer's menu/selector popovers
 /// (Context Budget, router balance, model options) so they read as one family.
-/// Defaults match the lightweight hover cards; the model-options panel passes
-/// larger values for its heavier look.
-private struct PopoverCardModifier: ViewModifier {
+/// Opaque overlay surface + default border + overlay elevation, all from the
+/// semantic theme roles.
+struct PopoverCardModifier: ViewModifier {
     var cornerRadius: CGFloat = 10
-    var backgroundColor: Color? = nil
-    var accentOpacity: (dark: Double, light: Double) = (0.04, 0.03)
-    var borderColor: Color? = nil
-    var borderWidth: CGFloat = 1
-    var borderOpacity: Double = 0.12
-    var shadowOpacity: Double = 0.2
-    var shadowRadius: CGFloat = 16
-    var shadowOffsetY: CGFloat = 8
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var baseComponentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(16, enabled: baseComponentEnabled) }
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        content
-            .background {
-                if let backgroundColor {
-                    shape.fill(backgroundColor)
-                } else {
-                    ZStack {
-                        if theme.glassEnabled {
-                            shape.fill(.ultraThinMaterial)
-                        }
-                        shape.fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(
-                                    theme.isDark ? accentOpacity.dark : accentOpacity.light
-                                ),
-                                .clear,
-                            ],
-                            startPoint: .top,
-                            endPoint: .center
-                        )
-                        .clipShape(shape)
-                    }
-                }
-            }
+        let shape = RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: cornerRadius), style: .continuous)
+        content.environment(\.theme, theme)
+            #if OSAURUS_DESIGN_SYSTEM
+            .foregroundColor(theme.text.primary)
+            .frame(minHeight: theme.catalogMetric("height", fallback: 0))
+            .presentationCornerRadius(theme.catalogMetric("radius", fallback: cornerRadius))
+            .presentationBackground(theme.surface.overlay)
+            #endif
+            .background { shape.fill(theme.surface.overlay) }
             .clipShape(shape)
-            .overlay {
-                if let borderColor {
-                    shape.strokeBorder(borderColor, lineWidth: borderWidth)
-                } else {
-                    shape.strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(0.2),
-                                theme.primaryBorder.opacity(borderOpacity),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-                }
-            }
-            .shadow(
-                color: theme.shadowColor.opacity(shadowOpacity),
-                radius: shadowRadius,
-                x: 0,
-                y: shadowOffsetY
-            )
+            .overlay { shape.strokeBorder(theme.border.default, lineWidth: theme.stroke.default) }
+            .themeElevation(theme.elevation.overlay)
     }
 }
 
-private extension View {
-    /// Applies the shared composer popover card chrome (glass fill, gradient
-    /// border, soft shadow). Tunable for the heavier model-options panel.
-    func popoverCard(
-        cornerRadius: CGFloat = 10,
-        backgroundColor: Color? = nil,
-        accentOpacity: (dark: Double, light: Double) = (0.04, 0.03),
-        borderColor: Color? = nil,
-        borderWidth: CGFloat = 1,
-        borderOpacity: Double = 0.12,
-        shadowOpacity: Double = 0.2,
-        shadowRadius: CGFloat = 16,
-        shadowOffsetY: CGFloat = 8
-    ) -> some View {
-        modifier(
-            PopoverCardModifier(
-                cornerRadius: cornerRadius,
-                backgroundColor: backgroundColor,
-                accentOpacity: accentOpacity,
-                borderColor: borderColor,
-                borderWidth: borderWidth,
-                borderOpacity: borderOpacity,
-                shadowOpacity: shadowOpacity,
-                shadowRadius: shadowRadius,
-                shadowOffsetY: shadowOffsetY
-            )
-        )
+extension View {
+    /// Applies the shared composer popover card chrome.
+    func popoverCard(cornerRadius: CGFloat = 10) -> some View {
+        modifier(PopoverCardModifier(cornerRadius: cornerRadius))
     }
 }
 
@@ -7007,9 +6947,9 @@ private struct ContextBreakdownPopover: View {
     }
 
     private var statusColor: Color {
-        if isHardOverflow { return theme.errorColor }
-        if isNearLimit { return theme.warningColor }
-        return theme.accentColor
+        if isHardOverflow { return theme.status.error.foreground }
+        if isNearLimit { return theme.status.warning.foreground }
+        return theme.status.info.foreground
     }
 
     private var limitLabel: String? {
@@ -7091,17 +7031,7 @@ private struct ContextBreakdownPopover: View {
     }
 
     private func color(for tint: ContextBreakdown.Tint) -> Color {
-        switch tint {
-        case .purple: return theme.isDark ? Color(red: 0.68, green: 0.52, blue: 1.0) : .purple
-        case .blue: return theme.isDark ? Color(red: 0.45, green: 0.68, blue: 1.0) : .blue
-        case .orange: return theme.isDark ? Color(red: 1.0, green: 0.68, blue: 0.35) : .orange
-        case .green: return theme.isDark ? Color(red: 0.45, green: 0.85, blue: 0.55) : .green
-        case .gray: return theme.isDark ? Color(red: 0.58, green: 0.62, blue: 0.68) : Color(white: 0.55)
-        case .cyan: return theme.isDark ? Color(red: 0.35, green: 0.82, blue: 0.9) : .cyan
-        case .teal: return theme.isDark ? Color(red: 0.3, green: 0.75, blue: 0.75) : .teal
-        case .indigo: return theme.isDark ? Color(red: 0.55, green: 0.48, blue: 0.95) : .indigo
-        case .pink: return theme.isDark ? Color(red: 1.0, green: 0.55, blue: 0.78) : .pink
-        }
+        tint.seriesColor(isDark: theme.isDark)
     }
 
     // MARK: - Body
@@ -7170,16 +7100,16 @@ private struct ContextBreakdownPopover: View {
     private var statusAccessory: some View {
         if let limitLabel {
             Text(verbatim: limitLabel)
-                .font(theme.font(size: theme.pickerCardBodySize, weight: .medium))
+                .textStyle(.label)
                 .foregroundStyle(statusColor)
         } else if isStreaming {
             HStack(spacing: 5) {
                 Circle()
-                    .fill(theme.successColor)
+                    .fill(theme.status.success.foreground)
                     .frame(width: 6, height: 6)
                 Text("Live", bundle: .module)
-                    .font(theme.font(size: theme.pickerCardBodySize))
-                    .foregroundStyle(theme.secondaryText)
+                    .textStyle(.bodySmall)
+                    .foregroundStyle(theme.text.secondary)
             }
         }
     }
@@ -7208,13 +7138,13 @@ private struct ContextBreakdownPopover: View {
         // A full cache is an LRU's steady state, not a problem; the tint and
         // the note appear only when the cap took THIS chat's saved progress.
         let warn = usage.pressureAffects(session: currentSessionKey)
-        let tint = warn ? theme.warningColor : theme.accentColor
+        let tint = warn ? theme.status.warning.foreground : theme.status.info.foreground
         return VStack(alignment: .leading, spacing: 0) {
             PickerCardSectionTitle(title: L("Disk cache")) {
                 Text(verbatim: usage.headlineLabel)
                     .fontWeight(.regular)
                     .monospacedDigit()
-                    .foregroundStyle(warn ? tint : theme.secondaryText)
+                    .foregroundStyle(warn ? tint : theme.text.secondary)
             }
             if usage.maxBytes > 0 {
                 usageBar(fraction: fraction, tint: tint, height: 4)
@@ -7232,7 +7162,7 @@ private struct ContextBreakdownPopover: View {
     private func usageBar(fraction: Double, tint: Color, height: CGFloat) -> some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(theme.tertiaryBackground)
+                Capsule().fill(theme.surface.hover)
                 Capsule()
                     .fill(tint)
                     // Keep a sliver visible at ~0% so the bar reads as a gauge.
@@ -7240,7 +7170,7 @@ private struct ContextBreakdownPopover: View {
             }
         }
         .frame(height: height)
-        .animation(.easeOut(duration: 0.2), value: fraction)
+        .animation(theme.motion.quick, value: fraction)
     }
 
     // MARK: - Compaction
@@ -7264,7 +7194,7 @@ private struct ContextBreakdownPopover: View {
         let configured = ContextCompactionService.configuredModelIdentifier()
         if ContextCompactionService.usesChatModelFallback(configured: configured) {
             return L(
-                "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Settings → Conversation → Advanced → Compaction Model."
+                "Summarizes older messages with the current chat model to free up context. The visible chat is unchanged. Pick a dedicated model in Models → Model Defaults → Compaction Model."
             )
         }
         let name = configured.map(Self.shortModelName) ?? ""
@@ -7292,14 +7222,14 @@ private struct ContextBreakdownPopover: View {
             case .completed(let savedTokens):
                 statusRow {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(theme.successColor)
+                        .foregroundStyle(theme.status.success.foreground)
                 } text: {
                     Text("Compacted — ~\(formatTokenCount(savedTokens)) tokens reclaimed", bundle: .module)
                 }
             case .failed(let message):
                 statusRow {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(theme.warningColor)
+                        .foregroundStyle(theme.status.warning.foreground)
                 } text: {
                     Text(verbatim: message)
                 }
@@ -7319,11 +7249,11 @@ private struct ContextBreakdownPopover: View {
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             icon()
-                .font(.system(size: 11))
+                .textStyle(.footnote)
                 .frame(width: 16)
             text()
-                .font(theme.font(size: theme.pickerCardBodySize))
-                .foregroundStyle(theme.secondaryText)
+                .textStyle(.bodySmall)
+                .foregroundStyle(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -7342,13 +7272,12 @@ private struct ContextBreakdownPopover: View {
     /// share, a fill bar, and the headroom / model-limit caption.
     private var hero: some View {
         let prefix = isStreaming ? "" : "~"
-        let captionFont = theme.font(size: theme.pickerCardCaptionSize)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(verbatim: "\(prefix)\(formatTokenCount(breakdown.total))")
-                    .font(theme.font(size: theme.pickerCardHeroSize, weight: .semibold))
+                    .textStyle(.title)
                     .monospacedDigit()
-                    .foregroundStyle(isHardOverflow ? theme.errorColor : theme.primaryText)
+                    .foregroundStyle(isHardOverflow ? theme.status.error.foreground : theme.text.primary)
                     .contentTransition(.numericText())
                 Group {
                     if let maxTokens = utilization.maxTokens {
@@ -7357,12 +7286,12 @@ private struct ContextBreakdownPopover: View {
                         Text("tokens", bundle: .module)
                     }
                 }
-                .font(theme.font(size: theme.pickerCardBodySize))
-                .foregroundStyle(theme.secondaryText)
+                .textStyle(.bodySmall)
+                .foregroundStyle(theme.text.secondary)
                 Spacer(minLength: 4)
                 if let percent = utilization.percent {
                     Text(verbatim: "\(percent)%")
-                        .font(theme.font(size: theme.pickerCardBodySize, weight: .medium))
+                        .textStyle(.label)
                         .monospacedDigit()
                         .foregroundStyle(statusColor)
                         .contentTransition(.numericText())
@@ -7392,8 +7321,8 @@ private struct ContextBreakdownPopover: View {
                         )
                 }
             }
-            .font(captionFont)
-            .foregroundStyle(theme.secondaryText)
+            .textStyle(.caption)
+            .foregroundStyle(theme.text.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, PickerCardMetrics.rowInset)
@@ -7421,7 +7350,7 @@ private struct ContextBreakdownPopover: View {
     private func autoDisableRow(_ notice: String) -> some View {
         statusRow {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(theme.warningColor)
+                .foregroundStyle(theme.status.warning.foreground)
         } text: {
             Text(verbatim: notice)
         }
@@ -7469,15 +7398,15 @@ private struct ContextBreakdownPopover: View {
                 // by id would risk a duplicate-ID ForEach trap.
                 ForEach(Array(zip(segments, widths).enumerated()), id: \.offset) { _, pair in
                     let (segment, width) = pair
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: theme.radius.small)
                         .fill(color(for: segment.tint).opacity(0.85))
                         .frame(width: width)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .clipShape(RoundedRectangle(cornerRadius: theme.radius.small))
         }
         .frame(height: 6)
-        .background(RoundedRectangle(cornerRadius: 3).fill(theme.tertiaryBackground))
+        .background(RoundedRectangle(cornerRadius: theme.radius.small).fill(theme.surface.hover))
     }
 
     // MARK: - Legend
@@ -7557,7 +7486,6 @@ private struct ContextBreakdownPopover: View {
         highlighted: Bool = false,
         nested: Bool = false
     ) -> some View {
-        let textSize = theme.pickerCardBodySize - (nested ? 1 : 0)
         return HStack(spacing: 8) {
             Circle()
                 .fill(color(for: tint))
@@ -7565,30 +7493,32 @@ private struct ContextBreakdownPopover: View {
                 .frame(width: 16)
 
             Text(label)
-                .font(theme.font(size: textSize))
-                .foregroundStyle(nested ? theme.secondaryText : theme.primaryText)
+                .textStyle(nested ? .caption : .label)
+                .fontWeight(.regular)
+                .foregroundStyle(nested ? theme.text.secondary : theme.text.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
             if let disclosure {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(theme.tertiaryText)
+                    .glyphSize(9, weight: .semibold)
+                    .foregroundStyle(theme.text.tertiary)
                     .rotationEffect(.degrees(disclosure ? 90 : 0))
             }
 
             Spacer(minLength: 6)
 
             Text(formatTokenCount(tokens))
-                .font(theme.font(size: textSize))
+                .textStyle(nested ? .caption : .label)
+                .fontWeight(.regular)
                 .monospacedDigit()
-                .foregroundStyle(highlighted ? color(for: tint) : theme.primaryText)
+                .foregroundStyle(highlighted ? color(for: tint) : theme.text.primary)
                 .contentTransition(highlighted ? .numericText() : .identity)
 
             Text(percent(tokens))
-                .font(theme.font(size: theme.pickerCardCaptionSize))
+                .textStyle(.footnote)
                 .monospacedDigit()
-                .foregroundStyle(theme.tertiaryText)
+                .foregroundStyle(theme.text.tertiary)
                 .frame(width: 32, alignment: .trailing)
         }
         .padding(.leading, nested ? 24 : 0)
@@ -7618,7 +7548,7 @@ private struct BudgetDisclosureRow<Label: View>: View {
 
 /// The composer wallet panel, presented in the same arrowless, themed card
 /// as the model picker, aligned to the trailing edge of its credits chip.
-/// Opens from the credits chip as a hover preview or a pinned click-through
+/// Opens from the credits chip on click as an interactive
 /// panel: balance hero, per-session router spend, recent account activity
 /// (model requests + ledger transactions), and Add credits / View all actions.
 /// This is the surface agent-initiated credit transactions will land in — new
@@ -7641,7 +7571,7 @@ private struct WalletPopover: View {
     @Environment(\.theme) private var theme
     @Environment(\.anchoredCardMetrics) private var cardMetrics
 
-    private var subduedTextColor: Color { theme.isDark ? theme.tertiaryText : theme.secondaryText }
+    private var subduedTextColor: Color { theme.isDark ? theme.text.tertiary : theme.text.secondary }
 
     /// Shared so each row doesn't allocate a formatter; relative labels like
     /// "3h ago" only need minute resolution.
@@ -7698,8 +7628,8 @@ private struct WalletPopover: View {
             PickerCardHeading(title: L("Credits")) {
                 if accountService.isFrozen {
                     Text("Paused", bundle: .module)
-                        .font(theme.font(size: theme.pickerCardBodySize, weight: .medium))
-                        .foregroundStyle(theme.warningColor)
+                        .textStyle(.label)
+                        .foregroundStyle(theme.status.warning.foreground)
                 }
             }
 
@@ -7736,25 +7666,25 @@ private struct WalletPopover: View {
             // balances don't truncate the oversized figure.
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(verbatim: accountService.formattedBalanceValue)
-                    .font(theme.font(size: theme.pickerCardHeroSize, weight: .semibold))
+                    .textStyle(.title)
                     .monospacedDigit()
                     .foregroundStyle(
                         (isAttention || accountService.isFrozen)
-                            ? theme.warningColor : theme.primaryText
+                            ? theme.status.warning.foreground : theme.text.primary
                     )
                     .contentTransition(.numericText())
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                 Text("credits available", bundle: .module)
-                    .font(theme.font(size: theme.pickerCardBodySize))
-                    .foregroundStyle(theme.secondaryText)
+                    .textStyle(.bodySmall)
+                    .foregroundStyle(theme.text.secondary)
                     .lineLimit(1)
             }
 
             if accountService.isFrozen {
                 Text("Account paused - add credits to resume.", bundle: .module)
-                    .font(theme.font(size: theme.pickerCardCaptionSize))
-                    .foregroundStyle(theme.warningColor)
+                    .textStyle(.footnote)
+                    .foregroundStyle(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -7772,18 +7702,18 @@ private struct WalletPopover: View {
     ) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundStyle(iconColor ?? theme.tertiaryText)
+                .glyphSize(11)
+                .foregroundStyle(iconColor ?? theme.text.tertiary)
                 .frame(width: 16)
             Text(label, bundle: .module)
-                .font(theme.font(size: theme.pickerCardBodySize))
-                .foregroundStyle(theme.primaryText)
+                .textStyle(.bodySmall)
+                .foregroundStyle(theme.text.primary)
                 .lineLimit(1)
             Spacer(minLength: 6)
             Text(verbatim: value)
-                .font(theme.font(size: theme.pickerCardBodySize))
+                .textStyle(.bodySmall)
                 .monospacedDigit()
-                .foregroundStyle(valueColor ?? theme.primaryText)
+                .foregroundStyle(valueColor ?? theme.text.primary)
                 .contentTransition(.numericText())
         }
         .pickerCardRowChrome(highlighted: false, minHeight: PickerCardMetrics.valueRowHeight)
@@ -7799,7 +7729,7 @@ private struct WalletPopover: View {
                 icon: "bolt.fill",
                 label: "Prompt cache",
                 value: cachedLabel,
-                valueColor: theme.secondaryText
+                valueColor: theme.text.secondary
             )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(
@@ -7817,10 +7747,10 @@ private struct WalletPopover: View {
         let exhausted = grant.remainingTotal <= 0
         return valueRow(
             icon: "magnifyingglass",
-            iconColor: exhausted ? theme.warningColor : nil,
+            iconColor: exhausted ? theme.status.warning.foreground : nil,
             label: "Search credits",
             value: "\(grant.remainingTotal)",
-            valueColor: exhausted ? theme.warningColor : nil
+            valueColor: exhausted ? theme.status.warning.foreground : nil
         )
     }
 
@@ -7831,12 +7761,12 @@ private struct WalletPopover: View {
     private var webSearchFallbackNotice: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundStyle(theme.warningColor)
+                .glyphSize(11)
+                .foregroundStyle(theme.status.warning.foreground)
                 .frame(width: 16)
             Text("Premium search is paused - add credits to resume.", bundle: .module)
-                .font(theme.font(size: theme.pickerCardCaptionSize))
-                .foregroundStyle(theme.secondaryText)
+                .textStyle(.footnote)
+                .foregroundStyle(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -7863,7 +7793,7 @@ private struct WalletPopover: View {
     private func activityRow(_ row: WalletActivityRow) -> some View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: iconName(for: row))
-                .font(.system(size: 11, weight: .medium))
+                .glyphSize(11, weight: .medium)
                 .foregroundStyle(badgeTint(for: row))
                 .frame(width: 16)
 
@@ -7881,13 +7811,13 @@ private struct WalletPopover: View {
                         Text(LocalizedStringKey(row.title), bundle: .module)
                     }
                 }
-                .font(theme.font(size: theme.pickerCardBodySize))
-                .foregroundStyle(theme.primaryText)
+                .textStyle(.bodySmall)
+                .foregroundStyle(theme.text.primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 if let timeLabel = timeLabel(for: row) {
                     Text(verbatim: timeLabel)
-                        .font(theme.font(size: theme.pickerCardCaptionSize))
+                        .textStyle(.footnote)
                         .foregroundStyle(subduedTextColor)
                 }
             }
@@ -7895,9 +7825,9 @@ private struct WalletPopover: View {
             Spacer(minLength: 8)
 
             Text(verbatim: row.amountLabel)
-                .font(theme.font(size: theme.pickerCardBodySize))
+                .textStyle(.bodySmall)
                 .monospacedDigit()
-                .foregroundStyle(row.isCredit ? theme.successColor : theme.secondaryText)
+                .foregroundStyle(row.isCredit ? theme.status.success.foreground : theme.text.secondary)
                 .lineLimit(1)
                 .fixedSize()
         }
@@ -7910,9 +7840,9 @@ private struct WalletPopover: View {
     private var footerActions: some View {
         HStack(spacing: 0) {
             PickerCardTextLink(
-                title: L("Add credits"),
+                title: L("Add Credits"),
                 icon: "plus",
-                tint: theme.accentColor,
+                tint: theme.text.link,
                 fillsWidth: false,
                 action: onAddCredits
             )
@@ -7945,16 +7875,16 @@ private struct WalletPopover: View {
     /// Hosted web searches render in the premium (accent) family — a touch
     /// stronger when the request used a search credit.
     private func badgeTint(for row: WalletActivityRow) -> Color {
-        if row.isCredit { return theme.successColor }
+        if row.isCredit { return theme.status.success.foreground }
         switch row.stateKind {
-        case .warning: return theme.warningColor
-        case .error: return theme.errorColor
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
         case .success, .secondary:
             if row.kind == .webUsage {
                 return row.isIncludedWebRequest
-                    ? theme.accentColor : theme.accentColor.opacity(0.7)
+                    ? theme.status.info.foreground : theme.status.info.foreground
             }
-            return theme.secondaryText
+            return theme.text.secondary
         }
     }
 
@@ -8030,13 +7960,44 @@ func computeContextBudgetSegmentWidths(
 /// Polished selector chip for model pickers
 private struct SelectorChip<Content: View>: View {
     let isActive: Bool
+    /// A text-weight selector (the model picker): no surface at rest, a
+    /// soft fill on hover and while its card is open.
+    var quiet: Bool = false
     let action: () -> Void
     @ViewBuilder let content: () -> Content
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
 
+    init(isActive: Bool, quiet: Bool = false, action: @escaping () -> Void, @ViewBuilder content: @escaping () -> Content) {
+        self.isActive = isActive
+        self.quiet = quiet
+        self.action = action
+        self.content = content
+    }
+
     var body: some View {
+        if quiet {
+            Button(action: action) {
+                content().modifier(QuietChipSurface(isActive: isActive, isHovered: isHovered))
+            }
+            .composerChipButtonStyle()
+            .composerChipFocus()
+            .pointingHandCursor()
+            .onHover { hovering in
+                withAnimation(theme.motion.quick) { isHovered = hovering }
+            }
+        } else {
+            standardChip
+        }
+    }
+
+    @ViewBuilder
+    private var standardChip: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        Button(action: action) { content().composerChipSurface(selected: isActive) }
+            .composerChipButtonStyle().composerChipFocus()
+        #else
         Button(action: action) {
             content()
                 .padding(.horizontal, 10)
@@ -8044,40 +8005,28 @@ private struct SelectorChip<Content: View>: View {
                 .background(chipBackground)
                 .clipShape(Capsule())
                 .overlay(chipBorder)
-                .shadow(
-                    color: isHovered || isActive ? theme.accentColor.opacity(0.1) : .clear,
-                    radius: 4,
-                    x: 0,
-                    y: 1
-                )
+
         }
-        .buttonStyle(.plain)
+        .composerChipButtonStyle()
         .pointingHandCursor()
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
+    #endif
     }
 
     @ViewBuilder
     private var chipBackground: some View {
         ZStack {
             Capsule()
-                .fill(theme.secondaryBackground.opacity(isHovered || isActive ? 0.95 : 0.8))
+                .fill(theme.surface.subtle)
 
-            if isHovered || isActive {
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.06),
-                                Color.clear,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+            if isActive {
+                Capsule().fill(theme.surface.selected)
+            } else if isHovered {
+                Capsule().fill(theme.surface.hover)
             }
         }
     }
@@ -8085,18 +8034,83 @@ private struct SelectorChip<Content: View>: View {
     private var chipBorder: some View {
         Capsule()
             .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(isHovered || isActive ? 0.25 : 0.15),
-                        (isActive ? theme.accentColor : theme.primaryBorder).opacity(
-                            isHovered || isActive ? 0.2 : 0.12
-                        ),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
+                isActive ? theme.border.focus : (isHovered ? theme.border.default : theme.border.subtle),
+                lineWidth: theme.stroke.default
             )
+    }
+}
+
+/// One surface for the media composer's option chips (size, steps, CFG,
+/// seed, negative prompt…): the design system's composer chip around a
+/// fixed content height, so every chip in the row is as tall as the
+/// composer's round buttons whatever it holds — the steps stepper's
+/// buttons included.
+private struct ImageOptionChipSurface: ViewModifier {
+    static let contentHeight: CGFloat = 18
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        content
+            .frame(height: Self.contentHeight)
+            .composerChipSurface()
+        #else
+        content
+            .frame(height: Self.contentHeight)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s4)
+            .background(
+                Capsule()
+                    .fill(theme.surface.subtle)
+                    .overlay(Capsule().strokeBorder(theme.border.subtle, lineWidth: theme.hairline))
+            )
+        #endif
+    }
+}
+
+/// The quiet chip's surface: as tall as the composer's round buttons, a
+/// tight inset so the label sits close to the + beside it, and a fill only
+/// on hover or while active.
+private struct QuietChipSurface: ViewModifier {
+    let isActive: Bool
+    let isHovered: Bool
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+        content
+            .padding(.horizontal, theme.space.s8)
+            .frame(height: theme.controlSize.compactHeight)
+            .background(shape.fill(isActive ? theme.surface.selected : isHovered ? theme.surface.hover : Color.clear))
+            .contentShape(shape)
+    }
+}
+
+/// Sizes content to its natural width up to `maxWidth`, truncating past it.
+/// A plain `.frame(maxWidth:)` grows to the cap whenever the row has room,
+/// which left a short model name centred in a wide chip.
+private struct CappedHuggingWidth: ViewModifier {
+    let maxWidth: CGFloat
+
+    func body(content: Content) -> some View {
+        CappedHuggingWidthLayout(maxWidth: maxWidth) { content }
+    }
+}
+
+private struct CappedHuggingWidthLayout: Layout {
+    let maxWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let natural = child.sizeThatFits(.unspecified)
+        let width = min(natural.width, maxWidth, proposal.width ?? .infinity)
+        return child.sizeThatFits(ProposedViewSize(width: width, height: proposal.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(
+            at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }
 
@@ -8111,41 +8125,31 @@ private struct SlashCommandTriggerButton: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        Button(action: action) { Text("/") }
+            .assignedSettingsButtonStyle(.tertiary)
+            .localizedHelp("Browse slash commands")
+            .accessibilityLabel(Text("Browse slash commands", bundle: .module))
+        #else
         Button(action: action) {
             ZStack {
                 Circle()
-                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
+                    .fill(theme.surface.hover)
 
                 if isHovered {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [theme.accentColor.opacity(0.1), Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    Circle().fill(theme.surface.hover)
                 }
 
                 Text("/")
-                    .font(.system(size: 16, weight: .medium, design: .monospaced))
-                    .foregroundColor(
-                        isActive ? theme.accentColor : (isHovered ? theme.accentColor : theme.secondaryText)
-                    )
+                    .textStyle(.code, weight: 500)
+                    .foregroundColor(isActive || isHovered ? theme.text.primary : theme.text.secondary)
             }
             .frame(width: 32, height: 32)
             .overlay(
                 Circle()
                     .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
-                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.5
+                        isHovered ? theme.border.default : theme.border.subtle,
+                        lineWidth: theme.hairline
                     )
             )
         }
@@ -8153,6 +8157,7 @@ private struct SlashCommandTriggerButton: View {
         .pointingHandCursor()
         .localizedHelp("Browse slash commands")
         .onHover { isHovered = $0 }
+        #endif
     }
 }
 
@@ -8165,59 +8170,42 @@ private struct InputActionButton: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        Button(action: action) { Image(systemName: icon) }
+            .assignedSettingsIconButtonStyle(size: .small, role: .secondary)
+            .help(help).accessibilityLabel(help)
+        #else
         Button(action: action) {
             ZStack {
                 Circle()
-                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
+                    .fill(theme.surface.hover)
 
                 if isHovered {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    theme.accentColor.opacity(0.1),
-                                    Color.clear,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    Circle().fill(theme.surface.hover)
                 }
 
                 Image(systemName: icon)
-                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                    .glyphSize(15, weight: .medium)
+                    .foregroundColor(isHovered ? theme.text.primary : theme.text.secondary)
             }
             .frame(width: 32, height: 32)
             .overlay(
                 Circle()
                     .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
-                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
+                        isHovered ? theme.border.default : theme.border.subtle,
+                        lineWidth: theme.stroke.default
                     )
-            )
-            .shadow(
-                color: isHovered ? theme.accentColor.opacity(0.15) : .clear,
-                radius: 6,
-                x: 0,
-                y: 2
             )
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
         .help(help)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
+        #endif
     }
 }
 
@@ -8256,42 +8244,71 @@ private struct InputActionMenuButton: View {
 
     @State private var isHovered = false
     @State private var showPopover = false
+    @State private var menuInteraction = ClickMenuInteraction()
+    @State private var measuredMenuSize: CGSize = .zero
     @Environment(\.theme) private var theme
 
     var body: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        menuTrigger
+
+            // Shared anchored presentation; click/keyboard activation takes focus.
+            .anchoredCard(isPresented: $menuInteraction.isPresented,
+                          size: measuredMenuSize,
+                          alignment: .leading, constrainToWindow: true,
+                          takesFocus: menuInteraction.takesFocus, shadowPadding: 18,
+                          shadowPassesThrough: true, accessibilityLabel: help) {
+                menuContent
+                    .fixedSize(horizontal: true, vertical: true)
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+                        if abs(measuredMenuSize.width - size.width) > 0.5 || abs(measuredMenuSize.height - size.height) > 0.5 {
+                            measuredMenuSize = CGSize(width: max(1, size.width), height: max(1, size.height))
+                        }
+                    }
+
+                    .themeElevation(theme.elevation.overlay)
+            }
+            .onChange(of: menuInteraction.isPresented) { _, shown in
+                if !shown {
+                    menuInteraction.didDismiss()
+                }
+            }
+            .onDisappear { menuInteraction.didDismiss() }
+        #else
+        menuTrigger
+            .assignedPopover(isPresented: $showPopover, width: footer != nil ? 240 : 180,
+                accessibilityLabel: help, arrowEdge: .top) { menuContent }
+        #endif
+    }
+
+    @ViewBuilder private var menuTrigger: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        Button {
+            menuInteraction.clickTrigger()
+        } label: { Image(systemName: icon) }
+            .assignedSettingsIconButtonStyle(size: .small, role: .secondary)
+            .contentShape(Rectangle())
+            .help(help).accessibilityLabel(help)
+        #else
         Button(action: { showPopover.toggle() }) {
             ZStack {
                 Circle()
-                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
+                    .fill(theme.surface.hover)
 
                 if isHovered {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [theme.accentColor.opacity(0.1), Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    Circle().fill(theme.surface.hover)
                 }
 
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                    .glyphSize(16, weight: .medium)
+                    .foregroundColor(isHovered ? theme.text.primary : theme.text.secondary)
             }
             .frame(width: 32, height: 32)
             .overlay(
                 Circle()
                     .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
-                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.5
+                        isHovered ? theme.border.default : theme.border.subtle,
+                        lineWidth: theme.hairline
                     )
             )
         }
@@ -8299,27 +8316,44 @@ private struct InputActionMenuButton: View {
         .pointingHandCursor()
         .help(help)
         .onHover { isHovered = $0 }
-        .popover(isPresented: $showPopover, arrowEdge: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    MenuItemRow(icon: item.icon, title: item.title, disabledReason: item.disabledReason) {
-                        showPopover = false
-                        item.action()
-                    }
-                }
-                if let footer {
-                    Divider()
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                    footer({ showPopover = false })
-                }
-            }
-            .padding(.vertical, 6)
-            // Wider with a footer so recent folder names have room.
-            .frame(width: footer != nil ? 240 : 180)
-            .background(theme.primaryBackground)
+        #endif
+    }
+
+    @ViewBuilder private var menuContent: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        ChatContextMenu { menuRows }
             .environment(\.theme, theme)
+        #else
+        VStack(alignment: .leading, spacing: 4) { menuRows }
+            .padding(.vertical, 6)
+            .frame(width: footer != nil ? 240 : 180)
+            .background(theme.surface.canvas)
+        #endif
+    }
+
+    @ViewBuilder private var menuRows: some View {
+        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+            MenuItemRow(icon: item.icon, title: item.title, disabledReason: item.disabledReason) {
+                closeMenu()
+                item.action()
+            }
         }
+        if let footer {
+            #if OSAURUS_DESIGN_SYSTEM
+            ChatContextMenuDivider()
+            #else
+            Divider()
+            #endif
+            footer({ closeMenu() })
+        }
+    }
+
+    private func closeMenu() {
+        #if OSAURUS_DESIGN_SYSTEM
+        menuInteraction.didDismiss()
+        #else
+        showPopover = false
+        #endif
     }
 
     /// One popover action row, in the model picker's `SortOptionRow` idiom:
@@ -8336,6 +8370,18 @@ private struct InputActionMenuButton: View {
         private var isDisabled: Bool { disabledReason != nil }
 
         var body: some View {
+            #if OSAURUS_DESIGN_SYSTEM
+            Button(action: { if !isDisabled { action() } }) {
+                ChatContextMenuLabel(title: title, icon: Group {
+                    if icon == "slash.forward" { Text("/") }
+                    else { Image(systemName: icon) }
+                })
+                if isDisabled { Image(systemName: "info.circle") }
+            }
+            .buttonStyle(ChatContextMenuRowStyle())
+            .disabled(isDisabled)
+            .help(disabledReason ?? Text(""))
+            #else
             // Inert rather than `.disabled` so the row still tracks hover.
             // The info icon is an overlay sibling rather than part of the
             // Button label: `.help` never fires inside a plain-style label
@@ -8343,13 +8389,13 @@ private struct InputActionMenuButton: View {
             Button(action: { if !isDisabled { action() } }) {
                 HStack(spacing: 10) {
                     Image(systemName: icon)
-                        .font(.system(size: 12, weight: .medium))
+                        .glyphSize(12, weight: .medium)
                         .frame(width: 16)
-                        .foregroundColor(theme.secondaryText)
+                        .foregroundColor(theme.text.secondary)
                         .opacity(isDisabled ? 0.45 : 1)
                     title
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .glyphSize(12, weight: .medium)
+                        .foregroundColor(theme.text.primary)
                         .opacity(isDisabled ? 0.45 : 1)
                     Spacer(minLength: 0)
                     if isDisabled {
@@ -8362,162 +8408,124 @@ private struct InputActionMenuButton: View {
                 .background(
                     // Match the popover's own corner radius so the hover
                     // highlight reads as concentric with the menu chrome.
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(isHovering ? theme.tertiaryBackground.opacity(0.7) : Color.clear)
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .fill(isHovering ? theme.surface.hover : Color.clear)
                 )
                 .padding(.horizontal, 6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.12)) {
+                withAnimation(theme.motion.quick) {
                     isHovering = hovering && !isDisabled
                 }
             }
             .overlay(alignment: .trailing) {
                 if let disabledReason {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(showReason ? theme.primaryText : theme.secondaryText)
+                        .glyphSize(11, weight: .medium)
+                        .foregroundColor(showReason ? theme.text.primary : theme.text.secondary)
                         .frame(width: 14, height: 14)
                         .contentShape(Rectangle())
                         .padding(.trailing, 18)
                         .onHover { showReason = $0 }
                         .popover(isPresented: $showReason, arrowEdge: .trailing) {
                             disabledReason
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.primaryText)
+                                .textStyle(.footnote)
+                                .foregroundColor(theme.text.primary)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: 200, alignment: .leading)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 8)
-                                .background(theme.primaryBackground)
+                                .background(theme.surface.canvas)
                                 .environment(\.theme, theme)
                         }
                 }
             }
+            #endif
         }
     }
 }
 
 // MARK: - Send Button
 
-/// Polished send button with hover glow effect
-private struct SendButton: View {
+/// Shared Send/Stop icon button. Stop retains the Send footprint and uses
+/// the library primary action; Send retains the saved brand action. Also
+/// the submit of `PromptReplyField`.
+struct SendButton: View {
     let canSend: Bool
+    var isStopping = false
     let action: () -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
 
+    private var state: ThemeActionState<Color> {
+        guard canSend else { return theme.action.primary.disabled }
+        return isHovered ? theme.action.primary.hover : theme.action.primary.default
+    }
+
     var body: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        Button(action: action) { Image(systemName: isStopping ? "stop.fill" : "arrow.up") }
+            .assignedSettingsIconButtonStyle(size: .small, role: isStopping ? .primary : .brand)
+            .disabled(!canSend)
+            .accessibilityLabel(Text(isStopping ? "Stop" : "Send", bundle: .module))
+        #else
         Button(action: action) {
             ZStack {
-                // Background gradient
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor,
-                                theme.accentColor.opacity(0.85),
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-
-                // Brighter overlay on hover
-                if isHovered && canSend {
-                    Circle()
-                        .fill(Color.white.opacity(0.15))
-                }
-
-                Image(systemName: "arrow.up")
-                    .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
-                    .foregroundColor(.white)
+                Circle().fill(state.background)
+                Image(systemName: isStopping ? "stop.fill" : "arrow.up")
+                    .glyphSize(16, weight: .semibold)
+                    .foregroundColor(state.foreground)
             }
             .frame(width: 32, height: 32)
-            .overlay(
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(isHovered ? 0.35 : 0.2),
-                                theme.accentColor.opacity(0.3),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.accentColor.opacity(isHovered && canSend ? 0.5 : 0.35),
-                radius: isHovered && canSend ? 10 : 6,
-                x: 0,
-                y: isHovered && canSend ? 4 : 2
-            )
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
         .disabled(!canSend)
-        .opacity(canSend ? 1 : 0.5)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
-        .animation(.easeOut(duration: 0.1), value: canSend)
+        .animation(theme.motion.quick, value: canSend)
+        #endif
     }
 }
 
 // MARK: - Stop Button
 
-/// Polished stop button with red accent
-private struct StopButton: View {
+/// Destructive-action stop button (`action.destructive` default/hover).
+/// Also the Stop of a hosted conversation's notice.
+struct StopButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
 
+    private var state: ThemeActionState<Color> {
+        isHovered ? theme.action.destructive.hover : theme.action.destructive.default
+    }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(.white)
+                RoundedRectangle(cornerRadius: theme.radius.small)
+                    .fill(state.foreground)
                     .frame(width: 8, height: 8)
                 Text("Stop", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                    .textStyle(.footnote, weight: 500)
             }
-            .foregroundColor(.white)
+            .foregroundColor(state.foreground)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(
-                ZStack {
-                    Capsule()
-                        .fill(Color.red.opacity(isHovered ? 1.0 : 0.9))
-
-                    if isHovered {
-                        Capsule()
-                            .fill(Color.white.opacity(0.1))
-                    }
-                }
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(Color.white.opacity(isHovered ? 0.3 : 0.15), lineWidth: 1)
-            )
-            .shadow(
-                color: Color.red.opacity(isHovered ? 0.4 : 0.25),
-                radius: isHovered ? 8 : 4,
-                x: 0,
-                y: 2
-            )
+            .background(Capsule().fill(state.background))
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
@@ -8542,38 +8550,40 @@ private struct SendQueueButton: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        Button(action: action) { Image(systemName: "arrow.up") }
+            .assignedSettingsIconButtonStyle(size: .small, role: .secondary)
+            .disabled(!canSend)
+            .localizedHelp("Queue message · sent when current run finishes")
+            .accessibilityLabel(Text("Queue message", bundle: .module))
+            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        #else
+        let state: ThemeActionState<Color> =
+            !canSend
+            ? theme.action.secondary.disabled
+            : (isHovered ? theme.action.secondary.hover : theme.action.secondary.default)
         Button(action: action) {
             ZStack {
-                Circle()
-                    .fill(theme.tertiaryBackground.opacity(canSend ? 0.95 : 0.7))
-
-                if isHovered && canSend {
-                    Circle()
-                        .fill(theme.accentColor.opacity(0.12))
-                }
-
+                Circle().fill(state.background)
                 Image(systemName: "arrow.up")
-                    .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .glyphSize(16, weight: .semibold)
+                    .foregroundColor(state.foreground)
             }
             .frame(width: 32, height: 32)
-            .overlay(
-                Circle()
-                    .strokeBorder(theme.secondaryText.opacity(isHovered ? 0.35 : 0.2), lineWidth: 1)
-            )
+            .overlay(Circle().strokeBorder(theme.action.border, lineWidth: theme.stroke.default))
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
         .disabled(!canSend)
-        .opacity(canSend ? 1 : 0.5)
         .localizedHelp("Queue message · sent when current run finishes")
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
-        .animation(.easeOut(duration: 0.1), value: canSend)
+        .animation(theme.motion.quick, value: canSend)
         .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        #endif
     }
 }
 
@@ -8590,60 +8600,33 @@ private struct SendNowButton: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        Button(action: action) { Image(systemName: "bolt.fill") }
+            .assignedSettingsIconButtonStyle(size: .small, role: .brand)
+            .localizedHelp("Send now · interrupts current run")
+            .accessibilityLabel(Text("Send now", bundle: .module))
+            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        #else
+        let state = isHovered ? theme.action.primary.hover : theme.action.primary.default
         Button(action: action) {
             ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor,
-                                theme.accentColor.opacity(0.85),
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-
-                if isHovered {
-                    Circle()
-                        .fill(Color.white.opacity(0.15))
-                }
-
+                Circle().fill(state.background)
                 Image(systemName: "bolt.fill")
-                    .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
-                    .foregroundColor(.white)
+                    .glyphSize(16, weight: .semibold)
+                    .foregroundColor(state.foreground)
             }
             .frame(width: 32, height: 32)
-            .overlay(
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(isHovered ? 0.35 : 0.2),
-                                theme.accentColor.opacity(0.3),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.accentColor.opacity(isHovered ? 0.5 : 0.35),
-                radius: isHovered ? 10 : 6,
-                x: 0,
-                y: isHovered ? 4 : 2
-            )
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
         .localizedHelp("Send now · interrupts current run")
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
         .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        #endif
     }
 }
 
@@ -8693,7 +8676,7 @@ private struct SendNowButton: View {
                     )
                 }
                 .frame(width: 700, height: 400)
-                .background(Color(hex: "0f0f10"))
+                .background(CustomizableTheme.dark().surface.canvas)
             }
         }
 
@@ -8750,9 +8733,9 @@ private struct FloatingWorkspacePoolChip: View {
     private var isFrozen: Bool { balance?.frozen == true }
 
     private var balanceColor: Color {
-        if isFrozen { return theme.warningColor }
-        guard let micro = balance.flatMap({ Int64($0.balanceMicro) }) else { return theme.primaryText }
-        return micro <= 0 ? theme.warningColor : theme.primaryText
+        if isFrozen { return theme.status.warning.foreground }
+        guard let micro = balance.flatMap({ Int64($0.balanceMicro) }) else { return theme.text.primary }
+        return micro <= 0 ? theme.status.warning.foreground : theme.text.primary
     }
 
     /// Names the workspace, not a generic "Workspace pool": a bare number
@@ -8760,7 +8743,6 @@ private struct FloatingWorkspacePoolChip: View {
     /// context that makes the number legible, so it survives compact
     /// (truncated) and only ultra-compact drops it.
     var body: some View {
-        let caption = CGFloat(theme.captionSize)
         SelectorChip(isActive: false) {
             if let workspaceId {
                 WorkspacesService.shared.openInSettings(workspaceId: workspaceId, tab: .overview)
@@ -8768,42 +8750,45 @@ private struct FloatingWorkspacePoolChip: View {
                 AppDelegate.shared?.showManagementWindow(initialTab: .workspaces)
             }
         } content: {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.23.elements.layout.floatingWorkspacePoolChip.body.horizontalGap", inheriting: theme.assignedMetric("component.library.23.gap", fallback: 4))) {
                 Image(systemName: "person.2.fill")
-                    .font(.system(size: caption - 2))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(10)
+                    .composerChipInk("secondary", fallback: theme.text.tertiary)
                 if !metaUltraCompact {
                     Text(verbatim: workspaceName)
-                        .font(theme.font(size: caption - 1, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .composerChipTextStyle(.footnote, weight: 500)
+                        .composerChipOriginalWeight(.medium)
+                        .composerChipInk("foreground", fallback: theme.text.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: metaCompact ? 96 : 160, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                     if !metaCompact {
                         Text("pool", bundle: .module)
-                            .font(theme.font(size: caption - 1, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
+                            .composerChipTextStyle(.footnote, weight: 500)
+                            .composerChipOriginalWeight(.medium)
+                            .composerChipInk("secondary", fallback: theme.text.tertiary)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                     }
                     if let balanceDisplay {
                         Text(verbatim: "·")
-                            .font(.system(size: caption - 1))
-                            .foregroundColor(theme.tertiaryText)
+                            .composerChipTextStyle(.footnote)
+                            .composerChipInk("secondary", fallback: theme.text.tertiary)
                         Text(verbatim: balanceDisplay)
-                            .font(.system(size: caption - 1, weight: .medium, design: .monospaced))
-                            .foregroundColor(balanceColor)
+                            .composerChipTextStyle(.footnote, monospacedDigit: true, weight: 500, family: .code, property: "text")
+                            .composerChipOriginalWeight(.medium)
+                            .composerChipInk("foreground", fallback: balanceColor)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                             .contentTransition(.numericText())
                     }
                 }
-            }
+            }.catalogLayoutTarget("component.library.23.elements.layout.floatingWorkspacePoolChip.body.horizontalGap")
         }
         .help(Text(verbatim: helpText))
         .accessibilityLabel(Text(verbatim: accessibilityText))
-        .animation(.easeOut(duration: 0.2), value: balance?.balanceMicro)
+        .animation(theme.motion.quick, value: balance?.balanceMicro)
         // First paint and every workspace change: read the pool once. Billed
         // steps refresh it through `WorkspacesService.noteWorkspaceBilled`.
         .task(id: workspaceId) {
@@ -8842,9 +8827,9 @@ private struct FloatingWorkspacePoolChip: View {
 }
 
 /// account-service updates re-render only this chip, never the whole card.
-/// Hovering previews the wallet panel; clicking pins it so its actions
+/// Clicking opens the wallet panel so its actions
 /// (Add credits → top-up sheet, View all → Credits tab) are reachable.
-/// Quiet plain text normally, escalating to an amber pill / "Add credits"
+/// Quiet plain text normally, escalating to an amber pill / "Add Credits"
 /// CTA as the balance runs low or hits zero — router-billed sessions only.
 private struct FloatingCreditsChip: View {
     let isRouterBilledSession: Bool
@@ -8856,25 +8841,19 @@ private struct FloatingCreditsChip: View {
     let metaUltraCompact: Bool
     let onAddCredits: (() -> Void)?
 
+    #if OSAURUS_DESIGN_SYSTEM
+    var inspectionBalance: Int? = nil
+    #endif
+
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @Environment(\.theme) private var theme
 
-    /// Wallet panel presentation. Hovering the chip opens it as a passive
-    /// preview (dismissed on hover exit); clicking pins it so its actions
-    /// (Add credits, View all) are reachable.
+    /// Wallet panel presentation, activated by clicking the chip.
     @State private var showWalletPanel = false
-    /// True when the wallet panel was opened by click; hover exit no longer
-    /// dismisses it, only outside-click / an action does.
+    /// Open panels remain until explicit dismissal, outside-click or an action.
     @State private var walletPanelPinned = false
-    @State private var walletHover = HoverPreviewPresence()
     /// Measured before the first presentation, then updated as activity loads.
     @State private var walletPanelHeight: CGFloat = 0
-    @State private var balanceHoverTask: Task<Void, Never>?
-    /// Delayed dismiss for the hover-opened wallet panel. Gives the cursor a
-    /// grace period to travel from the chip into the panel (which lives in its
-    /// own window, so hovering it doesn't keep the chip "hovered"); the panel's
-    /// own hover cancels it so its buttons stay clickable.
-    @State private var walletDismissTask: Task<Void, Never>?
 
     /// Urgency tiers for the balance indicator. Healthy stays quiet (plain muted
     /// text that blends into the meta cluster); low and empty escalate to an
@@ -8889,6 +8868,9 @@ private struct FloatingCreditsChip: View {
     }
 
     private var balanceLevel: BalanceLevel {
+        #if OSAURUS_DESIGN_SYSTEM
+        if let value = inspectionBalance { return value <= 0 ? .empty : value < 1_000_000 ? .low : .healthy }
+        #endif
         let micro = accountService.balanceMicroValue
         if micro <= 0 || accountService.isFrozen {
             return .empty
@@ -8908,24 +8890,25 @@ private struct FloatingCreditsChip: View {
         let weight: Font.Weight
         /// Pill fill/stroke; `nil` keeps the chip chrome-free (healthy state).
         let pill: (fill: Color, stroke: Color)?
-        let glow: Color
-        /// When false, the chip shows the "Add credits" CTA instead of an amount.
+        /// Lifts the chip off the composer to draw the eye to the CTA.
+        let raised: Bool
+        /// When false, the chip shows the "Add Credits" CTA instead of an amount.
         let showsAmount: Bool
     }
 
     private func creditsStyle(for level: BalanceLevel) -> CreditsChipStyle {
-        let amber = theme.warningColor
+        let amber = theme.status.warning.foreground
         // Outside router-billed sessions the chip never escalates: the balance
         // doesn't block the current session, so a $0/unknown wallet reads as
-        // quiet muted "Add credits" text instead of an amber call to action.
+        // quiet muted "Add Credits" text instead of an amber call to action.
         guard isRouterBilledSession else {
             return CreditsChipStyle(
                 iconName: "cloud",
-                iconColor: theme.tertiaryText,
-                textColor: theme.secondaryText,
+                iconColor: theme.text.tertiary,
+                textColor: theme.text.secondary,
                 weight: .medium,
                 pill: nil,
-                glow: .clear,
+                raised: false,
                 showsAmount: level != .empty
             )
         }
@@ -8933,24 +8916,24 @@ private struct FloatingCreditsChip: View {
         case .healthy:
             return CreditsChipStyle(
                 iconName: "cloud",
-                iconColor: theme.tertiaryText,
-                textColor: theme.secondaryText,
+                iconColor: theme.text.tertiary,
+                textColor: theme.text.secondary,
                 weight: .medium,
                 pill: nil,
-                glow: .clear,
+                raised: false,
                 showsAmount: true
             )
         case .low:
             // The chip shows the router balance, so a low balance escalates the
             // chip itself to amber text (no pill) — a gentle nudge that stops
-            // short of the empty-state "Add credits" call to action.
+            // short of the empty-state "Add Credits" call to action.
             return CreditsChipStyle(
                 iconName: "cloud",
                 iconColor: amber,
                 textColor: amber,
                 weight: .semibold,
                 pill: nil,
-                glow: .clear,
+                raised: false,
                 showsAmount: true
             )
         case .empty:
@@ -8959,14 +8942,14 @@ private struct FloatingCreditsChip: View {
                 iconColor: amber,
                 textColor: amber,
                 weight: .semibold,
-                pill: (amber.opacity(0.22), amber.opacity(0.5)),
-                glow: amber.opacity(0.25),
+                pill: (theme.status.warning.background, theme.status.warning.border),
+                raised: true,
                 showsAmount: false
             )
         }
     }
 
-    /// This session's Router spend, formatted for the hover popover. The chip
+    /// This session's Router spend, formatted for the wallet panel. The chip
     /// surfaces the account balance; spend is shown only in the popover.
     private var sessionSpendDisplay: String {
         OsaurusRouter.formatMicroAsCredits(String(sessionSpendMicro))
@@ -8984,13 +8967,13 @@ private struct FloatingCreditsChip: View {
     var body: some View {
         let level = balanceLevel
         let style = creditsStyle(for: level)
-        let caption = CGFloat(theme.captionSize)
+        let caption = theme.pointSize(.caption)
         // Hide the icon in compact mode to save width, except the empty-state
         // plus glyph, which signals the chip is actionable. In the ultra-compact
         // tier we always keep the icon, since it becomes the whole chip.
         let showIcon = !metaCompact || level == .empty || metaUltraCompact
         // At the tightest width the chip is icon-only (glyph carries the state,
-        // hover/tap opens the wallet) so the row's toggle chips aren't clipped.
+        // click opens the wallet) so the row's toggle chips aren't clipped.
         let showLabel = !metaUltraCompact
 
         Group {
@@ -9004,54 +8987,36 @@ private struct FloatingCreditsChip: View {
                     chipLabel(style: style, caption: caption, showIcon: showIcon, showLabel: showLabel)
                 }
             } else {
-                // Empty state keeps its own amber "Add credits" CTA pill.
+                // Empty state keeps its own amber "Add Credits" CTA pill.
                 Button {
                     handleChipTap(level: level)
                 } label: {
                     chipLabel(style: style, caption: caption, showIcon: showIcon, showLabel: showLabel)
+                        #if OSAURUS_DESIGN_SYSTEM
+                        .composerChipSurface()
+                        #else
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                         .background {
                             if let pill = style.pill {
                                 Capsule()
                                     .fill(pill.fill)
-                                    .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
+                                    .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: theme.stroke.default))
                             }
                         }
-                        // Soft glow on the empty CTA draws the eye without a
-                        // repeating animation.
-                        .shadow(color: style.glow, radius: 5, x: 0, y: 1)
+                        #endif
+                        .themeElevation(style.raised ? theme.elevation.raised : .none)
                         .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .composerChipButtonStyle()
                 .pointingHandCursor()
             }
         }
         .accessibilityLabel(creditsHelpText)
-        .onHover { hovering in
-            walletHover.isOverTrigger = hovering
-            balanceHoverTask?.cancel()
-            // Empty state: the chip is a direct "Add credits" CTA (click opens
-            // the top-up sheet), so no hover preview — surfacing the wallet
-            // panel there just re-offers the same action with an extra hop.
-            guard level != .empty || onAddCredits == nil else {
-                if !hovering, !walletPanelPinned { scheduleWalletDismiss() }
-                return
-            }
-            if hovering {
-                walletDismissTask?.cancel()
-                balanceHoverTask = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                    guard !Task.isCancelled else { return }
-                    showWalletPanel = true
-                }
-            } else if !walletPanelPinned {
-                scheduleWalletDismiss()
-            }
-        }
+
         .anchoredCard(
             isPresented: $showWalletPanel,
-            size: CGSize(width: PickerCardMetrics.infoCardWidth, height: walletPanelHeight),
+            size: theme.assignedPickerCardSize(CGSize(width: PickerCardMetrics.infoCardWidth, height: walletPanelHeight)),
             alignment: .trailing,
             constrainToWindow: true,
             takesFocus: walletPanelPinned,
@@ -9072,30 +9037,22 @@ private struct FloatingCreditsChip: View {
                 onHeightChange: { walletPanelHeight = $0 }
             )
             .contentShape(Rectangle())
-            .onHover { hovering in
-                walletHover.isOverPanel = hovering
-                if hovering {
-                    walletDismissTask?.cancel()
-                } else if !walletPanelPinned {
-                    scheduleWalletDismiss()
-                }
-            }
+
         }
         .onChange(of: showWalletPanel) { _, isShown in
-            // Outside-click dismissal flips the binding directly; unpin so the
-            // next hover preview behaves normally.
+            // Outside-click dismissal resets the next explicit activation.
             if !isShown {
-                walletHover.isOverPanel = false
                 walletPanelPinned = false
                 walletPanelHeight = 0
-                balanceHoverTask?.cancel()
-                walletDismissTask?.cancel()
             }
         }
-        .onDisappear {
-            balanceHoverTask?.cancel()
-            walletDismissTask?.cancel()
-        }
+    }
+
+    private var chipBalanceDisplay: String {
+        #if OSAURUS_DESIGN_SYSTEM
+        if let value = inspectionBalance { return OsaurusRouter.formatMicroAsCreditsCompact(String(value)) }
+        #endif
+        return accountService.compactFormattedBalance
     }
 
     /// The chip's icon + amount/CTA line, shared by the `SelectorChip`
@@ -9107,42 +9064,42 @@ private struct FloatingCreditsChip: View {
         showIcon: Bool,
         showLabel: Bool
     ) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.23.elements.layout.floatingCreditsChip.content.horizontalGap", inheriting: theme.assignedMetric("component.library.23.gap", fallback: 4))) {
             if showIcon {
                 Image(systemName: style.iconName)
-                    .font(.system(size: caption - 2))
-                    .foregroundColor(style.iconColor)
+                    .glyphSize(10)
+                    .composerChipInk("accent", fallback: style.iconColor)
                     .contentTransition(.symbolEffect(.replace))
             }
 
             if showLabel {
                 if style.showsAmount {
                     // Composer shows the overall router balance; this session's
-                    // spend is surfaced only in the hover popover. Abbreviated
+                    // spend is surfaced in the wallet panel. Abbreviated
                     // ("212.1K credits") so six-figure balances don't crowd
                     // the meta cluster.
-                    Text(verbatim: accountService.compactFormattedBalance)
-                        .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
-                        .foregroundColor(style.textColor)
+                    Text(verbatim: chipBalanceDisplay)
+                        .composerChipTextStyle(.footnote, monospacedDigit: true, family: .code, property: "text")
+                        .composerChipOriginalWeight(style.weight)
+                        .composerChipInk("foreground", fallback: style.textColor)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                 } else {
-                    Text("Add credits", bundle: .module)
-                        .font(theme.font(size: caption - 1, weight: style.weight))
-                        .foregroundColor(style.textColor)
+                    Text("Add Credits", bundle: .module)
+                        .composerChipTextStyle(.footnote)
+                        .composerChipOriginalWeight(style.weight)
+                        .composerChipInk("foreground", fallback: style.textColor)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                 }
             }
-        }
+        }.catalogLayoutTarget("component.library.23.elements.layout.floatingCreditsChip.content.horizontalGap")
     }
 
     private func handleChipTap(level: BalanceLevel) {
-        balanceHoverTask?.cancel()
-        walletDismissTask?.cancel()
-        // Empty state: the chip IS the "Add credits" call to action, so a
+        // Empty state: the chip IS the "Add Credits" call to action, so a
         // click opens the top-up sheet directly — routing it through the
-        // wallet panel just to click a second "Add credits" there was an
+        // wallet panel just to click a second "Add Credits" there was an
         // extra hop with no information gain.
         if level == .empty, let onAddCredits {
             showWalletPanel = false
@@ -9162,31 +9119,14 @@ private struct FloatingCreditsChip: View {
         }
     }
 
-    /// Dismiss the hover-opened wallet panel after a grace period, giving the
-    /// cursor time to cross the gap into the panel window.
-    private func scheduleWalletDismiss() {
-        balanceHoverTask?.cancel()
-        walletDismissTask?.cancel()
-        guard walletHover.shouldDismiss(isPinned: walletPanelPinned) else { return }
-        walletDismissTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled,
-                walletHover.shouldDismiss(isPinned: walletPanelPinned)
-            else { return }
-            showWalletPanel = false
-        }
-    }
-
     private func closeWalletPanel() {
-        walletDismissTask?.cancel()
-        balanceHoverTask?.cancel()
         showWalletPanel = false
         walletPanelPinned = false
     }
 }
 
 /// Context/token indicator on the right edge of the selector row. Extracted
-/// from `FloatingInputCard` so popover hover/pin state re-renders only this
+/// from `FloatingInputCard` so popover presentation state re-renders only this
 /// chip. All budget math stays in the parent (it also gates sending); this
 /// view just renders the passed values. `breakdown` is a closure so the
 /// panel's content is computed only while it is open.
@@ -9241,27 +9181,28 @@ private struct FloatingContextChip: View {
     var currentModel: String? = nil
 
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var componentEnabled
 
     @State private var showContextBreakdown = false
-    /// True when the context panel was opened by click. Hover previews dismiss
-    /// automatically; pinned panels remain interactive until an outside click
-    /// or a second click on the trigger.
+    /// A clicked panel stays open until outside-click or another trigger click.
     @State private var contextPanelPinned = false
-    @State private var contextHover = HoverPreviewPresence()
     /// Measured before the first presentation, then updated as sections
     /// expand or the disk-cache reading lands.
     @State private var contextPanelHeight: CGFloat = 0
-    @State private var contextHoverTask: Task<Void, Never>?
-    /// Delayed dismiss for the context panel. Gives the cursor a grace
-    /// period to travel from the trigger into the panel (which lives in its
-    /// own window, so hovering it doesn't keep the trigger "hovered").
-    @State private var contextDismissTask: Task<Void, Never>?
     /// Live disk-cache reading, refreshed only while the popover is open so an
     /// idle chat does not poll the cache index on a timer.
     @State private var diskCacheUsage: DiskCacheUsage?
+    private var contextWarningColor: Color? {
+        #if OSAURUS_DESIGN_SYSTEM
+        return !componentEnabled ? theme.assignedColor("component.library.23.disabledForeground", fallback: theme.text.disabled)
+            : isHardOverflow ? theme.assignedColor("component.library.23.error", fallback: theme.status.error.foreground)
+            : isNearLimit ? theme.status.warning.foreground : nil
+        #else
+        return isHardOverflow ? .red : (isNearLimit ? .orange : nil)
+        #endif
+    }
     var body: some View {
-        let warningColor: Color? =
-            isHardOverflow ? .red : (isNearLimit ? .orange : nil)
+        let warningColor = contextWarningColor
         let prefix = isStreaming ? "" : "~"
         let tokenText =
             if let maxCtx = usableTokens {
@@ -9271,8 +9212,6 @@ private struct FloatingContextChip: View {
             }
 
         Button {
-            contextHoverTask?.cancel()
-            contextDismissTask?.cancel()
             if showContextBreakdown && contextPanelPinned {
                 showContextBreakdown = false
                 contextPanelPinned = false
@@ -9289,23 +9228,27 @@ private struct FloatingContextChip: View {
                 // borders are tuned to be faint against the background in
                 // many themes, while text tokens are guaranteed legible in
                 // every theme (custom themes must define them too), so the
-                // unused portion of the ring stays visible everywhere.
+                // unused portion of the ring stays visible everywhere. The
+                // track is as thick as the arc: the chip's border width
+                // resolves to zero, which left only a short arc that read
+                // as a stray dash beside the mic.
                 Circle()
-                    .stroke(theme.tertiaryText.opacity(0.45), lineWidth: 2.5)
+                    .stroke(theme.text.disabled, lineWidth: theme.stroke.focus)
                 Circle()
                     .trim(from: 0, to: CGFloat(min(1, max(0, usageRatio ?? 0))))
                     .stroke(
-                        warningColor ?? theme.accentColor,
-                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+                        warningColor ?? theme.assignedColor("component.library.23.accent", fallback: theme.status.info.foreground),
+                        style: StrokeStyle(lineWidth: theme.stroke.focus, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
             }
             .frame(width: 15, height: 15)
             .frame(width: 24, height: 24)
             .contentShape(Circle())
-            .animation(.easeOut(duration: 0.2), value: usageRatio)
+            .animation(theme.motion.quick, value: usageRatio)
         }
-        .buttonStyle(.plain)
+        .composerChipButtonStyle()
+        .composerChipFocus()
         .pointingHandCursor()
         .help(
             isHardOverflow
@@ -9325,17 +9268,10 @@ private struct FloatingContextChip: View {
         .accessibilityLabel(
             Text("Context budget: \(tokenText) tokens", bundle: .module)
         )
-        .onHover { hovering in
-            contextHover.isOverTrigger = hovering
-            if hovering {
-                openContextBreakdown()
-            } else if !contextPanelPinned {
-                scheduleContextDismiss()
-            }
-        }
+
         .anchoredCard(
             isPresented: $showContextBreakdown,
-            size: CGSize(width: PickerCardMetrics.infoCardWidth, height: contextPanelHeight),
+            size: theme.assignedPickerCardSize(CGSize(width: PickerCardMetrics.infoCardWidth, height: contextPanelHeight)),
             alignment: .trailing,
             constrainToWindow: true,
             takesFocus: contextPanelPinned,
@@ -9348,19 +9284,11 @@ private struct FloatingContextChip: View {
             }
         }
         .onChange(of: showContextBreakdown) { _, isShown in
-            // Outside-click dismissal flips the binding directly. Clear the
-            // pinned state so the next hover behaves as a passive preview.
+            // Outside-click dismissal resets the next explicit activation.
             if !isShown {
-                contextHover.isOverPanel = false
                 contextPanelPinned = false
                 contextPanelHeight = 0
-                contextHoverTask?.cancel()
-                contextDismissTask?.cancel()
             }
-        }
-        .onDisappear {
-            contextHoverTask?.cancel()
-            contextDismissTask?.cancel()
         }
     }
 
@@ -9400,45 +9328,10 @@ private struct FloatingContextChip: View {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
-        // Keep the panel alive while the cursor is over it, so the user
-        // can travel from the trigger and click the disclosure headers.
         .contentShape(Rectangle())
-        .onHover { hovering in
-            contextHover.isOverPanel = hovering
-            if hovering {
-                contextDismissTask?.cancel()
-            } else if !contextPanelPinned {
-                scheduleContextDismiss()
-            }
-        }
+
     }
 
-    /// Open the context panel after a short hover dwell, cancelling any
-    /// pending dismiss so a quick re-entry doesn't flicker it closed.
-    private func openContextBreakdown() {
-        contextDismissTask?.cancel()
-        contextHoverTask?.cancel()
-        contextHoverTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
-            showContextBreakdown = true
-        }
-    }
-
-    /// Dismiss the context panel after a grace period, giving the cursor
-    /// time to cross the gap into the panel window.
-    private func scheduleContextDismiss() {
-        contextHoverTask?.cancel()
-        contextDismissTask?.cancel()
-        guard contextHover.shouldDismiss(isPinned: contextPanelPinned) else { return }
-        contextDismissTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled,
-                contextHover.shouldDismiss(isPinned: contextPanelPinned)
-            else { return }
-            showContextBreakdown = false
-        }
-    }
 }
 
 // MARK: - Voice Children
@@ -9507,7 +9400,9 @@ private struct FloatingVoiceButton: View {
         if isVoiceConfigured {
             button
                 .disabled(isStreaming)
+                #if !OSAURUS_DESIGN_SYSTEM
                 .opacity(isStreaming ? 0.4 : 1.0)
+                #endif
         }
     }
 
@@ -9543,7 +9438,9 @@ private struct FloatingVoiceButton: View {
                         .allowsHitTesting(false)
                 )
                 .disabled(true)
+                #if !OSAURUS_DESIGN_SYSTEM
                 .opacity(0.5)
+                #endif
             } else {
                 InputActionButton(
                     icon: "mic.fill",
@@ -9668,4 +9565,231 @@ private struct ComposerTextObservationScope<Content: View>: View {
 /// `FloatingInputCard.composerText` for the invalidation contract.
 final class ComposerTextModel: ObservableObject {
     @Published var text: String = ""
+}
+
+/// A single sweep through the placeholder glyphs when a new idea appears.
+/// The view disappears with the placeholder, cancelling its task on typing.
+private struct WorkflowPlaceholderGlimmer: ViewModifier {
+    @Environment(\.theme) private var theme
+    let phrase: String
+    let enabled: Bool
+    let color: Color
+    @State private var progress: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if enabled {
+                GeometryReader { geometry in
+                    let band = max(48, geometry.size.width * 0.3)
+                    LinearGradient(colors: [.clear, color.opacity(0.65), .clear],
+                                   startPoint: .leading, endPoint: .trailing)
+                        .frame(width: band)
+                        .offset(x: -band + progress * (geometry.size.width + band))
+                }
+                .mask(content)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
+        .task(id: enabled ? phrase : "") {
+            guard enabled else { return }
+            var reset = Transaction()
+            reset.disablesAnimations = true
+            withTransaction(reset) { progress = 0 }
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+            guard !Task.isCancelled else { return }
+            withAnimation(theme.motion.timed(.easeInOut, duration: 1.14)) { progress = 1 }
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder func composerPlaceholderTypography(theme: any ThemeProtocol) -> some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        assignedTypography("component.library.21.text", fallback: SettingsFont.rowDescription)
+        #else
+        textStyle(.body, theme: theme)
+        #endif
+    }
+}
+
+#if OSAURUS_DESIGN_INSPECTOR
+/// The production mic button's enabled/loading/streaming appearance with local
+/// callbacks. Does not alter the service's permission or configured-model gates.
+struct InspectorComposerVoiceActionVerification: View {
+    @State private var callbacks = 0
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                InputActionButton(icon: "mic.fill", help: "Local voice action") { callbacks += 1 }
+                InputActionButton(icon: "mic.fill", help: "Voice disabled during streaming") { callbacks += 1 }
+                    .disabled(true)
+                InputActionButton(icon: "mic.fill", help: "Loading voice model…") { callbacks += 1 }
+                    .overlay(ProgressView().scaleEffect(0.5).allowsHitTesting(false))
+                    .disabled(true)
+            }
+        }
+    }
+}
+#endif
+
+#if OSAURUS_DESIGN_INSPECTOR
+/// Existing production chip views with local values. No purchase, permission,
+/// provisioning or model actions are used to check their styling.
+struct InspectorComposerChipVerification: View {
+    @Environment(\.theme) private var theme
+    @State private var selected = false
+    @State private var callbackCount = 0
+    @State private var credits = "Healthy"
+    @State private var context = "Normal"
+    @State private var compact = "Full"
+    @State private var unavailable = false
+    private var micro: Int { credits == "Healthy" ? 5_000_000 : credits == "Low" ? 500_000 : 0 }
+    private var ratio: Double { context == "Normal" ? 0.42 : context == "Near limit" ? 0.90 : 1.20 }
+    var body: some View {
+        SettingsSection(title: "Native selector and context variants", layout: .plain, verbatimTitle: true) {
+            Picker("Chip density", selection: $compact) {
+                ForEach(["Full", "Compact", "Icon only"], id: \.self) { Text(verbatim: $0).tag($0) }
+            }
+            Toggle("Unavailable selector", isOn: $unavailable)
+            SelectorChip(isActive: selected) { selected.toggle(); callbackCount += 1 } content: {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.23.elements.layout.inspectorComposerChipVerification.body.horizontalGap", inheriting: theme.assignedMetric("component.library.23.gap", fallback: 6))) {
+                    Image(systemName: "slider.horizontal.3").composerChipInk("accent", fallback: theme.border.focus)
+                    Text(verbatim: "Local selector").composerChipTextStyle(.caption)
+                        .composerChipInk("foreground", fallback: theme.text.primary)
+                    Text(verbatim: "· Medium").composerChipTextStyle(.caption, property: "caption")
+                        .composerChipInk("secondary", fallback: theme.text.secondary)
+                }.catalogLayoutTarget("component.library.23.elements.layout.inspectorComposerChipVerification.body.horizontalGap")
+            }.disabled(unavailable).accessibilityLabel("Local selector")
+            Picker("Local credits state", selection: $credits) {
+                ForEach(["Healthy", "Low", "Empty"], id: \.self) { Text(verbatim: $0).tag($0) }
+            }
+            FloatingCreditsChip(isRouterBilledSession: true, sessionSpendMicro: 125_000,
+                sessionCachedInputLabel: nil, metaCompact: compact != "Full", metaUltraCompact: compact == "Icon only",
+                onAddCredits: { callbackCount += 1 }, inspectionBalance: micro)
+            FloatingWorkspacePoolChip(workspaceName: "Local verification workspace with a long name", workspaceId: nil,
+                spendMicro: 125_000, metaCompact: compact != "Full", metaUltraCompact: compact == "Icon only")
+            Picker("Local context state", selection: $context) {
+                ForEach(["Normal", "Near limit", "Overflow"], id: \.self) { Text(verbatim: $0).tag($0) }
+            }
+            FloatingContextChip(displayTokens: Int(ratio * 10_000), usableTokens: 10_000, modelMaxTokens: 10_000,
+                windowResolution: nil, isStreaming: false, isNearLimit: context == "Near limit", isHardOverflow: context == "Overflow",
+                usageRatio: ratio, formatTokenCount: { String($0) }, breakdown: { .zero })
+        }
+    }
+}
+#endif
+
+/// Account usage opens on click from either main destination.
+/// Outside-click, Escape, the trigger or an action closes the panel.
+struct NavigationUsageButton: View {
+    @ObservedObject private var account = OsaurusRouterAccountService.shared
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme }
+    @State private var interaction = ClickMenuInteraction()
+    #if OSAURUS_DESIGN_SYSTEM
+    @AppStorage("designInspector.previewCreditsData") private var previewCreditsData = true
+    #endif
+    private var usesPreviewData: Bool {
+        #if OSAURUS_DESIGN_SYSTEM
+        previewCreditsData
+        #else
+        false
+        #endif
+    }
+    private var balanceTitle: String {
+        if usesPreviewData { return "138,376 credits · Preview" }
+        return account.balance == nil ? L("Usage unavailable") : account.formattedBalanceValue + " " + L("credits")
+    }
+    @State private var showTopUp = false
+
+    private var rows: [WalletActivityRow] {
+        #if OSAURUS_DESIGN_SYSTEM
+        if usesPreviewData {
+            return [
+                WalletActivityRow(id: "preview-grant", kind: .transaction, title: "Credits grant", amountLabel: "+100,000 credits", isCredit: true, stateKind: .success, date: nil),
+                WalletActivityRow(id: "preview-model-1", kind: .usage, title: "deepseek-v4-1-flash", amountLabel: "−13 credits", isCredit: false, stateKind: .secondary, date: nil),
+                WalletActivityRow(id: "preview-added", kind: .transaction, title: "Credits added", amountLabel: "+50,000 credits", isCredit: true, stateKind: .success, date: nil),
+                WalletActivityRow(id: "preview-model-2", kind: .usage, title: "Claude Sonnet", amountLabel: "−11,200 credits", isCredit: false, stateKind: .secondary, date: nil),
+                WalletActivityRow(id: "preview-web", kind: .webUsage, title: "Web search", amountLabel: "−411 credits", isCredit: false, stateKind: .secondary, date: nil)
+            ]
+        }
+        #endif
+        return WalletActivityProjector().rows(usageItems: account.usage, transactions: account.transactions,
+                                      webUsageItems: account.webUsage, limit: 5)
+    }
+
+    var body: some View {
+        SettingsIconButton("cloud", help: "Usage", size: .regular, isActive: interaction.isPresented, role: .tertiary) {
+
+            interaction.clickTrigger()
+        }
+        .frame(width: 32, height: 32)
+
+        .anchoredCard(isPresented: $interaction.isPresented, size: CGSize(width: 240, height: 217),
+                      alignment: .leading, besideAnchor: true, constrainToWindow: true, takesFocus: interaction.takesFocus,
+                      shadowPadding: 18, accessibilityLabel: L("Usage")) {
+            VStack(spacing: 12) {
+                Text(balanceTitle)
+                    .textStyle(.body)
+                    .foregroundStyle(theme.text.primary)
+                    .frame(maxWidth: .infinity, minHeight: 30)
+                    .background(theme.surface.subtle, in: RoundedRectangle(cornerRadius: theme.radius.small))
+                if rows.isEmpty {
+                    Text(account.balance == nil ? L("Connect to view your usage") : L("No activity yet"))
+                        .componentInspectionText(51, role: .caption, fallback: .caption, theme: theme)
+                        .foregroundStyle(theme.text.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(rows) { row in
+                            HStack(spacing: 8) {
+                                Text(verbatim: row.title).lineLimit(1).truncationMode(.middle)
+                                Spacer(minLength: 4)
+                                Text(verbatim: row.amountLabel.replacingOccurrences(of: " credits", with: ""))
+                                    .monospacedDigit().fixedSize()
+                                    .foregroundStyle(row.isCredit ? theme.status.success.foreground : theme.text.tertiary)
+                            }
+                            .textStyle(.caption)
+                            .foregroundStyle(row.isCredit ? theme.status.success.foreground : theme.text.secondary)
+                        }
+                    }.padding(.horizontal, theme.space.s8)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                }
+                Rectangle().fill(theme.surface.overlay).frame(height: theme.stroke.default)
+                HStack {
+                    SettingsButton(.tertiary, "Add Credits", icon: "plus", size: .extraSmall) {
+                        interaction.didDismiss(); showTopUp = true
+                    }
+                    Spacer()
+                    Button {
+                        interaction.didDismiss()
+                        AppDelegate.shared?.showManagementWindow(initialTab: .credits)
+                    } label: {
+                        HStack(spacing: theme.space.s4) {
+                            Text("Manage", bundle: .module)
+                            Image(systemName: "arrow.right")
+                        }
+                    }.buttonStyle(.settings(.tertiary, size: .extraSmall))
+                }
+            }
+            .padding(theme.space.s6 + theme.stroke.default)
+            .chatContextMenuSurface()
+            .themeElevation(theme.elevation.overlay)
+
+            .task(id: usesPreviewData) {
+                guard !usesPreviewData else { return }
+                await account.refreshBalance()
+                await account.refreshUsage(reset: true)
+                await account.refreshTransactions(reset: true)
+                await account.refreshWebUsage(reset: true)
+            }
+        }
+        .onChange(of: interaction.isPresented) { _, shown in
+            if !shown { interaction.didDismiss() }
+        }
+        .onDisappear { interaction.didDismiss() }
+        .sheet(isPresented: $showTopUp) { CreditsTopUpSheet() }
+    }
+
 }

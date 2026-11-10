@@ -1,0 +1,19 @@
+{
+  "id": "prompt_surface.custom-agent-large-model-surface",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • custom host-folder agent on a large local model (full prompt class)",
+  "query": "",
+  "notes": "Prices the large-model surface the reported Allosaurus chat used: a 125B bundle resolves to the full (non-compact) prompt class. Pins the class and determinism; the report's system/tool token counts are the before/after measurement for the size-gated description trimmer.",
+  "fixtures": {
+    "agentCapabilities": { "calculatorEnabled": true }
+  },
+  "expect": {
+    "promptSurface": {
+      "composeModel": "OsaurusAI/Allosaurus-v0.2-125B-A6B-JANGHT1.8",
+      "expectCompactPrompt": false,
+      "expectDeterministic": true,
+      "mustIncludeSections": ["platform", "persona"],
+      "mustIncludeTools": ["calculate", "file_read"]
+    }
+  }
+}

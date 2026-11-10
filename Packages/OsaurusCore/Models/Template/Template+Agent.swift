@@ -46,14 +46,25 @@ extension Template {
         createdAt: Date = Date(),
         availableToOrchestrator: Bool = true,
         requirements: TemplateRequirements = TemplateRequirements(),
-        actions: [TemplateAction]? = nil
+        actions: [TemplateAction]? = nil,
+        workflows: [WorkflowReference] = []
     ) {
         self.init(
             name: name, summary: summary,
             author: author.map { TemplateAuthor(name: $0) },
             createdAt: createdAt, availableToOrchestrator: availableToOrchestrator,
             requirements: requirements,
-            payload: .agent(AgentTemplatePayload(agent: agent, actions: actions)))
+            payload: .agent(AgentTemplatePayload(agent: agent, actions: actions, workflows: workflows)))
+    }
+
+    /// Workflow templates the agent references.
+    public var workflowReferences: [WorkflowReference] {
+        get { agentPayload?.workflows ?? [] }
+        set {
+            guard case .agent(var p) = payload else { return }
+            p.workflows = newValue
+            payload = .agent(p)
+        }
     }
 
     /// The name to offer on import. When the envelope name collides and a
@@ -85,6 +96,7 @@ extension Template {
             if overrides.maxTokens.isSpecified { entry.maxTokens = overrides.maxTokens }
             if overrides.generationSettings.isSpecified { entry.generationSettings = overrides.generationSettings }
             if let show = overrides.showResponseMetrics { entry.showResponseMetrics = show }
+            if let on = overrides.followUpSuggestions { entry.followUpSuggestions = on }
             if overrides.workingFolder.isSpecified { entry.workingFolder = overrides.workingFolder }
             if let v = overrides.capabilities { entry.capabilities = merge(entry.capabilities, v) }
             if let v = overrides.tools { entry.tools = v }
@@ -112,8 +124,16 @@ extension Template {
         if let v = over.selfSchedulingEnabled { out.selfSchedulingEnabled = v }
         if let v = over.computerUseEnabled { out.computerUseEnabled = v }
         if let v = over.browserUseEnabled { out.browserUseEnabled = v }
+        if let v = over.imageEnabled { out.imageEnabled = v }
+        if let v = over.applescriptEnabled { out.applescriptEnabled = v }
+        if let v = over.appleApps { out.appleApps = v }
         if let v = over.speakEnabled { out.speakEnabled = v }
         if let v = over.renderChartEnabled { out.renderChartEnabled = v }
+        if let v = over.calculatorEnabled { out.calculatorEnabled = v }
+        if let v = over.redactionToolsEnabled { out.redactionToolsEnabled = v }
+        if let v = over.taskChecklistEnabled { out.taskChecklistEnabled = v }
+        if let v = over.clarifyEnabled { out.clarifyEnabled = v }
+        if let v = over.artifactsEnabled { out.artifactsEnabled = v }
         if let v = over.relayEnabled { out.relayEnabled = v }
         return out
     }
@@ -132,6 +152,7 @@ extension Template {
         case knowledge
         case pluginInstructions = "plugin_instructions"
         case actions
+        case workflows
 
         public var id: String { rawValue }
     }
@@ -164,6 +185,10 @@ extension Template {
         }
         if sections.contains(.pluginInstructions) { entry.pluginInstructions = nil }
         if sections.contains(.actions) { p.actions = nil }
+        if sections.contains(.workflows) {
+            p.workflows = []
+            copy.bundled = []
+        }
         p.agent = entry
         copy.payload = .agent(p)
         copy.requirements = reqs
@@ -229,6 +254,8 @@ extension Template {
         entry.capabilities?.knowledgeCollectionIds = nil
         // Relay exposure is a per-Mac decision, never part of a template.
         entry.capabilities?.relayEnabled = nil
+        // Installed names are per-Mac; workflows travel as references below.
+        entry.workflows = nil
 
         if let path = agent.workingFolderPath, !path.isEmpty {
             reqs.workingFolder = PathHint(path: abbreviateHome(path), label: L("Working Folder"))
@@ -236,6 +263,18 @@ extension Template {
         }
         if agent.settings.appleScriptEnabled {
             reqs.permissions.append(SystemPermission.automation.rawValue)
+        }
+
+        // Enabled workflows travel as references plus the exact template
+        // versions they pin, so the receiver needs nothing else.
+        var refs: [WorkflowReference] = []
+        var bundled: [Template] = []
+        for wid in agent.settings.enabledWorkflowIDs {
+            guard let installed = InstalledWorkflowStore.shared.workflow(id: wid) else { continue }
+            refs.append(WorkflowReference(id: installed.templateID, minVersion: installed.templateVersion))
+            if let pinned = TemplateStore.shared.template(id: installed.templateID, version: installed.templateVersion) {
+                bundled.append(TemplateExportSanitizer.sanitized(pinned))
+            }
         }
 
         let displayName = (name?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
@@ -250,7 +289,8 @@ extension Template {
             requirements: reqs,
             payload: .agent(
                 AgentTemplatePayload(
-                    agent: entry, actions: agent.chatQuickActions?.map(TemplateAction.init))))
+                    agent: entry, actions: agent.chatQuickActions?.map(TemplateAction.init), workflows: refs)))
+        template.bundled = bundled
         template = template.renamed(to: displayName)
         return template.sealed()
     }

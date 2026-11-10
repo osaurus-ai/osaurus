@@ -5,6 +5,7 @@
 //  Shared components for chat session sidebars.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Sidebar Style Constants
@@ -13,29 +14,7 @@ import SwiftUI
 enum SidebarStyle {
     // MARK: Layout
     static let width: CGFloat = 240
-    static let cornerRadius: CGFloat = 14
-    static let rowCornerRadius: CGFloat = 8
-    static let searchFieldCornerRadius: CGFloat = 8
     static let actionButtonSize: CGFloat = 24
-    static let actionButtonCornerRadius: CGFloat = 5
-
-    // MARK: Glass Background
-    static let glassOpacityDark: Double = 0.82
-    static let glassOpacityLight: Double = 0.90
-
-    // MARK: Accent Gradient
-    static let accentGradientOpacityDark: Double = 0.06
-    static let accentGradientOpacityLight: Double = 0.04
-
-    // MARK: Border
-    static let edgeLightOpacityDark: Double = 0.18
-    static let edgeLightOpacityLight: Double = 0.28
-    static let borderOpacityDark: Double = 0.14
-    static let borderOpacityLight: Double = 0.22
-
-    // MARK: Accent Edge
-    static let accentEdgeHoverOpacity: Double = 0.18
-    static let accentEdgeNormalOpacity: Double = 0.10
 }
 
 // MARK: - Sidebar Container
@@ -50,19 +29,27 @@ struct SidebarContainer<Content: View>: View {
     /// Fixed width of the container. Defaults to the shared constant; callers
     /// that support a user-resizable rail pass a live width instead.
     let width: CGFloat
+    let roundBottomCorners: Bool
+    let showsBorder: Bool
 
     @ViewBuilder let content: () -> Content
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
 
     init(
         attachedEdge: Edge? = nil,
         topPadding: CGFloat = 0,
         width: CGFloat = SidebarStyle.width,
+        roundBottomCorners: Bool = true,
+        showsBorder: Bool = true,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.attachedEdge = attachedEdge
         self.topPadding = topPadding
         self.width = width
+        self.roundBottomCorners = roundBottomCorners
+        self.showsBorder = showsBorder
         self.content = content
     }
 
@@ -73,19 +60,20 @@ struct SidebarContainer<Content: View>: View {
         .padding(.top, topPadding)
         .frame(width: width, alignment: .top)
         .frame(maxHeight: .infinity, alignment: .top)
+        .environment(\.theme, theme)
         .background { SidebarBackground() }
         .clipShape(containerShape)
-        .overlay(SidebarBorder(attachedEdge: attachedEdge))
+        .overlay { if showsBorder { SidebarBorder(attachedEdge: attachedEdge) } }
     }
 
     private var containerShape: UnevenRoundedRectangle {
-        let radius = SidebarStyle.cornerRadius
+        let radius = theme.radius.large
         switch attachedEdge {
         case .leading:
             // Attached to leading edge - round only leading corners
             return UnevenRoundedRectangle(
                 topLeadingRadius: radius,
-                bottomLeadingRadius: radius,
+                bottomLeadingRadius: roundBottomCorners ? radius : 0,
                 bottomTrailingRadius: 0,
                 topTrailingRadius: 0,
                 style: .continuous
@@ -114,41 +102,15 @@ struct SidebarContainer<Content: View>: View {
 
 // MARK: - Sidebar Background
 
-/// Glass-based background for sidebar with accent gradient (similar to ToastBackground).
+/// Opaque sidebar surface (color.surface.sidebar). No component glass: the
+/// base window material is the only translucent layer in the app.
 struct SidebarBackground: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
 
     var body: some View {
-        ZStack {
-            // Layer 0: NSVisualEffectView-backed glass, only when the
-            // sidebar's own glass toggle is on. Outer container clips to
-            // the sidebar's rounded shape, so a plain rectangle is fine here.
-            if theme.glassSidebarEnabled {
-                ThemedGlassSurface(cornerRadius: SidebarStyle.cornerRadius)
-            }
-
-            // Layer 1: Semi-transparent card background. Lower opacity when
-            // the sidebar's own glass toggle is on so the behind-window
-            // material shows through.
-            theme.cardBackground.opacity(
-                theme.glassSidebarEnabled
-                    ? (theme.isDark ? SidebarStyle.glassOpacityDark : SidebarStyle.glassOpacityLight)
-                    : 1.0
-            )
-
-            // Layer 2: Accent gradient for visual polish
-            LinearGradient(
-                colors: [
-                    theme.accentColor.opacity(
-                        theme.isDark ? SidebarStyle.accentGradientOpacityDark : SidebarStyle.accentGradientOpacityLight
-                    ),
-                    Color.clear,
-                    theme.primaryBackground.opacity(theme.isDark ? 0.06 : 0.03),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
+        theme.surface.sidebar
     }
 }
 
@@ -156,7 +118,9 @@ struct SidebarBackground: View {
 
 /// Gradient border with accent edge highlight for sidebar (similar to ToastBorder)
 struct SidebarBorder: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
 
     let attachedEdge: Edge?
 
@@ -166,26 +130,11 @@ struct SidebarBorder: View {
 
     var body: some View {
         borderShape
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(
-                            theme.isDark ? SidebarStyle.edgeLightOpacityDark : SidebarStyle.edgeLightOpacityLight
-                        ),
-                        theme.primaryBorder.opacity(
-                            theme.isDark ? SidebarStyle.borderOpacityDark : SidebarStyle.borderOpacityLight
-                        ),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
-            .overlay(accentEdge)
+            .strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default)
     }
 
     private var borderShape: UnevenRoundedRectangle {
-        let radius = SidebarStyle.cornerRadius
+        let radius = theme.radius.large
         switch attachedEdge {
         case .leading:
             return UnevenRoundedRectangle(
@@ -214,29 +163,84 @@ struct SidebarBorder: View {
         }
     }
 
-    private var accentEdge: some View {
-        borderShape
-            .strokeBorder(
-                theme.accentColor.opacity(SidebarStyle.accentEdgeNormalOpacity),
-                lineWidth: 1
-            )
-            .mask(
-                LinearGradient(
-                    colors: [Color.white, Color.white.opacity(0)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
+}
+
+// MARK: - Sidebar Scroll Edge Fade
+
+/// Which ends of a vertical scroll view still hide content.
+struct SidebarScrollOverflow: Equatable {
+    var above = false
+    var below = false
+
+    /// `visibleRect` is in content coordinates. The tolerance absorbs
+    /// rubber-banding and sub-point rounding at rest.
+    init(visibleRect: CGRect, contentHeight: CGFloat, tolerance: CGFloat = 1) {
+        above = visibleRect.minY > tolerance
+        below = visibleRect.maxY < contentHeight - tolerance
+    }
+
+    init() {}
+}
+
+/// Fades the top or bottom of a vertical scroll view while content runs
+/// past that edge. With overlay scrollers hidden at rest, the fade is the
+/// only sign that a clipped list continues.
+private struct SidebarScrollEdgeFade: ViewModifier {
+    let length: CGFloat
+
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var overflow = SidebarScrollOverflow()
+    /// The first sample lands while the window lays out; it is not animated.
+    @State private var hasSampled = false
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollGeometryChange(for: SidebarScrollOverflow.self) { geo in
+                SidebarScrollOverflow(visibleRect: geo.visibleRect, contentHeight: geo.contentSize.height)
+            } action: { _, new in
+                withAnimation(reduceMotion || !hasSampled ? nil : theme.motion.quick) { overflow = new }
+                hasSampled = true
+            }
+            .mask {
+                VStack(spacing: 0) {
+                    edge(fading: overflow.above, toward: .top)
+                    Rectangle()
+                    edge(fading: overflow.below, toward: .bottom)
+                }
+            }
+    }
+
+    /// Opaque while that edge has nothing past it; a gradient to clear
+    /// at the edge while it does. The solid layer's opacity is what
+    /// animates, since gradient stops do not interpolate.
+    private func edge(fading: Bool, toward end: UnitPoint) -> some View {
+        ZStack {
+            LinearGradient(colors: [.black, .clear], startPoint: end == .top ? .bottom : .top, endPoint: end)
+            Rectangle().opacity(fading ? 0 : 1)
+        }
+        .frame(height: length)
+    }
+}
+
+extension View {
+    /// Fade a vertical scroll view's edges while it can scroll that way.
+    /// Apply to the `ScrollView` itself.
+    func sidebarScrollEdgeFade(length: CGFloat = 28) -> some View {
+        modifier(SidebarScrollEdgeFade(length: length))
     }
 }
 
 // MARK: - Sidebar Lens Bar
 
-/// Equal-width segmented lens switcher that opens every rail (Agents |
-/// Projects on the left, File Changes | History on the right). Each
-/// segment is the whole padded rectangle as a hit target, accent-tinted
-/// when selected, with an optional count badge. Views within a pane use
-/// `SidebarFilterChip`s, one level below.
+/// Equal-width segmented switcher that fills its row (Agents | Projects
+/// on the left rail, Timeline | Files in the File Changes pane).
+/// Each segment is the whole padded rectangle as a hit target,
+/// accent-tinted when selected, with an optional count badge. When every
+/// label does not fit with room to spare, unselected segments with an icon
+/// shrink to the icon (the label moves to a tooltip); segments still fill
+/// the bar, and the selected one is never narrower than its label. Views
+/// within a pane use `FilterChipRow`, one level below.
 struct SidebarLensBar<Value: Hashable>: View {
     struct Segment {
         let value: Value
@@ -249,63 +253,118 @@ struct SidebarLensBar<Value: Hashable>: View {
     @Binding var selection: Value
     let segments: [Segment]
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                segmentButton(segment)
-            }
+        ViewThatFits(in: .horizontal) {
+            bar(compact: false)
+            bar(compact: true)
         }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
-        )
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 3, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 3, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.body.padding.horizontal").catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.body.padding.vertical")
+        .environment(\.theme, theme)
+        .settingsChrome(.inset)
     }
 
-    private func segmentButton(_ segment: Segment) -> some View {
+    private func bar(compact: Bool) -> some View {
+        SidebarEqualWidthRow(
+            spacing: 4,
+            wholeIndex: compact ? segments.firstIndex { $0.value == selection } : nil
+        ) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                segmentButton(segment, compact: compact)
+            }
+        }
+    }
+
+    private func segmentButton(_ segment: Segment, compact: Bool) -> some View {
         let isSelected = selection == segment.value
+        let showsLabel = !compact || isSelected || segment.icon == nil
         return Button {
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 selection = segment.value
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 5, theme))) {
                 if let icon = segment.icon {
                     Image(systemName: icon)
-                        .font(.system(size: 10, weight: .semibold))
+                        .glyphSize(10, weight: .semibold)
                 }
-                Text(segment.label, bundle: .module)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                    .lineLimit(1)
+                if showsLabel {
+                    Text(segment.label, bundle: .module)
+                        .componentInspectionText(42, role: .caption, fallback: .footnote, weight: isSelected ? 600 : 500, theme: theme)
+                        .lineLimit(1)
+                }
                 if let badge = segment.badge, badge > 0 {
                     Text(badge > 99 ? "99+" : "\(badge)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                        .padding(.horizontal, 5)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                        .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
+                        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 5, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX")
                         .padding(.vertical, 1)
-                        .background(
-                            Capsule().fill(
-                                (isSelected ? theme.accentColor : theme.secondaryText)
-                                    .opacity(theme.isDark ? 0.22 : 0.14))
-                        )
+                        .background(Capsule().fill(isSelected ? theme.surface.pressed : theme.surface.subtle))
                         .accessibilityHidden(true)
                 }
-            }
-            .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+            }.catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.horizontalGap")
+            .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
+            // Breathing room the full labels must also fit, so the bar
+            // goes compact before labels touch their neighbours.
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX2", inheriting: NativeComponentInspectionStyle.metric(42, "padding", compact ? 4 : 8, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX2")
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 5, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingY")
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18) : .clear)
+                RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
+                    .fill(isSelected ? theme.surface.selected : .clear)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous))
         }
         .buttonStyle(.plain)
+        .frame(minHeight: NativeComponentInspectionStyle.metric(42, "height", 0, theme))
         .pointingHandCursor()
+        .help(showsLabel ? Text(verbatim: "") : Text(segment.label, bundle: .module))
         .accessibilityLabel(segment.accessibilityLabel ?? Text(segment.label, bundle: .module))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Lays its children out in equal-width columns. Its ideal width is the
+/// widest child's ideal times the count, so `ViewThatFits` only picks it
+/// when every child fits at that shared width. The `wholeIndex` child
+/// never gets less than its ideal width; when the equal share is too
+/// narrow for it, the others split what is left.
+private struct SidebarEqualWidthRow: Layout {
+    var spacing: CGFloat
+    var wholeIndex: Int? = nil
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let gaps = spacing * CGFloat(subviews.count - 1)
+        let ideal = (sizes.map(\.width).max() ?? 0) * CGFloat(subviews.count) + gaps
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? ideal
+        return CGSize(width: width, height: sizes.map(\.height).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard !subviews.isEmpty else { return }
+        let gaps = spacing * CGFloat(subviews.count - 1)
+        let available = max(0, bounds.width - gaps)
+        let share = available / CGFloat(subviews.count)
+        var widths = Array(repeating: share, count: subviews.count)
+        if let wholeIndex, subviews.indices.contains(wholeIndex), subviews.count > 1 {
+            let whole = min(available, subviews[wholeIndex].sizeThatFits(.unspecified).width)
+            if whole > share {
+                let rest = (available - whole) / CGFloat(subviews.count - 1)
+                widths = widths.indices.map { $0 == wholeIndex ? whole : rest }
+            }
+        }
+        var x = bounds.minX
+        for (subview, width) in zip(subviews, widths) {
+            subview.place(
+                at: CGPoint(x: x, y: bounds.midY), anchor: .leading,
+                proposal: ProposedViewSize(width: width, height: bounds.height))
+            x += width + spacing
+        }
     }
 }
 
@@ -322,24 +381,26 @@ struct SidebarHeaderIconButton: View {
     var label: LocalizedStringKey? = nil
     let action: () -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderIconButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 4, theme))) {
                 Image(systemName: icon)
-                    .font(.system(size: size, weight: .medium))
+                    .glyphSize(size, weight: .medium)
                 if let label {
                     Text(label, bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(SettingsFont.smallLabel)
                 }
-            }
-            .foregroundColor(tint ?? theme.secondaryText)
+            }.catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderIconButton.body.horizontalGap")
+            .foregroundColor(tint ?? theme.text.secondary)
             .opacity(isEnabled ? 1 : 0.45)
             // Pad the hit target beyond the glyph without adding chrome.
-            .padding(.horizontal, 4)
-            .padding(.vertical, 4)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 4, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 4, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingY")
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -350,59 +411,6 @@ struct SidebarHeaderIconButton: View {
 
 // MARK: - Sidebar Filter Chip
 
-/// Pane-level toggle in the rails' chip idiom: a capsule, ghost when off
-/// (hover tints it), accent-tinted when on. One level below the lens bar:
-/// lenses change what a rail lists, chips narrow or re-sort it.
-struct SidebarFilterChip: View {
-    let label: LocalizedStringKey
-    var icon: String? = nil
-    var iconOn: String? = nil
-    let isOn: Bool
-    var help: LocalizedStringKey? = nil
-    let action: () -> Void
-
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    var body: some View {
-        let shape = Capsule(style: .continuous)
-        Button(action: action) {
-            HStack(spacing: 4) {
-                if let icon {
-                    Image(systemName: isOn ? (iconOn ?? icon) : icon)
-                        .font(.system(size: 9.5, weight: .semibold))
-                }
-                Text(label, bundle: .module)
-                    .font(.system(size: 11, weight: isOn ? .semibold : .medium))
-            }
-            .foregroundColor(isOn ? theme.accentColor : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                shape.fill(
-                    isOn
-                        ? theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18)
-                        : (isHovered ? theme.secondaryBackground.opacity(0.5) : Color.clear)
-                )
-            )
-            .contentShape(shape)
-            .pointingHandCursor()
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .accessibilityAddTraits(isOn ? .isSelected : [])
-        .modifier(OptionalHelp(help: help))
-    }
-
-    private struct OptionalHelp: ViewModifier {
-        let help: LocalizedStringKey?
-        func body(content: Content) -> some View {
-            if let help { content.localizedHelp(help) } else { content }
-        }
-    }
-}
-
 // MARK: - Sidebar Empty State
 
 /// The rails' one empty-state idiom: a light symbol, a short title and an
@@ -412,28 +420,30 @@ struct SidebarEmptyState: View {
     let title: LocalizedStringKey
     var hint: LocalizedStringKey? = nil
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarEmptyState.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 8, theme))) {
             Spacer()
             Image(systemName: icon)
-                .font(.system(size: 28, weight: .light))
-                .foregroundColor(theme.secondaryText.opacity(0.5))
+                .glyphSize(28, weight: .light)
+                .foregroundColor(theme.text.tertiary)
             Text(title, bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
             if let hint {
                 Text(hint, bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText.opacity(0.7))
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-        }
+        }.catalogLayoutTarget("component.library.42.elements.layout.sidebarEmptyState.body.verticalGap")
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 24)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarEmptyState.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 24, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarEmptyState.body.paddingX")
     }
 }
 
@@ -445,30 +455,33 @@ struct SidebarEmptyState: View {
 /// the left rail's header so the two rails line up.
 struct SidebarHeaderRow<Actions: View>: View {
     var summary: String? = nil
+    var compact: Bool = false
     @ViewBuilder let actions: () -> Actions
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 4, theme))) {
             if let summary, !summary.isEmpty {
                 Text(summary)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(compact ? .caption : .body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(compact ? theme.text.tertiary : theme.text.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    // Optically aligned with the lens bar's inner edge.
-                    .padding(.leading, 4)
+                    // Compact agent headers align with the agent row text inset.
+                    .padding(.leading, compact ? 0 : 4)
             }
             Spacer(minLength: 8)
             actions()
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 2)
-        .padding(.bottom, 8)
+        }.catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderRow.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 12, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderRow.body.paddingX")
+        .padding(.top, compact ? 0 : 2)
+        .padding(.bottom, compact ? 0 : 8)
         // Constant height whether or not a pane has actions, so the list
         // below starts at the same y on every pane.
-        .frame(minHeight: 32)
+        .frame(minHeight: NativeComponentInspectionStyle.metric(42, "height", 32, theme))
     }
 }
 
@@ -482,7 +495,9 @@ struct SidebarTitleRow<Actions: View>: View {
     let title: LocalizedStringKey
     @ViewBuilder let actions: () -> Actions
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
 
     init(_ title: LocalizedStringKey, @ViewBuilder actions: @escaping () -> Actions = { EmptyView() }) {
         self.title = title
@@ -490,17 +505,17 @@ struct SidebarTitleRow<Actions: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarTitleRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 4, theme))) {
             Text(title, bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
                 .padding(.leading, 4)
             Spacer(minLength: 8)
             actions()
-        }
-        .frame(minHeight: 30)
-        .padding(.horizontal, 12)
+        }.catalogLayoutTarget("component.library.42.elements.layout.sidebarTitleRow.body.horizontalGap")
+        .frame(minHeight: NativeComponentInspectionStyle.metric(42, "height", 30, theme))
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarTitleRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 12, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarTitleRow.body.paddingX")
         .padding(.top, 16)
         .padding(.bottom, 12)
     }
@@ -514,57 +529,145 @@ struct SidebarTitleRow<Actions: View>: View {
 /// left rail uses `.trailing` (drag right widens), the right rail
 /// `.leading` (drag left widens).
 struct ColumnResizeHandle: View {
-    /// Which edge of the rail this handle sits on.
     let edge: HorizontalEdge
-    /// Allowed rail widths.
     let range: ClosedRange<Double>
-    /// Persisted width; committed on release.
     @Binding var storedWidth: Double
-    /// Width while a drag is in flight (nil at rest).
     @Binding var liveWidth: Double?
-
+    var accessibilityLabel: String?
+    /// Double-clicking the divider calls this, when set.
+    var onReset: (() -> Void)?
     @Environment(\.theme) private var theme
-    @State private var dragAnchor: Double?
-
-    private func clamp(_ raw: Double) -> Double {
-        min(max(raw, range.lowerBound), range.upperBound)
-    }
+    @State private var isHovering = false
 
     var body: some View {
-        // An 11pt-wide interactive strip; the offset pushes half of it past
-        // the border so the seam is grabbable right at the boundary. The
-        // visible seam is a 1pt line at the strip's center.
-        Color.clear
-            .frame(width: 11)
+        // Native cursor rectangles own a stable 16pt grab zone. Drag deltas
+        // use window coordinates, independent of the divider's moving frame.
+        NativeColumnResizeHandle(edge: edge, range: range,
+                                 storedWidth: $storedWidth, liveWidth: $liveWidth, isHovering: $isHovering,
+                                 accessibilityLabel: accessibilityLabel, onReset: onReset)
+            .frame(width: 16)
             .frame(maxHeight: .infinity)
             .overlay {
                 Rectangle()
-                    .fill(theme.secondaryText.opacity(liveWidth != nil ? 0.55 : 0.12))
-                    .frame(width: 1)
+                    .fill(isHovering || liveWidth != nil ? theme.border.default : .clear)
+                    .frame(width: theme.stroke.default)
+                    .allowsHitTesting(false)
             }
-            .contentShape(Rectangle())
-            .pointerStyle(.columnResize)
-            .offset(x: edge == .trailing ? 5 : -5)
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                    .onChanged { value in
-                        // Anchor to the width at gesture start so the rail
-                        // tracks the cursor 1:1 without accumulating drift.
-                        let anchor = dragAnchor ?? clamp(liveWidth ?? storedWidth)
-                        if dragAnchor == nil {
-                            dragAnchor = anchor
-                        }
-                        let delta = Double(value.translation.width)
-                        liveWidth = clamp(anchor + (edge == .trailing ? delta : -delta))
-                    }
-                    .onEnded { _ in
-                        if let final = liveWidth {
-                            storedWidth = clamp(final)
-                        }
-                        liveWidth = nil
-                        dragAnchor = nil
-                    }
-            )
+            .offset(x: edge == .trailing ? 8 : -8)
+    }
+}
+
+private struct NativeColumnResizeHandle: NSViewRepresentable {
+    let edge: HorizontalEdge
+    let range: ClosedRange<Double>
+    @Binding var storedWidth: Double
+    @Binding var liveWidth: Double?
+    @Binding var isHovering: Bool
+    let accessibilityLabel: String?
+    let onReset: (() -> Void)?
+
+    func makeNSView(context: Context) -> ResizeView { ResizeView() }
+    func updateNSView(_ view: ResizeView, context: Context) {
+        view.width = liveWidth ?? storedWidth
+        view.range = range
+        view.direction = edge == .trailing ? 1 : -1
+        view.onChange = { liveWidth = $0 }
+        view.onEnd = { width, moved in
+            if moved { storedWidth = width }
+            liveWidth = nil
+        }
+        view.onHover = { isHovering = $0 }
+        view.onReset = onReset
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.splitter)
+        view.setAccessibilityLabel(accessibilityLabel ?? (edge == .trailing ? "Resize sidebar" : "Resize inspector"))
+        view.setAccessibilityValue(NSNumber(value: view.width))
+        view.window?.invalidateCursorRects(for: view)
+    }
+
+    final class ResizeView: NSView {
+        var width: Double = 240
+        var range: ClosedRange<Double> = 240...460
+        var direction: Double = 1
+        var onChange: ((Double) -> Void)?
+        /// The width at release, and whether the drag changed it.
+        var onEnd: ((Double, Bool) -> Void)?
+        var onHover: ((Bool) -> Void)?
+        var onReset: (() -> Void)?
+        private var hoverArea: NSTrackingArea?
+        private var pointerInside = false
+        private var anchorX: CGFloat = 0
+        private var anchorWidth: Double = 0
+        private var dragWidth: Double?
+        private weak var draggingWindow: NSWindow?
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func resetCursorRects() {
+            super.resetCursorRects()
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let hoverArea { removeTrackingArea(hoverArea) }
+            let area = NSTrackingArea(rect: .zero,
+                options: [.mouseEnteredAndExited, .cursorUpdate, .activeAlways, .inVisibleRect],
+                owner: self, userInfo: nil)
+            addTrackingArea(area)
+            hoverArea = area
+        }
+        private func setHover(_ inside: Bool) {
+            guard pointerInside != inside else { return }
+            pointerInside = inside
+            onHover?(inside)
+        }
+        override func mouseEntered(with event: NSEvent) {
+            setHover(true)
+            NSCursor.resizeLeftRight.set()
+        }
+        override func mouseExited(with event: NSEvent) { setHover(false) }
+        override func cursorUpdate(with event: NSEvent) {
+            setHover(true)
+            NSCursor.resizeLeftRight.set()
+        }
+        override func mouseDown(with event: NSEvent) {
+            setHover(true)
+            if event.clickCount == 2, let onReset {
+                onReset()
+                return
+            }
+            anchorX = event.locationInWindow.x
+            anchorWidth = width
+            dragWidth = width
+            draggingWindow = window
+            window?.disableCursorRects()
+            NSCursor.resizeLeftRight.set()
+            onChange?(width)
+        }
+        override func mouseDragged(with event: NSEvent) {
+            guard dragWidth != nil else { return }
+            let proposed = anchorWidth + direction * Double(event.locationInWindow.x - anchorX)
+            let clamped = min(max(proposed, range.lowerBound), range.upperBound)
+            dragWidth = clamped
+            NSCursor.resizeLeftRight.set()
+            onChange?(clamped)
+        }
+        override func mouseUp(with event: NSEvent) {
+            setHover(bounds.contains(convert(event.locationInWindow, from: nil)))
+            finishDrag()
+        }
+        override func cancelOperation(_ sender: Any?) { finishDrag() }
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow == nil { setHover(false); finishDrag() }
+            super.viewWillMove(toWindow: newWindow)
+        }
+        private func finishDrag() {
+            guard let value = dragWidth else { return }
+            dragWidth = nil
+            draggingWindow?.enableCursorRects()
+            draggingWindow?.invalidateCursorRects(for: self)
+            draggingWindow = nil
+            onEnd?(value, value != anchorWidth)
+        }
     }
 }
 
@@ -582,61 +685,88 @@ struct SidebarSearchField: View {
     /// to match its dropdown chrome); the sidebar keeps the borderless look.
     var showsRestingBorder: Bool = false
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
 
+    #if OSAURUS_DESIGN_SYSTEM
+    @State private var inspectorComposing = false
+    #endif
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarSearchField.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 8, theme))) {
             searchIcon
             searchTextField
             if isSearching {
                 ProgressView()
+                    .assignedProgressIndicator()
                     .controlSize(.mini)
                     .frame(width: 12, height: 12)
                     .transition(.opacity)
             }
             clearButton
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        }.catalogLayoutTarget("component.library.42.elements.layout.sidebarSearchField.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarSearchField.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarSearchField.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 8, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarSearchField.body.padding.horizontal").catalogLayoutTarget("component.library.42.elements.layout.sidebarSearchField.body.padding.vertical")
+        .frame(minHeight: NativeComponentInspectionStyle.metric(42, "height", 30, theme))
         .background(fieldBackground)
         .overlay(focusBorder)
-        .animation(theme.animationQuick(), value: isFocused.wrappedValue)
-        .animation(theme.animationQuick(), value: text.isEmpty)
-        .animation(theme.animationQuick(), value: isSearching)
+        .animation(theme.motion.quick, value: isFocused.wrappedValue)
+        .animation(theme.motion.quick, value: text.isEmpty)
+        .animation(theme.motion.quick, value: isSearching)
     }
 
     private var searchIcon: some View {
         Image(systemName: "magnifyingglass")
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(isFocused.wrappedValue ? theme.primaryText : theme.secondaryText.opacity(0.7))
+            .glyphSize(12, weight: .medium)
+            .foregroundColor(isFocused.wrappedValue ? theme.text.primary : theme.text.secondary)
     }
 
     private var searchTextField: some View {
         ZStack(alignment: .leading) {
             if text.isEmpty {
                 Text(localized: placeholder)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText.opacity(0.7))
+                    .componentInspectionText(42, role: .label, fallback: .label, theme: theme)
+                    .foregroundColor(theme.text.placeholder)
             }
+            #if OSAURUS_DESIGN_SYSTEM
+            InspectorAssignedTextField(text: $text, isComposing: $inspectorComposing,
+                font: theme.assignedNativeFont(NativeComponentInspectionStyle.key(42, "label"), fallback: theme.nsFont(.label)),
+                textColor: NSColor(theme.text.primary), onSubmit: nil,
+                onFocusChange: { isFocused.wrappedValue = $0 },
+                tracking: theme.assignedTracking(NativeComponentInspectionStyle.key(42, "label")),
+                editable: componentEnabled, requestedFocus: isFocused.wrappedValue,
+                onCommand: { selector in
+                    guard selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+                    clearAndResign()
+                    return true
+                })
+            #else
             TextField("", text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
+                .componentInspectionText(42, role: .caption, fallback: .caption, theme: theme)
+                .foregroundColor(theme.text.primary)
                 .focused(isFocused)
+                .onExitCommand(perform: clearAndResign)
+            #endif
         }
+    }
+
+    /// Escape: empties the query and gives up focus.
+    private func clearAndResign() {
+        text = ""
+        isFocused.wrappedValue = false
     }
 
     @ViewBuilder
     private var clearButton: some View {
         if !text.isEmpty {
             Button {
-                withAnimation(theme.animationQuick()) {
+                withAnimation(theme.motion.quick) {
                     text = ""
                 }
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText.opacity(0.7))
+                    .glyphSize(12)
+                    .foregroundColor(theme.text.secondary)
             }
             .buttonStyle(.plain)
             .transition(.opacity.combined(with: .scale(scale: 0.8)))
@@ -644,17 +774,17 @@ struct SidebarSearchField: View {
     }
 
     private var fieldBackground: some View {
-        RoundedRectangle(cornerRadius: SidebarStyle.searchFieldCornerRadius, style: .continuous)
-            .fill(theme.isDark ? theme.primaryBackground.opacity(0.5) : theme.tertiaryBackground.opacity(0.8))
+        RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+            .fill(theme.surface.raised)
     }
 
     private var focusBorder: some View {
-        RoundedRectangle(cornerRadius: SidebarStyle.searchFieldCornerRadius, style: .continuous)
+        RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
             .stroke(
                 isFocused.wrappedValue
-                    ? theme.accentColor.opacity(0.3)
-                    : (showsRestingBorder ? theme.secondaryText.opacity(0.15) : .clear),
-                lineWidth: 1)
+                    ? theme.border.focus
+                    : (showsRestingBorder ? theme.border.subtle : .clear),
+                lineWidth: isFocused.wrappedValue ? theme.stroke.focus : theme.stroke.default)
     }
 }
 
@@ -665,45 +795,39 @@ struct SidebarNoResultsView: View {
     let searchQuery: String
     let onClear: () -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarNoResultsView.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 12, theme))) {
             Spacer()
 
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 24, weight: .light))
-                .foregroundColor(theme.secondaryText.opacity(0.4))
+                .glyphSize(24, weight: .light)
+                .foregroundColor(theme.text.disabled)
 
-            VStack(spacing: 4) {
+            VStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarNoResultsView.body.verticalGap2", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 4, theme))) {
                 Text("No matches found", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText.opacity(0.8))
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.secondary)
 
                 Text("for \"\(searchQuery)\"", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText.opacity(0.6))
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-            }
+            }.catalogLayoutTarget("component.library.42.elements.layout.sidebarNoResultsView.body.verticalGap2")
 
             Button(action: onClear) {
                 Text("Clear search", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(theme.accentColor.opacity(0.1))
-                    )
             }
-            .buttonStyle(.plain)
+            .assignedSettingsButtonStyle(.secondary, size: .compact)
 
             Spacer()
-        }
+        }.catalogLayoutTarget("component.library.42.elements.layout.sidebarNoResultsView.body.verticalGap")
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarNoResultsView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 16, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarNoResultsView.body.paddingX")
     }
 }
 
@@ -715,140 +839,86 @@ struct SidebarRowActionButton: View {
     let help: String
     let action: () -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
-                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
-                .background(
-                    RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
-                        .fill(isHovered ? theme.accentColor.opacity(0.1) : .clear)
+                .glyphSize(12, weight: .semibold)
+                .foregroundColor(
+                    isHovered ? theme.text.primary : theme.text.secondary
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
-                        .strokeBorder(
-                            isHovered ? theme.accentColor.opacity(0.2) : .clear,
-                            lineWidth: 1
-                        )
-                )
+                .frame(width: NativeComponentInspectionStyle.metric(41, "height", SidebarStyle.actionButtonSize, theme), height: NativeComponentInspectionStyle.metric(41, "height", SidebarStyle.actionButtonSize, theme))
+                .settingsChrome(isHovered ? .hover : nil)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(Text(LocalizedStringKey(help), bundle: .module))
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .animation(theme.motion.quick, value: isHovered)
+        .environment(\.theme, theme)
     }
 }
 
 // MARK: - Sidebar Row Background
 
-/// Enhanced row background with glass effects and gradient borders (similar to ToastBackground styling).
+/// Flat row background (`component.sidebar.row`): `surface.selected` +
+/// `border.default` when selected, `surface.hover` while hovered, nothing at
+/// rest. `radius.medium`.
 struct SidebarRowBackground: View {
     let isSelected: Bool
     let isHovered: Bool
+    var family = 41
+    var compactChatStyle = false
 
-    @Environment(\.theme) private var theme
-
-    private var cornerRadius: CGFloat { SidebarStyle.rowCornerRadius }
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(family, enabled: componentEnabled, authoritative: true) }
 
     var body: some View {
-        ZStack {
-            // Layer 1: Background fill with glass effect
-            if isSelected || isHovered {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(backgroundColor)
-            }
-
-            // Layer 2: Accent gradient overlay for selected/hovered states
-            if isSelected {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(theme.isDark ? 0.12 : 0.08),
-                                theme.accentColor.opacity(theme.isDark ? 0.04 : 0.02),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            } else if isHovered {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.primaryBackground.opacity(theme.isDark ? 0.08 : 0.04),
-                                Color.clear,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-        }
-        .overlay(borderOverlay)
+        let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+        shape
+            .fill(fill)
+            .overlay(shape.strokeBorder(isSelected && !compactChatStyle ? theme.border.default : .clear, lineWidth: theme.stroke.default))
     }
 
-    private var backgroundColor: Color {
-        if isSelected {
-            return theme.accentColor.opacity(theme.isDark ? 0.15 : 0.12)
-        } else if isHovered {
-            return theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.6)
-        }
-        return .clear
+    private var fill: Color {
+        if !componentEnabled { return theme.surface.disabled }
+        if compactChatStyle { return isSelected || isHovered ? theme.surface.hover : .clear }
+        if isSelected { return theme.surface.selected }
+        if isHovered { return theme.surface.hover }
+        return theme.assignedColor(NativeComponentInspectionStyle.key(family, "background"), fallback: .clear)
     }
+}
 
-    @ViewBuilder
-    private var borderOverlay: some View {
-        if isSelected {
-            // Selected state: gradient border with accent highlight
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.accentColor.opacity(theme.isDark ? 0.35 : 0.28),
-                            theme.accentColor.opacity(theme.isDark ? 0.15 : 0.12),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-                .overlay(selectedAccentEdge)
-        } else if isHovered {
-            // Hovered state: subtle gradient border
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(theme.isDark ? 0.12 : 0.18),
-                            theme.primaryBorder.opacity(theme.isDark ? 0.08 : 0.12),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        }
+/// Paints `SidebarRowBackground` behind a row and clips + hit-tests the row
+/// to `radius.medium`. No gesture of its own: a press-tracking gesture here
+/// swallows the clicks of the row's tap handler and of buttons inside it.
+private struct SidebarRowChromeModifier: ViewModifier {
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(family, enabled: componentEnabled, authoritative: true) }
+    let isSelected: Bool
+    let isHovered: Bool
+    var family = 41
+    var compactChatStyle = false
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+        content
+            .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered, family: family, compactChatStyle: compactChatStyle))
+            .clipShape(shape)
+            .contentShape(shape)
     }
+}
 
-    private var selectedAccentEdge: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .strokeBorder(
-                theme.accentColor.opacity(SidebarStyle.accentEdgeHoverOpacity),
-                lineWidth: 1
-            )
-            .mask(
-                LinearGradient(
-                    colors: [Color.white, Color.white.opacity(0)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
+extension View {
+    /// The sidebar row surface with hover and selected states.
+    func sidebarRowChrome(isSelected: Bool, isHovered: Bool, family: Int = 41, compactChatStyle: Bool = false) -> some View {
+        modifier(SidebarRowChromeModifier(isSelected: isSelected, isHovered: isHovered, family: family, compactChatStyle: compactChatStyle))
     }
 }
 
@@ -865,4 +935,33 @@ nonisolated(unsafe) private let _sharedRelativeDateFormatter: RelativeDateTimeFo
 /// Formats a date as a relative time string (e.g., "2h ago", "yesterday").
 func formatRelativeDate(_ date: Date) -> String {
     _sharedRelativeDateFormatter.localizedString(for: date, relativeTo: Date())
+}
+
+nonisolated(unsafe) private let _sharedCompactAgeFormatter = makeCompactAgeFormatter(locale: .current)
+
+private func makeCompactAgeFormatter(locale: Locale) -> DateComponentsFormatter {
+    let f = DateComponentsFormatter()
+    var calendar = Calendar.current
+    calendar.locale = locale
+    f.calendar = calendar
+    f.unitsStyle = .abbreviated
+    f.maximumUnitCount = 1
+    f.allowedUnits = [.year, .month, .day, .hour, .minute]
+    return f
+}
+
+/// Formats a date as the single-unit age a sidebar row has room for
+/// ("Now", "5m", "3h", "12d", "3mo"). `locale` is for tests; nil
+/// uses the shared current-locale formatter.
+func compactRelativeAge(_ date: Date, now: Date = Date(), locale: Locale? = nil) -> String {
+    guard now.timeIntervalSince(date) >= 60 else { return L("Now") }
+    let formatter = locale.map(makeCompactAgeFormatter) ?? _sharedCompactAgeFormatter
+    // The formatter rounds its one unit (80 days reads "3mo"); keep only
+    // the largest whole unit so an age never reads older than it is.
+    let units: [Calendar.Component] = [.year, .month, .day, .hour, .minute]
+    let parts = formatter.calendar!.dateComponents(Set(units), from: date, to: now)
+    guard let unit = units.first(where: { (parts.value(for: $0) ?? 0) > 0 }) else { return L("Now") }
+    var largest = DateComponents()
+    largest.setValue(parts.value(for: unit), for: unit)
+    return formatter.string(from: largest) ?? formatRelativeDate(date)
 }

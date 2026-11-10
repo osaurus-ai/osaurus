@@ -72,15 +72,15 @@ public struct NextRunPanelView: View {
                 idleBanner
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(panelBackground)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s12)
+        .settingsChrome(.inset)
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(theme.primaryBorder, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: theme.radius.medium)
+                .stroke(theme.border.subtle, lineWidth: theme.hairline)
         )
-        .padding(.horizontal, 20)
-        .padding(.top, 8)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.top, theme.space.s8)
         .task { await reload() }
         .onAppear { startTicker() }
         .onDisappear { refreshTask?.cancel() }
@@ -99,45 +99,45 @@ public struct NextRunPanelView: View {
     private func scheduledRow(_ entry: NextRunEntry) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
-                bannerIcon("alarm.fill", color: theme.warningColor)
+                bannerIcon("alarm.fill", color: theme.status.warning.foreground)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(Self.relative(entry.scheduledAt, now: nowTick))
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
+                            .font(SettingsFont.sectionTitle)
+                            .foregroundColor(theme.text.primary)
                             .fixedSize()
                         Text("·")
-                            .foregroundColor(theme.secondaryText)
+                            .foregroundColor(theme.text.secondary)
                             .fixedSize()
                         Text(Self.absolute(entry.scheduledAt))
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.caption)
+                            .foregroundColor(theme.text.secondary)
                             .fixedSize()
                         scheduledByBadge(entry.scheduledBy)
                             .fixedSize()
                     }
                     Text(entry.instructions)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(2)
                     if !entry.contextViews.isEmpty {
                         Text(verbatim: "Prefetching: \(entry.contextViews.joined(separator: ", "))")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText.opacity(0.85))
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(1)
                     }
                     // A due row with a dead dispatch loop would otherwise
                     // look like a working "Now" state forever (e.g. the
                     // storage key wasn't unlocked at launch). Tell the user
                     // why nothing fired and that Run now is the escape hatch.
-                    if entry.scheduledAt <= nowTick, !NextRunScheduler.shared.isRunning {
+                    if entry.scheduledAt <= nowTick, !EventManager.shared.isStarted {
                         Label(
                             "Scheduler inactive — waiting for storage unlock. Use Run now to start manually.",
                             systemImage: "exclamationmark.triangle.fill"
                         )
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.warningColor)
+                        .textStyle(.footnote, weight: 500)
+                        .foregroundColor(theme.status.warning.foreground)
                         .lineLimit(2)
                     }
                 }
@@ -169,14 +169,7 @@ public struct NextRunPanelView: View {
             case .system: return "by system"
             }
         }()
-        Text(label)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                Capsule().fill(theme.secondaryText.opacity(0.12))
-            )
+        StatusChip(label, tint: theme.text.secondary)
     }
 
     // MARK: Paused / Idle banners
@@ -189,7 +182,7 @@ public struct NextRunPanelView: View {
     private func pausedBanner(_ p: AgentPauseRecord) -> some View {
         statusBanner(
             icon: "pause.circle.fill",
-            iconColor: theme.warningColor,
+            iconColor: theme.status.warning.foreground,
             title: "Paused",
             subtitle: LocalizedStringKey(Self.pausedSubtitle(for: p))
         ) {
@@ -201,7 +194,7 @@ public struct NextRunPanelView: View {
     private var idleBanner: some View {
         statusBanner(
             icon: "calendar.badge.clock",
-            iconColor: theme.tertiaryText,
+            iconColor: theme.text.tertiary,
             title: "No upcoming run scheduled",
             subtitle: "The agent will schedule itself when it has work to do."
         ) {
@@ -232,8 +225,8 @@ public struct NextRunPanelView: View {
     private var resumeButton: some View {
         Button(action: resume) {
             Label(localized: "Resume", systemImage: "play.fill")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .textStyle(.footnote, weight: 500)
+                .foregroundColor(theme.text.secondary)
         }
         .buttonStyle(.plain)
         .fixedSize()
@@ -255,11 +248,11 @@ public struct NextRunPanelView: View {
             bannerIcon(icon, color: iconColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title, bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(subtitle, bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
@@ -271,7 +264,7 @@ public struct NextRunPanelView: View {
     @ViewBuilder
     private func bannerIcon(_ systemName: String, color: Color) -> some View {
         Image(systemName: systemName)
-            .font(.system(size: 14, weight: .medium))
+            .glyphSize(14, weight: .medium)
             .foregroundColor(color)
             .frame(width: Self.iconWidth, height: Self.iconWidth)
     }
@@ -307,22 +300,7 @@ public struct NextRunPanelView: View {
                 ]
             )
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 9, weight: .medium))
-                Text(Self.modeLabel(mode))
-                    .font(.system(size: 10, weight: .medium))
-                    .fixedSize()
-            }
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                Capsule().fill(theme.secondaryText.opacity(0.10))
-            )
-            .overlay(
-                Capsule().stroke(theme.secondaryText.opacity(0.18), lineWidth: 0.5)
-            )
+            StatusChip(Self.modeLabel(mode), icon: "calendar")
         }
         .buttonStyle(.plain)
         .fixedSize()
@@ -343,19 +321,13 @@ public struct NextRunPanelView: View {
     /// to `pausedBanner`, which shows `resumeButton` instead.
     @ViewBuilder
     private var pauseMenu: some View {
-        Menu {
+        SettingsMenuButton(.secondary, "Pause", icon: "pause.fill", size: .compact) {
             Button(localized: "1 hour") { pauseFor(hours: 1) }
             Button(localized: "4 hours") { pauseFor(hours: 4) }
             Button(localized: "Until tomorrow") { pauseUntilTomorrow() }
             Button(localized: "Custom…") { presentCustomPause() }
             Button(localized: "Indefinitely") { applyPause(until: .distantFuture) }
-        } label: {
-            Label(localized: "Pause", systemImage: "pause.fill")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
     }
 
     // MARK: Edit sheet
@@ -366,7 +338,7 @@ public struct NextRunPanelView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty
         return VStack(spacing: 0) {
-            AgentSheetHeader(
+            SettingsSheetHeader(
                 icon: "pencil.and.list.clipboard",
                 title: "Edit next-run instructions",
                 subtitle:
@@ -374,8 +346,8 @@ public struct NextRunPanelView: View {
                 onClose: { showEditInstructions = false }
             )
             VStack(alignment: .leading, spacing: 8) {
-                AgentSheetSectionLabel("Wake-up brief")
-                StyledTextField(
+                SettingsFieldLabel("Wake-up brief")
+                SettingsTextField(
                     placeholder: "What should the agent do when it wakes up?",
                     text: $editedInstructions,
                     icon: "text.alignleft",
@@ -383,15 +355,15 @@ public struct NextRunPanelView: View {
                     lineLimit: 5
                 )
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            AgentSheetFooter(
-                primary: AgentSheetFooter.Action(
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s16)
+            SettingsSheetFooter(
+                primary: SettingsSheetFooter.Action(
                     label: "Save",
                     isEnabled: !trimmedEmpty,
                     handler: { saveEditedInstructions() }
                 ),
-                secondary: AgentSheetFooter.Action(
+                secondary: SettingsSheetFooter.Action(
                     label: "Cancel",
                     handler: { showEditInstructions = false }
                 ),
@@ -399,23 +371,19 @@ public struct NextRunPanelView: View {
             )
         }
         .frame(width: 480)
-        .background(theme.primaryBackground)
+        .settingsSheetSurface()
     }
 
     // MARK: Side-effects
 
     private func runNow() {
-        guard let entry = nextRun else { return }
-        // Clear the slot synchronously so the scheduler doesn't double-fire,
-        // then dispatch with `selfSchedule` so the audit trail still shows
-        // the run was triggered by the next-run plumbing.
+        guard nextRun != nil, let wake = SelfScheduleAutomations.automation(for: agentId) else { return }
+        // Disarm the slot first so the timer doesn't double-fire, then run
+        // the wake through its automation: same fresh chat, preamble and
+        // title as the automatic path, recorded as a manual run.
         try? LocalAgentBridge.shared.cancelNextRun(agentId: agentId)
         Task {
-            // Same builder as the automatic path: fresh chat per run,
-            // preamble prompt with the previous-run pointer, timestamped
-            // session title.
-            let request = await NextRunScheduler.makeDispatchRequest(for: entry)
-            _ = await TaskDispatcher.shared.dispatch(request)
+            _ = await EventManager.shared.fireNow(wake.id)
             await reload()
             onRunNow()
         }
@@ -501,50 +469,45 @@ public struct NextRunPanelView: View {
     @ViewBuilder
     private var customPauseSheet: some View {
         VStack(spacing: 0) {
-            AgentSheetHeader(
+            SettingsSheetHeader(
                 icon: "pause.circle",
                 title: "Pause agent",
                 subtitle:
                     "Pick when this agent should resume firing scheduled and self-scheduled runs. The optional reason is logged in the audit trail.",
                 onClose: { showCustomPause = false }
             )
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 8) {
-                    AgentSheetSectionLabel("Resume at")
-                    DatePicker(
-                        "",
+            VStack(alignment: .leading, spacing: theme.space.s16) {
+                SettingsFieldRow(label: "Resume at") {
+                    SettingsDatePicker(
+                        label: "Resume at",
                         selection: $customPauseUntil,
-                        in: Date().addingTimeInterval(60)...,
-                        displayedComponents: [.date, .hourAndMinute]
+                        minimum: Date().addingTimeInterval(60),
+                        components: [.date, .hourAndMinute]
                     )
-                    .datePickerStyle(.compact)
-                    .labelsHidden()
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    AgentSheetSectionLabel("Reason (optional)")
-                    StyledTextField(
+                SettingsFieldRow(label: "Reason (optional)") {
+                    SettingsTextField(
                         placeholder: "e.g. cooling off after an error",
                         text: $customPauseReason,
                         icon: "text.bubble"
                     )
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            AgentSheetFooter(
-                primary: AgentSheetFooter.Action(
+            .padding(theme.settingsSheetInset)
+            SettingsSheetFooter(
+                primary: SettingsSheetFooter.Action(
                     label: "Pause",
                     handler: { applyCustomPause() }
                 ),
-                secondary: AgentSheetFooter.Action(
+                secondary: SettingsSheetFooter.Action(
                     label: "Cancel",
                     handler: { showCustomPause = false }
                 ),
                 hint: "+ Enter to pause"
             )
         }
-        .frame(width: 400)
-        .background(theme.primaryBackground)
+        .frame(width: SettingsSheetWidth.compact)
+        .settingsSheetSurface()
     }
 
     private func resume() {
@@ -556,11 +519,6 @@ public struct NextRunPanelView: View {
 
     @MainActor
     private func reload() async {
-        guard (try? SchedulerDatabase.shared.open()) != nil else {
-            nextRun = nil
-            pause = nil
-            return
-        }
         nextRun = try? LocalAgentBridge.shared.nextRun(agentId: agentId)
         pause = try? LocalAgentBridge.shared.pauseInfo(agentId: agentId)
     }
@@ -577,11 +535,6 @@ public struct NextRunPanelView: View {
 
     // MARK: Helpers
 
-    private var panelBackground: some View {
-        RoundedRectangle(cornerRadius: 10)
-            .fill(theme.secondaryBackground)
-    }
-
     @ViewBuilder
     private func actionButton(
         _ label: String,
@@ -589,15 +542,15 @@ public struct NextRunPanelView: View {
         destructive: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        let tint = destructive ? theme.errorColor : theme.accentColor
+        let tint = destructive ? theme.status.error.foreground : theme.action.primary.default.background
         Button(action: action) {
             Label(label, systemImage: systemImage)
-                .font(.system(size: 11, weight: .medium))
+                .textStyle(.footnote, weight: 500)
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 6).fill(tint.opacity(0.12)))
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s6)
+        .settingsChrome(.tinted(tint))
         .foregroundColor(tint)
         .fixedSize()
     }

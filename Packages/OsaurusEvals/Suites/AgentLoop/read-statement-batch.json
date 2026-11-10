@@ -1,0 +1,31 @@
+{
+  "id": "agent_loop.read-statement-batch",
+  "domain": "agent_loop",
+  "label": "agent loop • read six statement PDFs together and total their new balances",
+  "query": "Read every credit card statement in the statements folder and tell me the combined New balance across all of them, to the cent.",
+  "notes": "Multi-file read contract: six independent PDFs should be read together (one `file_read` with `paths`, or several `file_read` calls in one response), not one file per model step. The step ceiling leaves room for a listing, one batched read, an optional `calculate`, and the answer — a model reading one file per step cannot finish inside it. New balances: 1,435.57 + 1,132.86 + 774.13 + 721.09 + 551.21 + 1,568.20 = 6,183.06. Synthetic fixtures (Fixtures/Documents/statements). Off-CI (needs a model).",
+  "fixtures": {
+    "agentCapabilities": { "calculatorEnabled": true },
+    "workspaceFiles": [
+      { "path": "statements/Harbor_Rewards_2026-04.pdf", "contentsFromFixture": "Documents/statements/Harbor_Rewards_2026-04.pdf" },
+      { "path": "statements/Harbor_Rewards_2026-05.pdf", "contentsFromFixture": "Documents/statements/Harbor_Rewards_2026-05.pdf" },
+      { "path": "statements/Northwind_Card_2026-04.pdf", "contentsFromFixture": "Documents/statements/Northwind_Card_2026-04.pdf" },
+      { "path": "statements/Northwind_Card_2026-05.pdf", "contentsFromFixture": "Documents/statements/Northwind_Card_2026-05.pdf" },
+      { "path": "statements/Summit_Visa_2026-04.pdf", "contentsFromFixture": "Documents/statements/Summit_Visa_2026-04.pdf" },
+      { "path": "statements/Summit_Visa_2026-05.pdf", "contentsFromFixture": "Documents/statements/Summit_Visa_2026-05.pdf" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxModelSteps": 5,
+      "allowedExits": ["finalResponse"],
+      "mustCallTools": ["file_read"],
+      "mustNotCallTools": ["shell_run"],
+      "noToolErrors": true,
+      "rubric": [
+        "Reports the combined new balance as 6,183.06 (or 6183.06), matching the six statements exactly."
+      ]
+    }
+  }
+}

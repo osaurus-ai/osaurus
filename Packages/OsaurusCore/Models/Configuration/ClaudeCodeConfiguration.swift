@@ -76,6 +76,31 @@ public enum ClaudeCodeEffort: String, CaseIterable, Sendable {
     }
 }
 
+extension ClaudeCodeEffort {
+    /// The chat picker's Reasoning Effort row for a Claude Code agent: a
+    /// Default segment (no `--effort`, the CLI's per-model default) plus every
+    /// level. Reads and writes the agent's `ClaudeCodeAgentConfig.effort`.
+    static let pickerOptionID = "reasoningEffort"
+
+    static var pickerOption: ModelOptionDefinition {
+        ModelOptionDefinition(
+            id: pickerOptionID,
+            label: L("Reasoning Effort"),
+            kind: .segmented(
+                [ModelOptionSegment(id: ModelOptionSegment.defaultID, label: L("Default"))]
+                    + allCases.map { ModelOptionSegment(id: $0.rawValue, label: $0.displayName) }
+            ),
+            help: L("Default leaves Claude Code on its own per-model default. Applies from the next message.")
+        )
+    }
+
+    /// The stored `effort` for a picker segment; nil for Default.
+    static func storedValue(forSegment id: String?) -> String? {
+        guard let id, let effort = ClaudeCodeEffort(rawValue: id) else { return nil }
+        return effort.rawValue
+    }
+}
+
 /// Decoded `claude auth status --json`.
 ///
 /// Only the fields Osaurus actually shows are modeled; the CLI adds keys over
@@ -176,8 +201,77 @@ public enum ClaudeCodeConfiguration {
         return "Edit(/\(trimmed)/**)"
     }
 
-    /// Tools added when the agent opts into shell access.
-    public static let shellTools = ["Bash"]
+    /// Tools added when the agent opts into shell access. `Monitor` runs a
+    /// shell command in the background under the same rules as Bash.
+    public static let shellTools = ["Bash", "Monitor"]
+
+    /// The other built-ins that run commands or code — what the CLI's own
+    /// `--restricted` mode strips, besides the shell tools and WebFetch.
+    /// Hidden without shell access; never auto-approved.
+    public static let codeRunningTools = ["CronCreate", "LSP", "RemoteTrigger", "Workflow"]
+
+    /// Built-ins whose writes `Edit(...)` rules govern.
+    public static let writeTools = ["Edit", "Write", "NotebookEdit"]
+
+    /// Built-ins no toggle grants.
+    public static let neverAllowedTools = ["WebFetch", "WebSearch"]
+
+    /// Permission-free built-ins kept on every agent run. Names a CLI no
+    /// longer has are ignored by `--tools`.
+    public static let permissionFreeTools = ["TodoWrite"]
+
+    /// The `--tools` value: the only built-ins the model sees. An allow list,
+    /// because new CLI releases add built-ins (agent teams, scheduling,
+    /// worktrees, `ToolSearch`) that a deny list never names.
+    public static func availableBuiltinTools(allowWrites: Bool, allowShell: Bool) -> [String] {
+        var tools = defaultAllowedTools + permissionFreeTools
+        if allowWrites { tools += writeTools }
+        if allowShell { tools += shellTools }
+        return tools
+    }
+
+    /// Built-ins to remove from the model's tool list for this run.
+    ///
+    /// `dontAsk` refuses an un-allowlisted tool only after the model calls it,
+    /// so a visible-but-refused tool shows up as a failed call the model keeps
+    /// retrying. Claude Code also auto-approves read-only shell commands, so a
+    /// visible Bash or Monitor would run `ls` with shell access off. A bare
+    /// name in `--disallowedTools` drops the tool from the list entirely, and
+    /// a deny beats an allow, so a granted tool must never appear here.
+    public static func hiddenBuiltinTools(allowWrites: Bool, allowShell: Bool) -> [String] {
+        var hidden: [String] = []
+        if !allowShell { hidden += shellTools + codeRunningTools }
+        if !allowWrites { hidden += writeTools }
+        return hidden + neverAllowedTools
+    }
+
+    /// What the chat shows for a tool call Claude Code's permission rules
+    /// refused, naming the toggle that grants it.
+    public static func permissionDeniedMessage(tool: String) -> String {
+        if shellTools.contains(tool) {
+            return L(
+                "Claude Code isn't allowed to run shell commands for this agent. Turn on Allow shell commands in the agent's Claude Code Options."
+            )
+        }
+        if writeTools.contains(tool) {
+            return L(
+                "Claude Code isn't allowed to change this file. File changes need Allow file changes in the agent's Claude Code Options and stay limited to the chat folder."
+            )
+        }
+        return L("Claude Code isn't allowed to use this tool for this agent.")
+    }
+
+    /// What the chat shows when the model called a tool this run doesn't have.
+    public static func unavailableToolMessage(tool: String) -> String {
+        L("Claude Code doesn't have this tool on this run, so the call didn't happen.")
+    }
+
+    /// The name a tool card shows: Osaurus's own tools without the MCP
+    /// namespace Claude Code puts on them.
+    public static func displayToolName(_ name: String) -> String {
+        let prefix = "mcp__\(mcpServerName)__"
+        return name.hasPrefix(prefix) ? String(name.dropFirst(prefix.count)) : name
+    }
 
     // MARK: - Osaurus tools over MCP
 
@@ -202,9 +296,19 @@ public enum ClaudeCodeConfiguration {
 
     /// Claude Code's namespaced spelling of the same set, for `--allowedTools`.
     public static func osaurusAllowedToolNames(allowConfigWrites: Bool) -> [String] {
-        osaurusToolPatterns(allowConfigWrites: allowConfigWrites)
-            .map { "mcp__\(mcpServerName)__\($0)" }
+        namespaced(osaurusToolPatterns(allowConfigWrites: allowConfigWrites))
     }
+
+    /// The Architect's Osaurus tools, sorted so the argv is stable.
+    static var architectToolPatterns: [String] { HarnessGrantStore.architectToolNames.sorted() }
+
+    static func namespaced(_ tools: [String]) -> [String] {
+        tools.map { "mcp__\(mcpServerName)__\($0)" }
+    }
+
+    /// Claude Code's own MCP tool timeout (milliseconds). `workflow_test`
+    /// runs a whole workflow, far past the CLI's default.
+    static let mcpToolTimeoutMilliseconds = 15 * 60 * 1000
 
     /// Why Osaurus's own tools aren't reachable on this run.
     public enum OsaurusToolsUnavailableReason: Sendable, Equatable {
@@ -268,6 +372,21 @@ public enum ClaudeCodeConfiguration {
         return note
     }
 
+    /// The Architect's note when its drafting tools can't attach, so it says
+    /// why instead of improvising with tools it doesn't have.
+    public static func architectToolsUnavailableNote(reason: OsaurusToolsUnavailableReason) -> String {
+        let cause =
+            reason == .serverNotRunning
+            ? L("the Osaurus server is not running — tell the person to start it from the Osaurus app")
+            : L("this copy of Osaurus is missing the bundled part that connects them")
+        return String(
+            format: L(
+                "Your workflow tools are NOT connected on this run, because %@. You cannot read or change the draft. Do not call any tool; say plainly that you can't build the workflow until this is fixed, then send a new message."
+            ),
+            cause
+        )
+    }
+
     /// Absolute path to the `osaurus` CLI shipped inside this app bundle.
     ///
     /// Mirrors `ConfigurationView.resolveCLIExecutableURL`'s order: the
@@ -299,7 +418,15 @@ public enum ClaudeCodeConfiguration {
         allowConfigWrites: Bool,
         bridgeGrant: String? = nil
     ) -> String? {
-        let patterns = osaurusToolPatterns(allowConfigWrites: allowConfigWrites)
+        mcpConfigJSON(
+            cliPath: cliPath,
+            patterns: osaurusToolPatterns(allowConfigWrites: allowConfigWrites),
+            bridgeGrant: bridgeGrant
+        )
+    }
+
+    /// The same, for an explicit tool set (the Architect's).
+    static func mcpConfigJSON(cliPath: String, patterns: [String], bridgeGrant: String?) -> String? {
         guard !patterns.isEmpty else { return nil }
         var server: [String: Any] = [
             "command": cliPath,

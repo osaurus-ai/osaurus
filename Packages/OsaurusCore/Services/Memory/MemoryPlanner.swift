@@ -38,9 +38,10 @@ public enum MemoryPlanner {
     /// Identity overrides. Always small enough to ignore the budget.
     public static func assembleIdentityOverridesOnly() -> String {
         guard let id = try? MemoryDatabase.shared.loadIdentity() else { return "" }
-        guard !id.overrides.isEmpty else { return "" }
+        let overrides = MemoryDistillateScreen.resolvedIdentityOverrides(id.overrides)
+        guard !overrides.isEmpty else { return "" }
         var block = "## What I should always remember\n"
-        for override in id.overrides {
+        for override in overrides {
             block += "- \(override)\n"
         }
         return block
@@ -48,13 +49,14 @@ public enum MemoryPlanner {
 
     private static func assembleIdentity(budgetTokens: Int) -> String {
         guard let id = try? MemoryDatabase.shared.loadIdentity() else { return "" }
-        let hasOverrides = !id.overrides.isEmpty
+        let overrides = MemoryDistillateScreen.resolvedIdentityOverrides(id.overrides)
+        let hasOverrides = !overrides.isEmpty
         let hasContent = !id.content.isEmpty
         guard hasOverrides || hasContent else { return "" }
 
         var block = "## About you\n"
         if hasOverrides {
-            for override in id.overrides {
+            for override in overrides {
                 block += "- \(override)\n"
             }
         }

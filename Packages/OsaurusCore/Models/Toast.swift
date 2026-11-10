@@ -119,7 +119,8 @@ public struct ToastConfiguration: Codable, Equatable, Sendable {
     /// Whether toasts are enabled
     public var enabled: Bool
 
-    /// Maximum number of background tasks allowed to run concurrently
+    /// Legacy background task limit. Read once to seed the Default queue's
+    /// `maxConcurrent`; the queue policy is the live value.
     public var maxConcurrentTasks: Int
 
     public init(
@@ -220,9 +221,6 @@ public struct Toast: Identifiable, Sendable {
     /// Structured action (preferred over actionId)
     public var action: ToastAction?
 
-    /// Custom theme ID override (for agent-specific theming)
-    public var customThemeId: UUID?
-
     /// When this toast was created
     public let createdAt: Date
 
@@ -240,7 +238,6 @@ public struct Toast: Identifiable, Sendable {
         actionTitle: String? = nil,
         actionId: String? = nil,
         action: ToastAction? = nil,
-        customThemeId: UUID? = nil,
         createdAt: Date = Date(),
         progress: Double? = nil
     ) {
@@ -254,7 +251,6 @@ public struct Toast: Identifiable, Sendable {
         self.actionTitle = actionTitle
         self.actionId = actionId
         self.action = action
-        self.customThemeId = customThemeId
         self.createdAt = createdAt
         self.progress = progress
     }

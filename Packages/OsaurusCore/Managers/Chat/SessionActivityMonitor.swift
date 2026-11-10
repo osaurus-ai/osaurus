@@ -18,18 +18,24 @@
 //    the same `ChatSession` object.
 //  - `BackgroundTaskState` additionally reports `.queued` registry tasks,
 //    whose session isn't streaming yet and therefore reports nothing itself.
+//  - `AttentionCenter`'s pending blocking items mark their session waiting:
+//    an owner approval on a hosted run, a tool approval in its own panel, a
+//    workflow form. Waiting outranks working, since the run can't go on
+//    without an answer.
 //
 
+import Combine
 import Foundation
 
 @MainActor
 final class SessionActivityMonitor: ObservableObject {
-    static let shared = SessionActivityMonitor()
+    static let shared = SessionActivityMonitor(attention: .shared)
 
     enum Status: Equatable {
         /// A run is executing (streaming, warming up, or queued for a slot).
         case working
-        /// The run is paused on a user response (clarify / secret prompt).
+        /// The run is paused on a user response (clarify / secret prompt,
+        /// an approval, a workflow form).
         case waitingForInput
     }
 
@@ -40,8 +46,18 @@ final class SessionActivityMonitor: ObservableObject {
     private var sessionReported: [UUID: Status] = [:]
     /// Session ids of registry tasks still queued for an execution slot.
     private var queuedSessionIds: Set<UUID> = []
+    /// Session ids with a pending blocking attention item.
+    private var attentionWaitingIds: Set<UUID> = []
+    private var attentionCancellable: AnyCancellable?
 
-    init() {}
+    /// Tests pass no center and drive `reportAttention` directly.
+    init(attention: AttentionCenter? = nil) {
+        attentionCancellable = attention?.$pending.sink { [weak self] pending in
+            MainActor.assumeIsolated {
+                self?.reportAttention(waitingSessionIds: Self.waitingSessionIds(in: pending))
+            }
+        }
+    }
 
     func status(for sessionId: UUID) -> Status? {
         statuses[sessionId]
@@ -71,10 +87,35 @@ final class SessionActivityMonitor: ObservableObject {
         rebuild(sessionId)
     }
 
+    /// Replaces the set of sessions with a pending blocking attention item.
+    func reportAttention(waitingSessionIds: Set<UUID>) {
+        guard waitingSessionIds != attentionWaitingIds else { return }
+        let changed = waitingSessionIds.symmetricDifference(attentionWaitingIds)
+        attentionWaitingIds = waitingSessionIds
+        for id in changed { rebuild(id) }
+    }
+
+    /// One status for several sessions (an agent's row): waiting on the
+    /// owner outranks working, so a row never hides a question behind a
+    /// spinner.
+    nonisolated static func rollUp(_ statuses: some Sequence<Status>) -> Status? {
+        var rolled: Status?
+        for status in statuses {
+            if status == .waitingForInput { return .waitingForInput }
+            rolled = status
+        }
+        return rolled
+    }
+
+    static func waitingSessionIds(in pending: [AttentionItem]) -> Set<UUID> {
+        Set(pending.lazy.filter { $0.kind.isBlocking }.compactMap(\.sessionId))
+    }
+
     private func rebuild(_ sessionId: UUID) {
         let merged: Status? =
-            sessionReported[sessionId]
-            ?? (queuedSessionIds.contains(sessionId) ? .working : nil)
+            attentionWaitingIds.contains(sessionId)
+            ? .waitingForInput
+            : sessionReported[sessionId] ?? (queuedSessionIds.contains(sessionId) ? .working : nil)
         guard statuses[sessionId] != merged else { return }
         if let merged {
             statuses[sessionId] = merged

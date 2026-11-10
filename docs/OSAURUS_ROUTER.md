@@ -322,7 +322,7 @@ pulled — without a release. `AnnouncementsService` owns the client side:
   the dialog is presented; operators re-show by publishing a new slug.
 - Presentation: `AppDelegate.presentAnnouncementIfEligible()` applies the
   same "don't stack" deferrals as the other first-run dialogs (onboarding,
-  telemetry consent, modal sheets, active streaming, layout tour) and hosts
+  telemetry consent, modal sheets, active streaming) and hosts
   a `ThemedAlertCenter` dialog whose body is `AnnouncementDialogContent`
   (optional `https://` image + `MarkdownDocument`). CTAs: `external_url`
   (`https://` only) opens in the browser; `deeplink` (`osaurus://` only)

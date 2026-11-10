@@ -54,7 +54,8 @@ struct InboundSharedRunBridgeTests {
             workspaceId: "ws-acme",
             agentAddress: "0xshared",
             callerWallet: wallet,
-            callerName: caller
+            callerName: caller,
+            callerHandle: caller.lowercased().replacingOccurrences(of: " ", with: "")
         )
     }
 
@@ -113,9 +114,9 @@ struct InboundSharedRunBridgeTests {
             #expect(!state.isSubagentMirror, "a real session-backed task, not a visibility mirror")
             #expect(state.agentId == agent.id)
             #expect(state.source == .workspace)
-            #expect(state.externalSessionKey == "Alice")
+            #expect(state.externalSessionKey == "@alice")
             #expect(state.status == .running)
-            #expect(state.taskTitle == "Alice → Research Agent")
+            #expect(state.taskTitle == "@alice → Research Agent")
             #expect(state.currentStep == "Starting…")
             #expect(registered == [state.id], "chat windows are told to open it as a tab of the agent")
             #expect(manager.tasksForTabs().map(\.id).contains(state.id))
@@ -132,7 +133,7 @@ struct InboundSharedRunBridgeTests {
             #expect(session.source == .workspace)
             let row = try #require(ChatSessionsManager.shared.sessions.first { $0.id == handle.taskId })
             #expect(row.agentId == agent.id)
-            #expect(row.title == "Alice → Research Agent")
+            #expect(row.title == "@alice → Research Agent")
             #expect(row.sourcePluginId == ChatHistoryWriter.workspacePseudoPluginId)
             #expect(row.externalSessionKey == key(ctx, "convo-1"))
             #expect(row.workspace?.isServedForTeammate == true)
@@ -170,7 +171,7 @@ struct InboundSharedRunBridgeTests {
             #expect(row.workspace?.isDirectShare == true)
             #expect(row.source.originLabel(workspace: row.workspace) == "for Bob's laptop · Shared")
             #expect(
-                SessionSource.workspace.originLabel(workspace: workspaceContext()) == "for Alice · Workspace"
+                SessionSource.workspace.originLabel(workspace: workspaceContext()) == "for @alice · Workspace"
             )
         }
     }
@@ -567,18 +568,17 @@ struct InboundSharedRunBridgeTests {
             try #require(!ChatSessionStore._hasPendingSaveForTesting(handle.taskId))
             let expected = ChatTurnData(from: streamed)
             let committed = try #require(
-                ChatHistoryDatabase.shared.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID }
+                ChatSessionStore.load(id: handle.taskId)?.turns.first { $0.id == streamedID }
             )
-            let committedDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(committed, expected)
+            let committedDifferences = try ResponsesHistoryFixture.syncRoundTripDifferences(committed, expected)
             #expect(committedDifferences.isEmpty)
             // Drain/close the actual writer and clear pending overlays, then
-            // read through an independent connection as after process restart.
+            // reopen the conversation store as after process restart.
             ChatSessionStore._resetForTesting()
-            let disk = ChatHistoryDatabase()
-            try disk.open()
-            defer { disk.close() }
-            let loaded = try #require(disk.loadSession(id: handle.taskId)?.turns.first { $0.id == streamedID })
-            let reloadedDifferences = try ResponsesHistoryFixture.sqliteRoundTripDifferences(loaded, expected)
+            let loaded = try #require(
+                ChatSessionStore.load(id: handle.taskId)?.turns.first { $0.id == streamedID }
+            )
+            let reloadedDifferences = try ResponsesHistoryFixture.syncRoundTripDifferences(loaded, expected)
             #expect(reloadedDifferences.isEmpty)
         }
     }

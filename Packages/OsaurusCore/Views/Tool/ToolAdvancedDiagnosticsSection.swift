@@ -91,11 +91,11 @@ extension ToolExposureStateFilter: ToolCatalogFilterOption {}
 private enum ToolExposureStateStyle {
     static func color(for state: ToolExposureState, theme: ThemeProtocol) -> Color {
         switch state {
-        case .exposed: return theme.successColor
-        case .loadable: return theme.accentColor
-        case .hidden: return theme.warningColor
-        case .disabled: return theme.secondaryText
-        case .blocked, .unavailable: return theme.errorColor
+        case .exposed: return theme.status.success.foreground
+        case .loadable: return theme.action.primary.default.background
+        case .hidden: return theme.status.warning.foreground
+        case .disabled: return theme.text.secondary
+        case .blocked, .unavailable: return theme.status.error.foreground
         }
     }
 
@@ -174,9 +174,9 @@ struct ToolAdvancedDiagnosticsSection: View {
                 rowsList
             }
         }
-        .padding(16)
+        .padding(theme.space.s16)
         .frame(maxWidth: .infinity)
-        .background(HoverableCardBackground())
+        .settingsChrome(.card)
         .alert(
             Text("Export Failed", bundle: .module),
             isPresented: Binding(
@@ -198,43 +198,31 @@ struct ToolAdvancedDiagnosticsSection: View {
 
     private var headerButton: some View {
         Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            withAnimation(theme.motion.springAnimation) {
                 isExpanded.toggle()
             }
         } label: {
             HStack(alignment: .center, spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.12))
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 36, height: 36)
+SettingsIconTile(icon: "slider.horizontal.3", size: 36)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Advanced diagnostics", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.cardTitle)
+                        .foregroundColor(theme.text.primary)
                     Text("Audit exactly how each tool is exposed to the model", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(1)
                 }
 
                 Spacer(minLength: 8)
 
-                Text("\(filteredRows.count)/\(diagnostic.rows.count)", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(theme.tertiaryBackground))
+                StatusChip(L("\(filteredRows.count)/\(diagnostic.rows.count)"), tone: .neutral)
                     .fixedSize()
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(11, weight: .semibold)
+                    .foregroundColor(theme.text.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
             .contentShape(Rectangle())
@@ -248,21 +236,14 @@ struct ToolAdvancedDiagnosticsSection: View {
         Button(action: exportReport) {
             HStack(spacing: 5) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 11, weight: .semibold))
+                    .glyphSize(11, weight: .semibold)
                 Text("Export", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
             }
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 10)
+            .foregroundColor(theme.text.primary)
+            .padding(.horizontal, theme.space.s8)
             .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
+            .settingsChrome(.subtle)
         }
         .buttonStyle(PlainButtonStyle())
         .fixedSize()
@@ -276,28 +257,16 @@ struct ToolAdvancedDiagnosticsSection: View {
     private func exposureCountChip(_ state: ToolExposureState) -> some View {
         let isActive = stateFilter.state == state
         let tint = ToolExposureStateStyle.color(for: state, theme: theme)
-        return Button {
+        return FilterChip(
+            state.displayLabel,
+            icon: ToolExposureStateStyle.icon(for: state),
+            count: diagnostic.stateCounts[state, default: 0],
+            isSelected: isActive,
+            tint: tint,
+            help: L("Filter by this state")
+        ) {
             stateFilter = isActive ? .all : ToolExposureStateFilter.filter(for: state)
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: ToolExposureStateStyle.icon(for: state))
-                    .font(.system(size: 9, weight: .semibold))
-                Text("\(diagnostic.stateCounts[state, default: 0]) \(state.displayLabel)", bundle: .module)
-                    .font(.system(size: 10, weight: .medium))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .foregroundColor(tint)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(tint.opacity(isActive ? 0.22 : 0.12))
-                    .overlay(Capsule().stroke(tint.opacity(isActive ? 0.55 : 0), lineWidth: 1))
-            )
         }
-        .buttonStyle(PlainButtonStyle())
-        .help(Text("Filter by this state", bundle: .module))
     }
 
     @ViewBuilder
@@ -306,15 +275,15 @@ struct ToolAdvancedDiagnosticsSection: View {
         if rows.isEmpty {
             HStack(spacing: 8) {
                 Image(systemName: "line.3.horizontal.decrease.circle")
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 Text("No exposure rows match the current filters", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
             }
-            .padding(12)
+            .padding(theme.space.s12)
             .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.5)))
+            .settingsChrome(.inset)
         } else {
             let cap = toolGroupRenderCapValue
             let shown = (showAllRows || rows.count <= cap) ? rows : Array(rows.prefix(cap))
@@ -339,43 +308,29 @@ struct ToolAdvancedDiagnosticsSection: View {
     private func diagnosticRow(_ row: ToolExposureDiagnostic.Row) -> some View {
         HStack(spacing: 8) {
             Image(systemName: ToolExposureStateStyle.icon(for: row.state))
-                .font(.system(size: 10, weight: .semibold))
+                .glyphSize(10, weight: .semibold)
                 .foregroundColor(ToolExposureStateStyle.color(for: row.state, theme: theme))
                 .frame(width: 16)
 
             Text(row.toolName)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
 
-            Text(row.state.displayLabel)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(ToolExposureStateStyle.color(for: row.state, theme: theme))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule().fill(
-                        ToolExposureStateStyle.color(for: row.state, theme: theme).opacity(0.12)
-                    )
-                )
+            StatusChip(row.state.displayLabel, tint: ToolExposureStateStyle.color(for: row.state, theme: theme))
 
-            Text(row.source.displayLabel)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(theme.tertiaryBackground))
+            StatusChip(row.source.displayLabel, tone: .neutral)
 
             Spacer(minLength: 4)
 
             Text("tokens \(row.tokenEstimate)", bundle: .module)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize()
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.35)))
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s6)
+        .settingsChrome(.inset)
         .help(Self.diagnosticsDetail(for: row))
     }
 

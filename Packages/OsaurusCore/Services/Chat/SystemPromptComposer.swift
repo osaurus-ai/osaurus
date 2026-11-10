@@ -285,7 +285,7 @@ public struct SystemPromptComposer: Sendable {
             let window = ContextSizeResolver.resolve(modelId: snapshot.model)
             let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools)
             // `source=` is the bound session source, the input every
-            // source-scoped gate (channel publish tool, Channel Destinations)
+            // source-scoped gate (channel publish tool, Where It Can Post)
             // resolves against. Logging it makes warmup/send parity directly
             // readable: two banners for one session must show the same source
             // and the same staticPrefixHash, and `source=nil` on any live
@@ -525,17 +525,21 @@ public struct SystemPromptComposer: Sendable {
     /// (`composePreviewContext`) is itself sync; the async `resolveSoul`
     /// wrapper just adds trace marks. Errors are swallowed and logged —
     /// a missing/corrupt SOUL must never block compose.
-    private static func loadSoulContent(linuxName: String, maxBytes: Int = soulMaxBytes) -> String? {
-        let url = OsaurusPaths.containerAgentDir(linuxName)
-            .appendingPathComponent("SOUL.md", isDirectory: false)
+    static func loadSoulContent(linuxName: String, maxBytes: Int = soulMaxBytes) -> String? {
+        let home = OsaurusPaths.containerAgentDir(linuxName)
+        let url = home.appendingPathComponent("SOUL.md", isDirectory: false)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let raw: String
-        do {
-            raw = try String(contentsOf: url, encoding: .utf8)
-        } catch {
-            debugLog("[Soul] read failed for \(url.path): \(error.localizedDescription)")
+        // The guest controls this file: a symlink (to a host file or
+        // another agent's home) must never be followed into the prompt.
+        // One byte past the budget is enough for `capSoulContent` to see
+        // the overflow; a split trailing UTF-8 sequence decodes to U+FFFD
+        // and falls past the line-boundary cut.
+        guard let data = SandboxAgentPathScope.readContained(url, within: home, maxBytes: maxBytes + 1)
+        else {
+            debugLog("[Soul] refused or unreadable: \(url.path)")
             return nil
         }
+        let raw = String(decoding: data, as: UTF8.self)
         let capped = capSoulContent(raw, maxBytes: maxBytes)
         let trimmed = capped.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
@@ -992,7 +996,6 @@ public struct SystemPromptComposer: Sendable {
         } else {
             channelDestinationsSection = nil
         }
-
         // Production's default harness contract is intentionally small.
         // Tool schemas are the operational source of truth; security is
         // enforced by path validation, Seatbelt, and the VM boundary rather
@@ -1038,15 +1041,12 @@ public struct SystemPromptComposer: Sendable {
                             + "After creating or changing runnable code, run an available "
                             + "syntax/build/test/behavior check before saying it works; a successful "
                             + "file mutation proves only that bytes were saved. "
-                            + "To append while preserving a file, call file_write with mode "
-                            + "append and put only the new bytes in content. "
-                            + "file_write content has no length limit; if your own output would be cut short "
-                            + "on a very large text file, write it in parts with mode append. "
+                            + SystemPromptTemplates.batchReadLine + " "
                             + SystemPromptTemplates.folderDocumentFormatsLine
                     )
                 )
                 let state = SystemPromptTemplates.sandboxState(
-                    secretNames: AgentSecretsKeychain.secretIDs(agentId: agentId),
+                    secretNames: CredentialResolver.availableKeys(agentId: agentId),
                     installedPackages: SandboxPackageManifest.shared.installed(
                         agentId: agentId.uuidString
                     )
@@ -1059,7 +1059,10 @@ public struct SystemPromptComposer: Sendable {
                     .static(
                         id: "folderContext",
                         label: L("Working Directory"),
-                        content: SystemPromptTemplates.leanFolderContext(from: folder)
+                        content: SystemPromptTemplates.leanFolderContext(
+                            from: folder,
+                            toolNames: resolvedNames
+                        )
                     )
                 )
             }
@@ -1145,11 +1148,18 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .dynamic(
                         id: "channelDestinations",
-                        label: L("Channel Destinations"),
+                        label: L("Where It Can Post"),
                         content: channelDestinationsSection
                     )
                 )
             }
+            appendSandboxUnavailableNotice(
+                composer: &composer,
+                snapshot: snapshot,
+                agentId: agentId,
+                executionMode: executionMode,
+                trace: trace
+            )
             return
         }
 
@@ -1529,7 +1539,7 @@ public struct SystemPromptComposer: Sendable {
             // Captured here but emitted as the DYNAMIC `sandboxState` section
             // below so a `sandbox_install` or new secret stays fresh without
             // rewriting the cached prefix. `""` when nothing is recorded.
-            let secretNames = AgentSecretsKeychain.secretIDs(agentId: agentId)
+            let secretNames = CredentialResolver.availableKeys(agentId: agentId)
             let installedPackages = SandboxPackageManifest.shared.installed(
                 agentId: agentId.uuidString
             )
@@ -1702,22 +1712,13 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Surface a "sandbox unavailable" notice when the agent wants
-        // sandbox tools but registration couldn't provide them — otherwise
-        // the model hallucinates sandbox calls that never get a result.
-        if !executionMode.usesSandboxTools,
-            snapshot.autonomousEnabled,
-            let reason = SandboxToolRegistrar.shared.unavailabilityReason(for: agentId)
-        {
-            composer.append(
-                .dynamic(
-                    id: "sandboxUnavailable",
-                    label: L("Sandbox Unavailable"),
-                    content: Self.sandboxUnavailableNotice(reason: reason)
-                )
-            )
-            trace?.set("sandboxUnavailable", reason.kind.rawValue)
-        }
+        appendSandboxUnavailableNotice(
+            composer: &composer,
+            snapshot: snapshot,
+            agentId: agentId,
+            executionMode: executionMode,
+            trace: trace
+        )
 
         // Channel destinations: the redacted list of operator-approved
         // proactive publish routes for THIS agent and THIS run source.
@@ -1730,12 +1731,11 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .dynamic(
                     id: "channelDestinations",
-                    label: L("Channel Destinations"),
+                    label: L("Where It Can Post"),
                     content: channelDestinationsSection
                 )
             )
         }
-
     }
 
     /// True when any Agent Channel surface is configured: an enabled custom
@@ -1756,7 +1756,12 @@ public struct SystemPromptComposer: Sendable {
         }
         let slack = SlackConnectionService.shared.configuration()
         if !slack.readableChannelIds.isEmpty || !slack.writableChannelIds.isEmpty
-            || !slack.workspaceAccounts.isEmpty
+            || !SlackConnectionConfigurationStore.accountConnectionIds().isEmpty
+        {
+            return true
+        }
+        if !ChannelAccounts.accounts(kind: .discord).filter({ !$0.isPrimary }).isEmpty
+            || !ChannelAccounts.accounts(kind: .telegram).filter({ !$0.isPrimary }).isEmpty
         {
             return true
         }
@@ -1772,10 +1777,13 @@ public struct SystemPromptComposer: Sendable {
         if !whatsapp.readableChatIds.isEmpty || !whatsapp.writableChatIds.isEmpty {
             return true
         }
+        if !EmailChannelService.shared.configuration().accounts.isEmpty {
+            return true
+        }
         return false
     }
 
-    /// Render the redacted, deterministic "Channel Destinations" section for
+    /// Render the redacted, deterministic "Where It Can Post" section for
     /// one agent + run source. Lists ONLY this agent's usable bindings that
     /// allow the current run source — stable binding ids, labels,
     /// connection/room display ids, outbound mode, and operator guidance.
@@ -2029,13 +2037,22 @@ public struct SystemPromptComposer: Sendable {
     /// documents kept losing their title, type and tags. Both are argument
     /// contracts, both were invisible, and neither tool is ever reached via a
     /// `capabilities_load` that would have restored the full spec.
-    private static let constraintPreservingBootstrapToolNames: Set<String> = [
+    ///
+    /// The Architect's tools qualify too: the op shapes `workflow_draft`
+    /// accepts and the `trigger` `workflow_propose_save` takes are described
+    /// only in their properties, and the Architect has no `capabilities_load`.
+    /// Skeletonized, a local model spent its whole turn guessing the `ops`
+    /// format instead of building the draft.
+    private static let constraintPreservingBootstrapToolNames: Set<String> = Set([
         "complete", "clarify", "share_artifact",
+        // Small schemas whose property descriptions carry the syntax: the
+        // checklist line format and the recall query shape.
+        "todo", "search_memory",
         "write_knowledge", "delete_knowledge", "edit_knowledge",
         // The `reason` property description is the only place the model
         // learns the argument is a user-facing sentence shown in the picker.
         PromptWorkingFolderTool.toolName,
-    ]
+    ]).union(ToolRegistry.architectToolNames)
 
     /// Compress first-turn always-loaded specs by keeping the callable name,
     /// a one-line description, and the JSON shape without verbose property
@@ -2050,11 +2067,8 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// Apply the bootstrap skeleton unconditionally — even to a tool normally
-    /// kept at full spec by `fullBootstrapToolNames`. The Default agent uses
-    /// `capabilities_load` in exactly one shape (`tool/<write>`, spelled out in
-    /// its addendum), so it does not need the full multi-id-format schema the
-    /// general bootstrap preserves; compacting it there saves ~165 tokens every
-    /// turn. `constraintPreservingBootstrapToolNames` still keep their full
+    /// kept at full spec by `fullBootstrapToolNames`.
+    /// `constraintPreservingBootstrapToolNames` still keep their full
     /// parameter schema (only the prose description is trimmed).
     static func forcedCompactBootstrapSpec(_ tool: Tool) -> Tool {
         let name = tool.function.name
@@ -2482,6 +2496,32 @@ public struct SystemPromptComposer: Sendable {
         )
     }
 
+    /// Surface a "sandbox unavailable" notice when the agent wants sandbox
+    /// tools but registration couldn't provide them — otherwise the model
+    /// hallucinates sandbox calls that never get a result, or routes the
+    /// task to the host instead.
+    @MainActor
+    private static func appendSandboxUnavailableNotice(
+        composer: inout SystemPromptComposer,
+        snapshot: AgentConfigSnapshot,
+        agentId: UUID,
+        executionMode: ExecutionMode,
+        trace: TTFTTrace?
+    ) {
+        guard !executionMode.usesSandboxTools,
+            snapshot.autonomousEnabled,
+            let reason = SandboxToolRegistrar.shared.unavailabilityReason(for: agentId)
+        else { return }
+        composer.append(
+            .dynamic(
+                id: "sandboxUnavailable",
+                label: L("Sandbox Unavailable"),
+                content: Self.sandboxUnavailableNotice(reason: reason)
+            )
+        )
+        trace?.set("sandboxUnavailable", reason.kind.rawValue)
+    }
+
     /// Build the "sandbox not ready" notice, branching on failure kind so
     /// transient startup races read as "try again" while hard failures
     /// suggest the user open the Sandbox settings panel.
@@ -2510,7 +2550,8 @@ public struct SystemPromptComposer: Sendable {
                     "The sandbox VM is currently owned by another Osaurus process. "
                         + "Detail: \(reason.message)",
                     "Tell the user which process owns the sandbox and ask them to stop "
-                        + "that app or eval run before retrying. Do not repeatedly retry "
+                        + "that app or eval run; the Sandbox unavailable chip under the "
+                        + "message box can quit it or retry. Do not repeatedly retry "
                         + "sandbox startup in this task."
                 )
             case .provisioningFailed:
@@ -2710,6 +2751,18 @@ public struct SystemPromptComposer: Sendable {
         return visible
     }
 
+    /// Optional built-ins this agent has switched off. Custom agents only;
+    /// a session `capabilities_load` or a manual pick still keeps one.
+    static func disabledOptionalToolNames(_ snapshot: AgentConfigSnapshot) -> Set<String> {
+        var names: Set<String> = []
+        if !snapshot.calculatorEnabled { names.insert(CalculatorTool.toolName) }
+        if !snapshot.redactionToolsEnabled { names.formUnion(ToolRegistry.redactionToolNames) }
+        if !snapshot.taskChecklistEnabled { names.formUnion(["todo", "complete"]) }
+        if !snapshot.clarifyEnabled { names.insert("clarify") }
+        if !snapshot.artifactsEnabled { names.insert("share_artifact") }
+        return names
+    }
+
     @MainActor
     static func resolveTools(
         snapshot: AgentConfigSnapshot,
@@ -2773,9 +2826,16 @@ public struct SystemPromptComposer: Sendable {
         // but are stripped below unless the agent opts in. The first-turn baseline
         // uses compact schema skeletons; manual picks and `capabilities_load`
         // replace those skeletons with full specs when a task proves it needs
-        // the heavier argument contract.
+        // the heavier argument contract. Custom agents on models outside the
+        // compact-prompt class keep the full specs: the trimmed one-liners drop
+        // examples and argument rules a larger model can afford and uses. The
+        // Default agent's turn-1 schema has a fixed budget at every size.
+        let compactBaseline =
+            snapshot.agentId == Agent.defaultId
+            || ContextSizeResolver.resolve(modelId: snapshot.model).prefersCompactPrompt
+        let compactBaselineSpec: (Tool) -> Tool = { compactBaseline ? compactBootstrapSpec($0) : $0 }
         let baseline = filtered(ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode))
-            .map(compactBootstrapSpec)
+            .map(compactBaselineSpec)
         add(baseline)
 
         // Design C: the auto-mode schema is the fixed hot set above plus
@@ -2888,7 +2948,17 @@ public struct SystemPromptComposer: Sendable {
                     byName.removeValue(forKey: name)
                 }
             }
+            // The Default agent's surface is its own allowlist below.
+            if snapshot.agentId != Agent.defaultId {
+                for name in disabledOptionalToolNames(snapshot) where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
         }
+
+        // `ask_owner` belongs to a shared-agent run whose caller isn't the
+        // owner; the agent-run endpoint adds it there. Never a baseline tool.
+        byName.removeValue(forKey: AskOwnerTool.toolName)
 
         // Built-in Apple apps: authoritative per-agent gate. Every tool of an
         // app the agent has NOT enabled is stripped in BOTH auto and manual
@@ -2901,7 +2971,6 @@ public struct SystemPromptComposer: Sendable {
         for name in AppleApp.disabledToolNames(enabled: snapshot.enabledAppleApps) {
             byName.removeValue(forKey: name)
         }
-
         // Authoritative per-agent subagent gates, driven by ONE loop over the
         // capability registry (no per-kind branches here) so adding a kind needs
         // no edit to this strip. Each capability's `gate` decides the rule:
@@ -2960,7 +3029,9 @@ public struct SystemPromptComposer: Sendable {
         // that has no window.
         if !PromptWorkingFolderTool.shouldExpose(
             executionMode: executionMode,
-            source: ChatExecutionContext.currentSessionSource
+            source: ChatExecutionContext.currentSessionSource,
+            sandboxEnabled: snapshot.autonomousEnabled
+                && SandboxManager.State.shared.availability.isAvailable
         ) {
             byName.removeValue(forKey: PromptWorkingFolderTool.toolName)
         }
@@ -2979,20 +3050,23 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
-        // Default-agent configure surface:
-        //   * For the Default agent, hard-restrict to the consolidated
-        //     configure surface (the `osaurus_inspect` read + the single declarative
-        //     `osaurus_config` write) plus the agent-loop tools. Everything
-        //     loads DIRECTLY — the Default agent does not use
-        //     `capabilities_discover` / `capabilities_load`.
+        if snapshot.agentId == Agent.defaultId {
+            visibleDelegation.subtract(SubagentCapabilityRegistry.spawn.toolNames)
+        }
+
+        // Orchestrator surface:
+        //   * For the Default agent, hard-restrict to the routing surface
+        //     (`orchestratorAllowedToolNames`). Osaurus questions and changes
+        //     go through `configurator_handoff`, so every configure tool is
+        //     stripped, not just the excluded names.
         //     `additionalToolNames` still unions in so a custom-agent-style
         //     mid-session load never gets stripped here.
-        //   * For every other agent, strip the configure tools wholesale.
-        //     Even if a registration path leaks `osaurus_config` into the
-        //     schema, the strip filter keeps the model from seeing it.
+        //   * For every other agent, strip the configure and Orchestrator
+        //     tools wholesale.
         if snapshot.agentId == Agent.defaultId {
             var allowed = ToolRegistry.orchestratorAllowedToolNames
                 .union(additionalToolNames)
+            if !snapshot.hasOrchestratorWorkflows { allowed.remove(RunWorkflowTool.toolName) }
             // Settings → Orchestrator stores a manual list too, and until now
             // nothing read it: ticking a plugin tool for the Orchestrator was
             // inert (its specs were added at the top of resolveTools, then
@@ -3001,11 +3075,9 @@ public struct SystemPromptComposer: Sendable {
             if isManual, let manualNames = snapshot.manualToolNames {
                 allowed.formUnion(manualNames)
             }
-            // Spawn UX: the main/default chat may call the delegation tools
-            // (image / spawn) that survived the per-agent strip above — i.e. the
-            // ones `visibleDelegation` resolved on for the Default agent (spawn
-            // when its pool is non-empty, image when the global switch is on).
-            // The first actual call prompts for permission + spawn-model choice.
+            // The delegation tools `visibleDelegation` resolved on for the
+            // Default agent (spawn was subtracted above; image when the global
+            // switch is on). The first actual call prompts for permission.
             allowed.formUnion(visibleDelegation)
             // The Default agent may own destination bindings too; the narrow
             // publish tool follows them (never the broad channel catalog).
@@ -3016,46 +3088,35 @@ public struct SystemPromptComposer: Sendable {
             // the Default agent never gets it, so it stays off this allowlist
             // even if a stray snapshot carries the flag.
 
-            // Since the declarative consolidation the write surface is ONE
-            // tool (`osaurus_config`), which doubles as the routing/escape
-            // tool and therefore always stays loaded — there is nothing left
-            // to defer behind `capabilities_load` on small models, so the old
-            // compact-deferral path (and its schema-side `capabilities_load`)
-            // is gone entirely.
-            let prefersCompact = ContextSizeResolver.resolve(modelId: snapshot.model)
-                .prefersCompactPrompt
-            // Orchestrator invariant: worker-owned tools (`share_artifact`)
-            // never reach the orchestrator's schema — not even via
-            // `additionalToolNames` — because workers deliver artifacts
-            // themselves (see `ToolRegistry.orchestratorExcludedToolNames`).
+            // Orchestrator invariant: worker-owned tools (`share_artifact`,
+            // folder tools) and the configure surface never reach the
+            // orchestrator's schema, not even via `additionalToolNames` or a
+            // ticked manual name.
             allowed.subtract(ToolRegistry.orchestratorExcludedToolNames)
-            // Quick lookups run in the orchestrator itself: `web_search` is
-            // an always-loaded built-in already in `byName`, but retrieval
-            // (`search_and_extract`) is a dynamic tool — expose it up front
-            // so the discovery→retrieval transition advertised by
-            // `web_search` results is callable on turn 1. The per-agent
-            // `webSearchEnabled` gate still governs both tools.
-            if snapshot.webSearchEnabled {
-                for spec in ToolRegistry.shared.specs(forTools: ["search_and_extract"]) {
-                    byName[spec.function.name] = spec
-                }
-            }
+            allowed.subtract(ToolRegistry.configureToolNames)
+            allowed.subtract(ToolRegistry.agentCreationToolNames)
             byName = byName.filter { allowed.contains($0.key) }
-
-            // On a model that prefers a compact prompt, keep the configure
-            // write lean: `osaurus_config`'s full spec is long prose, so
-            // re-apply the bootstrap skeleton (enums + field names kept,
-            // prose dropped). The compact addendum teaches the YAML workflow
-            // the spec prose would otherwise carry.
-            if prefersCompact {
-                for name in ToolRegistry.configureWriteToolNames {
-                    guard let full = byName[name] else { continue }
-                    byName[name] = compactBootstrapSpec(full)
-                }
+        } else if snapshot.agentId == Agent.architectId {
+            byName = byName.filter { ToolRegistry.architectAllowedToolNames.contains($0.key) }
+            if let inspect = byName["osaurus_inspect"] {
+                byName["osaurus_inspect"] = OsaurusInspectTool.architectSpec(inspect)
             }
+        } else if snapshot.agentId == Agent.configuratorId {
+            // The New Agent chat: the draft, the read-only guide and
+            // inspect, and `clarify`. Nothing that writes settings.
+            byName = byName.filter { ToolRegistry.configuratorCreationToolNames.contains($0.key) }
         } else {
-            for name in ToolRegistry.configureToolNames {
+            for name in ToolRegistry.configureToolNames.union(ToolRegistry.architectToolNames)
+                .union(ToolRegistry.agentCreationToolNames)
+            {
                 byName.removeValue(forKey: name)
+            }
+            for name in ToolRegistry.orchestratorRoutingToolNames where name != "clarify" {
+                byName.removeValue(forKey: name)
+            }
+            // Agents → Workflows: each enabled workflow is its own tool.
+            for spec in ToolRegistry.shared.specs(forTools: snapshot.workflowToolNames) {
+                byName[spec.function.name] = spec
             }
         }
 
@@ -3092,7 +3153,7 @@ public struct SystemPromptComposer: Sendable {
                 additionalToolNames.contains("image")
                 || (isManual && (snapshot.manualToolNames?.contains("image") ?? false))
             let genOnly = ImageTool.generationOnlySpec()
-            byName["image"] = imageLoadedExplicitly ? genOnly : compactBootstrapSpec(genOnly)
+            byName["image"] = imageLoadedExplicitly ? genOnly : compactBaselineSpec(genOnly)
         }
 
         // The chat contract exposes one compact capability gateway. Keep the
@@ -3226,7 +3287,10 @@ public struct SystemPromptComposer: Sendable {
             // chat's folder root directly and have no sandbox bridge, so
             // VM-only mode must not offer them.
             if executionMode.usesHostFolderTools {
-                let hostOnly = ToolRegistry.hostFolderExtraToolNames
+                var hostOnly = ToolRegistry.hostFolderExtraToolNames
+                if !snapshot.redactionToolsEnabled {
+                    hostOnly.subtract(ToolRegistry.redactionToolNames.subtracting(additionalToolNames))
+                }
                 add(
                     ToolRegistry.shared.specs(forTools: Array(hostOnly)),
                     replacingExisting: true
@@ -3249,6 +3313,7 @@ public struct SystemPromptComposer: Sendable {
             if snapshot.computerUseEnabled { allowed.insert(ComputerUseTool.toolName) }
             if snapshot.browserUseEnabled { allowed.insert(BrowserUseTool.toolName) }
             allowed.formUnion(AppleApp.toolNames(for: snapshot.enabledAppleApps))
+            allowed.formUnion(snapshot.workflowToolNames)
             if byName["capabilities"] != nil { allowed.insert("capabilities") }
             if snapshot.hasChannelPublishDestinations {
                 allowed.insert(AgentChannelPublishTool.toolName)
@@ -3281,13 +3346,28 @@ public struct SystemPromptComposer: Sendable {
                 allowed.insert(PromptWorkingFolderTool.toolName)
             }
             // The orchestrator invariant holds in workspace modes too: with
-            // a working folder attached the Default agent keeps its configure
-            // surface, reads the folder (`file_read` / `file_search`), and
-            // still dispatches writing, shell work, and artifact delivery to
-            // workers (`orchestratorExcludedToolNames`).
+            // a working folder attached the Default agent keeps its routing
+            // surface and hands every folder task to workers
+            // (`orchestratorExcludedToolNames`).
             if snapshot.agentId == Agent.defaultId {
                 allowed.formUnion(ToolRegistry.orchestratorAllowedToolNames)
                 allowed.subtract(ToolRegistry.orchestratorExcludedToolNames)
+                allowed.subtract(ToolRegistry.configureToolNames)
+                if !snapshot.hasOrchestratorWorkflows { allowed.remove(RunWorkflowTool.toolName) }
+                // A folder chip never widens the routing surface.
+                var routing = ToolRegistry.orchestratorAllowedToolNames
+                    .union(visibleDelegation)
+                    .union(additionalToolNames)
+                if snapshot.hasChannelPublishDestinations { routing.insert(AgentChannelPublishTool.toolName) }
+                allowed.formIntersection(routing)
+            }
+            // The Architect's surface is fixed; a folder chip or a manual
+            // pick never widens it.
+            if snapshot.agentId == Agent.architectId {
+                allowed = ToolRegistry.architectAllowedToolNames
+            }
+            if snapshot.agentId == Agent.configuratorId {
+                allowed = ToolRegistry.configuratorCreationToolNames
             }
             byName = byName.filter { allowed.contains($0.key) }
 
@@ -3315,6 +3395,17 @@ public struct SystemPromptComposer: Sendable {
         for name in ToolRegistry.sandboxControlPlaneToolNames
         where !visibleSandboxControlPlane.contains(name) {
             byName.removeValue(forKey: name)
+        }
+
+        // Read-only working folder: authoritative like the Apple apps gate,
+        // with no manual-pick or `capabilities_load` bypass, and after the
+        // workspace union above so nothing re-adds a write tool.
+        // `ToolRegistry.execute` refuses the same tools at call time. The
+        // file-history tools go too: a folder nothing changes has no history.
+        if snapshot.workingFolderReadOnly, executionMode.usesHostFolderTools {
+            for name in ToolRegistry.readOnlyFolderBlockedToolNames.union(ToolRegistry.hostFolderHistoryToolNames) {
+                byName.removeValue(forKey: name)
+            }
         }
 
         // Eval-scoped ablation hook (nil in production): strip deferred
@@ -3386,14 +3477,27 @@ public struct SystemPromptComposer: Sendable {
             // extractors as a trusted folder (`WorkspaceShareRoute`).
             description =
                 "Read a file or list a directory. Handles source/text, PDF, Word (.docx/.doc/.rtf), "
-                + "PowerPoint (.pptx), Excel (.xlsx preview; `sheet_name`), and images (shown to vision "
-                + "models, OCR text otherwise). Call it on the document itself; do not unzip or convert first."
+                +                 "PowerPoint (.pptx), Excel (.xlsx preview; `sheet_name`), and images (shown to vision "
+                + "models, OCR text otherwise). Call it on the document itself; do not unzip or convert first. "
+                + "Read several files in one call: the first in `path`, the rest in `paths`."
                 + (executionMode.usesSandboxTools
                     ? " Paths resolve in the VM working folder (`/workspace/...`)." : "")
             properties = [
                 "path": .object([
                     "type": .string("string"),
                     "description": .string("Relative file or directory path"),
+                ]),
+                "paths": .object([
+                    "type": .string("array"),
+                    "items": .object(["type": .string("string")]),
+                    "maxItems": .number(Double(FileReadTool.maxBatchPaths)),
+                    "description": .string(
+                        "Optional more files read with `path` in the same call (\(FileReadTool.maxBatchPaths) total); the other options apply to each"
+                    ),
+                ]),
+                "pages": .object([
+                    "type": .string("string"),
+                    "description": .string("Optional PDF page or range (\"3\", \"3-5\")"),
                 ]),
                 "max_depth": .object([
                     "type": .string("integer"),
@@ -3421,11 +3525,11 @@ public struct SystemPromptComposer: Sendable {
                 ]),
                 "max_rows": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional XLSX rows per sheet (max 50)"),
+                    "description": .string("Optional XLSX rows per sheet (default 8, max 50)"),
                 ]),
                 "max_columns": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional XLSX columns per row (max 30)"),
+                    "description": .string("Optional XLSX columns per row (default 8, max 30)"),
                 ]),
             ]
             if let mode = fullProperties["mode"] {
@@ -3575,6 +3679,10 @@ public struct SystemPromptComposer: Sendable {
                     "type": .string("integer"),
                     "description": .string("Optional result cap (default 50)"),
                 ]),
+                "offset": .object([
+                    "type": .string("integer"),
+                    "description": .string("Skip this many matches; pass the previous `next_offset` to page"),
+                ]),
             ]
             required = ["pattern"]
         case "shell_run":
@@ -3696,9 +3804,20 @@ public struct SystemPromptComposer: Sendable {
         /// Any custom agent: its own persona.
         case customAgent
 
+        /// The Architect: its fixed workflow-designer persona.
+        case architect
+
+        /// The Configurator in a New Agent chat: drafting one agent.
+        case agentCreator
+
         @MainActor
         static func resolve(snapshot: AgentConfigSnapshot) -> PromptProfile {
-            snapshot.agentId == Agent.defaultId ? .osaurusAssistant : .customAgent
+            switch snapshot.agentId {
+            case Agent.defaultId: return .osaurusAssistant
+            case Agent.architectId: return .architect
+            case Agent.configuratorId: return .agentCreator
+            default: return .customAgent
+            }
         }
     }
 
@@ -3738,6 +3857,16 @@ public struct SystemPromptComposer: Sendable {
                     executionMode: executionMode
                 )
             )
+        case .architect:
+            basePrompt = ArchitectSystemPromptBuilder.render(
+                displayName: Agent.architectNameOverride,
+                instructions: snapshot.systemPrompt
+            )
+        case .agentCreator:
+            basePrompt = ConfiguratorSystemPromptBuilder.renderAgentCreation(
+                compact: ContextSizeResolver.resolve(modelId: snapshot.model).prefersCompactPrompt,
+                instructions: snapshot.systemPrompt
+            )
         case .customAgent:
             basePrompt = snapshot.systemPrompt
         }
@@ -3770,30 +3899,21 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// Synchronous exposure estimate for the Default agent, from the same
-    /// inputs `resolveTools` uses when no request-resolved `spawnTargets`
-    /// are available (`SpawnDescriptors.resolveForPreview`) and the
-    /// execution-mode folder gate. Matches the schema on the warm path;
-    /// `reconcileOrchestratorAddendum` closes the cold-miss gap.
+    /// inputs `resolveTools` uses and the execution-mode folder gate.
+    /// `reconcileOrchestratorAddendum` closes any gap with the schema.
     @MainActor
     static func previewOrchestratorExposure(
         snapshot: AgentConfigSnapshot,
         executionMode: ExecutionMode
     ) -> DefaultAgentSystemPromptBuilder.Exposure {
-        let pools = configuredSpawnPools(snapshot: snapshot)
-        let targets = SpawnDescriptors.resolveForPreview(
-            agentIDs: pools.agents,
-            launcherModelOverride: pools.launcherModelOverride,
-            workspaceAgents: pools.workspaceAgents
+        DefaultAgentSystemPromptBuilder.Exposure(
+            folderBound: orchestratorFolderBound(executionMode),
+            runWorkflowAvailable: snapshot.hasOrchestratorWorkflows
         )
-        let spawnAvailable =
-            targets.runnableAgentIDs.contains { $0 != snapshot.agentId }
-            || !targets.runnableWorkspaceAgents.isEmpty
-        let folderReadable =
-            executionMode.usesHostFolderTools || executionMode.usesSandboxTools
-        return DefaultAgentSystemPromptBuilder.Exposure(
-            spawnAvailable: spawnAvailable,
-            folderReadable: folderReadable
-        )
+    }
+
+    static func orchestratorFolderBound(_ executionMode: ExecutionMode) -> Bool {
+        executionMode.usesHostFolderTools || executionMode.usesSandboxTools
     }
 
     /// After the request schema is final, re-render the Default agent's
@@ -3811,7 +3931,10 @@ public struct SystemPromptComposer: Sendable {
     ) {
         guard PromptProfile.resolve(snapshot: snapshot) == .osaurusAssistant else { return }
         let names = Set(toolset.tools.map(\.function.name))
-        let actual = DefaultAgentSystemPromptBuilder.Exposure.from(toolNames: names)
+        let actual = DefaultAgentSystemPromptBuilder.Exposure.from(
+            toolNames: names,
+            folderBound: orchestratorFolderBound(executionMode)
+        )
         let basePrompt = orchestratorBasePrompt(
             snapshot: snapshot,
             executionMode: executionMode,
@@ -3869,7 +3992,13 @@ public struct SystemPromptComposer: Sendable {
         timeContext: String? = nil
     ) -> String? {
         var prefix = ""
-        if let memorySection {
+        let hasTimeContext =
+            timeContext.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
+        if var memorySection {
+            // Two clocks in one turn disagree in format; `[Current Time]` wins.
+            if hasTimeContext {
+                memorySection = MemoryContextAssembler.removingCurrentDateLine(memorySection)
+            }
             let trimmed = memorySection.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { prefix = "[Memory]\n\(trimmed)\n[/Memory]\n\n" }
         }
