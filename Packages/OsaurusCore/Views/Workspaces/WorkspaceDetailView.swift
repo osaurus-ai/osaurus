@@ -3,9 +3,9 @@
 //  osaurus
 //
 //  One workspace, on the `AgentDetailView` shell: the shared header bar
-//  (back · identity · status · actions), the grouped tab strip with
-//  Overview / Members / Shared Agents / Audit, and `AgentDetailSection` cards
-//  in each tab. Confirmations go through `themedAlert`, success through the
+//  (back · identity · status · actions), an Overview page whose last group
+//  pushes Members / Shared agents / Workflows / Audit sub-pages, and `SettingsSection`
+//  groups on every page. Confirmations go through `themedAlert`, success through the
 //  parent's toast, errors through `InlineBanner` — the same vocabulary the
 //  Agents tab uses, so a workspace reads like any other thing you manage.
 //
@@ -14,11 +14,56 @@ import AppKit
 import SwiftUI
 
 struct WorkspaceDetailView: View {
-    enum Tab: Hashable {
+    enum Tab: Hashable, SettingsDrillInItem {
         case overview
         case members
         case sharedAgents
+        case workflows
         case audit
+
+        var id: Self { self }
+
+        /// The catalog's `subTab` value for each page (`SettingsSearchEntry.subTab`).
+        init?(subTab: String) {
+            switch subTab {
+            case "overview": self = .overview
+            case "members": self = .members
+            case "sharedAgents": self = .sharedAgents
+            case "workflows": self = .workflows
+            case "audit": self = .audit
+            default: return nil
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .overview: return L("Overview")
+            case .members: return L("Members")
+            case .sharedAgents: return L("Shared agents")
+            case .workflows: return L("Workflows")
+            case .audit: return L("Audit (this Mac)")
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .overview: return "info.circle"
+            case .members: return "person.2.fill"
+            case .sharedAgents: return "antenna.radiowaves.left.and.right"
+            case .workflows: return "square.stack.3d.up"
+            case .audit: return "list.bullet.clipboard.fill"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .overview: return ""
+            case .members: return L("People in this workspace and invite links.")
+            case .sharedAgents: return L("Agents teammates have shared here.")
+            case .workflows: return L("Workflows and agents members shared here to install.")
+            case .audit: return L("What this Mac recorded: who changed what, and when.")
+            }
+        }
     }
 
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -29,7 +74,7 @@ struct WorkspaceDetailView: View {
     /// Observed for own-agent rows: their presence is the relay tunnel state.
     @ObservedObject private var relayManager = RelayTunnelManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let workspace: OsaurusRouterWorkspaceSummary
     var initialTab: Tab = .overview
@@ -93,27 +138,13 @@ struct WorkspaceDetailView: View {
     private var workspaceColor: Color { agentColorFor(workspaceName) }
 
     var body: some View {
-        VStack(spacing: 0) {
+        SettingsPage {
             header
-
-            AgentDetailGroupedTabStrip(groups: tabGroups, selection: $selectedTab)
-
-            Divider()
-                .foregroundColor(theme.primaryBorder)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    banners
-                    tabSections
-                }
-                .padding(24)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .id(selectedTab)
-            }
-            .background(theme.primaryBackground)
+        } content: {
+            banners
+            tabSections
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .id(selectedTab)
         .environment(\.theme, theme)
         .onAppear {
             selectedTab = initialTab
@@ -214,7 +245,7 @@ struct WorkspaceDetailView: View {
         .themedAlert(
             L("Leave Workspace?"),
             isPresented: $showLeaveConfirm,
-            message: L("You'll lose access to the workspace's shared agents and credit pool. Your shared agents are revoked."),
+            message: L("You'll lose access to the workspace's shared agents, workflows, and workspace credits. Your shared agents are revoked and your shared workflows leave its catalog."),
             primaryButton: .destructive(L("Leave")) {
                 Task { await performLeave() }
             },
@@ -250,46 +281,28 @@ struct WorkspaceDetailView: View {
     // MARK: - Header
 
     private var header: some View {
-        AgentDetailHeaderBar(
-            onBack: onBack,
-            backTitle: "Workspaces",
-            identity: {
-                AgentDetailIdentityLabel(
-                    mascotId: nil,
-                    name: workspaceName,
-                    tint: workspaceColor,
-                    subtitle: overviewCaption,
-                    maxWidth: 320
-                )
+        let onOverview = selectedTab == .overview
+        return SettingsPageHeader(
+            title: onOverview ? workspaceName : selectedTab.title,
+            verbatimTitle: true,
+            subtitle: onOverview && !overviewCaption.isEmpty ? overviewCaption : nil,
+            verbatimSubtitle: true,
+            onRefresh: { Task { await service.refreshSelectedWorkspace() } },
+            isRefreshing: service.isLoadingDetail,
+            leading: {
+                AgentHeaderAvatar(mascotId: nil, name: workspaceName, tint: workspaceColor)
             },
             status: {
-                HStack(spacing: 8) {
-                    if service.isLoadingDetail {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .scaleEffect(0.8)
-                    }
-                    WorkspaceRoleBadge(role: myRole)
-                    statusBadge
-                }
+                WorkspaceRoleBadge(role: myRole)
+                statusBadge
             },
-            actions: {
-                HStack(spacing: 6) {
-                    AgentDetailHeaderActionButton(
-                        icon: "clock.arrow.circlepath",
-                        tint: theme.secondaryText,
-                        help: "Activity",
-                        action: { showPoolActivity = true }
-                    )
-                    AgentDetailHeaderActionButton(
-                        icon: "arrow.clockwise",
-                        tint: theme.accentColor,
-                        help: "Refresh",
-                        action: { Task { await service.refreshSelectedWorkspace() } }
-                    )
-                }
+            utilities: {
+                SettingsIconButton("clock.arrow.circlepath", help: "Credit Activity") { showPoolActivity = true }
             }
         )
+        .settingsBackDestination(onOverview ? L("Workspaces") : workspaceName, verbatim: true) {
+            if onOverview { onBack() } else { selectedTab = .overview }
+        }
     }
 
     /// "3 members · 2 shared agents · since Mar 4 · Owned by you".
@@ -311,43 +324,13 @@ struct WorkspaceDetailView: View {
         return parts.joined(separator: " · ")
     }
 
-    // MARK: - Tabs
+    // MARK: - Pages
 
-    private var tabGroups: [AgentDetailTabGroup<Tab>] {
-        let memberCount = service.members.count
-        let agentCount = service.workspaceAgents.count
-        return [
-            AgentDetailTabGroup(
-                id: "overview",
-                label: L("Overview"),
-                icon: "info.circle",
-                items: [AgentDetailTabItem(id: .overview, label: L("Overview"), icon: "info.circle")]
-            ),
-            AgentDetailTabGroup(
-                id: "members",
-                label: L("Members"),
-                icon: "person.2.fill",
-                items: [AgentDetailTabItem(id: .members, label: L("Members"), icon: "person.2.fill")],
-                badgeCount: memberCount == 0 ? nil : memberCount
-            ),
-            AgentDetailTabGroup(
-                id: "agents",
-                label: L("Shared Agents"),
-                icon: "antenna.radiowaves.left.and.right",
-                items: [
-                    AgentDetailTabItem(
-                        id: .sharedAgents, label: L("Shared Agents"), icon: "antenna.radiowaves.left.and.right"
-                    )
-                ],
-                badgeCount: agentCount == 0 ? nil : agentCount
-            ),
-            AgentDetailTabGroup(
-                id: "audit",
-                label: L("Audit"),
-                icon: "list.bullet.clipboard.fill",
-                items: [AgentDetailTabItem(id: .audit, label: L("Audit"), icon: "list.bullet.clipboard.fill")]
-            ),
-        ]
+    private var subPageBadges: [Tab: Int] {
+        var badges: [Tab: Int] = [:]
+        if !service.members.isEmpty { badges[.members] = service.members.count }
+        if !service.workspaceAgents.isEmpty { badges[.sharedAgents] = service.workspaceAgents.count }
+        return badges
     }
 
     @ViewBuilder
@@ -358,6 +341,10 @@ struct WorkspaceDetailView: View {
             if isOwner {
                 nameSection
             }
+            SettingsDrillInList(
+                items: [.members, .sharedAgents, .workflows, .audit],
+                badges: subPageBadges
+            ) { selectedTab = $0 }
             dangerZoneSection
         case .members:
             membersSection
@@ -366,6 +353,10 @@ struct WorkspaceDetailView: View {
             }
         case .sharedAgents:
             sharedAgentsSection
+        case .workflows:
+            WorkspaceWorkflowsSection(
+                workspaceId: workspace.id, workspaceActive: workspaceActive && !isSuspended,
+                canModerate: canManageInvites)
         case .audit:
             WorkspaceAuditCard(workspaceId: workspace.id)
         }
@@ -402,29 +393,28 @@ struct WorkspaceDetailView: View {
     /// one quiet line below. Every workspace has a pool, so this is the
     /// overview for every workspace.
     private var poolSection: some View {
-        AgentDetailSection(
-            title: L("Workspace pool"),
-            icon: "rectangle.3.group.fill",
-            trailing: { statusBadge }
+        SettingsSection(
+            title: "Workspace Credits",
+            accessory: { statusBadge }
         ) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                     Text(
                         verbatim: OsaurusRouter.formatMicroAsCreditsValue(
                             service.poolBalance?.balanceMicro ?? detail?.balanceMicro ?? "0"
                         )
                     )
-                    .font(.system(size: 32, weight: .semibold, design: .monospaced))
+                    .componentInspectionText(49, role: .body, fallback: .code, weight: 600, theme: theme)
                     .foregroundColor(
                         detail?.poolFrozen == true || !workspaceActive
-                            ? theme.warningColor : theme.primaryText
+                            ? theme.status.warning.foreground : theme.text.primary
                     )
                     .contentTransition(.numericText())
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     Text("credits", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
+                        .foregroundColor(theme.text.secondary)
                 }
                 if service.isLoadingDetail && detail == nil {
                     ProgressView()
@@ -438,54 +428,54 @@ struct WorkspaceDetailView: View {
                     Button {
                         showTopUp = true
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 10.5, weight: .semibold))
+                                .glyphSize(10.5, weight: .semibold)
                             Text("Add credits…", bundle: .module)
                         }
                     }
-                    .buttonStyle(SecondaryButtonStyle(size: .compact))
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
                     .disabled(service.pendingConfirmation != nil)
-                    .help(L("Buy credits for this pool ($5–$500). Purchased credits never expire."))
+                    .help(L("Buy workspace credits ($5–$500). Purchased credits never expire."))
                     Button {
                         showAutoReload = true
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 10.5, weight: .semibold))
+                                .glyphSize(10.5, weight: .semibold)
                             Text("Auto-reload…", bundle: .module)
                         }
                     }
-                    .buttonStyle(SecondaryButtonStyle(size: .compact))
-                    .help(L("Refill the pool from your saved card when it runs low"))
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
+                    .help(L("Refill workspace credits from your saved card when they run low"))
                 }
             }
 
             Text(poolSubline)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
 
             if let breakdown = poolBreakdown {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Text(breakdown)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                     if let chip = autoReloadChip {
-                        CapsuleBadge(chip.label, tint: chip.tint, icon: "arrow.triangle.2.circlepath", help: chip.help)
+                        StatusChip(chip.label, tint: chip.tint, icon: "arrow.triangle.2.circlepath", help: chip.help)
                     }
                 }
             } else if let chip = autoReloadChip {
-                CapsuleBadge(chip.label, tint: chip.tint, icon: "arrow.triangle.2.circlepath", help: chip.help)
+                StatusChip(chip.label, tint: chip.tint, icon: "arrow.triangle.2.circlepath", help: chip.help)
             }
 
             if let syncingCopy {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     ProgressView()
                         .scaleEffect(0.55)
                         .frame(width: 12, height: 12)
                     Text(syncingCopy)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
 
                     Spacer(minLength: 8)
 
@@ -494,9 +484,9 @@ struct WorkspaceDetailView: View {
                     // number of polls.
                     Button(action: { service.dismissSubscriptionWait() }) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(4)
+                            .glyphSize(9, weight: .semibold)
+                            .foregroundColor(theme.text.tertiary)
+                            .padding(.horizontal, theme.space.s4).padding(.vertical, theme.space.s4)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -506,32 +496,32 @@ struct WorkspaceDetailView: View {
 
             Divider()
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 planFacts
                 Spacer()
                 Button {
                     showPoolActivity = true
                 } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 10.5, weight: .semibold))
-                        Text("Pool activity", bundle: .module)
+                            .glyphSize(10.5, weight: .semibold)
+                        Text("Credit Activity", bundle: .module)
                     }
                 }
-                .buttonStyle(SecondaryButtonStyle(size: .compact))
-                .help(L("Who spent what from the pool, and monthly grant/expiry entries"))
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
+                .help(L("Who spent what from workspace credits, plus monthly grants and expirations"))
                 if isOwner, isSuspended {
                     Button {
                         Task { await service.reactivateWorkspace(id: workspace.id) }
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "arrow.clockwise.circle.fill")
-                                .font(.system(size: 10.5, weight: .semibold))
+                                .glyphSize(10.5, weight: .semibold)
                             Text("Reactivate…", bundle: .module)
                         }
                     }
                     .buttonStyle(
-                        PrimaryButtonStyle(isLoading: service.isBusy("workspace.reactivate"))
+                        .settings(.primary, isLoading: service.isBusy("workspace.reactivate"))
                     )
                     .disabled(service.isBusy("workspace.reactivate") || service.pendingConfirmation != nil)
                     .help(reactivateHelp)
@@ -543,14 +533,14 @@ struct WorkspaceDetailView: View {
                     Button {
                         Task { await service.openBillingPortal() }
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 10.5, weight: .semibold))
+                                .glyphSize(10.5, weight: .semibold)
                             Text("Manage billing", bundle: .module)
                         }
                     }
                     .buttonStyle(
-                        SecondaryButtonStyle(isLoading: service.isBusy("subscription.portal"), size: .compact)
+                        .settings(.secondary, isLoading: service.isBusy("subscription.portal"), size: .compact)
                     )
                     .disabled(service.isBusy("subscription.portal"))
                     .help(
@@ -563,8 +553,8 @@ struct WorkspaceDetailView: View {
 
             if !workspaceActive {
                 Text(inactiveExplainer)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -581,7 +571,7 @@ struct WorkspaceDetailView: View {
             return L("Finish the checkout in your browser — this workspace reactivates automatically once Stripe confirms.")
         case .topUp(let id, _, let amountMicro, _, _) where id == workspace.id:
             return String(
-                format: L("Finish the %@ payment in your browser — the pool updates automatically once Stripe confirms."),
+                format: L("Finish the %@ payment in your browser. Workspace credits update automatically once Stripe confirms."),
                 OsaurusRouter.formatMicroUSD(String(amountMicro))
             )
         default:
@@ -608,15 +598,15 @@ struct WorkspaceDetailView: View {
         guard let state = service.poolBalance?.autoReload, state.enabled else { return nil }
         if state.paused {
             return (
-                L("Auto-reload paused"), theme.warningColor,
+                L("Auto-reload paused"), theme.status.warning.foreground,
                 isOwner
                     ? L("Reloads stopped after failed charges. Open Auto-reload… to fix the card and re-arm.")
                     : L("The owner's auto-reload stopped after failed charges.")
             )
         }
         return (
-            L("Auto-reload on"), theme.successColor,
-            L("The owner's saved card refills this pool when it runs low.")
+            L("Auto-reload on"), theme.status.success.foreground,
+            L("The owner's saved card refills workspace credits when they run low.")
         )
     }
 
@@ -634,11 +624,11 @@ struct WorkspaceDetailView: View {
     private var poolSubline: String {
         if !workspaceActive {
             return isSuspended
-                ? L("Pool paused — suspended until the owner reactivates this workspace.")
-                : L("Pool paused — resumes when the owner's subscription is current.")
+                ? L("Credits paused until the owner reactivates this workspace.")
+                : L("Credits paused until the owner's subscription is current.")
         }
         if detail?.poolFrozen == true {
-            return L("Pool paused.")
+            return L("Credits paused.")
         }
         if let monthly = entitlement?.monthlyCreditMicro, monthly != "0" {
             if let next = entitlement?.nextGrantAt, let date = WorkspacesFormatting.date(next) {
@@ -668,8 +658,8 @@ struct WorkspaceDetailView: View {
                 : L("This workspace's complimentary period has ended. Only the owner can reactivate it.")
         }
         return isOwner
-            ? L("Invites, shared agents, and pool-billed inference are paused until your subscription is current. Past-due? Update the card under Manage billing.")
-            : L("The workspace's subscription isn't active right now, so invites, shared agents, and pool-billed inference are paused. Only the owner can renew.")
+            ? L("Invites, shared agents, and inference billed to workspace credits are paused until your subscription is current. Past-due? Update the card under Manage billing.")
+            : L("The workspace's subscription isn't active right now, so invites, shared agents, and inference billed to workspace credits are paused. Only the owner can renew.")
     }
 
     /// "Credits · trial ends/renews date · seats 2/5 · agents 1/3 · owner"
@@ -677,7 +667,7 @@ struct WorkspaceDetailView: View {
     /// one — an unlimited lever (`nil`) is not worth a "∞" fact.
     @ViewBuilder
     private var planFacts: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: theme.space.s12) {
             if let grant = monthlyGrantValue {
                 factItem(label: L("Monthly credits"), value: grant, detail: planDetail)
             }
@@ -739,20 +729,19 @@ struct WorkspaceDetailView: View {
     }
 
     private func factItem(label: String, value: String, detail: String?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(label)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-                .textCase(.uppercase)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
                 .kerning(0.4)
             Text(value)
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
             if let detail {
                 Text(detail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
         }
     }
@@ -769,9 +758,9 @@ struct WorkspaceDetailView: View {
     private var renameChanged: Bool { trimmedRename != workspaceName }
 
     private var nameSection: some View {
-        AgentDetailSection(title: L("Name"), icon: "pencil") {
-            HStack(spacing: 10) {
-                StyledTextField(
+        SettingsSection(title: "Name") {
+            HStack(spacing: theme.space.s8) {
+                SettingsTextField(
                     placeholder: L("Workspace name"),
                     text: $renameDraft,
                     icon: "rectangle.3.group"
@@ -783,7 +772,7 @@ struct WorkspaceDetailView: View {
                 } label: {
                     Text("Save", bundle: .module)
                 }
-                .buttonStyle(PrimaryButtonStyle(isLoading: service.isBusy("workspace.rename")))
+                .assignedSettingsButtonStyle(.primary, isLoading: service.isBusy("workspace.rename"))
                 .disabled(!renameIsValid || !renameChanged || service.isBusy("workspace.rename"))
             }
             Text(
@@ -794,8 +783,8 @@ struct WorkspaceDetailView: View {
                         trimmedRename.count
                     )
             )
-            .font(.system(size: 11))
-            .foregroundColor(renameIsValid ? theme.tertiaryText : theme.warningColor)
+            .componentInspectionText(49, role: .caption, fallback: .footnote, theme: theme)
+            .foregroundColor(renameIsValid ? theme.text.tertiary : theme.status.warning.foreground)
         }
     }
 
@@ -815,43 +804,28 @@ struct WorkspaceDetailView: View {
     /// affordance): plain copy on the left, one tinted destructive button
     /// on the right. Both routes confirm before doing anything.
     private var dangerZoneSection: some View {
-        AgentDetailSection(title: L("Danger zone"), icon: "exclamationmark.triangle") {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(isOwner ? L("Delete this workspace") : L("Leave this workspace"))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        isOwner
-                            ? L("Removes the workspace for everyone and revokes shared agents and invites.")
-                            : L("You'll lose access to shared agents; agents you shared are revoked.")
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 12)
-
-                Button {
+        let busyKey = isOwner ? "workspace.delete" : "member.leave"
+        return SettingsDestructiveZone {
+            SettingsRow(
+                title: isOwner ? "Delete This Workspace" : "Leave This Workspace",
+                description: isOwner
+                    ? "Removes the workspace for everyone and revokes shared agents and invites."
+                    : "You'll lose access to shared agents; agents you shared are revoked."
+            ) {
+                SettingsButton(
+                    .destructive,
+                    isOwner ? "Delete…" : "Leave…",
+                    icon: isOwner ? "trash" : "rectangle.portrait.and.arrow.right",
+                    isLoading: service.isBusy(busyKey),
+                    size: .compact
+                ) {
                     if isOwner {
                         showDeleteConfirm = true
                     } else {
                         showLeaveConfirm = true
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: isOwner ? "trash" : "rectangle.portrait.and.arrow.right")
-                            .font(.system(size: 11))
-                        Text(isOwner ? L("Delete…") : L("Leave…"))
-                    }
                 }
-                .buttonStyle(
-                    DestructiveButtonStyle(
-                        isLoading: service.isBusy(isOwner ? "workspace.delete" : "member.leave")
-                    )
-                )
-                .disabled(service.isBusy(isOwner ? "workspace.delete" : "member.leave"))
+                .disabled(service.isBusy(busyKey))
             }
         }
     }
@@ -915,13 +889,13 @@ struct WorkspaceDetailView: View {
     private func destructionMessage(_ action: PendingDestruction) -> String {
         switch action {
         case .removeMember:
-            return L("They lose access to the workspace's shared agents and credit pool, and any agents they shared are revoked.")
+            return L("They lose access to the workspace's shared agents and workspace credits, and any agents they shared are revoked.")
         case .revokeInvite:
             return L(
                 "Anyone who still has this link won't be able to join with it. People who already joined stay on the workspace."
             )
         case .unshareAgent:
-            return L("Teammates lose access immediately, and the agent can no longer bill the workspace pool.")
+            return L("Teammates lose access immediately, and the agent can no longer bill workspace credits.")
         }
     }
 
@@ -959,22 +933,21 @@ struct WorkspaceDetailView: View {
     // MARK: - Members
 
     private var membersSection: some View {
-        AgentDetailSection(
-            title: L("Members"),
-            icon: "person.2.fill",
-            subtitle: service.members.isEmpty ? nil : "\(service.members.count)",
-            trailing: {
+        SettingsSection(
+            title: "Members",
+            caption: service.members.isEmpty ? nil : "\(service.members.count)",
+            accessory: {
                 if canManageInvites {
                     Button {
                         showInviteSheet = true
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "link.badge.plus")
-                                .font(.system(size: 10.5, weight: .semibold))
+                                .glyphSize(10.5, weight: .semibold)
                             Text("Invite", bundle: .module)
                         }
                     }
-                    .buttonStyle(PrimaryButtonStyle(size: .compact))
+                    .assignedSettingsButtonStyle(.primary, size: .compact)
                     .disabled(!workspaceActive || service.isWorking)
                     .help(
                         workspaceActive
@@ -986,18 +959,17 @@ struct WorkspaceDetailView: View {
         ) {
             if service.members.isEmpty {
                 if service.isLoadingDetail {
-                    AgentSectionEmptyState(loading: "Loading members…")
+                    SettingsEmptyState(loading: "Loading members…")
                 } else {
-                    AgentSectionEmptyState(
-                        icon: "person.2",
+                    SettingsEmptyState(
+                        inline: "person.2",
                         title: "No members loaded",
                         hint: "Refresh to load the member list.",
-                        actionLabel: "Refresh",
-                        action: { Task { await service.refreshSelectedWorkspace() } }
+                        action: SettingsEmptyState.Action(title: L("Refresh"), icon: "", handler: { Task { await service.refreshSelectedWorkspace() } })
                     )
                 }
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(service.members) { member in
                         memberRow(member)
                     }
@@ -1014,24 +986,24 @@ struct WorkspaceDetailView: View {
     private func memberRow(_ member: OsaurusRouterWorkspaceMember) -> some View {
         let isSelf = service.isSelf(member)
         let role = member.typedRole ?? .member
-        return HStack(spacing: 10) {
-            WorkspaceAvatar(name: member.friendlyName, size: 28)
+        return HStack(spacing: theme.space.s8) {
+            ParticipantAvatar(name: member.friendlyName, seed: member.walletAddress ?? member.accountId)
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(member.friendlyName)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     if isSelf {
-                        CapsuleBadge(L("You"), tint: theme.secondaryText, style: .tag)
+                        StatusChip(L("You"), tint: theme.text.secondary)
                     }
                 }
                 if let wallet = member.walletAddress, !wallet.isEmpty {
                     let short = OsaurusRouterWorkspacePerson.shortWallet(wallet)
                     if short != member.friendlyName {
                         Text(short)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.tertiary)
                             .help(wallet)
                     }
                 }
@@ -1040,15 +1012,15 @@ struct WorkspaceDetailView: View {
             Spacer()
 
             if let count = member.agentsShared, count > 0 {
-                CapsuleBadge(
+                StatusChip(
                     count == 1 ? L("1 agent") : String(format: L("%d agents"), count),
-                    tint: theme.tertiaryText,
+                    tint: theme.text.tertiary,
                     icon: "antenna.radiowaves.left.and.right"
                 )
             }
 
             if isOwner, role != .owner {
-                Menu {
+                SettingsMenuButton(.secondary, role.displayName, size: .compact, verbatim: true) {
                     Button(action: {
                         Task {
                             await service.setMemberRole(
@@ -1073,16 +1045,7 @@ struct WorkspaceDetailView: View {
                         Text("Make Viewer", bundle: .module)
                     }
                     .disabled(role == .viewer)
-                } label: {
-                    HStack(spacing: 3) {
-                        WorkspaceRoleBadge(role: role)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(theme.tertiaryText)
-                    }
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
                 .help(L("Change role"))
             } else {
                 WorkspaceRoleBadge(role: role)
@@ -1091,8 +1054,8 @@ struct WorkspaceDetailView: View {
             if canRemove(member, isSelf: isSelf) {
                 Button(action: { pendingDestruction = .removeMember(member) }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.tertiaryText.opacity(0.8))
+                        .glyphSize(13)
+                        .foregroundColor(theme.text.tertiary)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1100,15 +1063,9 @@ struct WorkspaceDetailView: View {
                 .disabled(service.isBusy("member.\(member.accountId)"))
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(rowBackground)
-    }
-
-    /// The Agents tab's `connectionRow` recipe.
-    private var rowBackground: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(theme.inputBackground.opacity(0.5))
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     /// Demoting a member with active shared agents auto-revokes them
@@ -1147,21 +1104,20 @@ struct WorkspaceDetailView: View {
     // MARK: - Invite links
 
     private var inviteLinksSection: some View {
-        AgentDetailSection(
-            title: L("Invite links"),
-            icon: "link",
-            subtitle: pendingInvites.isEmpty ? nil : "\(pendingInvites.count)"
+        SettingsSection(
+            title: "Invite Links",
+            caption: pendingInvites.isEmpty ? nil : "\(pendingInvites.count)"
         ) {
             if pendingInvites.isEmpty {
-                AgentSectionEmptyState(
-                    icon: "link.badge.plus",
+                SettingsEmptyState(
+                    inline: "link.badge.plus",
                     title: "No active invite links",
                     hint: "Create a link and send it to a teammate. Links expire in 14 days.",
-                    actionLabel: workspaceActive ? "Create invite link" : nil,
-                    action: workspaceActive ? { showInviteSheet = true } : nil
+                    action: workspaceActive
+                        ? SettingsEmptyState.Action(title: L("Create invite link"), icon: "", handler: { showInviteSheet = true }) : nil
                 )
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(pendingInvites) { invite in
                         inviteRow(invite)
                     }
@@ -1171,19 +1127,19 @@ struct WorkspaceDetailView: View {
     }
 
     private func inviteRow(_ invite: OsaurusRouterWorkspaceInvite) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "link")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(11, weight: .medium)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 28)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(inviteTitle(invite))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(workspaceInviteCaption(invite))
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             Spacer()
@@ -1192,13 +1148,13 @@ struct WorkspaceDetailView: View {
                 Button {
                     copyInviteLink(invite.id, url: url)
                 } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: copiedInviteId == invite.id ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .glyphSize(10.5, weight: .semibold)
                         Text(copiedInviteId == invite.id ? L("Copied") : L("Copy link"))
                     }
                 }
-                .buttonStyle(SecondaryButtonStyle(size: .compact))
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
             }
 
             Button {
@@ -1207,13 +1163,13 @@ struct WorkspaceDetailView: View {
                 Text("Revoke", bundle: .module)
             }
             .buttonStyle(
-                DestructiveButtonStyle(isLoading: service.isBusy("invite.\(invite.id)"), size: .compact)
+                .settings(.destructive, isLoading: service.isBusy("invite.\(invite.id)"), size: .compact)
             )
             .disabled(service.isBusy("invite.\(invite.id)"))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(rowBackground)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     private func inviteTitle(_ invite: OsaurusRouterWorkspaceInvite) -> String {
@@ -1247,11 +1203,11 @@ struct WorkspaceDetailView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
         copiedInviteTask?.cancel()
-        withAnimation(.easeOut(duration: 0.15)) { copiedInviteId = inviteId }
+        withAnimation(theme.motion.quick) { copiedInviteId = inviteId }
         copiedInviteTask = Task {
             try? await Task.sleep(for: .seconds(1.8))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.15)) { copiedInviteId = nil }
+            withAnimation(theme.motion.quick) { copiedInviteId = nil }
         }
     }
 
@@ -1277,23 +1233,22 @@ struct WorkspaceDetailView: View {
     }
 
     private var sharedAgentsSection: some View {
-        AgentDetailSection(
-            title: L("Shared agents"),
-            icon: "antenna.radiowaves.left.and.right",
-            subtitle: sharedAgentCap.map { "\($0.used) / \($0.max)" }
+        SettingsSection(
+            title: "Shared Agents",
+            caption: sharedAgentCap.map { "\($0.used) / \($0.max)" }
                 ?? (service.workspaceAgents.isEmpty ? nil : "\(service.workspaceAgents.count)"),
-            trailing: {
+            accessory: {
                 if myRole.canShareAgents {
                     Button {
                         showShareSheet = true
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "plus")
-                                .font(.system(size: 10.5, weight: .semibold))
+                                .glyphSize(10.5, weight: .semibold)
                             Text("Share agent", bundle: .module)
                         }
                     }
-                    .buttonStyle(PrimaryButtonStyle(size: .compact))
+                    .assignedSettingsButtonStyle(.primary, size: .compact)
                     .disabled(!workspaceActive || service.isWorking || isAtSharedAgentCap)
                     .help(shareHelp)
                 }
@@ -1302,24 +1257,24 @@ struct WorkspaceDetailView: View {
             orchestratorAutoJoinToggle
             if service.workspaceAgents.isEmpty {
                 if service.isLoadingDetail {
-                    AgentSectionEmptyState(loading: "Loading shared agents…")
+                    SettingsEmptyState(loading: "Loading shared agents…")
                 } else if myRole.canShareAgents {
-                    AgentSectionEmptyState(
-                        icon: "antenna.radiowaves.left.and.right",
+                    SettingsEmptyState(
+                        inline: "antenna.radiowaves.left.and.right",
                         title: "No shared agents yet",
                         hint: "Share one so teammates can chat with it from their own Osaurus.",
-                        actionLabel: workspaceActive && !isAtSharedAgentCap ? "Share agent" : nil,
-                        action: workspaceActive && !isAtSharedAgentCap ? { showShareSheet = true } : nil
+                        action: workspaceActive && !isAtSharedAgentCap
+                            ? SettingsEmptyState.Action(title: L("Share agent"), icon: "", handler: { showShareSheet = true }) : nil
                     )
                 } else {
-                    AgentSectionEmptyState(
-                        icon: "antenna.radiowaves.left.and.right",
+                    SettingsEmptyState(
+                        inline: "antenna.radiowaves.left.and.right",
                         title: "No shared agents yet",
                         hint: "Agents your teammates share appear here and in your chat sidebar."
                     )
                 }
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     // The billing switch renders per hosted-here row; only the
                     // first carries the search anchor so the id is unique.
                     let firstHostedHere = service.workspaceAgents.first {
@@ -1335,12 +1290,14 @@ struct WorkspaceDetailView: View {
                                 == workspace.id,
                             billingAnchorId: agent.agentAddress.lowercased() == firstHostedHere
                                 ? "workspaces.agents.billPool" : nil,
+                            approvalAnchorId: agent.agentAddress.lowercased() == firstHostedHere
+                                ? "workspaces.agents.askOwnerApproval" : nil,
                             isUnsharing: service.isBusy("agent.\(agent.agentAddress.lowercased())"),
                             onConnect: { connect(agent) },
                             onChat: { chat(with: agent) },
                             onTurnOnRelay: {
                                 if let local = AgentManager.shared.agent(byAddress: agent.agentAddress) {
-                                    RelayTunnelManager.shared.setTunnelEnabled(true, for: local.id)
+                                    RemoteAccessConsent.request(for: local, scope: .management)
                                 }
                             },
                             onUnshare: { pendingDestruction = .unshareAgent(identity(for: agent)) },
@@ -1365,9 +1322,9 @@ struct WorkspaceDetailView: View {
     /// twin: `delegation.workspace_auto_join`.
     private var orchestratorAutoJoinToggle: some View {
         SettingsToggle(
-            title: L("Let the Orchestrator delegate to shared agents"),
+            title: "Let the Orchestrator delegate to shared agents",
             description: L(
-                "Teammates' agents shared in this workspace join the Orchestrator's Allowed subagents automatically. Off removes them from the pool; delegating still asks for permission (Settings → Orchestrator)."
+                "Teammates' agents shared in this workspace join the Orchestrator's Allowed subagents automatically. Off removes them from that list; delegating still asks for permission (Settings → Orchestrator)."
             ),
             anchorId: "workspaces.agents.orchestratorAutoJoin",
             isOn: Binding(
@@ -1383,7 +1340,7 @@ struct WorkspaceDetailView: View {
                 }
             )
         )
-        .padding(.bottom, 4)
+        .padding(.bottom, theme.space.s4)
         .onAppear {
             orchestratorAutoJoin =
                 SubagentConfigurationStore.snapshot().workspaceAutoJoinEnabled(workspace.id)
@@ -1469,7 +1426,9 @@ struct WorkspaceDetailView: View {
 /// a billing toggle; teammates' agents show Chat once paired, else
 /// Connect/Retry with the failure reason inline.
 private struct WorkspaceSharedAgentRow: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let identity: SharedAgentIdentity
     let status: SharedAgentStatus
@@ -1480,6 +1439,8 @@ private struct WorkspaceSharedAgentRow: View {
     /// Settings-search landing anchor for the billing switch; set on the
     /// first hosted-here row only, so the id stays unique in the list.
     var billingAnchorId: String? = nil
+    /// Same rule for the owner-approval switch.
+    var approvalAnchorId: String? = nil
     let isUnsharing: Bool
     let onConnect: () -> Void
     let onChat: () -> Void
@@ -1500,17 +1461,17 @@ private struct WorkspaceSharedAgentRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 avatar
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     titleRow
                     captionRow
                     if let description = identity.description, !description.isEmpty {
                         Text(description)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1523,15 +1484,16 @@ private struct WorkspaceSharedAgentRow: View {
             }
 
             if isMine {
-                billingToggle
+                VStack(alignment: .leading, spacing: 8) {
+                    billingToggle
+                    ownerApprovalToggle
+                }
+                .padding(.leading, theme.space.s40)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground.opacity(0.5))
-        )
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     private var avatar: some View {
@@ -1548,31 +1510,32 @@ private struct WorkspaceSharedAgentRow: View {
             Circle()
                 .fill(statusColor)
                 .frame(width: 9, height: 9)
-                .overlay(Circle().strokeBorder(theme.cardBackground, lineWidth: 1.5))
+                .overlay(Circle().strokeBorder(theme.surface.raised, lineWidth: theme.stroke.default))
                 .offset(x: 1, y: 1)
         }
     }
 
     private var titleRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Text(identity.name)
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
             if isMine {
-                CapsuleBadge(L("Yours"), tint: theme.accentColor, style: .tag)
+                StatusChip(L("Yours"), tint: theme.action.primary.default.background)
             } else if isOwnedElsewhere {
-                CapsuleBadge(
+                StatusChip(
                     L("Yours · other device"),
-                    tint: theme.accentColor,
-                    style: .tag,
-                    help: L("Shared by your identity from another device. Reached through the relay like a teammate's agent.")
+                    tint: theme.action.primary.default.background,
+                    help: L(
+                        "Shared by your identity from another device. Reached through the relay like a teammate's agent."
+                    )
                 )
             }
             if let model = identity.modelLabel {
-                CapsuleBadge(
+                StatusChip(
                     model,
-                    tint: theme.secondaryText,
+                    tint: theme.text.secondary,
                     icon: "cpu",
                     help: identity.model.map { String(format: L("Runs on %@"), $0) }
                 )
@@ -1591,8 +1554,8 @@ private struct WorkspaceSharedAgentRow: View {
             parts.append(String(format: L("shared as “%@”"), sharedAs))
         }
         return Text(parts.joined(separator: " · "))
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+            .foregroundColor(theme.text.tertiary)
             .lineLimit(1)
             .truncationMode(.tail)
             .help(identity.address)
@@ -1600,7 +1563,7 @@ private struct WorkspaceSharedAgentRow: View {
 
     @ViewBuilder
     private var statusLine: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
             if isConnecting {
                 ProgressView()
                     .controlSize(.mini)
@@ -1608,27 +1571,27 @@ private struct WorkspaceSharedAgentRow: View {
                     .frame(width: 10, height: 10)
             } else {
                 Image(systemName: status.symbolName)
-                    .font(.system(size: 10, weight: .semibold))
+                    .glyphSize(10, weight: .semibold)
                     .foregroundColor(statusColor)
             }
             Text(statusText)
-                .font(.system(size: 10.5))
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
                 .foregroundColor(statusTextColor)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.top, 2)
+        .padding(.top, theme.space.s2)
     }
 
     private var statusText: String {
         switch status {
         case .ready:
             return isMine
-                ? L("Relay on — teammates can reach it")
+                ? L("Remote access on — teammates can reach it")
                 : (isPaired ? L("Connected — ready to chat") : L("Online"))
         case .checking: return L("Checking access and availability…")
         case .connecting:
-            return isMine ? L("Relay connecting…") : L("Connecting…")
+            return isMine ? L("Remote access connecting…") : L("Connecting…")
         case .offline(let lastSeen):
             if let lastSeen {
                 return String(format: L("Offline · last seen %@"), SharedAgentStatus.relative(lastSeen))
@@ -1636,7 +1599,7 @@ private struct WorkspaceSharedAgentRow: View {
             return L("Offline — the host's Osaurus isn't reachable")
         case .notConnected(let reason, let attempted):
             if isMine {
-                return L("Relay off — teammates can't reach it")
+                return L("Remote access off — teammates can't reach it")
             }
             if attempted, let reason, !reason.isEmpty {
                 return String(format: L("Couldn't connect: %@"), SharedAgentStatus.sentence(reason))
@@ -1644,56 +1607,56 @@ private struct WorkspaceSharedAgentRow: View {
             return L("Not connected on this Mac yet")
         case .unavailable(let reason, _):
             return SharedAgentStatus.sentence(reason)
-        case .readOnlyTeammate:
+        case .accessRevoked, .readOnlyTeammate:
             return status.shortLabel
         }
     }
 
     private var statusColor: Color {
         switch status.tint {
-        case .success: return theme.successColor
-        case .accent: return theme.accentColor
-        case .warning: return theme.warningColor
-        case .muted: return theme.tertiaryText
+        case .success: return theme.status.success.foreground
+        case .accent: return theme.action.primary.default.background
+        case .warning: return theme.status.warning.foreground
+        case .muted: return theme.text.tertiary
         }
     }
 
     private var statusTextColor: Color {
         if case .notConnected(_, let attempted) = status, attempted || isMine {
-            return theme.warningColor
+            return theme.status.warning.foreground
         }
-        return theme.tertiaryText
+        return theme.text.tertiary
     }
 
     @ViewBuilder
     private var actions: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             if isMine {
                 if relayOff {
                     Button(action: onTurnOnRelay) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "antenna.radiowaves.left.and.right")
-                                .font(.system(size: 10.5, weight: .semibold))
-                            Text("Turn on relay", bundle: .module)
+                                .glyphSize(10.5, weight: .semibold)
+                            Text("Turn on remote access", bundle: .module)
                         }
                     }
-                    .buttonStyle(PrimaryButtonStyle(size: .compact))
-                    .help(L("Teammates reach this agent through its relay tunnel"))
+                    .assignedSettingsButtonStyle(.primary, size: .compact)
+                    .help(L("Teammates reach this agent through remote access"))
                 }
                 Button(action: onChat) {
                     Text("Chat", bundle: .module)
                 }
-                .buttonStyle(SecondaryButtonStyle(size: .compact))
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
             } else if isPaired {
                 Button(action: onChat) {
                     Text("Chat", bundle: .module)
                 }
-                .buttonStyle(PrimaryButtonStyle(size: .compact))
+                .assignedSettingsButtonStyle(.primary, size: .compact)
             } else {
                 Button(action: onConnect) {
                     Text(isConnecting ? L("Connecting…") : (status.actionLabel ?? L("Connect")))
                 }
-                .buttonStyle(PrimaryButtonStyle(isLoading: isConnecting, size: .compact))
+                .assignedSettingsButtonStyle(.primary, isLoading: isConnecting, size: .compact)
                 .disabled(isConnecting)
             }
 
@@ -1703,7 +1666,7 @@ private struct WorkspaceSharedAgentRow: View {
                 Button(action: onUnshare) {
                     Text("Unshare", bundle: .module)
                 }
-                .buttonStyle(DestructiveButtonStyle(isLoading: isUnsharing, size: .compact))
+                .assignedSettingsButtonStyle(.destructive, isLoading: isUnsharing, size: .compact)
                 .disabled(isUnsharing)
             }
         }
@@ -1714,13 +1677,89 @@ private struct WorkspaceSharedAgentRow: View {
     /// per-agent opt-out so the roster-driven default never flips it back.
     private var billingToggle: some View {
         SettingsToggle(
-            title: L("Bill the workspace pool"),
+            title: "Bill Workspace Credits",
             description: L(
-                "On by default for agents you share: this agent's Osaurus cloud calls — yours and your teammates' — draw from the workspace's shared credits. Off, your own chats bill your personal balance."
+                "On by default for agents you share: your own chats with this agent use this workspace's credits too. Teammates' chats always do. Off, your own chats bill your personal balance."
             ),
             isOn: Binding(get: { billsThisWorkspace }, set: onSetBilling)
         )
-        .padding(.leading, 40)
         .settingsLandingAnchor(billingAnchorId)
     }
+
+    /// The agent's `sharedToolApproval`: off fails a teammate's call to a
+    /// tool that needs approval; on parks it for the owner. The timeout row
+    /// stays in place (disabled while off) so the section doesn't jump.
+    @ViewBuilder
+    private var ownerApprovalToggle: some View {
+        if let local = AgentManager.shared.agent(byAddress: identity.address) {
+            let policy = local.sharedToolApproval
+            let asksOwner = policy?.mode == .askOwner
+            let timeout = Int(
+                policy?.effectiveTimeout ?? TimeInterval(SharedToolApprovalPolicy.defaultTimeoutSeconds))
+            SettingsToggle(
+                title: "Require Approval for Teammate Tool Calls",
+                description:
+                    "When someone else's chat with this agent reaches a tool that needs approval, it waits for you: allow it in the conversation, from the notification, in the Inbox or on your iPhone. Off, those tool calls fail.",
+                isOn: Binding(
+                    get: { asksOwner },
+                    set: { on in
+                        var updated = local
+                        updated.sharedToolApproval =
+                            on
+                            ? SharedToolApprovalPolicy(
+                                mode: .askOwner, timeoutSeconds: local.sharedToolApproval?.timeoutSeconds)
+                            : nil
+                        AgentManager.shared.update(updated)
+                    }
+                )
+            )
+            .settingsLandingAnchor(approvalAnchorId)
+
+            SettingsPickerRow(
+                title: "Decline Unanswered Requests After",
+                description: "The teammate's tool call is declined if you haven't answered by then.",
+                anchorId: approvalAnchorId == nil ? nil : "workspaces.agents.ownerApprovalTimeout",
+                style: .menu,
+                selection: Binding(
+                    get: { timeout },
+                    set: { seconds in
+                        var updated = local
+                        updated.sharedToolApproval = SharedToolApprovalPolicy(
+                            mode: .askOwner, timeoutSeconds: seconds)
+                        AgentManager.shared.update(updated)
+                    }
+                ),
+                options: Self.timeoutOptions(including: timeout)
+            )
+            .disabled(!asksOwner)
+        }
+    }
+
+    /// Preset waits, plus a value set declaratively that isn't one of them.
+    static func timeoutOptions(including current: Int) -> [SettingsPickerRow<Int>.Option] {
+        var options: [SettingsPickerRow<Int>.Option] = [
+            .init(300, "5 minutes"), .init(600, "10 minutes"), .init(1800, "30 minutes"),
+            .init(3600, "1 hour"), .init(14_400, "4 hours"), .init(86_400, "24 hours"),
+        ]
+        if !options.contains(where: { $0.value == current }) {
+            let label =
+                Duration.seconds(current).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .wide))
+            options.append(.init(current, label, verbatim: true))
+            options.sort { $0.value < $1.value }
+        }
+        return options
+    }
 }
+
+#if OSAURUS_DESIGN_SYSTEM
+extension WorkspaceDetailView {
+    @MainActor static func inspectionSharedRows(action: @escaping () -> Void) -> some View {
+        let states: [SharedAgentStatus] = [.ready, .connecting, .checking, .offline(lastSeen: Date()), .notConnected(reason: "Local connection failure", hasAttempted: true), .unavailable(reason: "Local unavailable display", fix: .none)]
+        return VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(states.enumerated()), id: \.offset) { index, status in
+                WorkspaceSharedAgentRow(identity: SharedAgentIdentity(address: "local-display-\(index)", name: "Local shared agent \(index + 1)", avatar: "green", customAvatarURL: nil, model: "Local model", ownerName: "Local teammate", workspaceId: "local-display", workspaceName: "Local workspace", description: "Local display only; no pairing or sharing action.", isOwnedByMe: index == 0, isHostedHere: index == 0, localAgent: index == 0 ? .default : nil, paired: nil, rosterAgent: nil), status: status, workspaceId: "local-display", canManage: true, billsThisWorkspace: true, isUnsharing: false, onConnect: action, onChat: action, onTurnOnRelay: action, onUnshare: action, onSetBilling: { _ in action() })
+            }
+        }
+    }
+}
+#endif

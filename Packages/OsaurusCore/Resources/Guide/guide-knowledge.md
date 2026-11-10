@@ -11,7 +11,7 @@ Knowledge is what you teach your agents: a library of your own documents (SOPs, 
 ## Setup
 
 1. Settings… (⌘,) → Knowledge → **Add Collection** — point it at any folder of documents: your docs, an Obsidian vault, an exported wiki. Markdown works best, but plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are indexed too.
-2. Open a custom agent → Abilities → Overview → **Knowledge** — enable the toggle and check the collections that agent may use.
+2. Open a custom agent → Abilities → **Knowledge** — enable the toggle and check the collections that agent may use.
 3. Chat. The agent gets `search_knowledge` / `read_knowledge` / `list_knowledge` and consults the library only when a task calls for it.
 
 Files are indexed in place and never moved or modified; edits to the folder are picked up within seconds. Optional YAML frontmatter (`type`, `title`, `description`, `tags`) improves search filtering.

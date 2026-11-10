@@ -1,0 +1,52 @@
+{
+  "id": "architect.paged-issue-digest",
+  "domain": "architect",
+  "label": "architect \u2022 paged issue digest with auth, per-issue decision, memory, and a report file",
+  "query": "Our issue tracker has an API at {{fixture.base_url}}. GET /v1/issues lists open issues two at a time as {\"issues\": [{\"id\", \"title\", \"body\"}], \"next_cursor\": \"...\"}. To get the next page, send next_cursor back as the `cursor` query parameter; next_cursor is null on the last page. Every request needs the header `Authorization: Bearer <token>`. I have the token and will enter it when you ask.\n\nBuild me a workflow that goes through every open issue, decides for each one whether it is urgent (an outage, lost data, or a security problem), and makes a Markdown report file listing the urgent ones, each with its id and a one-line reason. It should remember which issues it has already looked at, so the next run only covers new ones. Test it, then offer to save it.",
+  "notes": "Hard case. Three cursor pages behind bearer auth (401 without the token). Pins paginate on the http step, a declared secret read through `auth`, a per-issue decision (map + inference), a state step that remembers handled issues, and a Markdown file in the workflow output. The latest test's report names both urgent issues; a post-run after the Architect's tests must leave them out, because they were already seen.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 40,
+      "secrets": { "*": "trk_eval_8f3k2m9q" },
+      "fixtureAPI": {
+        "routes": [
+          {
+            "path": "/v1/issues",
+            "method": "GET",
+            "bearer": "trk_eval_8f3k2m9q",
+            "pages": [
+              { "issues": [
+                { "id": "ISS-101", "title": "Checkout page returns 500 for every customer", "body": "Since 7am nobody can pay. The whole checkout is down." },
+                { "id": "ISS-102", "title": "Typo on the About page", "body": "It says 'teh team'." }
+              ] },
+              { "issues": [
+                { "id": "ISS-103", "title": "Add dark mode", "body": "Would be nice to have a dark theme." },
+                { "id": "ISS-104", "title": "Password reset links work for any account", "body": "Changing the email in the reset link lets anyone reset another user's password." }
+              ] },
+              { "issues": [
+                { "id": "ISS-105", "title": "Export button label is misaligned", "body": "Off by a few pixels on Safari." },
+                { "id": "ISS-106", "title": "Slow search on large accounts", "body": "Search takes 4 seconds for accounts with many projects." }
+              ] }
+            ]
+          }
+        ]
+      },
+      "fixtureRequests": { "/v1/issues": 3 },
+      "nodeKinds": ["http", "map", "inference", "state"],
+      "structure": {
+        "paginate": true,
+        "secretAuth": true,
+        "fileOutput": true
+      },
+      "testOutputContains": { "*": ["ISS-101", "ISS-104"] },
+      "postRuns": [
+        { "status": "completed", "outputExcludes": { "*": ["ISS-101", "ISS-104"] } }
+      ],
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "maxToolCalls": 30,
+      "maxPromptTokens": 600000
+    }
+  }
+}

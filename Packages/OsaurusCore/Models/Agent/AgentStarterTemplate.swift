@@ -2,11 +2,10 @@
 //  AgentStarterTemplate.swift
 //  osaurus
 //
-//  Lightweight presets used by the create-agent flows (both the in-app
-//  AgentEditorSheet and the onboarding "Create your agent" step). Picking
-//  one prefills the system prompt and (only when the user hasn't typed yet)
-//  a default name. Creation requires an explicit routing description.
-//  Generation overrides and visual theme remain editable in Configure.
+//  Lightweight presets: the starter chips in a New Agent chat
+//  (`AgentCreatorLauncher`) and the declarative `template` an agent entry
+//  can seed from. Picking a chip sends its name and tagline to the
+//  Configurator, which drafts from there.
 //
 
 import Foundation

@@ -16,7 +16,9 @@ struct AnnouncementDialogContent: View {
     let body_: String
     let imageURL: URL?
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
 
     init(body: String, imageURL: URL?) {
         self.body_ = body
@@ -24,7 +26,9 @@ struct AnnouncementDialogContent: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        Group {
+
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.announcementDialogContent.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 14, theme))) {
             if let imageURL {
                 // Loaded asynchronously; the dialog shows without it on
                 // failure (the contract says never block on the image).
@@ -36,10 +40,10 @@ struct AnnouncementDialogContent: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: .infinity)
                             .frame(maxHeight: 180)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
                     case .empty:
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(theme.tertiaryBackground.opacity(0.4))
+                        RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                            .fill(theme.surface.hover)
                             .frame(height: 120)
                             .overlay(ProgressView().controlSize(.small))
                     default:
@@ -57,8 +61,10 @@ struct AnnouncementDialogContent: View {
             }
             .frame(maxHeight: 320)
             .fixedSize(horizontal: false, vertical: true)
-        }
+        }.catalogLayoutTarget("component.library.55.elements.layout.announcementDialogContent.body.verticalGap")
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 4)
-    }
+    
+        }.environment(\.theme, theme)
+}
 }

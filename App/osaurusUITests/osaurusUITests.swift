@@ -34,7 +34,7 @@ final class osaurusUITests: XCTestCase {
     @MainActor
     func testModelSearchFunctionality() throws {
         // This test is a placeholder for UI testing the search functionality
-        // It requires knowing how to navigate to the ModelDownloadView
+        // It requires knowing how to navigate to Local Models
         // which depends on the specific UI implementation
 
         // Example test structure:
@@ -45,7 +45,7 @@ final class osaurusUITests: XCTestCase {
         // 5. Verify filtered results
 
         // Skip this test for now as it requires UI navigation setup
-        XCTSkip("ModelDownloadView navigation not implemented in test")
+        XCTSkip("Local Models navigation not implemented in test")
     }
 
     @MainActor

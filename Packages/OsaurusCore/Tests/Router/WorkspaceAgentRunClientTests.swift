@@ -70,6 +70,7 @@ struct WorkspaceAgentRunClientTests {
         client.identityExists = { true }
         client.isHostedHere = { _ in false }
         client.rosterKnows = { _ in true }
+        client.rosterDenies = { _ in false }
         client.lastSeen = { _ in nil }
         client.pairedAgent = { _ in paired }
         client.pair = { _, _ in
@@ -124,6 +125,12 @@ struct WorkspaceAgentRunClientTests {
         let unshared = Self.makeClient(trace: trace)
         unshared.rosterKnows = { _ in false }
         #expect(await Self.prepareError(unshared) == .notShared)
+
+        // Still paired, but a verified roster no longer lists the agent:
+        // the pairing is stale and must not be used.
+        let stalePairing = Self.makeClient(trace: trace, paired: Self.remote(providerId: UUID()))
+        stalePairing.rosterDenies = { _ in true }
+        #expect(await Self.prepareError(stalePairing) == .notShared)
 
         #expect(trace.probes == 0)
         #expect(trace.pairs == 0)

@@ -1,0 +1,120 @@
+{
+  "id": "workflow.code-node-transform",
+  "domain": "workflow",
+  "label": "workflow \u2022 code node runs in osaurus-js-host and returns the computed total",
+  "query": "code node runs in osaurus-js-host and returns the computed total",
+  "notes": "No model. A JavaScript code node sums line items inside the sandboxed helper. Skips with a typed reason when the helper is not reachable from the eval process (set OSAURUS_JS_HOST_PATH).",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [],
+        "examples": [],
+        "input_schema": {
+          "properties": {
+            "items": {
+              "items": {
+                "properties": {
+                  "price": {
+                    "type": "number"
+                  },
+                  "qty": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "qty",
+                  "price"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "items"
+          ],
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "code": {
+              "network": [],
+              "secrets": [],
+              "source": "async function run(input, ctx) {\n  const total = input.items.reduce((sum, i) => sum + i.qty * i.price, 0);\n  ctx.log(\"items \" + input.items.length);\n  return { total, count: input.items.length };\n}",
+              "timeout": 10
+            },
+            "id": "sum",
+            "input": {
+              "items": "{{input.items}}"
+            },
+            "kind": "code",
+            "name": "Sum Order",
+            "output_schema": {
+              "properties": {
+                "count": {
+                  "type": "number"
+                },
+                "total": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "total",
+                "count"
+              ],
+              "type": "object"
+            },
+            "retry": {
+              "backoff_seconds": 1,
+              "max_attempts": 1
+            },
+            "timeout": 120
+          }
+        ],
+        "output": "{{nodes.sum.output}}",
+        "output_schema": {
+          "properties": {
+            "count": {
+              "type": "number"
+            },
+            "total": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "total",
+            "count"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {
+        "items": [
+          {
+            "qty": 2,
+            "price": 10
+          },
+          {
+            "qty": 1,
+            "price": 22
+          }
+        ]
+      },
+      "nodeStatuses": {
+        "sum": "done"
+      },
+      "outputValues": {
+        "total": [
+          42
+        ],
+        "count": [
+          2
+        ]
+      }
+    }
+  }
+}

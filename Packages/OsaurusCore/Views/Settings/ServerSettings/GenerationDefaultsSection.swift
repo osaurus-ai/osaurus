@@ -67,9 +67,8 @@ struct GenerationDefaultsSection: View {
                 value: $draft.generation.maxTokens
             )
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "Diffusion Models") {
+            SettingsFieldRow(label: "Diffusion Models") {
                 OptionalIntField(
                     label: "Denoising Steps per Canvas",
                     placeholder: "Blank = model default (48)",
@@ -81,9 +80,8 @@ struct GenerationDefaultsSection: View {
                 )
             }
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "Streaming") {
+            SettingsFieldRow(label: "Streaming") {
                 VStack(alignment: .leading, spacing: 8) {
                     ServerSettingsPlannedBanner(
                         blurb:

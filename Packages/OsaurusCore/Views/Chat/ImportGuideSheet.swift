@@ -95,8 +95,8 @@ struct ImportGuideSheet: View {
                 "Bring conversations from other AI apps into Osaurus and continue them with any model. Export your chats first:",
                 bundle: .module
             )
-            .font(.system(size: 13))
-            .foregroundColor(theme.secondaryText)
+            .textStyle(.bodySmall)
+            .foregroundColor(theme.text.secondary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
             .padding(.bottom, 12)
@@ -111,14 +111,14 @@ struct ImportGuideSheet: View {
                 "Then choose the downloaded file below. You can select several files at once.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.tertiaryText)
+            .textStyle(.caption)
+            .foregroundColor(theme.text.tertiary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
             .padding(.top, 12)
 
             Rectangle()
-                .fill(theme.primaryBorder.opacity(0.3))
+                .fill(theme.border.subtle)
                 .frame(height: 1)
                 .padding(.top, 14)
 
@@ -126,8 +126,8 @@ struct ImportGuideSheet: View {
                 if showsSkipToggle {
                     Toggle(isOn: $pref.skip) {
                         Text("Don't show this again", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
+                            .textStyle(.caption)
+                            .foregroundColor(theme.text.secondary)
                     }
                     .toggleStyle(.checkbox)
                 }
@@ -136,13 +136,13 @@ struct ImportGuideSheet: View {
 
                 Button(action: onChooseFile) {
                     Text("Choose File…", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
+                        .textStyle(.label, weight: 600)
+                        .foregroundColor(theme.action.primary.default.foreground)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 8)
                         .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(theme.accentColor)
+                            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                                .fill(theme.action.primary.default.background)
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -157,20 +157,20 @@ struct ImportGuideSheet: View {
         let isExpanded = expandedProviderId == provider.id
         return VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                withAnimation(theme.motion.springAnimation) {
                     expandedProviderId = isExpanded ? nil : provider.id
                 }
             } label: {
                 HStack(spacing: 10) {
                     Text(provider.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .textStyle(.label, weight: 600)
+                        .foregroundColor(theme.text.primary)
 
                     Spacer()
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(10, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
                 .padding(.horizontal, 12)
@@ -182,8 +182,8 @@ struct ImportGuideSheet: View {
             if isExpanded {
                 HStack(alignment: .top, spacing: 10) {
                     Text(provider.recipe, bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .textStyle(.caption)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -192,8 +192,8 @@ struct ImportGuideSheet: View {
                             NSWorkspace.shared.open(url)
                         } label: {
                             Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(theme.accentColor)
+                                .glyphSize(13, weight: .medium)
+                                .foregroundColor(theme.text.link)
                         }
                         .buttonStyle(PlainButtonStyle())
                         .localizedHelp("Open export page")
@@ -205,13 +205,13 @@ struct ImportGuideSheet: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.tertiaryBackground.opacity(isExpanded ? 0.55 : 0.4))
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(theme.surface.hover)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isExpanded ? theme.accentColor.opacity(0.35) : theme.cardBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .stroke(isExpanded ? theme.border.strong : theme.border.default, lineWidth: theme.stroke.default)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
     }
 }

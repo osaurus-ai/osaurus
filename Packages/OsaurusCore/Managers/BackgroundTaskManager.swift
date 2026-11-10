@@ -33,6 +33,8 @@ private struct RetainedActivityTabRecord: Codable {
     /// Optional for records written before inbound shared-agent runs
     /// became retained tabs.
     let isInboundRun: Bool?
+    /// Trigger kind for `.automation` tabs; nil for older records.
+    let automationKind: EventSourceKind?
 
     @MainActor
     init?(state: BackgroundTaskState) {
@@ -62,6 +64,7 @@ private struct RetainedActivityTabRecord: Codable {
         self.externalSessionKey = state.externalSessionKey
         self.contextPreview = state.contextPreview
         self.isInboundRun = state.isInboundRun
+        self.automationKind = state.automationKind
     }
 
     var status: BackgroundTaskStatus {
@@ -157,7 +160,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Combined cancellables for each task (session + state observers)
     private var taskObservers: [UUID: Set<AnyCancellable>] = [:]
 
-    /// Continuations for callers awaiting task completion (e.g. ScheduleManager)
+    /// Continuations for callers awaiting task completion (e.g. AgentTurnWorker)
     /// Value-only terminal metadata is copied while the task still owns its
     /// live session. It cannot be lost when cleanup releases that session.
     struct CompletionWithToolFailure: Sendable {
@@ -205,14 +208,22 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Window attachment is pure view state — it never affects execution.
     private var taskIdByWindow: [UUID: UUID] = [:]
 
-    /// FIFO admission queue: task ids accepted while the configured
-    /// concurrency limits were saturated, in submission order. Each id has a
-    /// matching deferred start closure in `pendingStarts`. Promoted by
-    /// `pumpQueue()` whenever a running task stops consuming its slot.
-    private var queuedOrder: [UUID] = []
+    /// Admission for every dispatched run: the Default (or requested) queue's
+    /// concurrency limit plus the per-agent safety cap. Each run's slots
+    /// follow its status (see `schedulingStatusChanged`).
+    let scheduler: TaskScheduler
 
-    /// Deferred start work for queued tasks, keyed by task id.
-    private var pendingStarts: [UUID: @MainActor () async -> Void] = [:]
+    /// Scheduler task id by background-task id, when they differ (an
+    /// automation's task reattached to an earlier session).
+    private var schedulerTaskIds: [UUID: UUID] = [:]
+
+    /// Background tasks whose task record this manager owns. The rest were
+    /// admitted by another owner (an automation), which ends the record and
+    /// frees the lane when its worker returns.
+    private var ownedTaskRecords: Set<UUID> = []
+
+    /// Last lease renewal per background-task id (see `renewLease`).
+    private var leaseRenewedAt: [UUID: Date] = [:]
 
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
@@ -223,7 +234,8 @@ public final class BackgroundTaskManager: ObservableObject {
     private init(
         persistsRetainedTabs: Bool = true,
         retainedTabsDefaults: UserDefaults = .standard,
-        powerManager: AgentRunPowerManager? = .shared
+        powerManager: AgentRunPowerManager? = .shared,
+        scheduler: TaskScheduler? = nil
     ) {
         self.persistsRetainedTabs = persistsRetainedTabs
         self.retainedTabsDefaults = retainedTabsDefaults
@@ -231,6 +243,7 @@ public final class BackgroundTaskManager: ObservableObject {
             defaults: retainedTabsDefaults, key: Self.retainedTabsDefaultsKey
         )
         self.powerManager = powerManager
+        self.scheduler = scheduler ?? .shared
         viewUpdateCancellable =
             viewUpdateSubject
             .throttle(for: .milliseconds(50), scheduler: DispatchQueue.main, latest: true)
@@ -309,6 +322,24 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Get background task state by ID
     public func taskState(for id: UUID) -> BackgroundTaskState? {
         backgroundTasks[id]
+    }
+
+    /// An approval card for a running task is waiting on a person
+    /// (`AttentionProducers.markWaiting`). Waiting releases the task's
+    /// execution slot like a clarification; answering it resumes the run.
+    func setAwaitingApproval(_ id: UUID, waiting: Bool, step: String) {
+        guard let state = backgroundTasks[id] else { return }
+        if waiting {
+            guard state.status == .running else { return }
+            state.status = .waitingForInput
+            state.currentStep = step
+            pumpQueue()
+        } else if state.status == .waitingForInput, state.chatSession?.awaitingClarify == nil {
+            // The caller only ends a wait once none of this task's cards are
+            // open; a clarification still showing keeps the task waiting.
+            state.status = .running
+            state.currentStep = "Running..."
+        }
     }
 
     /// Resolve a still-retained channel conversation so an inbound follow-up
@@ -496,7 +527,8 @@ public final class BackgroundTaskManager: ObservableObject {
         // waiting for input is still alive and must survive the view going
         // away. (The clarify observer installed below immediately replays
         // the pause into `.waitingForInput`.)
-        guard session.isStreaming || session.awaitingClarify != nil else { return nil }
+        guard session.isStreaming || session.awaitingClarify != nil || !session.awaitingWorkflowRuns.isEmpty
+        else { return nil }
 
         // Registry-shared sessions are co-owned by their registering
         // owner, which keeps an in-flight run alive after every window
@@ -577,14 +609,7 @@ public final class BackgroundTaskManager: ObservableObject {
                 type: .cancelled,
                 json: PluginHostContext.serializeCancelledEvent(taskTitle: state.taskTitle)
             )
-            if let runId = state.agentRunId {
-                do {
-                    try SchedulerDatabase.shared.recordRunEnd(runId: runId, status: .cancelled)
-                } catch {
-                    print("[BackgroundTaskManager] recordRunEnd (finalize/cancel) failed for run \(runId): \(error)")
-                }
-                state.agentRunId = nil
-            }
+            state.agentRunId = nil
         }
 
         dispatchHoldTasks.remove(backgroundId)
@@ -604,9 +629,10 @@ public final class BackgroundTaskManager: ObservableObject {
         // Drop any window→task bindings pointing here so a still-open
         // window's close path stops thinking the task is alive.
         taskIdByWindow = taskIdByWindow.filter { $0.value != backgroundId }
-        // Drop any deferred start so a finalized queued task can't launch.
-        queuedOrder.removeAll { $0 == backgroundId }
-        pendingStarts.removeValue(forKey: backgroundId)
+        // Free its slots and drop any deferred start so a finalized queued
+        // task can't launch.
+        scheduler.cancelPending(schedulerTaskId(backgroundId))
+        detachScheduling(state)
 
         state.releaseReferences()
 
@@ -621,8 +647,8 @@ public final class BackgroundTaskManager: ObservableObject {
     /// its slot and pumps the queue, so doing it the other way around would
     /// briefly promote (and start) queued work mid-shutdown.
     public func cancelAllTasks() {
-        for queuedId in queuedOrder {
-            cancelTask(queuedId)
+        for (id, state) in backgroundTasks where state.status == .queued {
+            cancelTask(id)
         }
         for (id, state) in backgroundTasks where state.status.isActive {
             cancelTask(id)
@@ -647,6 +673,7 @@ public final class BackgroundTaskManager: ObservableObject {
         state.tokensIn += max(0, tokensInDelta)
         state.tokensOut += max(0, tokensOutDelta)
         state.costUSD += max(0, costUSDDelta)
+        renewLease(backgroundId)
         if let reason = state.budgetExceededReason() {
             state.budgetExhaustedReason = reason
             print("[BackgroundTaskManager] budget exhausted (\(reason)) — cancelling \(backgroundId)")
@@ -704,8 +731,7 @@ public final class BackgroundTaskManager: ObservableObject {
         let backgroundId = state.id
         // A queued task never started — drop its deferred start so a later
         // pump can't resurrect it.
-        queuedOrder.removeAll { $0 == backgroundId }
-        pendingStarts.removeValue(forKey: backgroundId)
+        scheduler.cancelPending(schedulerTaskId(backgroundId))
 
         // stop() synchronously publishes isStreaming=false. Mark cancellation
         // first so the streaming observer cannot resume a delegation waiter
@@ -713,30 +739,14 @@ public final class BackgroundTaskManager: ObservableObject {
         state.status = .cancelled
         if stopSession { state.chatSession?.stop() }
         state.captureContextPreview()
-        // Mirror the markCompleted finalisation for the agent_runs row
-        // so cancelled runs don't sit in `running` forever in the
-        // Activity tab.
         if let runId = state.agentRunId {
-            let cancelError = state.budgetExhaustedReason.map { "Budget exhausted: \($0)" }
             Self.writeRunTrace(
                 runId: runId,
                 state: state,
                 status: .cancelled,
                 endedAt: Date(),
-                errorMessage: cancelError
+                errorMessage: state.budgetExhaustedReason.map { "Budget exhausted: \($0)" }
             )
-            do {
-                try SchedulerDatabase.shared.recordRunEnd(
-                    runId: runId,
-                    status: .cancelled,
-                    tokensIn: state.tokensIn > 0 ? state.tokensIn : nil,
-                    tokensOut: state.tokensOut > 0 ? state.tokensOut : nil,
-                    costUSD: state.costUSD > 0 ? state.costUSD : nil,
-                    error: cancelError
-                )
-            } catch {
-                print("[BackgroundTaskManager] recordRunEnd (cancel) failed for run \(runId): \(error)")
-            }
             state.agentRunId = nil
         }
         resumeCompletion(for: backgroundId, result: .cancelled)
@@ -766,8 +776,7 @@ public final class BackgroundTaskManager: ObservableObject {
         guard !ids.isEmpty else { return }
 
         for id in ids {
-            queuedOrder.removeAll { $0 == id }
-            pendingStarts.removeValue(forKey: id)
+            scheduler.cancelPending(schedulerTaskId(id))
         }
         for id in ids where backgroundTasks[id]?.status.isActive == true {
             cancelTask(id)
@@ -789,7 +798,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// queued work takes input via the chat window; failed / cancelled
     /// runs are view-only).
     @discardableResult
-    public func submitQuickReply(_ backgroundId: UUID, text: String) -> Bool {
+    public func submitQuickReply(_ backgroundId: UUID, text: String, author: ParticipantRef? = nil) -> Bool {
         // Inbound shared-agent runs are the remote caller's conversation —
         // read-only on the host, never replyable from here.
         guard let state = backgroundTasks[backgroundId], !state.isSubagentMirror, !state.isInboundRun
@@ -821,6 +830,7 @@ public final class BackgroundTaskManager: ObservableObject {
             recomputeSortedToastTasks()
             Task { @MainActor in
                 await context.prepare()
+                session.nextSendAuthor = author
                 session.send(trimmed)
             }
             return true
@@ -832,6 +842,7 @@ public final class BackgroundTaskManager: ObservableObject {
         // `send` clears any clarify pause / stale prompt overlay and starts
         // the next run; the streaming observer transitions the task back to
         // `.running`, so no status write is needed here.
+        session.nextSendAuthor = author
         session.send(trimmed)
         return true
     }
@@ -1058,8 +1069,46 @@ public final class BackgroundTaskManager: ObservableObject {
         request.externalSurface || ChatExecutionContext.isExternalSurface
     }
 
-    /// Dispatch a chat task for background execution.
-    public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
+    /// An unattended, app-authored trigger (an automation or a self-scheduled
+    /// wake-up) fires with no interactive user to answer an approval card.
+    /// Marked only when NOT external, so the narrow `.ask` auto-approval it
+    /// unlocks can never be reached from a loopback/HTTP/MCP/plugin dispatch.
+    nonisolated static func isUnattended(_ request: DispatchRequest, externalSurface: Bool) -> Bool {
+        guard !externalSurface else { return false }
+        let source = request.runtimeSource
+        return request.unattended
+            || source == .schedule
+            || source == .selfSchedule
+            || source == .watcher
+    }
+
+    /// Reveal a dispatched run's chat (notification and toast taps); a no-op
+    /// for anything that isn't a managed background run.
+    public func openTaskWindowIfPresent(_ id: UUID) {
+        guard isBackgroundTask(id) else { return }
+        openTaskWindow(id)
+    }
+
+    /// Dispatch a chat task for background execution. The run is a task on
+    /// `request.queueId` (Default when nil) and waits there while the queue
+    /// or the agent is at its limit. `admittedTaskId` is set when another
+    /// owner already admitted the task (an automation's lane): the run then
+    /// starts at once and the owner ends the task.
+    /// Binds a hosted run's voice call and Privacy Filter choice for the run;
+    /// everything else inherits.
+    static func withHostedRunContext(
+        _ hosted: DispatchRequest.HostedRunChoices?,
+        _ body: () async -> Void
+    ) async {
+        guard let hosted else { return await body() }
+        await ChatExecutionContext.$isVoiceCall.withValue(hosted.voiceCall) {
+            await ChatExecutionContext.$voiceCallPrivacy.withValue(hosted.privacy) {
+                await body()
+            }
+        }
+    }
+
+    public func dispatchChat(_ request: DispatchRequest, admittedTaskId: UUID? = nil) async -> DispatchHandle? {
         do { try request.generationOverrides?.validate(forWorkspaceAgent: request.workspaceTarget != nil) }
         catch {
             print("[BackgroundTaskManager] Invalid generation controls: \(error.localizedDescription)")
@@ -1092,12 +1141,14 @@ public final class BackgroundTaskManager: ObservableObject {
                 workspaceDispatchRefusals[ref] = message
                 return nil
             }
-        } else {
+        } else if request.syncReviewerScope == nil {
             // Background dispatch is an external surface (HTTP / plugins /
             // schedules). Built-in agents (the Default agent) are only
             // reachable from the in-app Chat — refuse to route any non-Chat
             // traffic to them, and refuse to silently default to the built-in
-            // agent when an anonymous request comes in.
+            // agent when an anonymous request comes in. A chat hosted for one
+            // of the user's own synced devices (only `SyncHostRunner` sets
+            // `syncReviewerScope`) is the in-app Chat on that device.
             if Agent.rejectBuiltInForExternalSurface(
                 request.agentId,
                 source: "background/dispatchChat"
@@ -1123,6 +1174,11 @@ public final class BackgroundTaskManager: ObservableObject {
         // and a non-active matching session exists, reattach to it so the
         // new prompt becomes the next turn instead of starting a fresh row.
         let reattach = lookupReattachableSession(for: request)
+        if let id = request.continueSessionId, reattach == nil {
+            print("[BackgroundTaskManager] Refusing to continue session \(id): not found, busy or not this agent's")
+            return nil
+        }
+        let callingAgentId = workspacePrepared == nil ? nil : Self.remoteCallingAgentId()
         let context: ExecutionContext
         if let existing = reattach {
             // Same folder resolution as a fresh context: an explicit dispatch
@@ -1137,7 +1193,8 @@ public final class BackgroundTaskManager: ObservableObject {
                 workspace: workspacePrepared,
                 loadIntent: request.loadIntent,
                 delegationBudget: request.delegationContract,
-                delegationModel: request.delegationModel
+                delegationModel: request.delegationModel,
+                callingAgentId: callingAgentId
             )
         } else if let workspacePrepared {
             context = ExecutionContext(
@@ -1145,33 +1202,39 @@ public final class BackgroundTaskManager: ObservableObject {
                 workspace: workspacePrepared,
                 title: request.title,
                 source: request.source,
+                automationKind: request.automationKind,
                 externalSessionKey: request.externalSessionKey,
                 loadIntent: request.loadIntent,
-                delegationBudget: request.delegationContract
+                delegationBudget: request.delegationContract,
+                callingAgentId: callingAgentId
             )
         } else {
             context = createContext(for: request)
         }
-        // Admission: capacity available → start immediately; saturated →
-        // register as `.queued` and defer the start until `pumpQueue()`
-        // promotes it (FIFO). Either way the request is registered before
-        // execution so `awaitCompletion` always finds the task.
-        let startsImmediately = hasExecutionCapacity(agentId: request.agentId)
-
+        context.followsAgentModel = request.syncReviewerScope != nil
+        if let hosted = request.hostedRun {
+            context.pinnedModel = hosted.model
+            context.chatSession.pendingRunInstructions = hosted.instructions
+            context.chatSession.pendingHostedImageSettings = hosted.image
+        }
+        // Registered as `.queued` before admission so `awaitCompletion`
+        // always finds the task; admission (below) starts it now or leaves
+        // it waiting for the scheduler to promote it.
         let state = BackgroundTaskState(
             id: context.id,
             taskTitle: context.title ?? "Chat",
             agentId: context.agentId,
             chatSession: context.chatSession,
             executionContext: context,
-            status: startsImmediately ? .running : .queued,
-            currentStep: startsImmediately ? "Running..." : "Queued",
+            status: .queued,
+            currentStep: "Queued",
             source: request.source,
             sourcePluginId: request.sourcePluginId,
             externalSessionKey: request.externalSessionKey,
             showToast: request.showToast,
             target: request.target ?? .local(context.agentId)
         )
+        state.automationKind = request.automationKind
         if let workspacePrepared {
             state.workspaceAgentName = workspacePrepared.displayName
             let runKey = context.id.uuidString
@@ -1195,7 +1258,19 @@ public final class BackgroundTaskManager: ObservableObject {
             holdEventsForDispatch(taskId: context.id)
         }
         registerTask(state)
+        // A run dispatched from inside a chat turn (delegation, a tool's
+        // dispatch) is awaited by that turn; holding it behind the turn's
+        // own reservation would stall both. Delegation has its own RAM
+        // admission and residency handoff.
+        let dispatchedFromTurn = request.isDelegatedRun || ChatExecutionContext.currentSessionSource != nil
+        let claim: ResourceClaim? =
+            workspacePrepared == nil && !dispatchedFromTurn ? ResourceArbiter.claim(forAgent: context.agentId) : nil
+        if admittedTaskId == nil {
+            recordTask(for: request, state: state, claim: claim)
+        }
+        attachScheduling(state, owned: admittedTaskId == nil, taskId: admittedTaskId)
         observeChatTask(state, session: context.chatSession)
+        let taskId = admittedTaskId ?? context.id
 
         // Pre-seed the per-run budget caps from `Agent.settings.limits`
         // (spec §11.3). `tokensIn/Out` and `costUSD` start at 0 and are
@@ -1250,38 +1325,15 @@ public final class BackgroundTaskManager: ObservableObject {
             }
             guard state.status.isActive else { return }
 
-            // Agent DB run logging (spec §1.4 + §8). Only DB-enabled agents
-            // get an `agent_runs` row + a bound `currentRunId`; for the
-            // default agent and any user-created agent that hasn't opted
-            // in, this is a no-op so the existing dispatch surface keeps
-            // the same behavior and the same overhead.
+            // Agent DB attribution (spec §1.4 + §8). Only DB-enabled agents
+            // bind `currentRunId` (the run's task id) and write a run
+            // trace; for every other agent this is a no-op.
             var boundRunId: UUID? = nil
             var boundActor: String = "user"
             if context.workspaceTarget == nil, AgentManager.shared.effectiveDBEnabled(for: context.agentId) {
-                let triggerKind = Self.triggerKind(for: request.source)
-                // `triggerPayload` is intentionally minimal: persisting the
-                // full prompt here would duplicate ChatHistoryDatabase data
-                // and inflate the scheduler DB. We surface the dispatch
-                // source + external key so the Activity tab can tag the
-                // row with what woke it.
-                let triggerPayload = Self.triggerPayload(for: request)
-                do {
-                    try SchedulerDatabase.shared.open()
-                    let runId = try SchedulerDatabase.shared.recordRunStart(
-                        agentId: context.agentId,
-                        triggerKind: triggerKind,
-                        triggerPayload: triggerPayload,
-                        instructions: request.prompt
-                    )
-                    boundRunId = runId
-                    state.agentRunId = runId
-                    boundActor = "agent"
-                } catch {
-                    print(
-                        "[BackgroundTaskManager] recordRunStart failed for agent "
-                            + "\(context.agentId): \(error)"
-                    )
-                }
+                boundRunId = taskId
+                state.agentRunId = taskId
+                boundActor = "agent"
             }
             // Bind the run-id + actor + background-task id for the entire
             // chat task. `chatSession.send` creates an unstructured
@@ -1306,25 +1358,39 @@ public final class BackgroundTaskManager: ObservableObject {
             // answer an approval card. Marked only when NOT external, so the
             // narrow `.ask` auto-approval it unlocks can never be reached from a
             // loopback/HTTP/MCP/plugin dispatch.
-            let unattended =
-                !externalSurface
-                && (request.source == .schedule
-                    || request.source == .selfSchedule
-                    || request.source == .watcher)
-            await ChatExecutionContext.$currentSessionSource.withValue(request.source) {
+            let unattended = Self.isUnattended(request, externalSurface: externalSurface)
+            await ChatExecutionContext.$currentSessionSource.withValue(request.runtimeSource) {
                 await ChatExecutionContext.$isUnattendedDispatch.withValue(unattended) {
                     await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
                         await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
                             await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
                                 await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
-                                    await residencyContext.run {
-                                        await ChatExecutionContext.$inferenceSourceOverride.withValue(request.inferenceSourceOverride) {
-                                            if let startFailure = await context.start(prompt: request.prompt, taskIntent: request.taskIntent, generationOverrides: request.generationOverrides) {
-                                                // A rejected start never flips isStreaming. Complete this
-                                                // registered task explicitly rather than waiting forever
-                                                // for the ordinary streaming-observed terminal path.
-                                                self.markCompleted(state, success: false, summary: startFailure)
-                                                self.pumpQueue()
+                                    await ChatExecutionContext.$currentTaskId.withValue(taskId) {
+                                        await ChatExecutionContext.$currentParticipant.withValue(
+                                            request.author ?? ChatExecutionContext.currentParticipant
+                                        ) {
+                                            await residencyContext.run {
+                                                await ChatExecutionContext.$syncReviewerScope.withValue(
+                                                    request.syncReviewerScope
+                                                ) {
+                                                    await Self.withHostedRunContext(request.hostedRun) {
+                                                        await ChatExecutionContext.$inferenceSourceOverride.withValue(
+                                                            request.inferenceSourceOverride
+                                                        ) {
+                                                            context.chatSession.nextSendAuthor = request.author
+                                                            if let startFailure = await context.start(
+                                                                prompt: request.prompt, taskIntent: request.taskIntent,
+                                                                generationOverrides: request.generationOverrides)
+                                                            {
+                                                                // A rejected start never flips isStreaming. Complete this
+                                                                // registered task explicitly rather than waiting forever
+                                                                // for the ordinary streaming-observed terminal path.
+                                                                self.markCompleted(state, success: false, summary: startFailure)
+                                                                self.pumpQueue()
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1336,13 +1402,21 @@ public final class BackgroundTaskManager: ObservableObject {
             }
         }
 
-        if startsImmediately {
+        // Stopped from the registration callback, before admission: it
+        // never starts, and its slots were never taken.
+        guard state.status.isActive else {
+            if admittedTaskId == nil {
+                scheduler.store.transition(
+                    taskId, to: .cancelled, kind: .cancelled, actor: .system("background"), reason: "stopped")
+            }
+            return DispatchHandle(id: context.id, request: request)
+        }
+        if admittedTaskId != nil {
+            state.status = .running
+            state.currentStep = "Running..."
             await startWork()
-        } else {
-            queuedOrder.append(context.id)
-            pendingStarts[context.id] = startWork
-            state.appendActivity(kind: .info, title: "Queued — waiting for a free slot")
-            print("[BackgroundTaskManager] Queued chat task \(context.id) (capacity saturated)")
+        } else if admit(state, queueId: request.queueId, claim: claim, startWork: startWork) {
+            await startWork()
         }
 
         let reattachNote = reattach == nil ? "" : " (reattached to session \(context.id))"
@@ -1357,6 +1431,9 @@ public final class BackgroundTaskManager: ObservableObject {
     /// if a live in-memory task is already driving that session, to avoid
     /// double-stream into the same `ChatSession`.
     func lookupReattachableSession(for request: DispatchRequest) -> (data: ChatSessionData, live: ChatSession?)? {
+        if let id = request.continueSessionId {
+            return lookupContinuedSession(id, agentId: request.agentId, workspace: request.workspaceTarget)
+        }
         guard request.reattachSession,
             let key = request.externalSessionKey,
             !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1380,9 +1457,8 @@ public final class BackgroundTaskManager: ObservableObject {
         }
         if liveDuplicate { return nil }
 
-        let db = ChatHistoryDatabase.shared
-        // ChatHistoryDatabase.findSession opens lazily via shared singleton;
-        // ensure it's initialised so the lookup doesn't no-op on cold start.
+        let db = ConversationStores.current
+        // Open the store so the lookup doesn't no-op on cold start.
         do { try db.open() } catch {
             print("[BackgroundTaskManager] Failed to open chat history db for reattach: \(error)")
             return nil
@@ -1394,7 +1470,13 @@ public final class BackgroundTaskManager: ObservableObject {
         if request.source == .plugin, let pluginId = request.sourcePluginId {
             metadata = db.findSession(pluginId: pluginId, externalKey: key, agentId: agentId)
         } else {
-            metadata = db.findSession(source: request.source, externalKey: key, agentId: agentId)
+            // Automation conversations started before `.automation` was
+            // written still live under their trigger-specific source.
+            let runtime = request.runtimeSource
+            metadata =
+                db.findSession(source: request.source, externalKey: key, agentId: agentId)
+                ?? (runtime != request.source
+                    ? db.findSession(source: runtime, externalKey: key, agentId: agentId) : nil)
         }
         guard let metadata else { return nil }
         if let ref = request.workspaceTarget {
@@ -1420,6 +1502,47 @@ public final class BackgroundTaskManager: ObservableObject {
             let data = db.loadSession(id: metadata.id)
         else { return nil }
         return (data, live)
+    }
+
+    /// The stored session `id`, when it belongs to `agentId` and nothing else
+    /// is running it.
+    private func lookupContinuedSession(
+        _ id: UUID,
+        agentId: UUID?,
+        workspace: WorkspaceAgentRef? = nil
+    ) -> (data: ChatSessionData, live: ChatSession?)? {
+        let db = ConversationStores.current
+        do { try db.open() } catch {
+            print("[BackgroundTaskManager] Failed to open chat history db to continue \(id): \(error)")
+            return nil
+        }
+        guard backgroundTasks[id]?.status.isActive != true,
+            let data = db.loadSession(id: id),
+            Self.continues(data, agentId: agentId, workspace: workspace),
+            data.turns.last?.role == .user
+        else { return nil }
+        let live = ChatWindowManager.shared.session(forSessionId: id)
+            ?? LiveChatSessionRegistry.shared.liveSession(for: id)
+            ?? backgroundTasks[id]?.chatSession
+        if let live {
+            guard live.isAvailableForDispatchReattachment else { return nil }
+            // A live copy outranks the stored one, so it must already have
+            // the turn to answer.
+            if live.turns.last?.id != data.turns.last?.id {
+                guard live.canApplyRemoteChanges else { return nil }
+                live.applyRemoteChanges(from: data)
+                guard live.turns.last?.id == data.turns.last?.id else { return nil }
+            }
+        }
+        return (data, live)
+    }
+
+    /// A local agent's chat continues under that agent; a chat with a
+    /// teammate's shared agent continues only toward that same agent.
+    static func continues(_ data: ChatSessionData, agentId: UUID?, workspace: WorkspaceAgentRef?) -> Bool {
+        guard let workspace else { return data.agentId == agentId && data.workspace == nil }
+        guard data.isWorkspaceAgentChat, let stored = data.workspace else { return false }
+        return stored.workspaceId == workspace.workspaceId && stored.agentAddress.lowercased() == workspace.agentAddress
     }
 
     // MARK: - Completion Signaling
@@ -1463,8 +1586,6 @@ public final class BackgroundTaskManager: ObservableObject {
 
     // MARK: - Private: Dispatch Helpers
 
-    private static let maxTasksPerAgent = 5
-
     /// Structural validity of a dispatch request. Capacity is NOT checked
     /// here — a valid request that arrives while the limits are saturated is
     /// accepted and queued rather than rejected.
@@ -1480,60 +1601,242 @@ public final class BackgroundTaskManager: ObservableObject {
         return true
     }
 
-    /// Whether an execution slot is free under both the user-configurable
-    /// global limit and the per-agent limit. Only slot-consuming statuses
-    /// count: queued tasks haven't started, and tasks waiting for input
-    /// released their slot.
-    private func hasExecutionCapacity(agentId: UUID?) -> Bool {
-        let globalLimit = ToastManager.shared.configuration.maxConcurrentTasks
-        // Spawned-helper mirrors are visibility-only: the spawn itself is
-        // admitted (and budgeted) inside its parent turn, so counting the
-        // mirror here would double-charge one run against the limits.
-        // Inbound shared-agent runs are admitted by the HTTP surface's
-        // inference gate, not the dispatch queue, so they don't hold a
-        // dispatch slot either.
-        let slotted = backgroundTasks.values.filter {
-            $0.status.consumesExecutionSlot && !$0.isSubagentMirror && !$0.isInboundRun
-        }
-
-        guard slotted.count < globalLimit else { return false }
-
-        if let agentId {
-            let agentCount = slotted.filter { $0.agentId == agentId }.count
-            guard agentCount < Self.maxTasksPerAgent else { return false }
-        }
-
-        return true
+    /// Admit waiting runs into free slots (the scheduler skips a run whose
+    /// agent is at its cap, so it never blocks other agents' work).
+    private func pumpQueue() {
+        scheduler.pump()
     }
 
-    /// Promote queued tasks into free execution slots, oldest first. A task
-    /// whose agent is still at its per-agent cap is skipped so it doesn't
-    /// head-of-line block work for other agents; it stays queued in place.
-    private func pumpQueue() {
-        while true {
-            // Drop stale entries (cancelled/finalized while queued).
-            queuedOrder.removeAll { backgroundTasks[$0]?.status != .queued }
+    // MARK: - Private: Scheduling
 
-            guard
-                let nextId = queuedOrder.first(where: { id in
-                    guard let state = backgroundTasks[id] else { return false }
-                    return hasExecutionCapacity(agentId: state.agentId)
-                }),
-                let state = backgroundTasks[nextId],
-                let startWork = pendingStarts.removeValue(forKey: nextId)
-            else { return }
+    /// The scheduler id of a background task.
+    private func schedulerTaskId(_ stateId: UUID) -> UUID {
+        schedulerTaskIds[stateId] ?? stateId
+    }
 
-            queuedOrder.removeAll { $0 == nextId }
-            // Claim the slot synchronously so a second pump in the same
-            // runloop tick can't over-admit past the limit.
+    /// The slots a dispatched run holds: its queue and its agent's cap.
+    private func limits(for state: BackgroundTaskState) -> [TaskScheduler.Limit] {
+        guard !state.target.isWorkspace else { return [] }
+        return [.agent(state.agentId)]
+    }
+
+    /// Wires a registered run's status to its slots and task record.
+    /// Spawned-helper mirrors are visibility-only (the spawn is admitted
+    /// inside its parent turn), and inbound shared-agent runs are admitted
+    /// by the HTTP surface's inference gate, so neither holds a slot.
+    private func attachScheduling(_ state: BackgroundTaskState, owned: Bool, taskId: UUID? = nil) {
+        guard !state.isSubagentMirror, !state.isInboundRun else { return }
+        if let taskId, taskId != state.id { schedulerTaskIds[state.id] = taskId }
+        if owned { ownedTaskRecords.insert(state.id) } else { ownedTaskRecords.remove(state.id) }
+        state.onStatusChange = { [weak self, weak state] old, new in
+            guard let self, let state else { return }
+            self.schedulingStatusChanged(state, from: old, to: new)
+        }
+        if state.status.consumesExecutionSlot {
+            occupySlots(state)
+        }
+    }
+
+    /// Forced and idempotent: a run admitted by the scheduler already holds
+    /// its slots; a run that turned `.running` on its own takes them.
+    private func occupySlots(_ state: BackgroundTaskState) {
+        let id = schedulerTaskId(state.id)
+        let queueId = scheduler.store.task(id: id)?.queueId ?? TaskQueue.defaultID
+        let queueLimit = TaskScheduler.Limit(
+            key: TaskScheduler.Limit.queue(queueId), capacity: scheduler.store.policy(for: queueId).maxConcurrent)
+        scheduler.occupy(id, queueId: queueId, limits: [queueLimit] + limits(for: state))
+    }
+
+    /// Slots follow status: a run that starts holds them, a run waiting on
+    /// the user gives them back (it is never demoted to the queue), and a
+    /// finished run frees them.
+    private func schedulingStatusChanged(
+        _ state: BackgroundTaskState, from old: BackgroundTaskStatus, to new: BackgroundTaskStatus
+    ) {
+        let id = schedulerTaskId(state.id)
+        let store = scheduler.store
+        let owned = ownedTaskRecords.contains(state.id)
+        switch new {
+        case .running:
+            if old == .waitingForInput {
+                scheduler.resume(id)
+                store.transition(id, to: .running, kind: .resumed, actor: .system("background")) {
+                    if owned { $0.lease = TaskLease(owner: "background") }
+                }
+            } else {
+                occupySlots(state)
+                guard owned else { return }
+                store.transition(id, to: .running, kind: .started, actor: .system("background")) {
+                    $0.sessionId = state.id
+                    $0.lease = TaskLease(owner: "background")
+                }
+            }
+        case .waitingForInput:
+            scheduler.suspend(id)
+            store.transition(
+                id, to: .waitingUser, kind: .waitingUser, actor: .system("background"),
+                data: Self.waitingData(taskId: id, sessionId: state.chatSession?.sessionId ?? state.id))
+        case .queued:
+            break
+        case .completed, .failed, .cancelled:
+            guard owned else {
+                // The owner (an automation) ends the record and its lane.
+                scheduler.suspend(id)
+                return
+            }
+            scheduler.finish(id)
+            let finalState = TaskState(new)
+            let summary: String? = {
+                switch new {
+                case .completed(let s), .failed(let s): return s
+                default: return state.budgetExhaustedReason.map { "Budget exhausted: \($0)" }
+                }
+            }()
+            let tokensIn = state.tokensIn
+            let tokensOut = state.tokensOut
+            let cost = state.costUSD
+            store.transition(
+                id, to: finalState, kind: finalState == .cancelled ? .cancelled : .finished,
+                actor: .system("background"), reason: finalState == .failed ? summary : nil
+            ) { task in
+                task.lastError = finalState == .failed ? summary : nil
+                task.result = TaskResult(
+                    summary: summary, producedIds: [task.sessionId?.uuidString].compactMap { $0 },
+                    tokensIn: tokensIn > 0 ? tokensIn : nil, tokensOut: tokensOut > 0 ? tokensOut : nil,
+                    costUSD: cost > 0 ? cost : nil)
+            }
+        }
+    }
+
+    /// Renews a running task's lease from the run's own progress (token
+    /// usage, tool calls, status), at most once per heartbeat interval. A
+    /// run that stops producing anything goes Stale.
+    private func renewLease(_ stateId: UUID) {
+        guard let state = backgroundTasks[stateId], !state.isSubagentMirror, !state.isInboundRun else { return }
+        let now = Date()
+        let id = schedulerTaskId(stateId)
+        guard let task = scheduler.store.task(id: id), task.state == .running else { return }
+        let stepChanged = state.currentStep != nil && state.currentStep != task.progressNote
+        if !stepChanged, let last = leaseRenewedAt[stateId], now.timeIntervalSince(last) < TaskLease.heartbeatInterval {
+            return
+        }
+        leaseRenewedAt[stateId] = now
+        scheduler.store.heartbeat(id, owner: "background", note: state.currentStep)
+    }
+
+    /// Frees a run's slots when it leaves management without a terminal
+    /// status change (finalized while still active).
+    private func detachScheduling(_ state: BackgroundTaskState) {
+        state.onStatusChange = nil
+        leaseRenewedAt.removeValue(forKey: state.id)
+        let id = schedulerTaskId(state.id)
+        if ownedTaskRecords.remove(state.id) != nil {
+            scheduler.finish(id)
+            if scheduler.store.task(id: id)?.state.isTerminal == false {
+                scheduler.store.transition(id, to: .cancelled, kind: .cancelled, actor: .system("background"))
+            }
+        } else {
+            scheduler.suspend(id)
+        }
+        schedulerTaskIds.removeValue(forKey: state.id)
+    }
+
+    /// Submits an owned run. Returns true when it starts now (the caller
+    /// runs `startWork` inline); false when it waits (the scheduler starts
+    /// it later) or was refused (the run is marked failed).
+    private func admit(
+        _ state: BackgroundTaskState, queueId: UUID?, claim: ResourceClaim?,
+        startWork: @escaping @MainActor () async -> Void
+    ) -> Bool {
+        let queue = scheduler.store.resolvedQueue(queueId)
+        let admission = scheduler.submit(
+            TaskScheduler.Submission(
+                id: state.id,
+                queueId: queue.id,
+                limits: limits(for: state),
+                claim: claim,
+                onStart: { [weak self, weak state] in
+                    guard let self, let state, state.status == .queued else { return }
+                    state.status = .running
+                    state.currentStep = "Running..."
+                    state.appendActivity(kind: .info, title: "Started")
+                    self.recomputeSortedToastTasks()
+                    print("[BackgroundTaskManager] Promoted queued task \(state.id)")
+                    Task { @MainActor in await startWork() }
+                },
+                onDrop: { [weak self, weak state] reason in
+                    guard let self, let state else { return }
+                    self.refuse(state, reason: reason)
+                }
+            ))
+        switch admission {
+        case .started:
             state.status = .running
             state.currentStep = "Running..."
-            state.appendActivity(kind: .info, title: "Started")
-            recomputeSortedToastTasks()
-            print("[BackgroundTaskManager] Promoted queued task \(nextId)")
-            Task { @MainActor in
-                await startWork()
-            }
+            return true
+        case .queued:
+            state.status = .queued
+            state.currentStep = "Queued"
+            let waitingOn = scheduler.waitReason(state.id) == "foreground_active" ? " for the chat to finish" : ""
+            state.appendActivity(kind: .info, title: "Queued — waiting\(waitingOn) for a free slot")
+            print("[BackgroundTaskManager] Queued chat task \(state.id) on \(queue.slug)")
+            return false
+        case .rejected(let reason):
+            refuse(state, reason: reason)
+            return false
+        }
+    }
+
+    /// A run the queue would not take (full, dropped by overflow).
+    private func refuse(_ state: BackgroundTaskState, reason: String) {
+        let summary = reason == "queue_full" ? "The queue is full" : "Dropped from the queue (\(reason))"
+        scheduler.store.update(state.id) { $0.reason = reason }
+        state.status = .failed(summary: summary)
+        state.currentStep = nil
+        resumeCompletion(for: state.id, result: .failed(summary))
+        scheduleAutoFinalize(state.id)
+        recomputeSortedToastTasks()
+    }
+
+    /// Records the task an owned dispatch is.
+    private func recordTask(for request: DispatchRequest, state: BackgroundTaskState, claim: ResourceClaim?) {
+        let parent = ChatExecutionContext.currentTaskId.flatMap { scheduler.store.task(id: $0) }
+        let createdBy: TaskActor
+        if let pluginId = request.sourcePluginId {
+            createdBy = .system("plugin:\(pluginId)")
+        } else if let parentAgent = parent?.agentId {
+            createdBy = .agent(parentAgent)
+        } else {
+            createdBy = .user
+        }
+        var task = OsaurusTask(
+            id: state.id,
+            title: state.taskTitle,
+            rootId: parent?.rootId,
+            parentId: parent?.id,
+            depth: parent.map { $0.depth + 1 } ?? 0,
+            queueId: scheduler.store.resolvedQueue(request.queueId).id,
+            subscriptionId: request.subscriptionId,
+            origin: request.taskOrigin ?? TaskOrigin(source: request.source),
+            createdBy: createdBy,
+            work: .agentTurn(
+                AgentTurnWork(
+                    agentId: request.workspaceTarget == nil ? state.agentId : nil,
+                    targetKey: request.workspaceTarget?.key,
+                    source: request.source,
+                    externalSessionKey: request.externalSessionKey)),
+            orderingKey: request.externalSessionKey,
+            claim: claim)
+        task.sessionId = state.id
+        task.originSessionId = OsaurusTask.originSessionId(
+            parent: parent, interactive: ChatExecutionContext.interactiveSessionId)
+        task.transition(to: .queued)
+        scheduler.store.record(
+            task,
+            event: TaskEvent(
+                taskId: state.id, kind: .enqueued, actor: createdBy, data: ["source": request.source.rawValue]))
+        if let parent {
+            scheduler.store.journal(parent.id, .childSpawned, actor: createdBy, data: ["task_id": state.id.uuidString])
         }
     }
 
@@ -1598,17 +1901,25 @@ public final class BackgroundTaskManager: ObservableObject {
         /// especially ones exercising `cancelAllTasks` (app shutdown) —
         /// must not run against `.shared`, where they would cancel tasks
         /// registered by other concurrently-running suites.
+        /// Each test manager gets its own scheduler and in-memory task store,
+        /// so saturating its queue never holds another suite's work.
+        static func isolatedScheduler() -> TaskScheduler {
+            TaskScheduler(store: TaskStore(database: nil), reservations: ForegroundReservationCenter())
+        }
+
         static func makeForTesting() -> BackgroundTaskManager {
             BackgroundTaskManager(
                 persistsRetainedTabs: false,
-                powerManager: nil
+                powerManager: nil,
+                scheduler: isolatedScheduler()
             )
         }
 
         static func makeForTesting(powerManager: AgentRunPowerManager) -> BackgroundTaskManager {
             BackgroundTaskManager(
                 persistsRetainedTabs: false,
-                powerManager: powerManager
+                powerManager: powerManager,
+                scheduler: isolatedScheduler()
             )
         }
 
@@ -1616,15 +1927,18 @@ public final class BackgroundTaskManager: ObservableObject {
             BackgroundTaskManager(
                 persistsRetainedTabs: true,
                 retainedTabsDefaults: defaults,
-                powerManager: nil
+                powerManager: nil,
+                scheduler: isolatedScheduler()
             )
         }
 
         /// Test-only: insert a pre-built `BackgroundTaskState` directly so
         /// regression tests can exercise `observeChatTask` without spinning up
-        /// a real `ExecutionContext` + MLX-backed engine.
+        /// a real `ExecutionContext` + MLX-backed engine. A running state
+        /// holds its slots like any dispatched run.
         func registerTaskForTesting(_ state: BackgroundTaskState) {
             backgroundTasks[state.id] = state
+            attachScheduling(state, owned: true)
             recomputeSortedToastTasks()
         }
 
@@ -1645,19 +1959,24 @@ public final class BackgroundTaskManager: ObservableObject {
             _ state: BackgroundTaskState,
             start: @escaping @MainActor () async -> Void
         ) {
-            if hasExecutionCapacity(agentId: state.agentId) {
-                state.status = .running
-                backgroundTasks[state.id] = state
-                recomputeSortedToastTasks()
+            state.status = .queued
+            state.currentStep = "Queued"
+            backgroundTasks[state.id] = state
+            attachScheduling(state, owned: true)
+            recomputeSortedToastTasks()
+            if admit(state, queueId: nil, claim: nil, startWork: start) {
                 Task { @MainActor in await start() }
-            } else {
-                state.status = .queued
-                state.currentStep = "Queued"
-                backgroundTasks[state.id] = state
-                queuedOrder.append(state.id)
-                pendingStarts[state.id] = start
-                recomputeSortedToastTasks()
             }
+        }
+
+        /// Test-only: record the task an owned dispatch is, as `dispatchChat`
+        /// does before admission.
+        func recordTaskForTesting(_ request: DispatchRequest, state: BackgroundTaskState) {
+            recordTask(for: request, state: state, claim: nil)
+        }
+
+        func taskRecordForTesting(_ id: UUID) -> OsaurusTask? {
+            scheduler.store.task(id: schedulerTaskId(id))
         }
 
         /// Test-only: run a queue promotion pass.
@@ -1666,9 +1985,20 @@ public final class BackgroundTaskManager: ObservableObject {
         }
 
         /// Test-only: whether a dispatch for `agentId` would be admitted
-        /// right now (global + per-agent slot limits).
+        /// right now (Default queue + per-agent slot limits).
         func hasExecutionCapacityForTesting(agentId: UUID?) -> Bool {
-            hasExecutionCapacity(agentId: agentId)
+            let queueKey = TaskScheduler.Limit.queue(TaskQueue.defaultID)
+            let queueCap = scheduler.store.policy(for: TaskQueue.defaultID).maxConcurrent
+            guard scheduler.runningCount(key: queueKey) < queueCap else { return false }
+            guard let agentId else { return true }
+            return scheduler.runningCount(key: TaskScheduler.Limit.agent(agentId).key) < TaskScheduler.maxTasksPerAgent
+        }
+
+        /// Test-only: set the Default queue's concurrency limit.
+        func setDefaultQueueMaxConcurrentForTesting(_ value: Int) {
+            var queue = scheduler.store.defaultQueue
+            queue.policy.maxConcurrent = TaskQueuePolicy.clampConcurrent(value)
+            scheduler.store.updateQueue(queue)
         }
 
         /// Test-only: whether terminal cleanup is pending. Visible tasks
@@ -1701,7 +2031,8 @@ public final class BackgroundTaskManager: ObservableObject {
         // `dispatchChat` rejects requests with `agentId == nil || ==
         // Agent.defaultId` before reaching here (see the
         // `rejectBuiltInForExternalSurface` guard at the top of
-        // `dispatchChat`). The historical `?? Agent.defaultId` fallback
+        // `dispatchChat`). The Sync hosted runs it lets through always
+        // continue a stored session, so they never get here. The historical `?? Agent.defaultId` fallback
         // would silently route anonymous traffic to the built-in Default
         // agent — we keep the precondition explicit instead of restoring
         // the fallback.
@@ -1717,12 +2048,40 @@ public final class BackgroundTaskManager: ObservableObject {
             folderBookmark: folder?.bookmark,
             folderPath: folder?.path,
             source: request.source,
+            automationKind: request.automationKind,
             sourcePluginId: request.sourcePluginId,
             externalSessionKey: request.externalSessionKey,
             loadIntent: request.loadIntent,
             delegationBudget: request.delegationContract,
             delegationModel: request.delegationModel
         )
+    }
+
+    /// Who a task is waiting on, for its `waiting_user` event: the newest
+    /// blocking request on it, who asked, and what it is about. Names only.
+    static func waitingData(
+        taskId: UUID, sessionId: UUID, center: AttentionCenter = .shared
+    ) -> [String: String] {
+        guard
+            let item = center.pending.last(where: {
+                $0.kind.isBlocking && ($0.taskId == taskId || $0.sessionId == sessionId)
+            })
+        else { return [:] }
+        var data = ["attention_id": item.id.uuidString, "attention_kind": item.kind.rawValue]
+        if let tool = item.toolName { data["tool"] = tool }
+        if let requester = item.requester { data["who"] = ParticipantFormatter.short(requester) }
+        data["asked"] = item.kind == .ownerApproval ? "agent_owner" : "owner"
+        return data
+    }
+
+    /// The agent sending a run to a teammate's agent: the one whose tool call
+    /// is dispatching, when it has its own key to sign `osaurus_caller` with.
+    static func remoteCallingAgentId() -> UUID? {
+        guard let id = ChatExecutionContext.currentAgentId,
+            let agent = AgentManager.shared.agent(for: id),
+            !agent.isBuiltIn, agent.agentAddress?.isEmpty == false, agent.agentKeyPath != nil
+        else { return nil }
+        return id
     }
 
     /// The folder a local dispatch runs in: the request's own folder when it
@@ -1774,36 +2133,6 @@ public final class BackgroundTaskManager: ObservableObject {
         completionContinuations.removeValue(forKey: id)?.resume(returning: snapshot)
     }
 
-    /// Map a dispatch source to the audit-trail trigger kind we persist
-    /// in `agent_runs`. Spec §16 leaves room for finer breakdowns; this
-    /// is the minimal mapping that's stable for Phase 1.
-    private static func triggerKind(for source: SessionSource) -> AgentRunTriggerKind {
-        switch source {
-        case .chat, .plugin, .http, .channel, .imported, .delegation, .workspace: return .user
-        case .schedule: return .recurringSchedule
-        case .watcher: return .watcher
-        case .selfSchedule: return .schedule
-        }
-    }
-
-    /// Compact JSON describing what dispatched this run. Skips the
-    /// prompt itself (already in ChatHistoryDatabase) and the plugin
-    /// secrets — just the source + grouping key the Activity tab
-    /// surfaces.
-    private static func triggerPayload(for request: DispatchRequest) -> String? {
-        var fields: [String: String] = ["source": request.source.rawValue]
-        if let pluginId = request.sourcePluginId, !pluginId.isEmpty {
-            fields["plugin_id"] = pluginId
-        }
-        if let key = request.externalSessionKey, !key.isEmpty {
-            fields["external_session_key"] = key
-        }
-        guard let data = try? JSONEncoder().encode(fields),
-            let json = String(data: data, encoding: .utf8)
-        else { return nil }
-        return json
-    }
-
     /// Mark a task as completed and signal callers.
     /// The toast persists until the user views it or dismisses manually.
     private func markCompleted(_ state: BackgroundTaskState, success: Bool, summary: String) {
@@ -1830,35 +2159,17 @@ public final class BackgroundTaskManager: ObservableObject {
                 )
             }
         }
-        // Close out the scheduler `agent_runs` row, if one was opened
-        // for this task. `recordRunEnd` is a single UPDATE so the cost
-        // is negligible; failure to write only forfeits the audit
-        // trail entry, never the task's completion signal.
+        // Persist the per-run JSON trace for DB-enabled agents BEFORE we
+        // null out `agentRunId` so subsequent retries/observers can't
+        // accidentally write it twice (spec §1.8).
         if let runId = state.agentRunId {
-            let endStatus: AgentRunStatus = success ? .success : .error
-            let errorMessage: String? = success ? nil : summary
-            // Persist the per-run JSON trace BEFORE we null out
-            // `agentRunId` so subsequent retries/observers can't
-            // accidentally write it twice (spec §1.8).
             Self.writeRunTrace(
                 runId: runId,
                 state: state,
-                status: endStatus,
+                status: success ? .success : .error,
                 endedAt: Date(),
-                errorMessage: errorMessage
+                errorMessage: success ? nil : summary
             )
-            do {
-                try SchedulerDatabase.shared.recordRunEnd(
-                    runId: runId,
-                    status: endStatus,
-                    tokensIn: state.tokensIn > 0 ? state.tokensIn : nil,
-                    tokensOut: state.tokensOut > 0 ? state.tokensOut : nil,
-                    costUSD: state.costUSD > 0 ? state.costUSD : nil,
-                    error: errorMessage
-                )
-            } catch {
-                print("[BackgroundTaskManager] recordRunEnd failed for run \(runId): \(error)")
-            }
             state.agentRunId = nil
         }
         resumeCompletion(for: state.id, result: resultFromState(state))
@@ -1899,7 +2210,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// at fire time, and the re-armed warm-up still loads with background
     /// intent — it fills the freed slot and can never evict.
     private func releaseResidencyAndRearmChatWarmup(after state: BackgroundTaskState) {
-        let taskSource = state.source.inferenceSource
+        let taskSource = state.runtimeSource.inferenceSource
         let modelName = state.chatSession?.selectedModel
         Task { @MainActor in
             // The terminal transition can observably fire before the run's
@@ -1974,7 +2285,7 @@ public final class BackgroundTaskManager: ObservableObject {
             runId: runId,
             agentId: state.agentId,
             sessionId: state.id.uuidString,
-            triggerSource: state.source.rawValue,
+            triggerSource: state.runtimeSource.rawValue,
             status: status.rawValue,
             startedAt: state.createdAt,
             endedAt: endedAt,
@@ -2015,7 +2326,7 @@ public final class BackgroundTaskManager: ObservableObject {
     // MARK: - Dispatch Event Gating
 
     /// Begin holding task events for a dispatch in flight. Call on the main
-    /// actor *before* `TaskDispatcher.dispatch` so the hold is in place before
+    /// actor *before* `dispatchChat` so the hold is in place before
     /// `registerTask` emits the `.started` event.
     func holdEventsForDispatch(taskId: UUID) {
         dispatchHoldTasks.insert(taskId)
@@ -2055,6 +2366,7 @@ public final class BackgroundTaskManager: ObservableObject {
                 contextPreview: record.contextPreview
             )
             state.isInboundRun = record.isInboundRun ?? false
+            state.automationKind = record.automationKind
             backgroundTasks[record.id] = state
         }
         recomputeSortedToastTasks()
@@ -2175,7 +2487,28 @@ public final class BackgroundTaskManager: ObservableObject {
 
         // Forward state changes with throttling
         state.objectWillChange
-            .sink { [weak self] _ in self?.viewUpdateSubject.send() }
+            .sink { [weak self] _ in
+                self?.viewUpdateSubject.send()
+            }
+            .store(in: &cancellables)
+
+        // `objectWillChange` fires before the mutation; the hop reads the
+        // run's new step rather than the one it is leaving.
+        state.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.renewLease(taskId) }
+            .store(in: &cancellables)
+
+        // A cold model load or a tool still running produces no progress
+        // events. The run's liveness monitor already allows for those phases
+        // (it only calls a run stalled after their own thresholds), so the
+        // lease follows it rather than going Stale a minute into a load.
+        Timer.publish(every: TaskLease.heartbeatInterval, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self, weak session] _ in
+                guard let session, session.isStreaming, session.runProgress.state != .stalled else { return }
+                self?.renewLease(taskId)
+            }
             .store(in: &cancellables)
 
         // Streaming state + error drive running/completed/failed transitions.
@@ -2213,6 +2546,16 @@ public final class BackgroundTaskManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Workflow calls parked on forms wait like clarify; the session
+        // resumes itself once every run has ended.
+        session.$awaitingWorkflowRuns
+            .map { !$0.isEmpty }
+            .removeDuplicates()
+            .sink { [weak self] parked in
+                self?.handleWorkflowParkChange(taskId: taskId, parked: parked)
+            }
+            .store(in: &cancellables)
+
         taskObservers[taskId] = cancellables
     }
 
@@ -2234,6 +2577,7 @@ public final class BackgroundTaskManager: ObservableObject {
             // before tripping the terminal branch. The `.running` guard
             // above already excludes the normal post-bridge case.
             if state.chatSession?.awaitingClarify != nil { return }
+            if state.chatSession?.awaitingWorkflowRuns.isEmpty == false { return }
             if let lastError {
                 markCompleted(state, success: false, summary: lastError)
             } else {
@@ -2258,6 +2602,13 @@ public final class BackgroundTaskManager: ObservableObject {
         )
         // Waiting requests stay alive but release their execution slot so
         // queued work isn't starved by a task idling on the user.
+        pumpQueue()
+    }
+
+    private func handleWorkflowParkChange(taskId: UUID, parked: Bool) {
+        guard let state = backgroundTasks[taskId], parked else { return }
+        state.status = .waitingForInput
+        state.currentStep = "Waiting for a workflow form"
         pumpQueue()
     }
 

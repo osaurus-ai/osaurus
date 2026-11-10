@@ -324,7 +324,7 @@ enum AppleScriptToolDispatch {
         }
         guard let rawSessionId = ChatExecutionContext.currentSessionId,
             let sessionId = UUID(uuidString: rawSessionId),
-            let session = ChatHistoryDatabase.shared.loadSession(id: sessionId)
+            let session = ConversationStores.current.loadSession(id: sessionId)
         else { return nil }
         return session.turns.last(where: { $0.role == .user })?.content
     }

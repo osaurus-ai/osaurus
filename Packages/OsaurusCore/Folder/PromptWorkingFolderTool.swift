@@ -85,13 +85,21 @@ public final class PromptWorkingFolderTool: OsaurusTool, @unchecked Sendable {
     ///    folder the ask is moot, and in VM mode the model already has file
     ///    tools inside `/workspace` (a host pick would silently flip the
     ///    agent's sandbox off — that stays a user-initiated chip action);
+    ///  - never while the agent's sandbox is on and this host can run it: a
+    ///    VM that is still starting or held by another Osaurus app also
+    ///    resolves to `.none`, and the same silent flip would follow from a
+    ///    transient outage;
     ///  - only for an attended chat window (`.chat`, or an `.imported`
     ///    conversation the user continues in one). HTTP, plugin, channel,
     ///    schedule, watcher, delegation, and workspace runs have no one to
     ///    click a picker. `nil` (no source published) is NOT attended: the
     ///    HTTP agent-run and plugin compose paths publish none.
-    static func shouldExpose(executionMode: ExecutionMode, source: SessionSource?) -> Bool {
-        guard case .none = executionMode else { return false }
+    static func shouldExpose(
+        executionMode: ExecutionMode,
+        source: SessionSource?,
+        sandboxEnabled: Bool
+    ) -> Bool {
+        guard case .none = executionMode, !sandboxEnabled else { return false }
         switch source {
         case .chat, .imported: return true
         default: return false

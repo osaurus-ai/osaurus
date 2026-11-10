@@ -366,14 +366,24 @@ public enum ServerRuntimeSettingsStore {
         baseLoadConfiguration: LoadConfiguration = .default,
         bundleFacts: LoadBundleFacts? = nil,
         host: MemoryStatus? = nil,
-        request: VMLXMemoryRequestEstimate? = nil
+        request: VMLXMemoryRequestEstimate? = nil,
+        sandboxVMBytes: UInt64 = SandboxMemoryReservation.currentBytes
     ) -> VMLXResolvedMemorySafetyPlan {
         let settings = canonicalizedContextAndKVPolicy(settings)
+        // The running sandbox VM holds its guest RAM out of the same unified
+        // memory, so a request has to fit alongside it. The diagnostic mode
+        // promises no automatic caps and is left alone.
+        let sandboxShare = settings.memorySafety.mode == .diagnosticDangerous ? 0 : sandboxVMBytes
+        var admittedRequest = request
+        if sandboxShare > 0, let estimate = request?.workingSetBytes {
+            let (sum, overflow) = estimate.addingReportingOverflow(sandboxShare)
+            admittedRequest?.workingSetBytes = overflow ? UInt64.max : sum
+        }
         var plan = settings.resolvedMemorySafetyPlan(
             baseLoadConfiguration: baseLoadConfiguration,
             bundleFacts: bundleFacts,
             host: host,
-            request: request
+            request: admittedRequest
         )
         if settings.memorySafety.mode == .diagnosticDangerous {
             if settings.memorySafety.customPhysicalMemoryFraction == nil {
@@ -392,6 +402,15 @@ public enum ServerRuntimeSettingsStore {
             plan.resolvedLoadBudgetBytes = plan.loadConfiguration.memoryLimit.resolve(
                 physicalMemory: plan.resolvedPhysicalMemoryBytes
             )
+            if sandboxShare > 0, let budget = plan.resolvedLoadBudgetBytes {
+                plan.resolvedLoadBudgetBytes = budget > sandboxShare ? budget - sandboxShare : 0
+                let gb = Double(sandboxShare) / Double(1 << 30)
+                plan.warnings.append(
+                    String(
+                        format:
+                            "The running sandbox VM holds ~%.1f GB, so it is taken out of the model load budget. Lower Sandbox → Memory or stop the sandbox to give models more room.",
+                        gb))
+            }
         }
         plan.displaySummary = memorySafetyDisplaySummary(settings: settings, plan: plan)
         return plan

@@ -187,7 +187,7 @@ final class CacheSectionWiringTests: XCTestCase {
         let src = try source("Views/Settings/ServerSettings/CacheSection.swift")
         XCTAssertFalse(src.contains("limited to 25%%"))
         XCTAssertTrue(src.contains("result.exceedsAvailableSpace"))
-        XCTAssertTrue(src.contains("hasDiskSpaceWarning ? theme.errorColor"))
+        XCTAssertTrue(src.contains("hasDiskSpaceWarning ? theme.status.error.foreground"))
     }
 
     /// The share field must not be formatted to one decimal place.

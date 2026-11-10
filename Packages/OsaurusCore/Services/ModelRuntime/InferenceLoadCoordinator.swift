@@ -77,8 +77,22 @@ public final class HTTPInferenceAdmission: @unchecked Sendable {
     public final class Token: @unchecked Sendable {
         private let releasedOnce = OSAllocatedUnfairLock(initialState: false)
         private let gate: HTTPInferenceAdmission
+        private let reservation = OSAllocatedUnfairLock<UUID?>(initialState: nil)
 
         fileprivate init(gate: HTTPInferenceAdmission) { self.gate = gate }
+
+        /// Holds a foreground reservation for `model` until the slot is
+        /// released, so queued background work yields to the API client
+        /// waiting on this request.
+        public func reserveForeground(model: String?) {
+            let id = ForegroundReservationCenter.shared.reserve(
+                owner: "http:\(UUID().uuidString)", kind: .api, model: model)
+            let previous = reservation.withLock { held -> UUID? in
+                defer { held = id }
+                return held
+            }
+            ForegroundReservationCenter.shared.release(previous)
+        }
 
         /// Release the slot. Safe to call multiple times — only the first
         /// call decrements the gate.
@@ -88,7 +102,13 @@ public final class HTTPInferenceAdmission: @unchecked Sendable {
                 done = true
                 return true
             }
-            if shouldRelease { gate.release() }
+            guard shouldRelease else { return }
+            gate.release()
+            let held = reservation.withLock { held -> UUID? in
+                defer { held = nil }
+                return held
+            }
+            ForegroundReservationCenter.shared.release(held)
         }
 
         deinit { release() }

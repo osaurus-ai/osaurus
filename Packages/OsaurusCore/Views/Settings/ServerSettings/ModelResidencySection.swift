@@ -20,43 +20,45 @@ struct ModelResidencySection: View {
                 "When to evict a loaded model from RAM, and how long to keep it warm after the last request.",
             spacing: 16
         ) {
-            SettingsSubsection(label: "Eviction Policy") {
+            SettingsFieldRow(label: "Eviction Policy") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Picker("", selection: $draft.modelEvictionPolicy) {
-                        ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
-                            Text(policy.displayName).tag(policy)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    AssignedBaseSegmentedPicker(
+                        selection: $draft.modelEvictionPolicy,
+                        options: ModelEvictionPolicy.allCases.map { .init($0, $0.displayName, verbatim: true) }
+                    )
+                    .fixedSize()
+                    .accessibilityLabel(Text("Eviction Policy", bundle: .module))
 
                     Text(draft.modelEvictionPolicy.description)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
 
-            SettingsSubsection(label: "Model Residency") {
+            SettingsFieldRow(label: "Model Residency") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("Keep Model Loaded", isOn: $draft.modelIdleResidencyPolicy.keepsModelLoaded)
+                        .settingsCheckbox()
                         .accessibilityIdentifier("server.residency.keepLoaded")
                     if !draft.modelIdleResidencyPolicy.keepsModelLoaded {
-                        Picker("Unload After", selection: $draft.modelIdleResidencyPolicy) {
-                            ForEach(ModelIdleResidencyPolicy.presets.filter { $0 != .never }, id: \.self) { policy in
-                                Text(policy.displayName).tag(policy)
+                        SettingsRow(title: "Unload After", description: "") {
+                            SettingsMenuPicker(selection: $draft.modelIdleResidencyPolicy) {
+                                ForEach(ModelIdleResidencyPolicy.presets.filter { $0 != .never }, id: \.self) {
+                                    policy in
+                                    Text(policy.displayName).tag(policy)
+                                }
+                                // Keep an existing custom timeout representable.
+                                if !ModelIdleResidencyPolicy.presets.contains(draft.modelIdleResidencyPolicy) {
+                                    Text(draft.modelIdleResidencyPolicy.displayName).tag(draft.modelIdleResidencyPolicy)
+                                }
                             }
-                            // Keep an existing custom timeout representable.
-                            if !ModelIdleResidencyPolicy.presets.contains(draft.modelIdleResidencyPolicy) {
-                                Text(draft.modelIdleResidencyPolicy.displayName).tag(draft.modelIdleResidencyPolicy)
-                            }
+                            .accessibilityIdentifier("server.residency.unloadAfter")
                         }
-                        .pickerStyle(.menu)
-                        .accessibilityIdentifier("server.residency.unloadAfter")
                     }
 
                     Text(draft.modelIdleResidencyPolicy.description)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
         }

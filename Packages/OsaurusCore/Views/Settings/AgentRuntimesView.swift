@@ -2,7 +2,7 @@
 //  AgentRuntimesView.swift
 //  osaurus
 //
-//  Agents → Runtimes: the external harnesses (Claude Code, Pi over RPC, and
+//  Settings → Runtimes: the external harnesses (Claude Code, Pi over RPC, and
 //  Pi-based wrappers) an agent can run on instead of Osaurus's own loop.
 //
 
@@ -14,9 +14,6 @@ struct AgentRuntimesView: View {
     @ObservedObject private var store = HarnessRuntimeStore.shared
     @ObservedObject private var agentManager = AgentManager.shared
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    @State private var hasAppeared = false
     @State private var isCreating = false
     @State private var editingRuntime: HarnessRuntime?
     @State private var signInRuntime: HarnessRuntime?
@@ -26,44 +23,51 @@ struct AgentRuntimesView: View {
     @State private var testResults: [UUID: HarnessProbeResult] = [:]
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    aboutCard
-                    if store.runtimes.isEmpty {
-                        emptyCard
-                    } else {
-                        VStack(spacing: 8) {
-                            ForEach(store.runtimes) { runtime in
-                                runtimeRow(runtime)
-                            }
-                        }
-                        .settingsLandingAnchor("agentRuntimes.list")
+        SettingsPage {
+            SettingsPageHeader(
+                title: "Agent Runtimes",
+                subtitle: "External agent harnesses, like Claude Code or Pi, that run an agent's chats. Pick one in an agent's Configure tab.",
+                count: store.runtimes.count,
+                primary: {
+                    SettingsButton(.primary, "Add Runtime", icon: "plus") {
+                        isCreating = true
+                    }
+                    .settingsLandingAnchor("agentRuntimes.add")
+                }
+            )
+        } content: {
+            if store.runtimes.isEmpty {
+                SettingsEmptyState(
+                    inline: "terminal",
+                    title: "No runtimes yet",
+                    hint: "Add Claude Code, Pi, or a Pi-based harness to run agents on it."
+                )
+            } else {
+                SettingsGroup {
+                    ForEach(store.runtimes) { runtime in
+                        runtimeRow(runtime)
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 20)
-                .frame(maxWidth: .infinity)
+                .settingsLandingAnchor("agentRuntimes.list")
             }
-            .opacity(hasAppeared ? 1 : 0)
+
+            SettingsCallout(
+                icon: "lock.shield",
+                title: "Runs with your account's access",
+                message:
+                    "Each chat gets its own process in the chat's folder, and the harness brings its own model, tools, and history. Osaurus can scope Claude Code's file edits to the chat folder, but it can't confine shell commands or a Pi harness's tools."
+            )
+            .settingsLandingAnchor("agentRuntimes.safety")
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-        .onAppear {
-            store.loadIfNeeded()
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
+        .onAppear { store.loadIfNeeded() }
         .sheet(isPresented: $isCreating) {
             HarnessRuntimeEditorSheet(runtime: nil) { save($0) }
+                .environment(\.theme, themeManager.currentTheme)
         }
         .sheet(item: $editingRuntime) { runtime in
             HarnessRuntimeEditorSheet(runtime: runtime) { save($0) }
+                .environment(\.theme, themeManager.currentTheme)
         }
         .sheet(item: $signInRuntime) { runtime in
             ClaudeCodeSetupStep(
@@ -74,7 +78,7 @@ struct AgentRuntimesView: View {
                 },
                 runtime: runtime
             )
-            .frame(width: 520, height: 560)
+            .frame(width: SettingsSheetWidth.regular, height: 560)
             .environment(\.theme, themeManager.currentTheme)
         }
         .themedAlert(
@@ -91,212 +95,72 @@ struct AgentRuntimesView: View {
         )
     }
 
-    // MARK: - Header
-
-    private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Agent Runtimes"),
-            subtitle: L("External agent harnesses, like Claude Code or Pi, that can run an agent's chats"),
-            count: store.runtimes.isEmpty ? nil : store.runtimes.count
-        ) {
-            HeaderPrimaryButton("Add Runtime", icon: "plus") {
-                isCreating = true
-            }
-            .settingsLandingAnchor("agentRuntimes.add")
-        }
-    }
-
-    private var aboutCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "info.circle.fill")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                Text("How runtimes work", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-            }
-            Text(
-                "Pick a runtime in an agent's Configure tab. Each chat gets its own long-running process in the chat's folder, and Osaurus relays your messages to it. The harness brings its own model, tools, and history.",
-                bundle: .module
-            )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-            Text(
-                "Runtimes run on this Mac with your account's access. Osaurus can scope Claude Code's file edits to the chat folder, but it can't confine shell commands or a Pi harness's tools.",
-                bundle: .module
-            )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
-        )
-        .settingsLandingAnchor("agentRuntimes.safety")
-    }
-
-    private var emptyCard: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "terminal")
-                .font(.system(size: 22))
-                .foregroundColor(theme.tertiaryText)
-            Text("No runtimes yet", bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Text("Add Claude Code, Pi, or a Pi-based harness to run agents on it.", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(28)
-    }
-
     // MARK: - Rows
 
     private func runtimeRow(_ runtime: HarnessRuntime) -> some View {
-        GlassListRow {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(theme.accentColor.opacity(0.12))
-                            .frame(width: 36, height: 36)
-                        Image(systemName: "terminal.fill")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(verbatim: runtime.displayName)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                            Text(verbatim: runtime.kind.displayName)
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(theme.tertiaryBackground))
-                        }
-                        Text(verbatim: commandLine(runtime))
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(2)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                        Text(usageLabel(runtime))
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                        if runtime.kind == .piRPC, !runtime.resumesSessions {
-                            Text(
-                                "Chats start over when the process restarts. Add --session-id {chat_id} to the arguments to resume them.",
-                                bundle: .module
-                            )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.warningColor)
-                            .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    Spacer()
-
-                    HStack(spacing: 4) {
-                        if runtime.kind == .claudeCode {
-                            rowTextButton(L("Sign In")) { signInRuntime = runtime }
-                                .localizedHelp("Check or start Claude Code's sign-in")
-                        }
-                        rowTextButton(L("Test"), busy: testing.contains(runtime.id)) { runTest(runtime) }
-                            .localizedHelp("Start this runtime once to check that a chat can launch it")
-                        iconButton("pencil", tint: theme.secondaryText) { editingRuntime = runtime }
-                            .localizedHelp("Edit runtime")
-                        iconButton("trash", tint: theme.errorColor) {
-                            pendingDelete = runtime
-                            showDeleteAlert = true
-                        }
-                        .localizedHelp("Delete runtime")
-                    }
+        VStack(alignment: .leading, spacing: 8) {
+            LibraryRow(
+                title: runtime.displayName,
+                subtitle: commandLine(runtime),
+                monospacedSubtitle: true,
+                action: { editingRuntime = runtime }
+            ) {
+                SettingsIconTile(icon: "terminal.fill", size: 32)
+            } badges: {
+                if runtime.displayName != runtime.kind.displayName {
+                    StatusChip(runtime.kind.displayName)
                 }
-
-                if let result = testResults[runtime.id] {
-                    testResultView(result)
+                StatusChip(usageLabel(runtime))
+            } trailing: {
+                if runtime.kind == .claudeCode {
+                    SettingsButton(
+                        .secondary,
+                        "Sign In",
+                        size: .compact,
+                        help: "Check or start Claude Code's sign-in"
+                    ) { signInRuntime = runtime }
                 }
+                SettingsButton(
+                    .secondary,
+                    "Test",
+                    isLoading: testing.contains(runtime.id),
+                    size: .compact,
+                    help: "Start this runtime once to check that a chat can launch it"
+                ) { runTest(runtime) }
+                .disabled(testing.contains(runtime.id))
+            } menu: {
+                Button(L("Edit")) { editingRuntime = runtime }
+                Divider()
+                Button(L("Delete"), role: .destructive) {
+                    pendingDelete = runtime
+                    showDeleteAlert = true
+                }
+            }
+
+            if runtime.kind == .piRPC, !runtime.resumesSessions {
+                SettingsFindingRow(
+                    severity: .warning,
+                    title: L(
+                        "Chats start over when the process restarts. Add --session-id {chat_id} to the arguments to resume them."
+                    )
+                )
+            }
+            if let result = testResults[runtime.id] {
+                SettingsFindingRow(
+                    severity: severity(of: result),
+                    title: result.message,
+                    detail: result.resolvedExecutable
+                )
             }
         }
     }
 
-    private func testResultView(_ result: HarnessProbeResult) -> some View {
-        let tint: Color = {
-            switch result.status {
-            case .ready: return theme.successColor
-            case .needsSetup: return theme.warningColor
-            case .failed: return theme.errorColor
-            }
-        }()
-        let icon: String = {
-            switch result.status {
-            case .ready: return "checkmark.circle.fill"
-            case .needsSetup: return "exclamationmark.circle.fill"
-            case .failed: return "xmark.octagon.fill"
-            }
-        }()
-        return HStack(alignment: .top, spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundColor(tint)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: result.message)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.primaryText)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let executable = result.resolvedExecutable {
-                    Text(verbatim: executable)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .textSelection(.enabled)
-                }
-            }
-            Spacer(minLength: 0)
+    private func severity(of result: HarnessProbeResult) -> SettingsFindingRow.Severity {
+        switch result.status {
+        case .ready: return .ok
+        case .needsSetup: return .warning
+        case .failed: return .blocked
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(tint.opacity(0.08)))
-        .padding(.leading, 48)
-    }
-
-    private func rowTextButton(_ title: String, busy: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Group {
-                if busy {
-                    ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
-                } else {
-                    Text(verbatim: title).font(.system(size: 12, weight: .medium))
-                }
-            }
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground))
-        }
-        .buttonStyle(.plain)
-        .disabled(busy)
-    }
-
-    private func iconButton(_ symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13))
-                .foregroundColor(tint)
-                .frame(width: 30, height: 30)
-                .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground))
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Helpers
@@ -364,7 +228,6 @@ struct AgentRuntimesView: View {
 // MARK: - Editor
 
 struct HarnessRuntimeEditorSheet: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
     let runtime: HarnessRuntime?
@@ -377,168 +240,94 @@ struct HarnessRuntimeEditorSheet: View {
     @State private var environmentText = ""
     @State private var errors: [String] = []
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
     private var isEditing: Bool { runtime != nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(isEditing ? "Edit Runtime" : "Add Runtime", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
+        SettingsSheet(
+            icon: "terminal.fill",
+            title: isEditing ? "Edit Runtime" : "Add Runtime",
+            width: SettingsSheetWidth.regular,
+            maxBodyHeight: 520,
+            primary: .init(label: isEditing ? "Save" : "Add Runtime", handler: save),
+            secondary: .init(label: "Cancel") { dismiss() },
+            onClose: { dismiss() }
+        ) {
+            SettingsFieldRow(
+                label: "Protocol",
+                hint: kind == .piRPC
+                    ? L("Pi, or any harness built on Pi, driven over its RPC mode.")
+                    : L("Your signed-in Claude Code CLI, driven over stream-json."),
+                verbatimHint: true
+            ) {
+                AssignedBaseSegmentedPicker(
+                    selection: $kind,
+                    options: HarnessKind.allCases.map { .init($0, $0.displayName, verbatim: true) }
+                )
+                .fixedSize()
+                .accessibilityLabel(Text("Protocol", bundle: .module))
+                .disabled(isEditing)
+                .onChange(of: kind) { old, new in applyKindDefaults(from: old, to: new) }
             }
-            .padding(20)
 
-            Divider().opacity(0.3)
+            SettingsFieldRow(label: "Name") {
+                SettingsTextField(placeholder: L("e.g. Spotlight"), text: $name)
+            }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    field(L("Protocol")) {
-                        Picker("", selection: $kind) {
-                            ForEach(HarnessKind.allCases) { kind in
-                                Text(verbatim: kind.displayName).tag(kind)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .disabled(isEditing)
-                        .onChange(of: kind) { old, new in applyKindDefaults(from: old, to: new) }
-                        hint(
-                            kind == .piRPC
-                                ? L("Pi, or any harness built on Pi, driven over its RPC mode.")
-                                : L("Your signed-in Claude Code CLI, driven over stream-json.")
-                        )
-                    }
+            SettingsFieldRow(label: "Executable", hint: "A command on your PATH, or a full path. ~ is allowed.") {
+                HStack(spacing: 8) {
+                    SettingsTextField(placeholder: kind.defaultExecutable, text: $executable, monospaced: true)
+                    SettingsButton(.secondary, "Choose…") { chooseExecutable() }
+                }
+            }
 
-                    field(L("Name")) {
-                        textField(L("e.g. Spotlight"), text: $name)
-                    }
+            SettingsFieldRow(label: "Arguments", hint: argumentsHint, verbatimHint: true) {
+                SettingsTextEditor(
+                    text: $argumentsText,
+                    placeholder: kind == .piRPC ? "--mode\nrpc" : nil,
+                    minHeight: 64,
+                    maxHeight: 110,
+                    monospaced: true
+                )
+            }
 
-                    field(L("Executable")) {
-                        HStack(spacing: 8) {
-                            textField(kind.defaultExecutable, text: $executable, monospaced: true)
-                            Button(L("Choose…")) { chooseExecutable() }
-                        }
-                        hint(L("A command on your PATH, or a full path. ~ is allowed."))
-                    }
+            SettingsFieldRow(
+                label: "Environment",
+                hint:
+                    "One KEY=value per line. Saved unencrypted, so don't put API keys here; sign in through the harness instead. Osaurus sets the OSAURUS_* variables itself."
+            ) {
+                SettingsTextEditor(
+                    text: $environmentText,
+                    placeholder: "KEY=value",
+                    minHeight: 64,
+                    maxHeight: 110,
+                    monospaced: true,
+                    isInvalid: !errors.isEmpty
+                )
+            }
 
-                    field(L("Arguments")) {
-                        textEditor(text: $argumentsText, placeholder: kind == .piRPC ? "--mode\nrpc" : "")
-                        hint(
-                            kind == .piRPC
-                                ? L(
-                                    "One argument per line. Keep --mode rpc. Add --session-id {chat_id} so chats resume after a restart, and --append-system-prompt {system_prompt_file} to pass the agent's system prompt. Narrow its tools with --tools."
-                                )
-                                : L(
-                                    "One argument per line, added after the flags Osaurus sets (model, session, permissions). Usually empty."
-                                )
-                        )
-                        hint(L("Placeholders: {chat_id}, {agent_id}, {cwd}, {system_prompt_file}."))
-                    }
-
-                    field(L("Environment")) {
-                        textEditor(text: $environmentText, placeholder: "KEY=value")
-                        hint(
-                            L(
-                                "One KEY=value per line. Saved unencrypted, so don't put API keys here; sign in through the harness instead. Osaurus sets the OSAURUS_* variables itself."
-                            )
-                        )
-                    }
-
-                    if !errors.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(errors, id: \.self) { error in
-                                Text(verbatim: error)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.errorColor)
-                            }
-                        }
-                    } else if let warning = argumentWarning {
-                        Text(verbatim: warning)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.warningColor)
-                            .fixedSize(horizontal: false, vertical: true)
+            if !errors.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(errors, id: \.self) { error in
+                        SettingsFindingRow(severity: .blocked, title: error)
                     }
                 }
-                .padding(20)
+            } else if let warning = argumentWarning {
+                SettingsFindingRow(severity: .warning, title: warning)
             }
-
-            Divider().opacity(0.3)
-
-            HStack {
-                Spacer()
-                Button { dismiss() } label: { Text("Cancel", bundle: .module) }
-                    .buttonStyle(SlashCommandButtonStyle(theme: theme))
-                Button { save() } label: { Text(isEditing ? "Save" : "Add Runtime", bundle: .module) }
-                    .buttonStyle(SlashCommandButtonStyle(isPrimary: true, theme: theme))
-            }
-            .padding(16)
         }
-        .frame(width: 500, height: 620)
-        .background(theme.cardBackground)
         .onAppear(perform: load)
     }
 
-    // MARK: - Building blocks
-
-    private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            content()
-        }
-    }
-
-    private func hint(_ text: String) -> some View {
-        Text(verbatim: text)
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func textField(_ placeholder: String, text: Binding<String>, monospaced: Bool = false) -> some View {
-        TextField(placeholder, text: text)
-            .textFieldStyle(.plain)
-            .font(.system(size: 13, design: monospaced ? .monospaced : .default))
-            .foregroundColor(theme.primaryText)
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+    private var argumentsHint: String {
+        let usage =
+            kind == .piRPC
+            ? L(
+                "One argument per line. Keep --mode rpc, and --session-id {chat_id} so chats resume after a restart. The agent's system prompt is passed with --append-system-prompt unless the arguments place {system_prompt_file} themselves. Narrow its tools with --tools."
             )
-    }
-
-    private func textEditor(text: Binding<String>, placeholder: String) -> some View {
-        ZStack(alignment: .topLeading) {
-            if text.wrappedValue.isEmpty, !placeholder.isEmpty {
-                Text(verbatim: placeholder)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.placeholderText)
-                    .padding(.top, 10)
-                    .padding(.leading, 14)
-                    .allowsHitTesting(false)
-            }
-            TextEditor(text: text)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 64, maxHeight: 110)
-                .padding(8)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
-        )
+            : L(
+                "One argument per line, added after the flags Osaurus sets (model, session, permissions). Usually empty."
+            )
+        return usage + "\n" + L("Placeholders: {chat_id}, {agent_id}, {cwd}, {system_prompt_file}.")
     }
 
     // MARK: - Parsing

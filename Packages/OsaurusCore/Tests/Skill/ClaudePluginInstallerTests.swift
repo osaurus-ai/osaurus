@@ -10,7 +10,7 @@
 //  - Stable plugin id derivation used for grouping/uninstall.
 //
 //  Tests that would require network access or singleton disk writes
-//  (`SkillManager.shared`, `ScheduleStore`, `MCPProviderManager.shared`,
+//  (`SkillManager.shared`, `EventManager.shared`, `MCPProviderManager.shared`,
 //  `SlashCommandStore`) are intentionally omitted here — those are
 //  validated end-to-end through the importer UI.
 //

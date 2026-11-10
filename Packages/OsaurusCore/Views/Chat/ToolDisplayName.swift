@@ -14,6 +14,29 @@
 //
 
 import Foundation
+import os
+
+/// Names for the workflows a `run_workflow` call can name by id (an ask
+/// button's installed or prepared workflow), readable from any thread so
+/// tool titles never show a raw id.
+enum WorkflowCallNames {
+    private static let installed = OSAllocatedUnfairLock<[UUID: String]>(initialState: [:])
+    private static let prepared = OSAllocatedUnfairLock<[UUID: String]>(initialState: [:])
+
+    static func setInstalled(_ workflows: [InstalledWorkflow]) {
+        let names = Dictionary(workflows.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        installed.withLock { $0 = names }
+    }
+
+    static func setPrepared(_ templates: [Template]) {
+        let names = Dictionary(templates.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        prepared.withLock { $0 = names }
+    }
+
+    static func name(for id: UUID) -> String? {
+        installed.withLock { $0[id] } ?? prepared.withLock { $0[id] }
+    }
+}
 
 enum ToolDisplayName {
 
@@ -24,6 +47,25 @@ enum ToolDisplayName {
     /// is display-only — the committed name overwrites it before the call is
     /// ever executed. See `ChatView`'s tool-call-progress branch.
     static let pendingToolSentinel = "\u{2063}osaurus.pendingToolCall"
+
+    /// Display-only row in a teammate's agent run while a tool waits on the
+    /// agent's owner (`osaurus_owner_approval`). Arguments carry
+    /// `{"owner": "@x", "tool": "web_fetch", "phase": "…"}`.
+    static let ownerApprovalRowName = "\u{2063}osaurus.ownerApproval"
+
+    private static func ownerApprovalLabel(running: Bool, arguments: String?, failed: Bool) -> String {
+        let fields =
+            arguments.flatMap { $0.data(using: .utf8) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] } ?? [:]
+        let owner = fields["owner"] ?? L("the owner")
+        let tool = fields["tool"] ?? L("a tool")
+        if running { return L("Waiting for \(owner) to allow \(tool)") }
+        switch fields["phase"] {
+        case "timed_out": return L("\(owner) didn't answer in time for \(tool)")
+        case "denied": return L("\(owner) denied \(tool)")
+        default: return failed ? L("\(owner) denied \(tool)") : L("\(owner) allowed \(tool)")
+        }
+    }
 
     /// Present-continuous + past phrasings for one tool.
     private struct ToolLabel {
@@ -64,6 +106,9 @@ enum ToolDisplayName {
         failed: Bool = false,
         pendingBytes: Int = 0
     ) -> String {
+        if rawName == ownerApprovalRowName {
+            return ownerApprovalLabel(running: running, arguments: arguments, failed: failed)
+        }
         if rawName == pendingToolSentinel {
             // A call is being written but hasn't closed, so the tool isn't known
             // yet. Present-continuous only — it always resolves to the real name.
@@ -85,7 +130,8 @@ enum ToolDisplayName {
         // when e.g. `file_write` returns `ok:false`. Name the tool and mark the
         // failure instead. Only applies once the call has completed.
         if failed, !running {
-            return String(format: L("Failed: %@"), humanize(rawName))
+            let named = WorkflowToolCall.isWorkflowCall(rawName) ? workflowName(rawName, arguments: arguments) : nil
+            return String(format: L("Failed: %@"), named ?? humanize(rawName))
         }
         if isSearchTool(rawName) {
             return searchLabel(rawName, running: running, arguments: arguments)
@@ -101,6 +147,9 @@ enum ToolDisplayName {
         }
         if rawName == "osaurus_inspect" {
             return inspectLabel(running: running, arguments: arguments)
+        }
+        if WorkflowToolCall.isWorkflowCall(rawName) {
+            return workflowLabel(rawName, running: running, arguments: arguments)
         }
         // Other subagent tools (spawn, computer_use) take their
         // chip label from the capability registry (SSOT) so the chip and the
@@ -118,6 +167,69 @@ enum ToolDisplayName {
         }
         return humanize(rawName)
     }
+
+    /// Tools whose approval title is read from their `command` argument.
+    static let shellToolNames: Set<String> = ["shell_run", "sandbox_exec"]
+
+    /// Imperative phrasing for the approval sheet's title ("Run a Python
+    /// script", "Write a file"). `curated` is false for
+    /// the humanized fallback, so the sheet knows the title alone may not
+    /// say what the tool does.
+    static func approvalTitle(for rawName: String, arguments: String?) -> (title: String, curated: Bool) {
+        if shellToolNames.contains(rawName) {
+            let command = stringArgument("command", from: arguments) ?? ""
+            switch ShellCommandRiskScanner.action(for: command) {
+            case .installPythonPackages: return (L("Install Python packages"), true)
+            case .installNodePackages: return (L("Install Node packages"), true)
+            case .installSystemPackages: return (L("Install system packages"), true)
+            case .runPythonScript: return (L("Run a Python script"), true)
+            case .runPythonCode: return (L("Run Python code"), true)
+            case .runNodeScript: return (L("Run a Node script"), true)
+            case .shellCommand: return (L("Run a shell command"), true)
+            }
+        }
+        if rawName == "image" {
+            return (imageHasSourcePaths(arguments) ? L("Edit an image") : L("Generate an image"), true)
+        }
+        if let title = approvalTitles[rawName] { return (title, true) }
+        return (humanize(rawName), false)
+    }
+
+    private static func stringArgument(_ key: String, from arguments: String?) -> String? {
+        guard let arguments,
+            let data = arguments.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return json[key] as? String
+    }
+
+    /// Approval titles for built-in tools that commonly ask first.
+    private static let approvalTitles: [String: String] = [
+        "file_write": L("Write a file"),
+        "file_edit": L("Edit a file"),
+        "file_copy": L("Copy a file"),
+        "sandbox_write_file": L("Write a file in the sandbox"),
+        "sandbox_edit_file": L("Edit a file in the sandbox"),
+        "sandbox_install": L("Install packages in the sandbox"),
+        "sandbox_process": L("Manage a process in the sandbox"),
+        "sandbox_plugin_register": L("Register a plugin in the sandbox"),
+        "sandbox_secret_set": L("Save a secret in the sandbox"),
+        "git_commit": L("Commit changes"),
+        "redact_file": L("Redact personal information"),
+        "db_execute": L("Run a database command"),
+        "db_delete": L("Delete from the database"),
+        "db_drop_view": L("Remove a database view"),
+        "db_restore": L("Restore the database"),
+        "db_migrate": L("Migrate the database"),
+        "write_knowledge": L("Update a knowledge collection"),
+        "delete_knowledge": L("Delete knowledge documents"),
+        "notify": L("Send a notification"),
+        "speak": L("Speak aloud"),
+        "spawn": L("Hand a task to another agent"),
+        "spawn_agent": L("Hand a task to another agent"),
+        "spawn_workspace": L("Hand a task to a teammate's agent"),
+        "video": L("Generate a video"),
+    ]
 
     /// Whether `rawName` is a search tool whose title should embed its query.
     static func isSearchTool(_ rawName: String) -> Bool {
@@ -157,9 +269,36 @@ enum ToolDisplayName {
             return running ? L("Applying configuration changes") : L("Applied configuration changes")
         case "templates":
             return running ? L("Reading config templates") : L("Read config templates")
+        case "workflows":
+            return running ? L("Listing workflows") : L("Listed workflows")
         default:
             return running ? L("Configuring Osaurus") : L("Configured Osaurus")
         }
+    }
+
+    /// "Running Client Intake" for `run_workflow` (its `workflow` argument)
+    /// and `workflow_<slug>` (the slug).
+    private static func workflowLabel(_ rawName: String, running: Bool, arguments: String?) -> String {
+        guard let named = workflowName(rawName, arguments: arguments) else {
+            return running ? L("Running a workflow") : L("Ran a workflow")
+        }
+        return String(format: running ? L("Running %@") : L("Ran %@"), named)
+    }
+
+    /// The workflow a call runs, by name. A `workflow` argument that is an
+    /// id resolves to that workflow's name, or to nothing when it is unknown.
+    private static func workflowName(_ rawName: String, arguments: String?) -> String? {
+        if rawName == ArchitectHandoffTool.toolName { return nil }
+        guard rawName == RunWorkflowTool.toolName else {
+            return humanize(String(rawName.dropFirst(WorkflowTool.namePrefix.count)))
+        }
+        guard let data = arguments?.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let key = (json["workflow"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !key.isEmpty
+        else { return nil }
+        if let id = UUID(uuidString: key) { return WorkflowCallNames.name(for: id) }
+        return key
     }
 
     /// Action-aware label for `osaurus_inspect` (status / list / describe).
@@ -261,6 +400,7 @@ enum ToolDisplayName {
         "db_run_view": ToolLabel(L("Running a database view"), L("Ran a database view")),
 
         // Sandbox — "in sandbox" suffix makes the execution context explicit.
+        "sandbox_init_pending": ToolLabel(L("Preparing sandbox"), L("Prepared sandbox")),
         "sandbox_exec": ToolLabel(L("Running a command in sandbox"), L("Ran a command in sandbox")),
         "sandbox_read_file": ToolLabel(L("Reading a file in sandbox"), L("Read a file in sandbox")),
         "sandbox_write_file": ToolLabel(L("Writing a file in sandbox"), L("Wrote a file in sandbox")),
@@ -291,6 +431,7 @@ enum ToolDisplayName {
             L("Redacting personal information"), L("Redacted personal information")),
         "git_status": ToolLabel(L("Checking git status"), L("Checked git status")),
         "git_diff": ToolLabel(L("Viewing changes"), L("Viewed changes")),
+        "git_log": ToolLabel(L("Reading commit history"), L("Read commit history")),
         "git_commit": ToolLabel(L("Committing changes"), L("Committed changes")),
 
         // Osaurus self-management. `osaurus_config` / `osaurus_inspect` are
@@ -307,11 +448,13 @@ enum ToolDisplayName {
         "share_artifact": ToolLabel(L("Sharing a file"), L("Shared a file")),
         "speak": ToolLabel(L("Speaking"), L("Spoke")),
         "notify": ToolLabel(L("Sending a notification"), L("Sent a notification")),
+        "ask_owner": ToolLabel(L("Asking the owner"), L("Asked the owner")),
         "schedule_next_run": ToolLabel(L("Scheduling the next run"), L("Scheduled the next run")),
         "cancel_next_run": ToolLabel(L("Canceling the scheduled run"), L("Canceled the scheduled run")),
 
         // Agent-loop (rendered as first-class UI, listed for completeness)
         "todo": ToolLabel(L("Updating the task list"), L("Updated the task list")),
+        "status": ToolLabel(L("Checking what's running"), L("Checked what's running")),
         "complete": ToolLabel(L("Finishing up"), L("Finished")),
         "clarify": ToolLabel(L("Asking a question"), L("Asked a question")),
         // Picker-backed folder attach: rendered as a normal chip so the

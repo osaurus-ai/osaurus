@@ -65,6 +65,72 @@ public enum AgentStore {
     // against the directory listing — one enumeration instead of N file
     // reads + JSON decodes.
     private static var loadedCustomAgents: [UUID: Agent]?
+    /// Bumped by every in-process record write so a background prewarm that
+    /// read the directory before the write never seeds the memo with it.
+    private static var recordWriteGeneration = 0
+    /// The launch prewarm, for callers that want the memo seeded first.
+    private(set) static var prewarmTask: Task<Void, Never>?
+
+    /// Reads and decodes the custom agent files off the main thread and seeds
+    /// the `loadAll` memo, so the first `AgentManager.shared` on main pays one
+    /// directory listing instead of N file reads and JSON decodes. Skipped
+    /// while a legacy `Personas/` directory still needs migrating (that runs
+    /// on the first `loadAll`, as before).
+    public static func prewarmInBackground() {
+        guard prewarmTask == nil, loadedCustomAgents == nil else { return }
+        let generation = recordWriteGeneration
+        prewarmTask = Task { @MainActor in
+            let decoded = await Task.detached(priority: .userInitiated) { () -> [UUID: Agent]? in
+                let root = OsaurusPaths.root()
+                let fm = FileManager.default
+                for name in ["Personas", "personas"] {
+                    var isDir = ObjCBool(false)
+                    if fm.fileExists(atPath: root.appendingPathComponent(name).path, isDirectory: &isDir),
+                        isDir.boolValue
+                    {
+                        return nil
+                    }
+                }
+                flushPendingWrites()
+                return decodeCustomAgents(in: agentsDirectory())
+            }.value
+            guard let decoded, loadedCustomAgents == nil, recordWriteGeneration == generation else { return }
+            loadedCustomAgents = decoded
+        }
+    }
+
+    /// Agent fields Osaurus Classic drops when it saves an agent.
+    nonisolated static let classicUnknownFields: [ClassicResaveRecovery.FieldPath] = [
+        ["sharedToolApproval"],
+        ["pluginId"],
+        ["autonomousExec", "hostServicesEnabled"],
+        ["settings", "enabledWorkflowIDs"],
+        ["settings", "workingFolderReadOnly"],
+        ["settings", "followUp", "enabled"],
+    ]
+
+    private nonisolated static func decodeAgent(_ data: Data, at url: URL, using decoder: JSONDecoder) throws -> Agent {
+        try decoder.decode(
+            Agent.self, from: ClassicResaveRecovery.restoring(data, at: url, fields: classicUnknownFields))
+    }
+
+    private nonisolated static func decodeCustomAgents(in directory: URL) -> [UUID: Agent]? {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let builtInIds: Set<UUID> = [Agent.defaultId, Agent.architectId]
+        var custom: [UUID: Agent] = [:]
+        for file in files where file.pathExtension == "json" {
+            do {
+                let agent = try decodeAgent(Data(contentsOf: file), at: file, using: decoder)
+                if !builtInIds.contains(agent.id) { custom[agent.id] = agent }
+            } catch {
+                print("[Osaurus] Failed to load agent from \(file.lastPathComponent): \(error)")
+            }
+        }
+        return custom
+    }
 
     /// Load all agents sorted by name, including built-ins
     public static func loadAll() -> [Agent] {
@@ -72,8 +138,10 @@ public enum AgentStore {
         // `Agent.defaultAgentNameOverride` (the user's custom Orchestrator
         // name) is populated before `Agent.builtInAgents` builds the
         // Default agent below — otherwise the first snapshot after a cold
-        // launch would render the stock "Osaurus" name.
+        // launch would render the stock "Osaurus" name. Same for the
+        // Architect's custom name and avatar.
         _ = DefaultAgentConfigurationStore.load()
+        _ = ArchitectConfigurationStore.load()
         // Cheap when the queue is idle; guarantees the listing check below
         // sees writes queued by `save` in program order.
         flushPendingWrites()
@@ -102,7 +170,7 @@ public enum AgentStore {
         for file in files where file.pathExtension == "json" {
             do {
                 let data = try Data(contentsOf: file)
-                let agent = try decoder.decode(Agent.self, from: data)
+                let agent = try decodeAgent(data, at: file, using: decoder)
                 if !Agent.builtInAgents.contains(where: { $0.id == agent.id }) {
                     custom[agent.id] = agent
                 }
@@ -256,7 +324,7 @@ public enum AgentStore {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode(Agent.self, from: data)
+            return try decodeAgent(data, at: url, using: decoder)
         } catch {
             throw PersistenceError.unreadable(id, underlying: error)
         }
@@ -280,7 +348,7 @@ public enum AgentStore {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode(Agent.self, from: data)
+            return try decodeAgent(data, at: url, using: decoder)
         } catch {
             print("[Osaurus] Failed to load agent \(id): \(error)")
             return nil
@@ -296,6 +364,7 @@ public enum AgentStore {
 
         let url = agentFileURL(for: agent.id)
         loadedCustomAgents?[agent.id] = agent
+        recordWriteGeneration &+= 1
 
         do {
             // Encode on the caller (cheap, and `Agent` needn't be Sendable);
@@ -307,6 +376,7 @@ public enum AgentStore {
             let agentId = agent.id
             writeQueue.async {
                 OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+                ClassicResaveRecovery.recordWrite(data, to: url)
                 do {
                     try data.write(to: url, options: [.atomic])
                 } catch {
@@ -335,11 +405,22 @@ public enum AgentStore {
             try? FileManager.default.removeItem(at: url)
         }
 
-        // Agent DB feature: drop scheduler rows + the per-agent DB
-        // directory. Each cleanup is best-effort so a missing
-        // scheduler.sqlite (feature not yet initialised) doesn't
-        // block agent deletion.
+        // Agent DB feature: drop the pause row, the agent's self-scheduled
+        // wake (and its run history) + the per-agent DB directory. Each
+        // cleanup is best-effort so a missing scheduler.sqlite (feature not
+        // yet initialised) doesn't block agent deletion.
         try? SchedulerDatabase.shared.deleteAllForAgent(id)
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                SelfScheduleAutomations.removeAll(agentId: id)
+                TaskStore.shared.deleteTasks(agentId: id)
+            }
+        } else {
+            Task { @MainActor in
+                SelfScheduleAutomations.removeAll(agentId: id)
+                TaskStore.shared.deleteTasks(agentId: id)
+            }
+        }
         try? AgentDatabaseStore.shared.deleteOnDisk(for: id)
         // The serial queue + open DB handle inside LocalAgentBridge
         // outlives `deleteOnDisk` (those live in a separate registry
@@ -349,7 +430,9 @@ public enum AgentStore {
 
         do {
             try FileManager.default.removeItem(at: agentFileURL(for: id))
+            ClassicResaveRecovery.forget(agentFileURL(for: id))
             loadedCustomAgents?.removeValue(forKey: id)
+            recordWriteGeneration &+= 1
             return true
         } catch {
             print("[Osaurus] Failed to delete agent \(id): \(error)")
@@ -486,7 +569,9 @@ public enum AgentStore {
         // The record may still be a queued write; serialize before removal.
         flushPendingWrites()
         loadedCustomAgents?.removeValue(forKey: id)
+        recordWriteGeneration &+= 1
         let url = agentFileURL(for: id)
+        ClassicResaveRecovery.forget(url)
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         do {
             try FileManager.default.removeItem(at: url)
@@ -513,7 +598,6 @@ private extension Agent {
             name: name,
             description: description,
             systemPrompt: systemPrompt,
-            themeId: themeId,
             defaultModel: defaultModel,
             temperature: temperature,
             maxTokens: maxTokens,
@@ -528,7 +612,6 @@ private extension Agent {
             agentAddress: nil,
             autonomousExec: autonomousExec,
             pluginInstructions: pluginInstructions,
-            bonjourEnabled: bonjourEnabled,
             toolSelectionMode: toolSelectionMode,
             manualToolNames: manualToolNames,
             skillNames: skillNames,
@@ -551,7 +634,6 @@ private extension Agent {
             name: "\(name) (Recovered)",
             description: description,
             systemPrompt: systemPrompt,
-            themeId: themeId,
             defaultModel: defaultModel,
             temperature: temperature,
             maxTokens: maxTokens,
@@ -566,7 +648,6 @@ private extension Agent {
             agentAddress: nil,
             autonomousExec: autonomousExec,
             pluginInstructions: pluginInstructions,
-            bonjourEnabled: bonjourEnabled,
             toolSelectionMode: toolSelectionMode,
             manualToolNames: manualToolNames,
             skillNames: skillNames,

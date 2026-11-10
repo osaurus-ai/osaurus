@@ -12,16 +12,15 @@ import SwiftUI
 #endif
 
 /// Pages of the Channels pane: connection management is the primary surface;
-/// Activity is a secondary destination reached from the header.
-private enum AgentChannelsPage: String, CaseIterable, AnimatedTabItem {
+/// Outbox holds sending. What incoming messages did lives in Automations
+/// History.
+private enum AgentChannelsPage: String, CaseIterable {
     case connections
-    case activity
     case outbox
 
     var title: String {
         switch self {
         case .connections: return L("Channels")
-        case .activity: return L("Activity")
         case .outbox: return L("Outbox")
         }
     }
@@ -31,25 +30,28 @@ private enum AgentChannelsPage: String, CaseIterable, AnimatedTabItem {
 private enum AgentChannelSheetTarget: Identifiable {
     case addChannel
     case native(AgentChannelKind)
+    /// Another account of a native channel, by connection id.
+    case account(AgentChannelKind, String)
+    /// A channel's next account, before it exists.
+    case newAccount(AgentChannelKind)
     case editCustom(AgentChannelConnection)
     case editN8n(AgentChannelConnection)
-    case addDestination
-    case editDestination(AgentChannelBinding)
 
     var id: String {
         switch self {
         case .addChannel: return "add-channel"
         case .native(let kind): return "native-\(kind.rawValue)"
+        case .account(_, let connectionId): return "account-\(connectionId)"
+        case .newAccount(let kind): return "new-account-\(kind.rawValue)"
         case .editCustom(let connection): return "custom-\(connection.id)"
         case .editN8n(let connection): return "n8n-\(connection.id)"
-        case .addDestination: return "destination-new"
-        case .editDestination(let binding): return "destination-\(binding.id)"
         }
     }
 }
 
 struct AgentChannelConnectionCenterView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
     @Environment(\.settingsLandingPending) private var landingPending
 
     @State private var hasAppeared = false
@@ -58,6 +60,9 @@ struct AgentChannelConnectionCenterView: View {
     @State private var nativeBadges: [AgentChannelKind: AgentChannelStatusPresentation] = [:]
     @State private var nativeRoutingDetails: [AgentChannelKind: String] = [:]
     @State private var nativeConfigured: [AgentChannelKind: Bool] = [:]
+    /// Every account past each channel's first, with its own badge.
+    @State private var extraAccounts: [ChannelAccount] = []
+    @State private var accountBadges: [String: AgentChannelStatusPresentation] = [:]
     /// True once the first native-credential probe has reported back, so the
     /// sidebar badge is only published from a complete picture.
     @State private var nativeBadgesResolved = false
@@ -67,23 +72,15 @@ struct AgentChannelConnectionCenterView: View {
     @State private var n8nPendingCounts: [String: Int] = [:]
     /// Effective posting rooms: stored bindings plus automatic ones derived
     /// from the channel setup (writable rooms × assigned agents).
-    @State private var destinationBindings: [AgentChannelBinding] = []
-    @State private var storedDestinationIds: Set<String> = []
     /// Rows needing operator attention (pending approvals + unconfirmed
     /// deliveries), surfaced as a count on the Outbox header button.
     @State private var pendingOutboxCount = 0
-
-    @State private var auditScopeId: String?
-    @State private var auditSnapshot: AgentChannelAuditWorkbenchSnapshot?
-    @State private var auditErrorMessage: String?
-    @State private var isLoadingAudit = false
-    @State private var auditLoadID = UUID()
+    @State private var overviewGrouping: ChannelsOverviewGrouping = .byChannel
 
     @State private var globalWritesEnabled = true
     @State private var focusChatOnInboundEnabled = false
 
     private let manager = AgentChannelConnectionManager.shared
-    private let auditWorkbench = AgentChannelAuditWorkbenchService()
     private let writeKillSwitch = ChannelWriteKillSwitch.shared
     private let focusPreference = AgentChannelInboundFocusPreference.shared
 
@@ -91,15 +88,20 @@ struct AgentChannelConnectionCenterView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
+            if page == .outbox {
+                SettingsPageHeader(title: "Outbox", subtitle: headerSubtitle)
+                    .settingsBackDestination(L("Channels"), verbatim: true) {
+                        withAnimation(theme.motion.quick) { page = .connections }
+                    }
+            } else {
+                headerView
+                    .settingsHeaderEntrance(hasAppeared: hasAppeared)
+            }
 
             Group {
                 switch page {
                 case .connections:
                     connectionsPage
-                case .activity:
-                    activityTab
                 case .outbox:
                     AgentChannelOutboxView()
                 }
@@ -107,27 +109,35 @@ struct AgentChannelConnectionCenterView: View {
             .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             reloadWriteGate()
             focusChatOnInboundEnabled = focusPreference.isEnabled
             reloadConnections()
             refreshNativeBadges()
-            reloadAuditWorkbench()
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
+            withAnimation(theme.motion.standard.delay(0.05)) {
                 hasAppeared = true
             }
+            openPendingChannel()
         }
         .onChange(of: page) {
             if page == .connections {
                 refreshNativeBadges()
-            } else if page == .activity {
-                reloadAuditWorkbench()
             }
         }
         .onChange(of: landingPending) { _, pending in
             routeForLandingTarget(pending)
+        }
+        .onChange(of: managementState.pendingChannelConnectionId) { _, _ in
+            openPendingChannel()
+        }
+        .onReceive(
+            NotificationCenter.default
+                .publisher(for: .agentChannelConfigurationChanged)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            reloadConnections()
         }
         .onReceive(
             NotificationCenter.default
@@ -143,13 +153,51 @@ struct AgentChannelConnectionCenterView: View {
         ) { _ in
             reloadN8nPendingCounts()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .eventsChanged).receive(on: DispatchQueue.main)) { _ in
+            refreshNativeBadges()
+        }
         .task {
             routeForLandingTarget(landingPending)
         }
         .sheet(item: $activeSheet, onDismiss: handleSheetDismiss) { target in
+            channelSheet(target)
+                .environment(\.channelSheetIsEditing, isEditing(target))
+                .themedAlertSheetHost()
+        }
+    }
+
+    /// Whether the sheet opens on something already set up, so it reads as
+    /// tabs rather than setup steps.
+    private func isEditing(_ target: AgentChannelSheetTarget) -> Bool {
+        switch target {
+        case .native(let kind): return nativeConfigured[kind] == true
+        case .account, .editCustom, .editN8n: return true
+        case .addChannel, .newAccount: return false
+        }
+    }
+
+    /// A channel's add button: its first account fills the channel's own
+    /// slot; later ones are new accounts.
+    private func addAccount(_ kind: AgentChannelKind) {
+        activeSheet = hasAccount(kind) ? .newAccount(kind) : .native(kind)
+    }
+
+    /// True when the kind already has a connected account, so adding one
+    /// creates another instead of setting up the first.
+    private func hasAccount(_ kind: AgentChannelKind) -> Bool {
+        nativeConfigured[kind] == true || extraAccounts.contains { $0.kind == kind }
+    }
+
+    @ViewBuilder
+    private func channelSheet(_ target: AgentChannelSheetTarget) -> some View {
             switch target {
             case .addChannel:
-                AgentChannelAddChannelSheet(nativeBadges: configuredNativeBadges) {
+                AgentChannelAddChannelSheet(
+                    nativeBadges: configuredNativeBadges,
+                    opensNewAccount: { kind in
+                        ChannelAccounts.multiAccountKinds.contains(kind) && hasAccount(kind)
+                    }
+                ) {
                     reloadConnections()
                 }
             case .native(.discord):
@@ -162,6 +210,28 @@ struct AgentChannelConnectionCenterView: View {
                 IMessageSettingsView()
             case .native(.whatsapp):
                 WhatsAppSettingsView()
+            case .native(.email):
+                EmailSettingsView()
+            case .account(.discord, let id):
+                DiscordSettingsView(connectionId: id)
+            case .account(.slack, let id):
+                SlackSettingsView(connectionId: id)
+            case .account(.telegram, let id):
+                TelegramSettingsView(connectionId: id)
+            case .account(.email, let id):
+                EmailSettingsView(connectionId: id)
+            case .account:
+                EmptyView()
+            case .newAccount(.discord):
+                DiscordSettingsView(newAccount: true)
+            case .newAccount(.slack):
+                SlackSettingsView(newAccount: true)
+            case .newAccount(.telegram):
+                TelegramSettingsView(newAccount: true)
+            case .newAccount(.email):
+                EmailSettingsView(newAccount: true)
+            case .newAccount:
+                EmptyView()
             case .native(.customHTTP), .native(.n8n):
                 // Custom HTTP and n8n connections are stored rows, never
                 // presented as a fixed native channel.
@@ -174,16 +244,7 @@ struct AgentChannelConnectionCenterView: View {
                 N8nSettingsView(connection: connection) {
                     reloadConnections()
                 }
-            case .addDestination:
-                AgentChannelDestinationEditorSheet(binding: nil) {
-                    reloadConnections()
-                }
-            case .editDestination(let binding):
-                AgentChannelDestinationEditorSheet(binding: binding) {
-                    reloadConnections()
-                }
             }
-        }
     }
 
     // MARK: - Header
@@ -193,7 +254,8 @@ struct AgentChannelConnectionCenterView: View {
     }
 
     private var connectedChannelCount: Int {
-        Self.nativeProviderKinds.filter { nativeConfigured[$0] == true }.count + connections.count
+        Self.nativeProviderKinds.filter { nativeConfigured[$0] == true }.count + extraAccounts.count
+            + connections.count
     }
 
     /// Badges for the Add Channel picker, limited to providers that are
@@ -204,37 +266,42 @@ struct AgentChannelConnectionCenterView: View {
 
     private var headerSubtitle: String {
         switch page {
-        case .activity:
-            return L("Incoming messages and receive decisions across your channels")
         case .outbox:
             return L("Posts agents want to send, plus what already went out")
         case .connections:
             if !globalWritesEnabled {
                 return L("Sending is paused — every channel is read-only")
             }
-            return L("Let agents read and reply on Discord, Slack, and Telegram")
+            return L("Connect the messaging apps Osaurus can listen on and post to")
         }
     }
 
     private var headerView: some View {
-        // Same header + tabs-row shell as every other multi-page tab
-        // (Tools, Voice, Privacy) instead of header buttons acting as pages.
-        ManagerHeaderWithTabs(
-            title: L("Channels"),
+        SettingsPageHeader(
+            title: "Channels",
             subtitle: headerSubtitle,
-            count: connectedChannelCount > 0 ? connectedChannelCount : nil
-        ) {
-            if page == .connections {
-                HeaderPrimaryButton(L("Add Channel"), icon: "plus") {
+            count: connectedChannelCount,
+            secondary: {
+                SettingsButton(
+                    .secondary,
+                    pendingOutboxCount > 0 ? L("Outbox (\(pendingOutboxCount))") : L("Outbox"),
+                    icon: "tray.and.arrow.up"
+                ) {
+                    withAnimation(theme.motion.quick) { page = .outbox }
+                }
+            },
+            primary: {
+                SettingsButton(.primary, "Add Channel", icon: "plus") {
                     activeSheet = .addChannel
                 }
+            },
+            toolbar: {
+                if !overviewEntries.isEmpty {
+                    SettingsTabsRow(selection: $overviewGrouping)
+                        .settingsLandingAnchor("agentChannels.overviewGrouping")
+                }
             }
-        } tabsRow: {
-            HeaderTabsRow(
-                selection: $page,
-                badges: pendingOutboxCount > 0 ? [.outbox: pendingOutboxCount] : nil
-            )
-        }
+        )
     }
 
     // MARK: - Connections Page
@@ -243,16 +310,22 @@ struct AgentChannelConnectionCenterView: View {
         Self.nativeProviderKinds.filter { nativeConfigured[$0] == true }
     }
 
+    /// Channels with no account at all.
     private var availableNativeKinds: [AgentChannelKind] {
-        Self.nativeProviderKinds.filter { nativeConfigured[$0] != true }
+        Self.nativeProviderKinds.filter { !hasAccount($0) }
     }
 
     private var connectionsPage: some View {
+        ScrollViewReader { proxy in
+            connectionsScrollView
+                .settingsLandingScroll(proxy)
+        }
+    }
+
+    private var connectionsScrollView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if isFirstRun {
-                    emptyStateHero
-                } else {
+            SettingsPageContent {
+                if !isFirstRun {
                     connectedSection
                 }
 
@@ -260,24 +333,10 @@ struct AgentChannelConnectionCenterView: View {
                     availableSection
                 }
 
-                if !isFirstRun || !destinationBindings.isEmpty {
-                    AgentChannelDestinationsSection(
-                        bindings: destinationBindings,
-                        storedBindingIds: storedDestinationIds,
-                        sendingPaused: !globalWritesEnabled,
-                        onAdd: { activeSheet = .addDestination },
-                        onEdit: { activeSheet = .editDestination($0) },
-                        onChanged: { reloadConnections() }
-                    )
-                }
-
                 incomingSection
 
                 sendingSection
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity)
         }
     }
 
@@ -286,186 +345,154 @@ struct AgentChannelConnectionCenterView: View {
     /// machines); ordinary use keeps it off so inbound messages never steal
     /// focus.
     private var incomingSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel(L("Incoming"))
-            focusOnInboundRow
-        }
-    }
-
-    private var focusOnInboundRow: some View {
-        HStack(spacing: 12) {
-            Image(systemName: focusChatOnInboundEnabled ? "macwindow.badge.plus" : "macwindow")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(focusChatOnInboundEnabled ? theme.accentColor : theme.tertiaryText)
-                .frame(width: 32, height: 32)
-                .background(
-                    Circle().fill(
-                        (focusChatOnInboundEnabled ? theme.accentColor : theme.tertiaryText).opacity(0.12)
-                    )
-                )
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Focus Chat on Incoming Messages", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    focusChatOnInboundEnabled
-                        ? L("Every channel message brings its conversation forward: the tab is selected and the chat window comes to the front (opening one if needed).")
-                        : L("Channel messages run quietly in the background; watch them in Activity or open the tab yourself. Turn on for a dedicated machine you keep an eye on.")
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            }
-
-            Spacer()
-
-            Toggle(
-                "",
+        SettingsSection(title: "Incoming") {
+            SettingsToggle(
+                title: "Focus Chat on Incoming Messages",
+                description: focusChatOnInboundEnabled
+                    ? "Every channel message brings its conversation forward: the tab is selected and the chat window comes to the front (opening one if needed)."
+                    : "Channel messages run quietly in the background; watch them in Automations History or open the tab yourself. Turn on for a dedicated machine you keep an eye on.",
+                anchorId: "agentChannels.focusOnInbound",
                 isOn: Binding(
                     get: { focusChatOnInboundEnabled },
                     set: { setFocusChatOnInboundEnabled($0) }
                 )
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-        .settingsLandingAnchor("agentChannels.focusOnInbound")
     }
 
     /// The master send control gets its own labeled section so it reads as
     /// the top of the sending hierarchy (replies AND new messages), not as
     /// a stray toggle after the destination list.
     private var sendingSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel(L("Sending"))
-            writeGateRow
+        SettingsSection(title: "Sending") {
+            SettingsToggle(
+                title: "Allow Agents to Send Messages",
+                description: globalWritesEnabled
+                    ? "Master switch for replies and new messages. Agents may send to write-allowlisted destinations."
+                    : "Sending is paused everywhere — replies and new messages. Agents can still read allowlisted channels.",
+                badge: globalWritesEnabled ? nil : L("All channels read-only"),
+                anchorId: "agentChannels.globalWrites",
+                isOn: Binding(
+                    get: { globalWritesEnabled },
+                    set: { setGlobalWritesEnabled($0) }
+                )
+            )
         }
     }
 
-    /// Polished first-run state: one clear action, with the provider catalog
-    /// listed right below as the guided starting path.
-    private var emptyStateHero: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 56, height: 56)
-                .background(Circle().fill(theme.accentColor.opacity(0.1)))
-
-            VStack(spacing: 4) {
-                Text("Connect your first channel", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    "Let agents read and reply where your team already talks. Each guided setup ends with a live verification of an incoming message.",
-                    bundle: .module
-                )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 420)
-            }
-
-            Button {
-                activeSheet = .addChannel
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Add Channel", bundle: .module)
-                }
-            }
-            .buttonStyle(SettingsButtonStyle(isPrimary: true))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
+    /// Channels that are set up, as one table: what each receives, where
+    /// its messages go, and what agents may send (or the same, by agent).
+    private var connectedSection: some View {
+        ChannelsOverviewTable(
+            entries: overviewEntries, writesEnabled: globalWritesEnabled, onAddAccount: { addAccount($0) },
+            grouping: $overviewGrouping
         )
         .settingsLandingAnchor("agentChannels.overview")
     }
 
-    /// Channels that are set up: configured native providers first, then
-    /// custom connections. This is the page's primary list.
-    private var connectedSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel(L("Connected"))
-
-            VStack(spacing: 10) {
-                ForEach(connectedNativeKinds, id: \.self) { kind in
-                    nativeCard(for: kind)
-                }
-
-                VStack(spacing: 10) {
-                    ForEach(connections) { connection in
-                        let pendingCount = connection.kind == .n8n ? (n8nPendingCounts[connection.id] ?? 0) : 0
-                        AgentChannelCard(
-                            icon: connection.kind.icon,
-                            gradient: connection.kind.brandGradient,
-                            title: connection.name.isEmpty ? connection.id : connection.name,
-                            subtitle: connection.kind == .n8n
-                                ? L("n8n HTTP Request in, poll or webhook out")
-                                : connection.id,
-                            subtitleIsMonospaced: connection.kind != .n8n,
-                            badge: Self.customBadge(
-                                for: connection,
-                                writesEnabled: globalWritesEnabled,
-                                pendingApprovals: pendingCount
-                            ),
-                            detail: pendingCount > 0
-                                ? (pendingCount == 1
-                                    ? L("1 workflow is waiting for your approval")
-                                    : L("\(pendingCount) workflows are waiting for your approval"))
-                                : nil,
-                            anchorId: connection.kind == .n8n ? "agentChannels.n8n" : nil,
-                            enabledToggle: connection.kind == .n8n
-                                ? AgentChannelCardEnabledToggle(
-                                    isOn: connection.enabled,
-                                    anchorId: "agentChannels.n8n.enabled",
-                                    onChange: { setConnectionEnabled($0, for: connection) }
-                                )
-                                : nil
-                        ) {
-                            activeSheet = connection.kind == .n8n ? .editN8n(connection) : .editCustom(connection)
-                        }
-                    }
-                }
-                .settingsLandingAnchor(connections.isEmpty ? nil : "agentChannels.customJSON")
+    private var overviewEntries: [ChannelOverviewEntry] {
+        var entries: [ChannelOverviewEntry] = []
+        for kind in Self.nativeProviderKinds {
+            if nativeConfigured[kind] == true, let connectionId = ChannelMessageSourceConfig.nativeConnectionId(for: kind) {
+                entries.append(
+                    ChannelOverviewEntry(
+                        connectionId: connectionId, kind: kind,
+                        name: ChannelAccounts.account(connectionId: connectionId).map(\.name)
+                            .flatMap { $0.isEmpty ? nil : $0 } ?? kind.displayName,
+                        badge: nativeBadges[kind], open: { activeSheet = .native(kind) }))
             }
-            .settingsLandingAnchor("agentChannels.overview")
+            for account in extraAccounts where account.kind == kind {
+                entries.append(
+                    ChannelOverviewEntry(
+                        connectionId: account.connectionId, kind: kind,
+                        name: account.name.isEmpty ? kind.displayName : account.name,
+                        badge: accountBadges[account.connectionId],
+                        open: { activeSheet = .account(kind, account.connectionId) }))
+            }
         }
+        for connection in connections {
+            let pendingCount = connection.kind == .n8n ? (n8nPendingCounts[connection.id] ?? 0) : 0
+            entries.append(
+                ChannelOverviewEntry(
+                    connectionId: connection.id,
+                    kind: connection.kind,
+                    name: connection.name.isEmpty ? connection.id : connection.name,
+                    badge: Self.customBadge(
+                        for: connection, writesEnabled: globalWritesEnabled, pendingApprovals: pendingCount),
+                    note: pendingCount > 0
+                        ? (pendingCount == 1
+                            ? L("1 workflow is waiting for your approval")
+                            : L("\(pendingCount) workflows are waiting for your approval"))
+                        : nil,
+                    enabledToggle: connection.kind == .n8n
+                        ? AgentChannelCardEnabledToggle(
+                            isOn: connection.enabled,
+                            anchorId: "agentChannels.n8n.enabled",
+                            onChange: { setConnectionEnabled($0, for: connection) })
+                        : nil,
+                    open: {
+                        activeSheet = connection.kind == .n8n ? .editN8n(connection) : .editCustom(connection)
+                    }))
+        }
+        return entries
     }
 
-    /// Native providers that are not configured yet, kept discoverable below
-    /// the connected list without competing with it.
+    /// Native providers that are not configured yet, as compact tiles below
+    /// the table.
+    @ViewBuilder
     private var availableSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !isFirstRun {
-                sectionLabel(L("Available"))
-            }
-
-            VStack(spacing: 10) {
+        if isFirstRun {
+            SettingsSection(
+                title: "Connect Your First Channel",
+                subtitle:
+                    "Let agents read and reply where your team already talks. Each guided setup ends with a live verification of an incoming message.",
+                anchorId: "agentChannels.overview"
+            ) {
                 ForEach(availableNativeKinds, id: \.self) { kind in
                     nativeCard(for: kind)
                 }
             }
+        } else {
+            SettingsSection(title: "Available", layout: .plain) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: theme.libraryGridGap)], spacing: theme.libraryGridGap) {
+                    ForEach(availableNativeKinds, id: \.self) { kind in
+                        providerTile(kind)
+                    }
+                }
+            }
         }
+    }
+
+    private func providerTile(_ kind: AgentChannelKind) -> some View {
+        Button {
+            activeSheet = .native(kind)
+        } label: {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .fill(LinearGradient(colors: kind.brandGradient, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    Image(systemName: kind.icon)
+                        .glyphSize(11, weight: .semibold)
+                        .foregroundColor(FixedPalette.onMedia)
+                }
+                .frame(width: 26, height: 26)
+                Text(verbatim: kind.displayName)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "plus")
+                    .glyphSize(10, weight: .semibold)
+                    .foregroundColor(theme.text.link)
+            }
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(.surface)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(Self.nativeSubtitle(for: kind))
+        .settingsLandingAnchor("agentChannels.\(kind.rawValue)")
     }
 
     private func nativeCard(for kind: AgentChannelKind) -> some View {
@@ -482,280 +509,10 @@ struct AgentChannelConnectionCenterView: View {
         }
     }
 
-    private func sectionLabel(_ title: String) -> some View {
-        Text(LocalizedStringKey(title), bundle: .module)
-            .textCase(.uppercase)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundColor(theme.tertiaryText)
-            .tracking(0.5)
-    }
-
-    /// Master write switch, humanized: on = agents may send where allowlisted,
-    /// off = every channel is read-only regardless of per-channel settings.
-    private var writeGateRow: some View {
-        HStack(spacing: 12) {
-            Image(systemName: globalWritesEnabled ? "shield.fill" : "shield.slash.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(globalWritesEnabled ? theme.successColor : theme.warningColor)
-                .frame(width: 32, height: 32)
-                .background(
-                    Circle().fill(
-                        (globalWritesEnabled ? theme.successColor : theme.warningColor).opacity(0.12)
-                    )
-                )
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text("Allow Agents to Send Messages", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    if !globalWritesEnabled {
-                        Text("All channels read-only", bundle: .module)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.warningColor)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.warningColor.opacity(0.12)))
-                    }
-                }
-                Text(
-                    globalWritesEnabled
-                        ? L("Master switch for replies and new messages. Agents may send to write-allowlisted destinations.")
-                        : L("Sending is paused everywhere — replies and new messages. Agents can still read allowlisted channels.")
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            }
-
-            Spacer()
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { globalWritesEnabled },
-                    set: { setGlobalWritesEnabled($0) }
-                )
-            )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(
-                            globalWritesEnabled ? theme.cardBorder : theme.warningColor.opacity(0.35),
-                            lineWidth: 1
-                        )
-                )
-        )
-        .settingsLandingAnchor("agentChannels.globalWrites")
-    }
-
-    // MARK: - Activity Tab
-
-    private var activityTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(
-                    "Authorized incoming messages are stored in a local inbox that agent read tools consult. A channel only replies automatically when an agent is chosen to reply there and automatic replies are turned on.",
-                    bundle: .module
-                )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
-                activityScopeRow
-
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 180, maximum: 280), spacing: 12)],
-                    alignment: .leading,
-                    spacing: 12
-                ) {
-                    ChannelMetricTile(
-                        title: L("Messages"),
-                        value: "\(auditSnapshot?.summary.messageCount ?? 0)",
-                        caption: L("stored in the inbox"),
-                        icon: "tray.full",
-                        color: theme.accentColor
-                    )
-                    ChannelMetricTile(
-                        title: L("Accepted"),
-                        value: "\(auditSnapshot?.summary.acceptedCount ?? 0)",
-                        caption: L("authorized and stored"),
-                        icon: "checkmark.shield.fill",
-                        color: theme.successColor
-                    )
-                    ChannelMetricTile(
-                        title: L("Denied"),
-                        value: "\(auditSnapshot?.summary.deniedCount ?? 0)",
-                        caption: L("blocked by allowlists"),
-                        icon: "hand.raised.fill",
-                        color: theme.warningColor
-                    )
-                    ChannelMetricTile(
-                        title: L("Duplicates"),
-                        value: "\(auditSnapshot?.summary.duplicateCount ?? 0)",
-                        caption: L("seen more than once"),
-                        icon: "arrow.triangle.2.circlepath",
-                        color: theme.secondaryText
-                    )
-                }
-
-                if let auditErrorMessage {
-                    AgentChannelInlineStatusMessage(
-                        message: auditErrorMessage,
-                        isError: true
-                    )
-                }
-
-                recentInboxMessages
-                recentAuditEvents
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity)
-        }
-    }
-
-    private var activityScopeRow: some View {
-        HStack(spacing: 12) {
-            Picker(selection: $auditScopeId) {
-                Text("All channels", bundle: .module)
-                    .tag(String?.none)
-                ForEach(auditScopeOptions, id: \.self) { connectionId in
-                    Text(scopeDisplayName(for: connectionId))
-                        .tag(String?.some(connectionId))
-                }
-            } label: {
-                EmptyView()
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(maxWidth: 220, alignment: .leading)
-            .onChange(of: auditScopeId) {
-                reloadAuditWorkbench()
-            }
-
-            Spacer(minLength: 0)
-
-            HeaderIconButton(
-                "arrow.clockwise",
-                isLoading: isLoadingAudit,
-                help: L("Refresh activity")
-            ) {
-                reloadAuditWorkbench()
-            }
-
-            HeaderIconButton(
-                "doc.on.doc",
-                help: L("Copy redacted export")
-            ) {
-                copyAuditExport()
-            }
-        }
-    }
-
-    private var recentInboxMessages: some View {
-        let messages = auditSnapshot?.messages ?? []
-        return activityListPanel(title: L("Recent Messages")) {
-            if messages.isEmpty {
-                activityEmptyState(
-                    icon: "tray",
-                    title: L("No messages yet"),
-                    detail: L("Authorized incoming messages for this scope appear here.")
-                )
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(messages) { message in
-                        AgentChannelInboxMessageRow(message: message)
-                        if message.id != messages.last?.id {
-                            Divider()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var recentAuditEvents: some View {
-        let events = auditSnapshot?.auditEvents ?? []
-        return activityListPanel(title: L("Receive Log")) {
-            if events.isEmpty {
-                activityEmptyState(
-                    icon: "list.bullet.clipboard",
-                    title: L("No receive decisions yet"),
-                    detail: L("Accept and deny decisions for this scope appear here.")
-                )
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(events) { event in
-                        AgentChannelAuditDecisionRow(event: event)
-                        if event.id != events.last?.id {
-                            Divider()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Full-width bordered list panel, matching the Router usage center's
-    /// stacked "Recent activity" list.
-    private func activityListPanel<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            content()
-                .frame(maxWidth: .infinity)
-                .background(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-    }
-
-    /// Inline empty state matching the Router usage center: no nested card,
-    /// just icon, headline, and one detail line inside the list panel.
-    private func activityEmptyState(icon: String, title: String, detail: String) -> some View {
-        VStack(spacing: 9) {
-            if isLoadingAudit {
-                ProgressView()
-                    .scaleEffect(0.75)
-            } else {
-                Image(systemName: icon)
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            Text(LocalizedStringKey(isLoadingAudit ? L("Loading activity") : title), bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Text(LocalizedStringKey(detail), bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-    }
-
     // MARK: - Channel Data
 
     private static let nativeProviderKinds: [AgentChannelKind] = [
-        .discord, .slack, .telegram, .imessage, .whatsapp,
+        .discord, .slack, .telegram, .imessage, .whatsapp, .email,
     ]
 
     private static func nativeSubtitle(for kind: AgentChannelKind) -> String {
@@ -765,6 +522,7 @@ struct AgentChannelConnectionCenterView: View {
         case .telegram: return L("Bot access to allowlisted chats and groups")
         case .imessage: return L("This Mac's Messages app, allowlisted chats only")
         case .whatsapp: return L("QR-linked WhatsApp Web bridge, allowlisted chats only")
+        case .email: return L("Mail app or IMAP accounts, allowlisted senders only")
         case .n8n: return L("n8n HTTP Request in, poll or webhook out")
         case .customHTTP: return L("JSON-defined HTTP channel")
         }
@@ -801,54 +559,44 @@ struct AgentChannelConnectionCenterView: View {
         slackReceiveExpected: Bool,
         telegramConfigured: Bool
     ) {
-        // iMessage has no remote credential; "configured" means a verified
-        // helper is present AND allowlisted chats exist. Without the helper
-        // check, a machine that lost its helper (failed download, tampered
-        // digest) would still show Configured/Connected while every action
-        // fails.
-        let imessageConfig = IMessageConnectionService.shared.configuration()
-        let imessageConfigured =
-            IMessageConnectionService.shared.helperAvailable()
-            && (!imessageConfig.readableChatIds.isEmpty || !imessageConfig.writableChatIds.isEmpty)
-        let imessageReceiveExpected = imessageConfig.canStartReceive()
-        // WhatsApp mirrors iMessage: no remote credential, "configured" is a
-        // verified helper plus allowlisted chats. Linked-session state feeds
-        // the transport health badge instead (probing spawns the helper).
-        let whatsappConfig = WhatsAppConnectionService.shared.configuration()
-        let whatsappConfigured =
-            WhatsAppConnectionService.shared.helperAvailable()
-            && (!whatsappConfig.readableChatIds.isEmpty || !whatsappConfig.writableChatIds.isEmpty)
-        let whatsappReceiveExpected = whatsappConfig.canStartReceive()
+        let imessageConfigured = AgentChannelConnectionManager.isIMessageConfigured()
+        let imessageReceiveExpected = IMessageConnectionService.shared.configuration().canStartReceive()
+        // Linked-session state feeds the transport health badge instead
+        // (probing spawns the helper).
+        let whatsappConfigured = AgentChannelConnectionManager.isWhatsAppConfigured()
+        let whatsappReceiveExpected = WhatsAppConnectionService.shared.configuration().canStartReceive()
+        let emailConfig = EmailChannelService.shared.configuration()
+        let emailPrimary = emailConfig.account(channelConnectionId: AgentChannelConnection.nativeEmailConnectionId)
+        let emailConfigured = emailPrimary != nil
+        let emailReceiveExpected = emailPrimary?.canStartReceive() == true
+        let extras = AgentChannelConnectionManager.extraAccounts()
+        extraAccounts = extras
         let discordConfig = DiscordConnectionService.shared.configuration()
         let discordReceiveExpected = discordConfigured
             && !discordConfig.readableChannelIds.isEmpty
             && !discordConfig.senderAllowlist.isEmpty
         let telegramConfig = TelegramConnectionService.shared.configuration()
         let telegramReceiveExpected = telegramConfig.longPollingEnabled
-        let slackDispatch = SlackConnectionService.shared.configuration().inboundDispatch
 
         anyNativeConfigured =
             discordConfigured || slackConfigured || telegramConfigured || imessageConfigured
-            || whatsappConfigured
+            || whatsappConfigured || emailConfigured || !extras.isEmpty
         nativeConfigured[.discord] = discordConfigured
         nativeConfigured[.slack] = slackConfigured
         nativeConfigured[.telegram] = telegramConfigured
         nativeConfigured[.imessage] = imessageConfigured
         nativeConfigured[.whatsapp] = whatsappConfigured
+        nativeConfigured[.email] = emailConfigured
         nativeBadgesResolved = true
         publishSidebarBadgeCount()
         // Reply state only makes sense on configured channels; the
         // "Available" list would otherwise show a noisy "Replies off".
-        nativeRoutingDetails[.discord] =
-            discordConfigured ? Self.routingSummary(discordConfig.inboundDispatch) : nil
-        nativeRoutingDetails[.slack] =
-            slackConfigured ? Self.routingSummary(slackDispatch) : nil
-        nativeRoutingDetails[.telegram] =
-            telegramConfigured ? Self.routingSummary(telegramConfig.inboundDispatch) : nil
-        nativeRoutingDetails[.imessage] =
-            imessageConfigured ? Self.routingSummary(imessageConfig.inboundDispatch) : nil
-        nativeRoutingDetails[.whatsapp] =
-            whatsappConfigured ? Self.routingSummary(whatsappConfig.inboundDispatch) : nil
+        for (kind, configured) in nativeConfigured {
+            guard let connectionId = ChannelMessageSourceConfig.nativeConnectionId(for: kind) else { continue }
+            nativeRoutingDetails[kind] =
+                configured
+                ? Self.routingSummary(EventManager.channelListeners(kind: kind, connectionId: connectionId)) : nil
+        }
 
         Task {
             let discordHealth = await AgentChannelTransportHealthCenter.shared.state(
@@ -871,6 +619,10 @@ struct AgentChannelConnectionCenterView: View {
                 connectionId: AgentChannelConnection.nativeWhatsAppConnectionId,
                 transportId: WhatsAppWatchTransportRuntime.transportId
             )
+            // One check per watched mailbox; the badge shows the worst.
+            let emailHealth = await AgentChannelTransportHealthCenter.shared
+                .allStates(connectionId: AgentChannelConnection.nativeEmailConnectionId)
+                .max { Self.healthRank($0.status) < Self.healthRank($1.status) }
             await MainActor.run {
                 nativeBadges[.discord] = Self.nativeBadge(
                     configured: discordConfigured,
@@ -897,28 +649,92 @@ struct AgentChannelConnectionCenterView: View {
                     receiveExpected: whatsappReceiveExpected,
                     health: whatsappHealth
                 )
+                nativeBadges[.email] = Self.nativeBadge(
+                    configured: emailConfigured,
+                    receiveExpected: emailReceiveExpected,
+                    health: emailHealth
+                )
             }
+        }
+        refreshAccountBadges(extras, email: emailConfig)
+    }
+
+    /// Badges for the extra accounts: each one's own receive state and
+    /// listener health.
+    private func refreshAccountBadges(_ accounts: [ChannelAccount], email: EmailChannelConfiguration) {
+        Task {
+            var badges: [String: AgentChannelStatusPresentation] = [:]
+            for account in accounts {
+                let id = account.connectionId
+                let health: AgentChannelTransportHealthState?
+                let receiveExpected: Bool
+                switch account.kind {
+                case .discord:
+                    let config = DiscordConnectionConfigurationStore.load(connectionId: id)
+                    receiveExpected = !config.readableChannelIds.isEmpty && !config.senderAllowlist.isEmpty
+                    health = await AgentChannelTransportHealthCenter.shared.state(
+                        connectionId: id, transportId: DiscordPollingTransportRuntime.transportId)
+                case .telegram:
+                    receiveExpected = TelegramConnectionConfigurationStore.load(connectionId: id).longPollingEnabled
+                    health = await AgentChannelTransportHealthCenter.shared.state(
+                        connectionId: id, transportId: TelegramLongPollTransportRuntime.transportId)
+                case .slack:
+                    // A workspace is added with both tokens.
+                    receiveExpected = true
+                    health = await AgentChannelTransportHealthCenter.shared.state(
+                        connectionId: id, transportId: SlackSocketModeTransportRuntime.transportId)
+                case .email:
+                    receiveExpected = email.account(channelConnectionId: id)?.canStartReceive() == true
+                    health = await AgentChannelTransportHealthCenter.shared.allStates(connectionId: id)
+                        .max { Self.healthRank($0.status) < Self.healthRank($1.status) }
+                default:
+                    continue
+                }
+                badges[id] = Self.nativeBadge(configured: true, receiveExpected: receiveExpected, health: health)
+            }
+            await MainActor.run { accountBadges = badges }
         }
     }
 
-    /// One-line description of who replies on this channel, shown on the
-    /// card. Always explicit — a configured channel that never replies says
-    /// so instead of hiding the state.
+    private static func healthRank(_ status: AgentChannelTransportHealthStatus) -> Int {
+        switch status {
+        case .disabled, .idle: 0
+        case .healthy: 1
+        case .degraded: 2
+        case .conflict: 3
+        case .failed: 4
+        }
+    }
+
+    /// One-line description of who answers messages on this channel, shown
+    /// on the card. Always explicit — a configured channel nobody answers
+    /// on says so instead of hiding the state. Names are the agents and
+    /// workflows (what the user picked in the sheet), not automation names.
     @MainActor
     static func routingSummary(
-        _ dispatch: AgentChannelInboundDispatchConfiguration,
-        agentName: (UUID) -> String? = { AgentManager.shared.agent(for: $0)?.name }
+        _ listeners: ChannelEventListeners,
+        nameFor: @MainActor (ChannelEventListeners.Listener) -> String = Self.answererName
     ) -> String? {
-        guard dispatch.enabled else { return L("Replies off") }
-        let names = dispatch.referencedAgentIds.map { agentName($0) ?? L("Unknown agent") }
+        var seen = Set<String>()
+        let names = listeners.listeners.map(nameFor).filter { seen.insert($0).inserted }
         switch names.count {
         case 0:
-            return L("Replies on — choose an agent")
+            return L("Nobody answers here yet — messages stay in the inbox")
         case 1:
-            return L("Replies: \(names[0])")
+            return L("Answered by \(names[0])")
+        case 2, 3:
+            return L("Answered by \(names.joined(separator: ", "))")
         default:
-            return L("Replies: \(names.count) agents — \(names.joined(separator: ", "))")
+            return L("Answered by \(names.prefix(2).joined(separator: ", ")) and \(names.count - 2) more")
         }
+    }
+
+    @MainActor
+    static func answererName(_ listener: ChannelEventListeners.Listener) -> String {
+        if let workflowId = listener.workflowId {
+            return InstalledWorkflowStore.shared.workflow(id: workflowId)?.name ?? L("Missing workflow")
+        }
+        return EventInspection.targetName(listener.target)
     }
 
     /// Honest custom-channel badge: enabled alone is not usable — a custom
@@ -926,13 +742,15 @@ struct AgentChannelConnectionCenterView: View {
     static func customBadge(
         for connection: AgentChannelConnection,
         writesEnabled: Bool = true,
-        pendingApprovals: Int = 0
+        pendingApprovals: Int = 0,
+        listeners: ChannelEventListeners? = nil
     ) -> AgentChannelStatusPresentation {
         guard connection.enabled else {
             return AgentChannelStatusPresentation(label: L("Disabled"), tone: .neutral)
         }
         if connection.kind == .n8n {
-            return n8nBadge(for: connection, writesEnabled: writesEnabled, pendingApprovals: pendingApprovals)
+            return n8nBadge(
+                for: connection, writesEnabled: writesEnabled, pendingApprovals: pendingApprovals, listeners: listeners)
         }
         let actionCount = connection.customHTTP?.actions.count ?? 0
         guard actionCount > 0 else {
@@ -944,13 +762,15 @@ struct AgentChannelConnectionCenterView: View {
         return AgentChannelStatusPresentation(label: L("Enabled (read-only)"), tone: .success)
     }
 
-    /// n8n rows are inbound-first: usable once a dispatch target exists and
+    /// n8n rows are inbound-first: usable once an event listens to it and
     /// at least one workflow identity has been approved (both allowlists are
     /// fail-closed; approve-on-first-contact fills them).
+    /// `listeners` defaults to the events currently listening on the connection.
     static func n8nBadge(
         for connection: AgentChannelConnection,
         writesEnabled: Bool = true,
-        pendingApprovals: Int = 0
+        pendingApprovals: Int = 0,
+        listeners: ChannelEventListeners? = nil
     ) -> AgentChannelStatusPresentation {
         if pendingApprovals > 0 {
             return AgentChannelStatusPresentation(
@@ -958,8 +778,9 @@ struct AgentChannelConnectionCenterView: View {
                 tone: .warning
             )
         }
-        guard connection.n8n?.inboundDispatch.isConfigured == true else {
-            return AgentChannelStatusPresentation(label: L("No agent assigned"), tone: .warning)
+        let listeners = listeners ?? EventManager.channelListeners(kind: connection.kind, connectionId: connection.id)
+        guard !listeners.isEmpty else {
+            return AgentChannelStatusPresentation(label: L("No automation yet"), tone: .warning)
         }
         let authorization = connection.inboundAuthorization
         guard !authorization.senderAllowlist.isEmpty, !authorization.roomAllowlist.isEmpty else {
@@ -1032,16 +853,24 @@ struct AgentChannelConnectionCenterView: View {
         }
     }
 
+    /// Opens the settings sheet a History row asked for.
+    private func openPendingChannel() {
+        guard let id = managementState.pendingChannelConnectionId else { return }
+        managementState.pendingChannelConnectionId = nil
+        page = .connections
+        let normalized = AgentChannelConnection.normalizedId(id)
+        if let kind = AgentChannelKind(rawValue: normalized), Self.nativeProviderKinds.contains(kind) {
+            activeSheet = .native(kind)
+        } else if let account = ChannelAccounts.account(connectionId: normalized) {
+            activeSheet = account.isPrimary ? .native(account.kind) : .account(account.kind, account.connectionId)
+        } else if let connection = manager.editableConnections().first(where: { $0.id == normalized }) {
+            activeSheet = connection.kind == .n8n ? .editN8n(connection) : .editCustom(connection)
+        }
+    }
+
     private func reloadConnections() {
         connections = manager.editableConnections()
         reloadN8nPendingCounts()
-        storedDestinationIds = Set(manager.bindings().map(\.id))
-        destinationBindings = AgentChannelAutoDestinationResolver.effectiveConfiguration()
-            .bindings
-            .sorted { lhs, rhs in
-                lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel)
-                    == .orderedAscending
-            }
         reloadPendingOutboxCount()
         publishSidebarBadgeCount()
     }
@@ -1074,7 +903,9 @@ struct AgentChannelConnectionCenterView: View {
         guard let pending else { return }
         if pending == "agentChannels.outbox", page != .outbox {
             page = .outbox
-        } else if pending == "agentChannels.destinations" || pending == "agentChannels.focusOnInbound"
+        } else if pending == "agentChannels.routing" || pending == "agentChannels.addRule"
+            || pending == "agentChannels.posting" || pending == "agentChannels.overviewGrouping"
+            || pending == "agentChannels.focusOnInbound"
             || pending == "agentChannels.globalWrites", page != .connections
         {
             page = .connections
@@ -1105,282 +936,4 @@ struct AgentChannelConnectionCenterView: View {
         }
     }
 
-    // MARK: - Activity Data
-
-    /// Explicit activity scope choices: native provider connections first,
-    /// then custom connections.
-    private var auditScopeOptions: [String] {
-        var options = [
-            AgentChannelConnection.nativeDiscordConnectionId,
-            AgentChannelConnection.nativeSlackConnectionId,
-            AgentChannelConnection.nativeTelegramConnectionId,
-            AgentChannelConnection.nativeIMessageConnectionId,
-            AgentChannelConnection.nativeWhatsAppConnectionId,
-        ]
-        for connection in connections where !options.contains(connection.id) {
-            options.append(connection.id)
-        }
-        return options
-    }
-
-    private func scopeDisplayName(for connectionId: String) -> String {
-        switch connectionId {
-        case AgentChannelConnection.nativeDiscordConnectionId:
-            return AgentChannelKind.discord.displayName
-        case AgentChannelConnection.nativeSlackConnectionId:
-            return AgentChannelKind.slack.displayName
-        case AgentChannelConnection.nativeTelegramConnectionId:
-            return AgentChannelKind.telegram.displayName
-        case AgentChannelConnection.nativeIMessageConnectionId:
-            return AgentChannelKind.imessage.displayName
-        case AgentChannelConnection.nativeWhatsAppConnectionId:
-            return AgentChannelKind.whatsapp.displayName
-        default:
-            if let match = connections.first(where: { $0.id == connectionId }), !match.name.isEmpty {
-                return match.name
-            }
-            return connectionId
-        }
-    }
-
-    private func reloadAuditWorkbench() {
-        let loadID = UUID()
-        auditLoadID = loadID
-        isLoadingAudit = true
-        let connectionId = auditScopeId
-        Task {
-            do {
-                let snapshot = try auditWorkbench.snapshot(
-                    connectionId: connectionId,
-                    messageLimit: 8,
-                    auditLimit: 10
-                )
-                await MainActor.run {
-                    guard auditLoadID == loadID, auditScopeId == connectionId else { return }
-                    auditSnapshot = snapshot
-                    auditErrorMessage = nil
-                    isLoadingAudit = false
-                }
-            } catch {
-                await MainActor.run {
-                    guard auditLoadID == loadID, auditScopeId == connectionId else { return }
-                    auditErrorMessage = error.localizedDescription
-                    isLoadingAudit = false
-                }
-            }
-        }
-    }
-
-    private func copyAuditExport() {
-        let connectionId = auditScopeId
-        Task {
-            do {
-                let export = try auditWorkbench.exportRedactedJSON(
-                    connectionId: connectionId,
-                    messageLimit: 25,
-                    auditLimit: 100
-                )
-                await MainActor.run {
-                    #if os(macOS)
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(export, forType: .string)
-                    #endif
-                    _ = ToastManager.shared.success(L("Redacted activity export copied"))
-                }
-            } catch {
-                await MainActor.run {
-                    _ = ToastManager.shared.error(
-                        L("Couldn't export activity"),
-                        message: error.localizedDescription
-                    )
-                }
-            }
-        }
-    }
-
-}
-
-// MARK: - Metric Tile
-
-/// Summary tile matching the Router usage center's metric tiles: tinted icon
-/// circle, large rounded value, one-line caption, uniform height.
-private struct ChannelMetricTile: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let title: String
-    let value: String
-    let caption: String
-    let icon: String
-    let color: Color
-
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(color)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(color.opacity(0.13)))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                Text(verbatim: value)
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .monospacedDigit()
-                Text(LocalizedStringKey(caption), bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(14)
-        .frame(minHeight: 112, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-}
-
-// MARK: - Activity Rows
-
-private struct AgentChannelAuditDecisionRow: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let event: AgentChannelAuditRecord
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: statusIcon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(statusColor)
-                    .frame(width: 18)
-                Text(event.status.rawValue.capitalized)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                Text(event.action)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-                Spacer()
-                Text(event.createdAt.formatted(.relative(presentation: .named)))
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            if !event.redactedSummary.isEmpty {
-                Text(event.redactedSummary)
-                    .font(.system(size: 12))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-                    .lineLimit(2)
-            }
-
-            HStack(spacing: 8) {
-                Label(scopeLabel, systemImage: "app.connected.to.app.below.fill")
-                if let roomId = event.roomId {
-                    Label(roomId, systemImage: "number")
-                }
-                if let reason = event.reason {
-                    Label(reason, systemImage: "info.circle")
-                }
-            }
-            .font(.system(size: 10))
-            .foregroundColor(themeManager.currentTheme.tertiaryText)
-            .lineLimit(1)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(themeManager.currentTheme.cardBackground)
-    }
-
-    private var scopeLabel: String {
-        AgentChannelKind(rawValue: event.connectionId)?.displayName ?? event.connectionId
-    }
-
-    private var statusIcon: String {
-        switch event.status {
-        case .accepted: "checkmark.shield.fill"
-        case .duplicate: "arrow.triangle.2.circlepath"
-        case .denied: "hand.raised.fill"
-        case .failed: "xmark.octagon.fill"
-        }
-    }
-
-    private var statusColor: Color {
-        switch event.status {
-        case .accepted:
-            themeManager.currentTheme.successColor
-        case .duplicate:
-            themeManager.currentTheme.accentColor
-        case .denied, .failed:
-            themeManager.currentTheme.warningColor
-        }
-    }
-}
-
-private struct AgentChannelInboxMessageRow: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let message: AgentChannelInboxMessage
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: message.direction == .inbound ? "tray.and.arrow.down" : "paperplane")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
-                    .frame(width: 18)
-                Text(message.direction == .inbound ? L("Received") : L("Sent"))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                Text(message.roomId)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-                Spacer()
-                Text(message.receivedAt.formatted(.relative(presentation: .named)))
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            Text(message.preview.isEmpty ? L("Empty message") : message.preview)
-                .font(.system(size: 12))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-                .lineLimit(2)
-
-            HStack(spacing: 8) {
-                Label(scopeLabel, systemImage: "app.connected.to.app.below.fill")
-                if let authorDisplay = message.authorDisplay, !authorDisplay.isEmpty {
-                    Label(authorDisplay, systemImage: "person")
-                }
-            }
-            .font(.system(size: 10))
-            .foregroundColor(themeManager.currentTheme.tertiaryText)
-            .lineLimit(1)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(themeManager.currentTheme.cardBackground)
-    }
-
-    private var scopeLabel: String {
-        AgentChannelKind(rawValue: message.connectionId)?.displayName ?? message.connectionId
-    }
 }

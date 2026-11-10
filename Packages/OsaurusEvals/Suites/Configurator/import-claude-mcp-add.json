@@ -1,0 +1,32 @@
+{
+  "id": "configurator.import-claude-mcp-add",
+  "domain": "configurator",
+  "label": "configurator • a `claude mcp add` command from a README goes to osaurus_import",
+  "query": "The README says to run this. Can you do the Osaurus version?\n\nclaude mcp add --transport http linear https://mcp.linear.app/mcp",
+  "notes": "Universal chat import. Install commands written for another app (Claude Code here) are read by code, not run in a shell. The Configurator passes the command text to osaurus_import exactly once.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_import"
+      ],
+      "mustNotCallTools": [
+        "sandbox_exec",
+        "shell",
+        "capabilities_discover"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_import",
+          "args": {
+            "source": "mcp.linear.app"
+          }
+        }
+      ],
+      "rubric": [
+        "Says the Linear MCP server was added (or names the one step left, such as signing in) in one or two sentences; does not tell the user to run the claude command."
+      ],
+      "maxIterations": 6
+    }
+  }
+}

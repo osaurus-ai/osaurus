@@ -26,7 +26,8 @@ struct ChatHistoryWriterWorkspaceTests {
             workspaceId: "ws-acme",
             agentAddress: Self.agentAddress,
             callerWallet: Self.callerWallet,
-            callerName: callerName
+            callerName: callerName,
+            callerHandle: callerName?.lowercased()
         )
     }
 
@@ -48,14 +49,15 @@ struct ChatHistoryWriterWorkspaceTests {
     }
 
     private func find(agentId: UUID, externalKey: String) -> ChatSessionData? {
+        let store = ConversationStores.current
         guard
-            let hit = ChatHistoryDatabase.shared.findSession(
+            let hit = store.findSession(
                 pluginId: ChatHistoryWriter.workspacePseudoPluginId,
                 externalKey: externalKey,
                 agentId: agentId
             )
         else { return nil }
-        return ChatHistoryDatabase.shared.loadSession(id: hit.id)
+        return store.loadSession(id: hit.id)
     }
 
     @Test func persist_writesWorkspaceRowUnderSharedAgentWithCallerTag() async throws {
@@ -83,7 +85,7 @@ struct ChatHistoryWriterWorkspaceTests {
             #expect(row.workspace == context())
             #expect(row.workspace?.isServedForTeammate == true)
             #expect(row.isWorkspaceAgentChat == false, "host copy is not a teammate-agent chat")
-            #expect(row.source.originLabel(workspace: row.workspace) == "for Alice · Workspace")
+            #expect(row.source.originLabel(workspace: row.workspace) == "for @alice · Workspace")
             #expect(row.title != "New Chat")
         }
     }
@@ -114,7 +116,7 @@ struct ChatHistoryWriterWorkspaceTests {
             #expect(second.turns.last?.content == "still here")
             #expect(second.updatedAt >= first.updatedAt)
 
-            let rows = ChatHistoryDatabase.shared.loadAllMetadata().filter { $0.externalSessionKey == key }
+            let rows = ConversationStores.current.loadAllMetadata().filter { $0.externalSessionKey == key }
             #expect(rows.count == 1)
         }
     }
@@ -141,7 +143,8 @@ struct ChatHistoryWriterWorkspaceTests {
                     workspaceId: "ws-acme",
                     agentAddress: Self.agentAddress,
                     callerWallet: bobWallet,
-                    callerName: "Bob"
+                    callerName: "Bob",
+                    callerHandle: "bob"
                 )
             )
 
@@ -149,8 +152,8 @@ struct ChatHistoryWriterWorkspaceTests {
             let aliceOther = try #require(find(agentId: agentId, externalKey: aliceOtherSession))
             let bob = try #require(find(agentId: agentId, externalKey: bobKey))
             #expect(Set([alice.id, aliceOther.id, bob.id]).count == 3)
-            #expect(bob.workspace?.callerLabel == "Bob")
-            #expect(alice.workspace?.callerLabel == "Alice")
+            #expect(bob.workspace?.callerLabel == "@bob")
+            #expect(alice.workspace?.callerLabel == "@alice")
         }
     }
 
@@ -158,7 +161,7 @@ struct ChatHistoryWriterWorkspaceTests {
         try await ChatHistoryTestStorage.run {
             let agentId = UUID()
             let key = "\(Self.callerWallet.lowercased()):convo-empty"
-            try ChatHistoryDatabase.shared.open()
+            try ConversationStores.current.open()
             persist(
                 agentId: agentId,
                 externalKey: key,
@@ -210,7 +213,7 @@ struct ChatHistoryWriterWorkspaceTests {
             let visible = manager.sessions(for: agentId).first { $0.id == row.id }
             #expect(visible != nil, "the host's sidebar/History shows the served row under the shared agent")
             #expect(visible?.source == .workspace)
-            #expect(visible?.workspace?.callerLabel == "Alice")
+            #expect(visible?.workspace?.callerLabel == "@alice")
             #expect(
                 manager.sessions(forRemoteAgentAddress: Self.agentAddress).isEmpty,
                 "host copies are not teammate-agent chats"

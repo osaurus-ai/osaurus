@@ -1,0 +1,26 @@
+{
+  "id": "configurator.settings-context-window",
+  "domain": "configurator",
+  "label": "configurator • context window / budget ask cites Server Cache, no spawn",
+  "query": "Change my default context window / context budget.",
+  "notes": "User-feedback lane: the Orchestrator used to invent Settings → Chat → context length, then spawn Computer Use to hunt Management. The catalog path is Server → Cache → Context Window Cap (tokens). Must call osaurus_help (find or read). Must not spawn, must not apply a fake declarative key, must not claim the cap was changed. Configurator lane: the seed carries the matching catalog rows, so osaurus_help is optional; every Settings path in the answer must come from the seed or a tool result.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [],
+      "mustNotCallTools": [
+        "spawn_agent",
+        "computer_use",
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "rubric": [
+        "Directs the user to Context Window Cap under Server → Cache in the Osaurus Settings UI, consistent with the osaurus_help catalog result; must not direct the user to Chat settings. An explicit negative statement about Chat is not required.",
+        "Does NOT claim the cap was changed, applied, or updated — no fabricated success.",
+        "Does NOT spawn a specialist or Computer Use agent to click through Settings."
+      ],
+      "maxIterations": 6,
+      "settingsPathsMustBeGrounded": true
+    }
+  }
+}

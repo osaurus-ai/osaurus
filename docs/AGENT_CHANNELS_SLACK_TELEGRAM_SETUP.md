@@ -269,10 +269,11 @@ the channel is ready for user testing:
 
 Proactive posting needs no separate setup. Once a channel has a saved
 credential, write access to at least one room (`writeEnabled` plus a
-write-allowlisted room id), and inbound dispatch enabled, Osaurus derives an
-automatic **Ask first** posting destination for each writable room × answering
-agent. They appear under Settings → Channels → Agent Posting (and per agent
-under Channel Posting) with an "Automatic" badge.
+write-allowlisted room id), and an agent answering on it, Osaurus derives an
+automatic **Ask first** posting place for each writable room × answering
+agent. The channel sheet shows it as **Posts on its own: Asks first** on the
+agent's row under **Agents on this channel**; the agent's Channels tab lists
+it read-only ("posts after asking first").
 
 Outbound spot check, after the inbound checklist above passes:
 

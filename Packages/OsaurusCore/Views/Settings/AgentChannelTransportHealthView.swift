@@ -34,8 +34,8 @@ struct AgentChannelTransportHealthView: View {
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
                 Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 AgentChannelStatusBadge(presentation: statusPresentation)
                 Spacer(minLength: 0)
                 Button {
@@ -48,45 +48,40 @@ struct AgentChannelTransportHealthView: View {
                             .frame(width: 12, height: 12)
                     } else {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .medium))
+                            .glyphSize(11, weight: .medium)
                     }
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(theme.secondaryText)
+                .foregroundColor(theme.text.secondary)
                 .disabled(isRefreshing)
                 .help(Text("Refresh receive status", bundle: .module))
             }
 
             if let state {
                 Text(state.summary)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let detail = state.detail, !detail.isEmpty {
                     Text(detail)
-                        .font(.system(size: 11))
-                        .foregroundColor(state.severity == .info ? theme.tertiaryText : theme.warningColor)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(
+                            state.severity == .info ? theme.text.tertiary : theme.status.warning.foreground
+                        )
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 metricsRow(state)
             } else {
                 Text(LocalizedStringKey(notRunningHint), bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground.opacity(0.6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.control)
         .task(id: refreshToken) {
             await refresh()
         }
@@ -97,8 +92,8 @@ struct AgentChannelTransportHealthView: View {
         let parts = Self.metrics(for: state, now: Date())
         if !parts.isEmpty {
             Text(parts.joined(separator: "  ·  "))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -169,24 +164,42 @@ struct AgentChannelInboundActivityListView: View {
     var refreshToken: Int = 0
 
     @State private var events: [AgentChannelInboundActivityEvent] = []
+    /// The newest messages in this connection's local inbox (what agent read
+    /// tools see).
+    @State private var messages: [AgentChannelInboxMessage] = []
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Recent incoming events", bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             if events.isEmpty {
                 Text(LocalizedStringKey(emptyHint), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach(events) { event in
                     eventRow(event)
                 }
+            }
+
+            if !messages.isEmpty {
+                Text("Recent Messages", bundle: .module)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
+                    .padding(.top, theme.space.s6)
+                VStack(spacing: 0) {
+                    ForEach(messages) { message in
+                        AgentChannelInboxMessageRow(message: message)
+                        if message.id != messages.last?.id { Divider() }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
+                .overlay(RoundedRectangle(cornerRadius: theme.radius.medium).stroke(theme.border.default, lineWidth: theme.stroke.default))
             }
         }
         .task(id: refreshToken) {
@@ -194,6 +207,10 @@ struct AgentChannelInboundActivityListView: View {
                 connectionId: connectionId,
                 limit: limit
             )
+            messages =
+                (try? AgentChannelAuditWorkbenchService().snapshot(
+                    connectionId: connectionId, messageLimit: 5, auditLimit: 0
+                ).messages) ?? []
         }
     }
 
@@ -201,29 +218,29 @@ struct AgentChannelInboundActivityListView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Image(systemName: Self.icon(for: event.stage))
-                    .font(.system(size: 9, weight: .semibold))
+                    .glyphSize(9, weight: .semibold)
                     .foregroundColor(Self.tone(for: event.stage).color(theme))
                     .frame(width: 14)
                 Text(AgentChannelInboundActivityPresentation.label(for: event.stage))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.chip)
+                    .foregroundColor(theme.text.primary)
                 Spacer(minLength: 6)
                 Text(event.recordedAt, style: .time)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
             }
             if let guidance = AgentChannelInboundActivityPresentation.guidance(
                 stage: event.stage,
                 reason: event.reason
             ) {
                 Text(guidance)
-                    .font(.system(size: 9))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 20)
+                    .padding(.leading, theme.space.s16)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, theme.space.s2)
     }
 
     static func icon(for stage: AgentChannelInboundActivityStage) -> String {

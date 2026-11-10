@@ -18,6 +18,7 @@
 //
 
 import Foundation
+import OsaurusSync
 import os
 
 public actor StorageRecoveryService {
@@ -32,22 +33,32 @@ public actor StorageRecoveryService {
         case memory
         case agentChannels = "agent-channels"
         case chatHistory = "chat-history"
+        case fileHistory = "file-history"
+        case sync
         case method
         case tool = "tool-index"
         case scheduler
         case routerBilling = "router-billing"
         case activityLog = "activity-log"
+        case tasks
+        case automationRuns = "automation-runs"
+        case configHistory = "config-history"
 
         public var path: String {
             switch self {
             case .memory: return OsaurusPaths.memoryDatabaseFile().path
             case .agentChannels: return OsaurusPaths.agentChannelMessagesDatabaseFile().path
             case .chatHistory: return OsaurusPaths.chatHistoryDatabaseFile().path
+            case .fileHistory: return OsaurusPaths.fileHistoryDatabaseFile().path
+            case .sync: return OsaurusPaths.sync().path
             case .method: return OsaurusPaths.methodsDatabaseFile().path
             case .tool: return OsaurusPaths.toolIndexDatabaseFile().path
             case .scheduler: return OsaurusPaths.schedulerDatabaseFile().path
             case .routerBilling: return OsaurusPaths.billingLedgerDatabaseFile().path
             case .activityLog: return OsaurusPaths.activityLogDatabaseFile().path
+            case .tasks: return OsaurusPaths.tasksDatabaseFile().path
+            case .automationRuns: return OsaurusPaths.eventRunsDatabaseFile().path
+            case .configHistory: return OsaurusPaths.configHistoryDatabaseFile().path
             }
         }
 
@@ -56,12 +67,17 @@ public actor StorageRecoveryService {
             switch self {
             case .memory: return "Memory"
             case .agentChannels: return "Agent channels"
-            case .chatHistory: return "Chat history"
+            case .chatHistory: return "Chat history (before sync)"
+            case .fileHistory: return "File history"
+            case .sync: return "Synced conversations"
             case .method: return "Methods"
             case .tool: return "Tool index"
             case .scheduler: return "Scheduler"
             case .routerBilling: return "Router billing"
             case .activityLog: return "Activity log"
+            case .tasks: return "Tasks"
+            case .automationRuns: return "Automation runs"
+            case .configHistory: return "Configuration history"
             }
         }
 
@@ -89,6 +105,10 @@ public actor StorageRecoveryService {
                 try AgentChannelMessageStore.shared.open()
             case .chatHistory:
                 try ChatHistoryDatabase.shared.open()
+            case .fileHistory:
+                try FileHistoryDatabase.shared.open()
+            case .sync:
+                try SyncService.shared.open()
             case .method:
                 try MethodDatabase.shared.open()
             case .tool:
@@ -99,6 +119,13 @@ public actor StorageRecoveryService {
                 try RouterBillingDatabase.shared.open()
             case .activityLog:
                 try ActivityLogStore.shared.open()
+            case .tasks:
+                try TaskDatabase.shared.open()
+                guard await TaskStore.shared.reattach() else { throw TaskDatabaseError.failedToOpen("not reattached") }
+            case .automationRuns:
+                try EventRunDatabase.shared.open()
+            case .configHistory:
+                try ConfigHistoryDatabase.shared.open()
             }
             PersistenceHealth.shared.clearStoreIssue(store: store.rawValue)
             log.info("recovery: \(store.rawValue, privacy: .public) reopened")
@@ -123,6 +150,7 @@ public actor StorageRecoveryService {
     /// `~/.osaurus/quarantine/`. Returns the quarantine destination, if any.
     @discardableResult
     public func resetStore(_ store: Store) async -> URL? {
+        if store == .sync { return await resetSync() }
         let path = store.path
 
         // Park concurrent opens and close every live handle before we move
@@ -157,5 +185,25 @@ public actor StorageRecoveryService {
 
         log.info("recovery: \(store.rawValue, privacy: .public) reset (quarantined)")
         return destination
+    }
+
+    /// Sync keeps a data directory and Keychain items, not one database file,
+    /// so its reset goes through `SyncService`.
+    private func resetSync() async -> URL? {
+        do {
+            let destination = try await SyncService.shared.resetLocalData()
+            PersistenceHealth.shared.clearStoreIssue(store: Store.sync.rawValue)
+            log.info("recovery: sync reset")
+            return destination
+        } catch {
+            PersistenceHealth.shared.recordStoreIssue(
+                store: Store.sync.rawValue,
+                kind: (error as? SyncError)?.storageIssueKind ?? StorageOpenIssueKind.classify(error),
+                message: error.syncUserMessage,
+                path: Store.sync.path
+            )
+            log.error("recovery: sync reset failed: \(error.syncLogDetail, privacy: .public)")
+            return nil
+        }
     }
 }

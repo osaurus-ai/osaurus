@@ -645,6 +645,14 @@ struct AgentLoopHooks {
     /// `authorizedToolNames`.
     var announcedToolCallRecovery: (() -> AgentToolLoop.AnnouncedToolCallRecovery?)?
 
+    /// Chat's forced `state` step (`ChatToolChoicePolicy.forceStateIfMissing`).
+    /// Asked at most once per run: when it would end on an ordinary final,
+    /// or when it reaches the step cap. True means the surface armed its
+    /// next `modelStep` to offer only `state` and force it; the driver runs
+    /// that one step and its call, then ends the run as it would have.
+    /// Assigned after construction like `authorizedToolNames`.
+    var armForcedStateStep: ((_ ending: StateStepEnding) async -> Bool)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async throws -> AgentLoopIterationInput,
@@ -1190,6 +1198,9 @@ enum AgentToolLoop {
         /// A malformed repeat of an already-successful desktop subagent call
         /// was replaced by the prior tool's summary.
         case desktopSummarySubstituted
+        /// The run ended after the surface's forced `state` step
+        /// (`AgentLoopHooks.armForcedStateStep`).
+        case forcedStateStep
         /// Terminal states that are already unambiguous from `Exit` itself.
         case typedTerminal
     }
@@ -1431,7 +1442,7 @@ enum AgentToolLoop {
     /// unfinished at the hard agent-step cap. This is driven by typed Todo
     /// state, never by classifying the model's prose.
     static func unfinishedTodoCapFallback(pending: Int) -> String {
-        "The agent reached the configured step limit with \(pending) todo item\(pending == 1 ? "" : "s") still unfinished. The task is incomplete; continue from the latest completed step or increase Max Tool Attempts under Settings → Conversation → Advanced."
+        "The agent reached the configured step limit with \(pending) todo item\(pending == 1 ? "" : "s") still unfinished. The task is incomplete; continue from the latest completed step or increase Max Tool Attempts under Settings → Chat → Advanced."
     }
 
     /// The iteration-budget warning staged when the remaining budget
@@ -1892,14 +1903,14 @@ enum AgentToolLoop {
     /// let calls AFTER the intercept execute and land in history, where
     /// the serial path stops immediately.
     static let interceptToolNames: Set<String> = [
-        "complete", "clarify", PromptWorkingFolderTool.toolName,
+        "complete", "clarify", PromptWorkingFolderTool.toolName, WorkflowProposeSaveTool.toolName,
     ]
 
     /// Agent-loop control calls are not user-task actions and therefore do
     /// not consume the structural tracking threshold. `share_artifact` is an
     /// action because it performs the requested delivery.
     static let taskTrackingControlToolNames: Set<String> = [
-        "todo", "complete", "clarify", PromptWorkingFolderTool.toolName,
+        "todo", "complete", "clarify", PromptWorkingFolderTool.toolName, StateTool.toolName,
     ]
 
     static let taskTrackingRequiredReason = "task_tracking_required"
@@ -2140,7 +2151,11 @@ enum AgentToolLoop {
     static func containsIntercept(
         _ calls: [(invocation: ServiceToolInvocation, callId: String)]
     ) -> Bool {
-        calls.contains { interceptToolNames.contains($0.invocation.toolName) }
+        calls.contains {
+            interceptToolNames.contains($0.invocation.toolName)
+                // A Work Mode workflow call can park and end the run.
+                || WorkflowToolCall.isWorkflowCall($0.invocation.toolName)
+        }
     }
 
     /// Whether a tool execution produced a SUCCESSFUL intercept — the
@@ -2523,7 +2538,24 @@ enum AgentToolLoop {
             nil
         }
 
-        while iteration < policy.maxIterations {
+        // The forced `state` step: the ending it was armed for, and whether
+        // its one step has run.
+        var forcedStateEnding: StateStepEnding?
+        var forcedStateAsked = false
+        var forcedStateStepRan = false
+        while true {
+            if forcedStateStepRan, forcedStateEnding == .finalText {
+                await recordExit(.finalResponse, .forcedStateStep)
+                return RunResult(exit: .finalResponse, iterations: iteration)
+            }
+            if iteration >= policy.maxIterations + (forcedStateEnding == nil ? 0 : 1) {
+                guard iteration == policy.maxIterations, !forcedStateAsked,
+                    let arm = hooks.armForcedStateStep, !(await hooks.isCancelled())
+                else { break }
+                forcedStateAsked = true
+                guard await arm(.iterationCap) else { break }
+                forcedStateEnding = .iterationCap
+            }
             if await hooks.isCancelled() {
                 return RunResult(exit: .cancelled, iterations: iteration)
             }
@@ -2563,6 +2595,16 @@ enum AgentToolLoop {
             if await hooks.isCancelled() {
                 return RunResult(exit: .cancelled, iterations: iteration - 1)
             }
+            if let ending = forcedStateEnding, !forcedStateStepRan {
+                forcedStateStepRan = true
+                // A model that ignored the forced choice gets no second try:
+                // the run ends as it was going to.
+                if case .toolCalls = step {} else {
+                    if ending == .iterationCap { break }
+                    await recordExit(.finalResponse, .forcedStateStep)
+                    return RunResult(exit: .finalResponse, iterations: iteration)
+                }
+            }
             switch step {
             case .finalResponse:
                 // Grounded-claim invariant (user-approved honest-state
@@ -2578,7 +2620,8 @@ enum AgentToolLoop {
                     let visibleText = await finalVisibleText(),
                     let notice = GroundedConfigClaimCheck.notice(
                         finalText: visibleText,
-                        hasGroundedApply: hasGroundedConfigApply
+                        hasGroundedApply: hasGroundedConfigApply,
+                        viaHandoff: ChatExecutionContext.currentAgentId == Agent.defaultId
                     )
                 {
                     groundedClaimRetries += 1
@@ -2650,6 +2693,13 @@ enum AgentToolLoop {
                     await prepareRetry()
                     iteration -= 1
                     continue
+                }
+                if !forcedStateAsked, let arm = hooks.armForcedStateStep {
+                    forcedStateAsked = true
+                    if await arm(.finalText) {
+                        forcedStateEnding = .finalText
+                        continue
+                    }
                 }
                 // An ordinary model final is authoritative. Todo is visible
                 // progress metadata; it must never override EOS/stop and make

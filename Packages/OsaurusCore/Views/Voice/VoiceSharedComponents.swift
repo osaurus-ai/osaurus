@@ -28,19 +28,19 @@ struct VoiceRequirementRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 16))
-                .foregroundColor(isComplete ? theme.successColor : theme.tertiaryText)
-                .animation(.easeOut(duration: 0.2), value: isComplete)
+                .glyphSize(16)
+                .foregroundColor(isComplete ? theme.status.success.foreground : theme.text.tertiary)
+                .animation(theme.motion.quick, value: isComplete)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.primary)
 
                 if let description {
                     Text(description)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
 
@@ -49,28 +49,17 @@ struct VoiceRequirementRow: View {
             if !isComplete, let action {
                 Button(action: action) {
                     Text("Fix", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(isHovered ? .white : theme.accentColor)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(isHovered ? theme.accentColor : Color.clear)
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .strokeBorder(theme.accentColor, lineWidth: 1)
-                            }
-                        )
+                        .font(SettingsFont.compactLabel)
                 }
-                .buttonStyle(.plain)
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
                 .onHover { hovering in
-                    withAnimation(.easeOut(duration: 0.15)) {
+                    withAnimation(theme.motion.quick) {
                         isHovered = hovering
                     }
                 }
             }
         }
-        .frame(maxWidth: .infinity, minHeight: SettingsGroupMetrics.rowMinHeight)
+        .frame(maxWidth: .infinity, minHeight: theme.settingsRowMinHeight)
     }
 }
 
@@ -91,12 +80,12 @@ struct VoiceInfoBox: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(11)
+                .foregroundColor(theme.text.tertiary)
 
             Text(LocalizedStringKey(text), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -108,6 +97,7 @@ struct VoiceInfoBox: View {
 /// Continuous opacity pulse for "recording" dots. Holds the steady state
 /// under Reduce Motion.
 struct VoicePulsingIndicatorModifier: ViewModifier {
+    @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
@@ -115,7 +105,7 @@ struct VoicePulsingIndicatorModifier: ViewModifier {
         content
             .opacity(isPulsing ? 0.4 : 1.0)
             .animation(
-                .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+                theme.motion.loop(.easeInOut, duration: 0.8, autoreverses: true),
                 value: isPulsing
             )
             .onAppear {

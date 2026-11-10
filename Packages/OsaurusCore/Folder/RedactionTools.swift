@@ -505,7 +505,9 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
             return ToolEnvelope.success(tool: name, result: preview.payload, warnings: warnings)
         }
 
+        try await FolderToolHelpers.confirmWorkflowReplace(fileURL, path: relativePath)
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
+        await FolderToolHelpers.recordWorkflowHostWrite(fileURL, replaced: true)
         if let setId = ChatExecutionContext.currentChangeSetId {
             preview.payload["operation_id"] = setId.uuidString
         }
@@ -590,8 +592,12 @@ enum RedactionFileAccess {
         guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRoot) else {
             return .failureEnvelope(FolderToolHelpers.noActiveFolderEnvelope(tool: tool))
         }
-        guard let fileURL = try? FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
-        else {
+        let fileURL: URL
+        do {
+            fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath, intent: .write)
+        } catch let error as FolderToolError where error.isWorkflowScope {
+            return .failureEnvelope(ToolEnvelope.fromError(error, tool: tool))
+        } catch {
             return .failureEnvelope(
                 ToolEnvelope.failure(
                     kind: .invalidArgs,

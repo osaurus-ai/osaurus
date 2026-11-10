@@ -266,6 +266,9 @@ public final class TelemetryService {
         if enriched["total_memory_gb"] == nil {
             enriched["total_memory_gb"] = Self.totalMemoryBucketLabel
         }
+        if enriched["build_channel"] == nil {
+            enriched["build_channel"] = Self.buildChannelLabel
+        }
 
         switch consent {
         case .granted:
@@ -294,6 +297,40 @@ public final class TelemetryService {
         }
         return "128+"
     }()
+
+    /// Every value `buildChannel(...)` can return.
+    nonisolated static let buildChannels = ["release", "beta", "proof", "dev", "debug"]
+
+    /// Closed build-channel token attached to every event so live-proof and
+    /// locally built Release apps, which report to the production bucket,
+    /// can be filtered out of real-user metrics.
+    nonisolated static let buildChannelLabel: String = {
+        #if DEBUG
+            let isDebug = true
+        #else
+            let isDebug = false
+        #endif
+        return buildChannel(
+            bundleID: Bundle.main.bundleIdentifier,
+            bundlePath: Bundle.main.bundlePath,
+            isDebug: isDebug
+        )
+    }()
+
+    /// `release` / `beta`: the shipped Osaurus and Osaurus Beta apps.
+    /// `proof`: a re-bundled live-proof app (`com.dinoki.osaurus.<id>`).
+    /// `dev`: any other bundle id, or a build run from Xcode DerivedData or
+    /// a SwiftPM `.build` directory.
+    nonisolated static func buildChannel(bundleID: String?, bundlePath: String, isDebug: Bool) -> String {
+        if isDebug { return "debug" }
+        if bundlePath.contains("/DerivedData/") || bundlePath.contains("/.build/") { return "dev" }
+        switch bundleID {
+        case SiblingAppGuard.stableBundleId: return "release"
+        case SiblingAppGuard.betaBundleId: return "beta"
+        case let id? where id.hasPrefix(SiblingAppGuard.stableBundleId + "."): return "proof"
+        default: return "dev"
+        }
+    }
 
     // MARK: - Anonymization
 
