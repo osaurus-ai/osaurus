@@ -23,6 +23,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-macOS%20(Apple%20Silicon)-black?logo=apple" alt="Platform">
   <img src="https://img.shields.io/badge/OpenAI%20API-compatible-0A7CFF" alt="OpenAI API">
+  <img src="https://img.shields.io/badge/Open%20Responses-compatible-0A7CFF" alt="Open Responses">
   <img src="https://img.shields.io/badge/Anthropic%20API-compatible-0A7CFF" alt="Anthropic API">
   <img src="https://img.shields.io/badge/Ollama%20API-compatible-0A7CFF" alt="Ollama API">
   <img src="https://img.shields.io/badge/MCP-server-0A7CFF" alt="MCP Server">
@@ -90,7 +91,7 @@ Osaurus doesn't depend on any one model. Swap models freely and your agents, mem
 
 - **Local**: Gemma, Qwen, GPT-OSS, Llama, LFM, and more, running on Apple Silicon through MLX. Osaurus publishes [curated quantizations on Hugging Face](https://huggingface.co/OsaurusAI) tuned for quality per gigabyte. Models live in `~/MLXModels` (override with `OSU_MODELS_DIR`), and models already in your Hugging Face cache or LM Studio can be used in place.
 - **Apple Foundation Models**: on macOS 26+ with Apple Intelligence, Apple's on-device model is available as `foundation`.
-- **Cloud**: OpenAI, Anthropic, Gemini, xAI, Venice AI, OpenRouter, Ollama, LM Studio, or any OpenAI- or Anthropic-compatible endpoint. See [Remote Providers](docs/REMOTE_PROVIDERS.md).
+- **Cloud**: OpenAI, Anthropic, Gemini, xAI, Venice AI, OpenRouter, Ollama, LM Studio, or any endpoint that speaks the OpenAI, Anthropic, or Open Responses format. See [Remote Providers](docs/REMOTE_PROVIDERS.md).
 - **Osaurus Cloud**: pay-as-you-go access through [Osaurus Router](docs/OSAURUS_ROUTER.md), with no separate provider account. Osaurus doesn't store your prompt or response content, only the usage metadata needed for billing.
 
 ## Install
@@ -122,10 +123,11 @@ Osaurus runs a local server with drop-in endpoints for existing tools:
 | API       | Endpoint                                      |
 | --------- | --------------------------------------------- |
 | OpenAI    | `http://127.0.0.1:1337/v1/chat/completions`   |
+| Responses | `http://127.0.0.1:1337/v1/responses`          |
 | Anthropic | `http://127.0.0.1:1337/anthropic/v1/messages` |
 | Ollama    | `http://127.0.0.1:1337/api/chat`              |
 
-`/chat/completions` keeps strict OpenAI semantics: it returns `tool_calls` and your client runs them. For server-side autonomous runs, use `POST /agents/{id}/run`. See the [OpenAI API Guide](docs/OpenAI_API_GUIDE.md).
+`/chat/completions` keeps strict OpenAI semantics: it returns `tool_calls` and your client runs them. `/v1/responses` speaks the item-based [Open Responses](https://www.openresponses.org) format, so Responses-only clients such as Codex work too. For server-side autonomous runs, use `POST /agents/{id}/run`. See the [OpenAI API Guide](docs/OpenAI_API_GUIDE.md).
 
 To give any MCP client access to your Osaurus tools:
 
