@@ -98,7 +98,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             config: config,
             perAgentEnabled: settings?.imageEnabled ?? false
         )
-        guard imageAllowed else {
+        guard imageAllowed || scope.isGrantedByWorkflow(capability) else {
             throw SubagentError.denied(
                 params.isEdit
                     ? "Image edit is not enabled for this agent."
@@ -265,14 +265,18 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                 ? .allow
                 : .userDenied("User denied billable remote image generation.")
         }
+        // A workflow step that lists `image` was approved with the workflow;
+        // local runs cost nothing, so its `.ask` prompt is already answered.
+        let grantedByWorkflow = scope.isGrantedByWorkflow(capability)
         return params.isEdit
-            ? await editPermission(policy: policy, argumentsJSON: approvalJSON)
-            : await generatePermission(policy: policy, argumentsJSON: approvalJSON)
+            ? await editPermission(policy: policy, argumentsJSON: approvalJSON, granted: grantedByWorkflow)
+            : await generatePermission(policy: policy, argumentsJSON: approvalJSON, granted: grantedByWorkflow)
     }
 
     private func generatePermission(
         policy: SubagentPermissionPolicy,
-        argumentsJSON: String
+        argumentsJSON: String,
+        granted: Bool
     ) async -> SubagentDecision {
         switch policy {
         case .deny:
@@ -280,10 +284,11 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         case .alwaysAllow:
             return .allow
         case .ask:
-            if ChatExecutionContext.autoApproveToolPrompts { return .allow }
+            if ChatExecutionContext.autoApproveToolPrompts || granted { return .allow }
             let approved = await ToolPermissionPromptService.requestApproval(
                 toolName: "image",
                 description: ImageTool.toolDescription,
+                descriptionIsForModel: true,
                 argumentsJSON: argumentsJSON
             )
             return approved ? .allow : .userDenied("User denied image generation.")
@@ -303,7 +308,8 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
 
     private func editPermission(
         policy: SubagentPermissionPolicy,
-        argumentsJSON: String
+        argumentsJSON: String,
+        granted: Bool
     ) async -> SubagentDecision {
         switch policy {
         case .deny:
@@ -311,10 +317,11 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         case .alwaysAllow:
             return .allow
         case .ask:
-            if ChatExecutionContext.autoApproveToolPrompts { return .allow }
+            if ChatExecutionContext.autoApproveToolPrompts || granted { return .allow }
             let approved = await ToolPermissionPromptService.requestApproval(
                 toolName: "image",
                 description: ImageTool.toolDescription,
+                descriptionIsForModel: true,
                 argumentsJSON: argumentsJSON
             )
             return approved ? .allow : .userDenied("User denied image edit.")

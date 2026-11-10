@@ -59,7 +59,7 @@ struct TTSModeSettingsTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 24) {
+            SettingsPageContent {
                 enableCard
 
                 if config.provider == .pocketTTS {
@@ -82,15 +82,15 @@ struct TTSModeSettingsTab: View {
 
                 Spacer()
             }
-            .padding(24)
-            .frame(maxWidth: .infinity)
         }
         .onAppear {
             if !hasLoadedSettings {
                 loadSettings()
                 hasLoadedSettings = true
             }
-            ttsService.refreshModelState()
+            // Probe only: loading compiles a ~700 MB CoreML model, which
+            // happens on first speak or from the Load button.
+            ttsService.probeModelFiles()
         }
         .onReceive(NotificationCenter.default.publisher(for: .ttsConfigurationChanged)) { _ in
             loadSettings()
@@ -100,60 +100,32 @@ struct TTSModeSettingsTab: View {
     // MARK: - Enable Card
 
     private var enableCard: some View {
-        SettingsSection(title: "Text-to-Speech", icon: "speaker.wave.2") {
+        SettingsSection(title: "Text-to-Speech") {
             SettingsToggle(
-                title: L("Enable Text-to-Speech"),
+                title: "Enable Text-to-Speech",
                 description: config.enabled
                     ? "Speaker button appears on assistant messages"
                     : "Enable to read assistant replies aloud",
                 isOn: $config.enabled
             )
             .onChange(of: config.enabled) { _, _ in saveSettings() }
-
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.accentColor)
-
-                Text(
-                    config.provider == .pocketTTS
-                        ? "Powered by FluidAudio PocketTTS. English only. Streams audio as it's synthesized."
-                        : "Sends text to any server implementing the OpenAI /v1/audio/speech API, such as openai-edge-tts or Kokoro.",
-                    bundle: .module
-                )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor.opacity(0.1))
-            )
         }
     }
 
     // MARK: - Model Card
 
     private var modelCard: some View {
-        SettingsSection(title: "PocketTTS Model", icon: "waveform.circle") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    Image(systemName: modelIconName)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(modelIconColor)
+        SettingsSection(title: "PocketTTS Model") {
+            SettingsRow(title: "PocketTTS", description: modelStatusText, verbatimTitle: true, verbatimDescription: true) {
+                Image(systemName: modelIconName)
+                    .glyphSize(16, weight: .medium)
+                    .foregroundColor(modelIconColor)
+            } trailing: {
+                modelAction
+            }
 
-                    Text(modelStatusText)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-
-                    Spacer()
-
-                    modelAction
-                }
-
-                if case .downloading(let fraction) = ttsService.modelState {
-                    downloadProgressBar(fraction: fraction)
-                }
+            if case .downloading(let fraction) = ttsService.modelState {
+                downloadProgressBar(fraction: fraction)
             }
         }
     }
@@ -163,23 +135,26 @@ struct TTSModeSettingsTab: View {
         if let fraction {
             ProgressView(value: fraction)
                 .progressViewStyle(.linear)
-                .tint(theme.accentColor)
+                .tint(theme.action.primary.default.background)
         } else {
             ProgressView()
                 .progressViewStyle(.linear)
-                .tint(theme.accentColor)
+                .tint(theme.action.primary.default.background)
         }
     }
 
     private var modelStatusText: String {
         switch ttsService.modelState {
-        case .notReady: return L("Not downloaded — about 700 MB")
+        case .notReady:
+            return ttsService.modelFilesOnDisk
+                ? L("Downloaded — loads the first time Osaurus speaks")
+                : L("Not downloaded — about 700 MB")
         case .downloading(let fraction):
             if let fraction {
                 return String(format: "%@ %d%%", L("Downloading"), Int(fraction * 100))
             }
             return L("Preparing…")
-        case .ready: return L("Ready")
+        case .ready: return L("Runs on this Mac. English only. Streams audio as it's synthesized.")
         case .failed(let msg): return msg
         }
     }
@@ -195,96 +170,55 @@ struct TTSModeSettingsTab: View {
 
     private var modelIconColor: Color {
         switch ttsService.modelState {
-        case .ready: return theme.successColor
-        case .downloading: return theme.accentColor
-        case .failed: return theme.errorColor
-        case .notReady: return theme.secondaryText
-        }
-    }
-
-    private var modelIconBackground: Color {
-        switch ttsService.modelState {
-        case .ready: return theme.successColor.opacity(0.15)
-        case .downloading: return theme.accentColor.opacity(0.15)
-        case .failed: return theme.errorColor.opacity(0.15)
-        case .notReady: return theme.tertiaryBackground
+        case .ready: return theme.status.success.foreground
+        case .downloading: return theme.status.info.foreground
+        case .failed: return theme.status.error.foreground
+        case .notReady: return theme.text.secondary
         }
     }
 
     @ViewBuilder
     private var modelAction: some View {
         switch ttsService.modelState {
-        case .notReady, .failed:
+        case .notReady where ttsService.modelFilesOnDisk:
             Button(action: { ttsService.ensureModelLoaded() }) {
-                Text("Download", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
+                Text("Load Now", bundle: .module)
             }
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.secondary)
+
+        case .notReady, .failed:
+            SettingsButton(.primary, "Download", icon: "arrow.down") { ttsService.ensureModelLoaded() }
 
         case .downloading:
             ProgressView()
                 .controlSize(.small)
 
         case .ready:
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(theme.successColor)
-                    .frame(width: 8, height: 8)
-                Text("Ready", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.successColor)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule().fill(theme.successColor.opacity(0.1))
-            )
+            StatusChip(L("Ready"), tone: .success, showsDot: true)
         }
     }
 
     // MARK: - Voice Card
 
     private var voiceCard: some View {
-        SettingsSection(title: "Voice", icon: "person.wave.2", anchorId: "voice.tts.voice") {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("Voice", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                    Spacer()
-                    Picker("", selection: $config.voice) {
-                        ForEach(voiceMenuOptions, id: \.self) { voice in
-                            Text(displayName(for: voice)).tag(voice)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(MenuPickerStyle())
-                    .frame(maxWidth: 180)
-                    .onChange(of: config.voice) { _, _ in saveSettings() }
-                }
+        SettingsSection(title: "Voice", anchorId: "voice.tts.voice") {
+            SettingsPickerRow(
+                title: "Voice",
+                style: .menu,
+                selection: $config.voice,
+                options: voiceMenuOptions.map { .init($0, displayName(for: $0), verbatim: true) }
+            )
+            .onChange(of: config.voice) { _, _ in saveSettings() }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Temperature", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                        Spacer()
-                        Text(String(format: "%.2f", config.temperature))
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    Slider(value: $config.temperature, in: 0.1 ... 1.2, step: 0.05) { editing in
-                        if !editing { saveSettings() }
-                    }
-                }
-                .settingsLandingAnchor("voice.tts.temperature")
+            SettingsSlider(
+                title: "Temperature",
+                valueText: String(format: "%.2f", config.temperature),
+                value: $config.temperature,
+                range: 0.1 ... 1.2,
+                step: 0.05,
+                anchorId: "voice.tts.temperature"
+            ) { editing in
+                if !editing { saveSettings() }
             }
         }
     }
@@ -297,7 +231,9 @@ struct TTSModeSettingsTab: View {
         SettingsAdvancedDisclosure(anchorIds: Self.advancedAnchorIds) {
             SettingsPickerRow(
                 title: "Engine",
-                description: "On-device PocketTTS needs no setup. Choose a server to use any OpenAI-compatible speech API.",
+                description: config.provider == .openAICompatible
+                    ? "Sends text to any server implementing the OpenAI /v1/audio/speech API, such as openai-edge-tts or Kokoro."
+                    : "On-device PocketTTS needs no setup. Choose a server to use any OpenAI-compatible speech API.",
                 anchorId: "voice.tts.engine",
                 style: .menu,
                 selection: $config.provider,
@@ -306,77 +242,76 @@ struct TTSModeSettingsTab: View {
                     .init(TTSProvider.openAICompatible, L("OpenAI-Compatible Server")),
                 ]
             )
-            .onChange(of: config.provider) { _, _ in saveSettings() }
+            // The server fields only render for the remote engine; until then
+            // their search result lands on the picker that reveals them.
+            .settingsLandingAnchor(config.provider == .openAICompatible ? nil : "voice.tts.remote")
 
             if config.provider == .openAICompatible {
                 remoteServerCard
             }
         }
+        // Outside the picker: its landing anchor changes identity with the
+        // provider, which would reset a handler attached to it.
+        .onChange(of: config.provider) { _, _ in saveSettings() }
     }
 
     // MARK: - Remote Server Card
 
+    /// Rows of the Advanced card; a nested section would draw a card inside it.
+    @ViewBuilder
     private var remoteServerCard: some View {
-        SettingsSection(title: "voice.tts.remote.title", icon: "network", anchorId: "voice.tts.remote") {
-            VStack(alignment: .leading, spacing: 16) {
-                labeledField(L("Endpoint")) {
-                    TextField(TTSConfiguration.defaultRemoteEndpoint, text: $config.remoteEndpoint)
-                        .onChange(of: config.remoteEndpoint) { _, _ in
-                            connectionTest = .idle
-                            saveSettings()
-                        }
+        SettingsFieldRow(label: "Endpoint", anchorId: "voice.tts.remote") {
+            SettingsTextField(placeholder: TTSConfiguration.defaultRemoteEndpoint, text: $config.remoteEndpoint)
+                .onChange(of: config.remoteEndpoint) { _, _ in
+                    connectionTest = .idle
+                    saveSettings()
                 }
+        }
 
-                labeledField(L("Model")) {
-                    TextField(TTSConfiguration.defaultRemoteModel, text: $config.remoteModel)
-                        .onChange(of: config.remoteModel) { _, _ in
-                            connectionTest = .idle
-                            saveSettings()
-                        }
+        SettingsFieldRow(label: "Model") {
+            SettingsTextField(placeholder: TTSConfiguration.defaultRemoteModel, text: $config.remoteModel)
+                .onChange(of: config.remoteModel) { _, _ in
+                    connectionTest = .idle
+                    saveSettings()
                 }
+        }
 
-                labeledField(L("Voice")) {
-                    TextField(TTSConfiguration.defaultRemoteVoice, text: $config.remoteVoice)
-                        .onChange(of: config.remoteVoice) { _, _ in
-                            connectionTest = .idle
-                            saveSettings()
-                        }
+        SettingsFieldRow(label: "Voice") {
+            SettingsTextField(placeholder: TTSConfiguration.defaultRemoteVoice, text: $config.remoteVoice)
+                .onChange(of: config.remoteVoice) { _, _ in
+                    connectionTest = .idle
+                    saveSettings()
                 }
+        }
 
-                labeledField(L("API Key")) {
-                    SecureField(L("Optional"), text: $remoteAPIKey)
-                        .onChange(of: remoteAPIKey) { _, newValue in
-                            connectionTest = .idle
-                            TTSRemoteAPIKeyStore.save(newValue)
-                        }
+        SettingsFieldRow(label: "API Key") {
+            SettingsTextField(placeholder: L("Optional"), text: $remoteAPIKey, isSecure: true)
+                .onChange(of: remoteAPIKey) { _, newValue in
+                    connectionTest = .idle
+                    TTSRemoteAPIKeyStore.save(newValue)
                 }
+        }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Speed", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                        Spacer()
-                        Text(String(format: "%.2fx", config.remoteSpeed))
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    Slider(value: $config.remoteSpeed, in: 0.25 ... 4.0, step: 0.05) { editing in
-                        if !editing { saveSettings() }
-                    }
-                }
+        SettingsSlider(
+            title: "Speed",
+            valueText: String(format: "%.2fx", config.remoteSpeed),
+            value: $config.remoteSpeed,
+            range: 0.25 ... 4.0,
+            step: 0.05
+        ) { editing in
+            if !editing { saveSettings() }
+        }
 
-                connectionTestRow
-
-                if let error = ttsService.lastRemoteError {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.errorColor)
-                        Text(error)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.errorColor)
-                    }
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            connectionTestRow
+            if let error = ttsService.lastRemoteError {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .glyphSize(12)
+                        .foregroundColor(theme.status.error.foreground)
+                    Text(error)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.status.error.foreground)
                 }
             }
         }
@@ -390,51 +325,33 @@ struct TTSModeSettingsTab: View {
             case .success:
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.successColor)
+                        .glyphSize(12)
+                        .foregroundColor(theme.status.success.foreground)
                     Text("Connected", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.successColor)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.status.success.foreground)
                 }
             case .failure(let message):
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
+                        .glyphSize(12)
+                        .foregroundColor(theme.status.error.foreground)
                     Text(message)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.status.error.foreground)
                         .lineLimit(3)
                 }
             }
 
             Spacer()
 
-            Button(action: runConnectionTest) {
-                // The spinner replaces the label inside the button; the
-                // zero-opacity label keeps the button width stable so the
-                // layout doesn't jump while testing.
-                ZStack {
-                    Text("Test Connection", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
-                        .opacity(connectionTest == .testing ? 0 : 1)
-                    if connectionTest == .testing {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(
-                            connectionTest == .testing
-                                ? theme.tertiaryBackground : theme.accentColor)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(connectionTest == .testing)
+            SettingsButton(
+                .secondary,
+                "Test Connection",
+                isLoading: connectionTest == .testing,
+                size: .compact,
+                action: runConnectionTest
+            )
         }
     }
 
@@ -459,63 +376,23 @@ struct TTSModeSettingsTab: View {
         }
     }
 
-    private func labeledField(_ title: String, @ViewBuilder field: () -> some View) -> some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-            field()
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .font(.system(size: 12))
-                .frame(maxWidth: 260)
-        }
-    }
-
     // MARK: - Preview Card
 
     private var previewCard: some View {
-        SettingsSection(title: "Preview", icon: "play.circle") {
+        SettingsSection(title: "Preview") {
             VStack(alignment: .leading, spacing: 12) {
-                TextEditor(text: $previewText)
-                    .font(.system(size: 13))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 60)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground)
-                    )
+                SettingsTextEditor(text: $previewText, minHeight: 60)
 
                 HStack {
                     Spacer()
-                    Button(action: {
-                        if ttsService.playingMessageId == previewMessageId {
+                    let isPlaying = ttsService.playingMessageId == previewMessageId
+                    SettingsButton(.primary, isPlaying ? "Stop" : "Play", icon: isPlaying ? "stop.fill" : "play.fill") {
+                        if isPlaying {
                             ttsService.stop()
                         } else {
                             ttsService.toggleSpeak(text: previewText, messageId: previewMessageId)
                         }
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(
-                                systemName: ttsService.playingMessageId == previewMessageId
-                                    ? "stop.fill" : "play.fill"
-                            )
-                            Text(
-                                ttsService.playingMessageId == previewMessageId ? "Stop" : "Play",
-                                bundle: .module
-                            )
-                        }
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(canPreview ? theme.accentColor : theme.tertiaryBackground)
-                        )
                     }
-                    .buttonStyle(PlainButtonStyle())
                     .disabled(!canPreview)
                 }
             }

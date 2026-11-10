@@ -1,0 +1,69 @@
+{
+  "id": "workflow.tool-node-run-caller-bindings",
+  "domain": "workflow",
+  "label": "workflow \u2022 tool step arguments bind {{run.id}} and {{caller.kind}}",
+  "query": "tool step arguments bind run and caller context",
+  "notes": "No model. A `file_write` step names its file after `{{run.id}}` and writes `{{caller.kind}}` (the harness runs as the user); the workflow output echoes the caller kind through the same binding, so the run-time context reaches both step arguments and the output.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [],
+        "examples": [],
+        "input_schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "stamp",
+            "input": {
+              "content": "caller={{caller.kind}}",
+              "path": "{{run.id}}.txt"
+            },
+            "kind": "tool",
+            "name": "Stamp Run",
+            "output_schema": {},
+            "tool": {
+              "name": "file_write"
+            }
+          }
+        ],
+        "output": {
+          "caller": "{{caller.kind}}",
+          "written": "{{nodes.stamp.output}}"
+        },
+        "output_schema": {
+          "properties": {
+            "caller": {
+              "type": "string"
+            },
+            "written": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "caller",
+            "written"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {},
+      "nodeStatuses": {
+        "stamp": "done"
+      },
+      "outputKeys": [
+        "written"
+      ],
+      "outputValues": {
+        "caller": [
+          "user"
+        ]
+      }
+    }
+  }
+}

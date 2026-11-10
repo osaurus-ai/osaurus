@@ -49,7 +49,6 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
     /// SIP/Library-Validation security warning in the setup UI.
     var advancedActionsEnabled: Bool
     var enabledAdvancedActions: [AdvancedAction]
-    var inboundDispatch: AgentChannelInboundDispatchConfiguration
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -66,7 +65,6 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         case maxAttachmentBytes
         case advancedActionsEnabled
         case enabledAdvancedActions
-        case inboundDispatch
     }
 
     static let defaultMaxAttachmentBytes = 25 * 1_024 * 1_024
@@ -98,10 +96,7 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         allowedAttachmentRoots: [String]? = nil,
         maxAttachmentBytes: Int = IMessageConnectionConfiguration.defaultMaxAttachmentBytes,
         advancedActionsEnabled: Bool = false,
-        enabledAdvancedActions: [AdvancedAction] = [],
-        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(
-            requireMention: false
-        )
+        enabledAdvancedActions: [AdvancedAction] = []
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -119,7 +114,6 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         self.maxAttachmentBytes = Self.clampAttachmentBytes(maxAttachmentBytes)
         self.advancedActionsEnabled = advancedActionsEnabled
         self.enabledAdvancedActions = Self.normalizedAdvancedActions(enabledAdvancedActions)
-        self.inboundDispatch = inboundDispatch
     }
 
     init(from decoder: Decoder) throws {
@@ -159,11 +153,7 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
             enabledAdvancedActions: try container.decodeIfPresent(
                 [AdvancedAction].self,
                 forKey: .enabledAdvancedActions
-            ) ?? [],
-            inboundDispatch: try container.decodeIfPresent(
-                AgentChannelInboundDispatchConfiguration.self,
-                forKey: .inboundDispatch
-            ) ?? AgentChannelInboundDispatchConfiguration(requireMention: false)
+            ) ?? []
         )
     }
 
@@ -182,8 +172,7 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
             allowedAttachmentRoots: allowedAttachmentRoots,
             maxAttachmentBytes: maxAttachmentBytes,
             advancedActionsEnabled: advancedActionsEnabled,
-            enabledAdvancedActions: enabledAdvancedActions,
-            inboundDispatch: inboundDispatch
+            enabledAdvancedActions: enabledAdvancedActions
         )
     }
 
@@ -321,7 +310,8 @@ enum IMessageConnectionConfigurationStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let normalized = configuration.normalized
-        try encoder.encode(normalized).write(to: url, options: [.atomic])
+        let data = try encoder.encode(normalized)
+        try LegacyInboundDispatchCarryOver.platformFile(data, replacing: url).write(to: url, options: [.atomic])
         cache.store(normalized, for: url)
     }
 

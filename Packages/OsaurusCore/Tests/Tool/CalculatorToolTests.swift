@@ -382,10 +382,11 @@ struct CalculatorToolTests {
     }
 
     @MainActor
-    @Test func registeredAsBuiltInAndInEveryBaseline() {
+    @Test func registeredAsBuiltInAndInTheWorkerBaseline() {
         #expect(ToolRegistry.shared.builtInToolNames.contains("calculate"))
         #expect(ToolRegistry.spawnedWorkerBaselineToolNames.contains("calculate"))
-        #expect(ToolRegistry.orchestratorAllowedToolNames.contains("calculate"))
+        #expect(ToolRegistry.orchestratorLegacyToolNames.contains("calculate"))
+        #expect(!ToolRegistry.orchestratorAllowedToolNames.contains("calculate"))
         #expect(!ToolRegistry.orchestratorExcludedToolNames.contains("calculate"))
     }
 }

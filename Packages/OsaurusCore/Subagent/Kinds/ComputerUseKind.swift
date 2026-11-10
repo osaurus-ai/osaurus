@@ -144,8 +144,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                 invokingParentModelName: scope.parentModelName,
                 idleWaitSeconds: Self.residencyIdleWaitSeconds,
                 deniedMessage:
-                    "Running Computer Use on a different local model requires \"Local Orchestrator "
-                    + "Handoff\" enabled in Settings → Subagents (so the chat model can unload to "
+                    "Running Computer Use on a different local model requires \"Swap Local Models for "
+                    + "Subagents\" enabled in Settings → Agents → Delegation (so the chat model can unload to "
                     + "make room).",
                 unavailableMessage:
                     "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
@@ -232,6 +232,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
 
     private func validateAuthority(_ scope: SubagentScope) async throws {
         guard evalHarness == nil else { return }
+        if scope.isGrantedByWorkflow(capability) { return }
         let refusal = await MainActor.run {
             Self.authorizationRefusal(
                 agentId: scope.agentId, agent: AgentManager.shared.agent(for: scope.agentId)

@@ -776,11 +776,12 @@ extension SharedArtifact {
             if relativePath.hasPrefix(containerHome + "/") {
                 relativePath = String(relativePath.dropFirst(containerHome.count + 1))
             } else if relativePath.hasPrefix("/workspace/") {
-                let stripped = String(relativePath.dropFirst("/workspace/".count))
-                if let resolved = resolveContainedPath(stripped, within: OsaurusPaths.containerWorkspace()) {
-                    return .candidate(resolved, attempted: [resolved.path])
-                }
-                return .rejected
+                // Only the agent's own home and `/workspace/shared` are in
+                // scope; another agent's home is never shareable.
+                guard let (root, relative) = SandboxAgentPathScope(agentName: agent).split(sandboxPath: relativePath),
+                    let resolved = resolveContainedPath(relative.isEmpty ? "." : relative, within: root)
+                else { return .rejected }
+                return .candidate(resolved, attempted: [resolved.path])
             }
             if relativePath.hasPrefix("./") {
                 relativePath = String(relativePath.dropFirst(2))

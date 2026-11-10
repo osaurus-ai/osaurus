@@ -96,9 +96,9 @@ struct ConfigurationDomainRegistryTests {
         ConfigurationDomainBootstrap.registerBuiltIns()
 
         let configureWrites = ToolRegistry.configureWriteToolNames
-        // Since the declarative consolidation the entire write surface is
-        // exactly one tool.
-        #expect(configureWrites == ["osaurus_config"])
+        // Since the declarative consolidation the write surface is the
+        // declarative tool plus the import tool for pasted sources.
+        #expect(configureWrites == ["osaurus_config", "osaurus_import"])
 
         let configureAll = ToolRegistry.configureToolNames
         #expect(configureAll.isSuperset(of: configureWrites))
@@ -126,33 +126,30 @@ struct ConfigurationDomainRegistryTests {
     }
 
     @Test
-    func orchestratorAllowedToolNames_isTheConsolidatedConfigureSurfacePlusLoop() {
+    func orchestratorAllowedToolNames_isTheRoutingSurfacePlusLegacyQuickTools() {
         // The orchestrator (Default agent) baseline is a hard product
-        // contract: the consolidated configure surface (2 reads + the single
-        // declarative write) plus the three agent-loop tools,
-        // `get_current_time`, `calculate`, and the native search pair (`web_search` /
-        // `search_and_extract` — quick lookups run in the orchestrator's own
-        // loop; heavy research still dispatches to workers), and NOTHING
-        // else. The capability-search gateway is not part of it. Changing
-        // this set changes the model's first-turn schema and must be
-        // reviewed deliberately.
+        // contract: the routing surface (`status`, `state`, the Configurator
+        // and Architect handoffs, `run_workflow` — dropped by the composer
+        // when no workflow is Orchestrator-visible — and `clarify`). The
+        // agent-loop pair, time, arithmetic, and the native search pair are
+        // the legacy set it never holds. No configure tool: Osaurus
+        // itself goes through `configurator_handoff`. Changing this set
+        // changes the model's first-turn schema and must be reviewed
+        // deliberately.
         ConfigurationDomainBootstrap._resetForTests()
         ConfigurationDomainBootstrap.registerBuiltIns()
         defer { ConfigurationDomainBootstrap._resetForTests() }
 
-        let expected: Set<String> = [
-            "osaurus_inspect",
-            "osaurus_help",
-            "osaurus_config",
-            "todo",
-            "complete",
-            "clarify",
-            "get_current_time",
-            "calculate",
-            "web_search",
-            "search_and_extract",
+        let routing: Set<String> = [
+            "status", "state", "configurator_handoff", "architect_handoff", "run_workflow", "clarify",
         ]
-        #expect(ToolRegistry.orchestratorAllowedToolNames == expected)
+        let legacy: Set<String> = [
+            "todo", "complete", "get_current_time", "calculate", "web_search", "search_and_extract",
+        ]
+        #expect(ToolRegistry.orchestratorRoutingToolNames == routing)
+        #expect(ToolRegistry.orchestratorLegacyToolNames == legacy)
+        #expect(ToolRegistry.orchestratorAllowedToolNames == routing)
+        #expect(ToolRegistry.orchestratorAllowedToolNames.isDisjoint(with: ToolRegistry.configureToolNames))
         // The capability-search gateway is explicitly NOT in the Default
         // agent's surface anymore (it stays available to custom agents).
         #expect(!ToolRegistry.orchestratorAllowedToolNames.contains("capabilities_discover"))

@@ -5,8 +5,8 @@
 //  Pins the host-side "Remote Connections" list assembly (the owner view of
 //  who can reach a shared agent). `RemoteConnectionsModel.rows` merges minted
 //  agent-scoped access keys with still-pending relay invites and maps each to a
-//  status badge: revoked → .revoked, expired → .expired, temporary LAN key →
-//  .temporary, otherwise .active; unredeemed invites → .pending. Redeemed
+//  status badge: revoked → .revoked, expired → .expired, otherwise
+//  .active; unredeemed invites → .pending. Redeemed
 //  invites already appear as their minted key, so they must not be double
 //  listed.
 //
@@ -67,8 +67,7 @@ struct RemoteConnectionsModelTests {
         let key = makeKey(label: "Paired – mac")
         let rows = RemoteConnectionsModel.rows(
             keys: [key],
-            invites: [],
-            isTemporary: { _ in false }
+            invites: []
         )
         #expect(rows.count == 1)
         #expect(rows.first?.status == .active)
@@ -83,8 +82,7 @@ struct RemoteConnectionsModelTests {
         let key = makeKey(label: "Invite – Bob").withRevoked()
         let rows = RemoteConnectionsModel.rows(
             keys: [key],
-            invites: [],
-            isTemporary: { _ in false }
+            invites: []
         )
         #expect(rows.first?.status == .revoked)
         #expect(rows.first?.canRevoke == false)
@@ -98,21 +96,10 @@ struct RemoteConnectionsModelTests {
         )
         let rows = RemoteConnectionsModel.rows(
             keys: [key],
-            invites: [],
-            isTemporary: { _ in false }
+            invites: []
         )
         #expect(rows.first?.status == .expired)
         #expect(rows.first?.canRevoke == false)
-    }
-
-    @Test func temporaryKey_mapsToTemporaryRow() {
-        let key = makeKey(label: "Paired – iPhone")
-        let rows = RemoteConnectionsModel.rows(
-            keys: [key],
-            invites: [],
-            isTemporary: { $0 == key.id }
-        )
-        #expect(rows.first?.status == .temporary)
     }
 
     // MARK: - Invites
@@ -121,8 +108,7 @@ struct RemoteConnectionsModelTests {
         let invite = makeInvite(status: .active)
         let rows = RemoteConnectionsModel.rows(
             keys: [],
-            invites: [invite],
-            isTemporary: { _ in false }
+            invites: [invite]
         )
         #expect(rows.count == 1)
         #expect(rows.first?.status == .pending)
@@ -137,8 +123,7 @@ struct RemoteConnectionsModelTests {
         let usedInvite = makeInvite(status: .used, accessKeyId: UUID())
         let rows = RemoteConnectionsModel.rows(
             keys: [],
-            invites: [usedInvite],
-            isTemporary: { _ in false }
+            invites: [usedInvite]
         )
         #expect(rows.isEmpty)
     }
@@ -149,8 +134,7 @@ struct RemoteConnectionsModelTests {
         let invite = makeInvite(status: .active, accessKeyId: UUID())
         let rows = RemoteConnectionsModel.rows(
             keys: [],
-            invites: [invite],
-            isTemporary: { _ in false }
+            invites: [invite]
         )
         #expect(rows.isEmpty)
     }
@@ -159,8 +143,7 @@ struct RemoteConnectionsModelTests {
         let invite = makeInvite(status: .active, expiresInSeconds: -60)
         let rows = RemoteConnectionsModel.rows(
             keys: [],
-            invites: [invite],
-            isTemporary: { _ in false }
+            invites: [invite]
         )
         #expect(rows.isEmpty)
     }
@@ -180,8 +163,7 @@ struct RemoteConnectionsModelTests {
 
         let rows = RemoteConnectionsModel.rows(
             keys: [older, newer],
-            invites: [pending],
-            isTemporary: { _ in false }
+            invites: [pending]
         )
         #expect(rows.count == 3)
         // Newest key first.

@@ -44,9 +44,10 @@ enum HarnessFixtures {
         osaurusCLIPath: String? = nil,
         apiBase: String? = nil,
         serverReachable: Bool = false,
-        sessionMode: HarnessLaunchContext.SessionMode = .automatic
+        sessionMode: HarnessLaunchContext.SessionMode = .automatic,
+        claudeCodeFeatures: ClaudeCodeCLIFeatures = .none
     ) -> HarnessLaunchContext {
-        HarnessLaunchContext(
+        var context = HarnessLaunchContext(
             runtime: runtime,
             chatId: chatId,
             agentId: agentId,
@@ -60,6 +61,8 @@ enum HarnessFixtures {
             serverReachable: serverReachable,
             sessionMode: sessionMode
         )
+        context.claudeCodeFeatures = claudeCodeFeatures
+        return context
     }
 
     static func collect(_ stream: AsyncThrowingStream<HarnessEvent, Error>) async throws -> [HarnessEvent] {

@@ -12,7 +12,9 @@
 import SwiftUI
 
 struct InlineBanner: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var baseComponentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(18, enabled: baseComponentEnabled) }
 
     enum Kind {
         case error
@@ -62,18 +64,22 @@ struct InlineBanner: View {
     }
 
     var body: some View {
-        HStack(alignment: caption == nil ? .center : .top, spacing: 10) {
+        HStack(alignment: caption == nil ? .center : .top, spacing: theme.space.s8) {
             iconView
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(title)
-                    .font(.system(size: caption == nil ? 12 : 13, weight: caption == nil ? .medium : .semibold))
-                    .foregroundColor(caption == nil ? tint : theme.primaryText)
+                    #if OSAURUS_DESIGN_SYSTEM
+                    .assignedTypography(caption == nil ? "component.library.18.text" : "component.library.18.label", fallback: SettingsFont.rowTitle)
+                    #else
+                    .textStyle(caption == nil ? .caption : .label)
+                    #endif
+                    .foregroundColor(caption == nil ? tint : theme.text.primary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let caption {
                     Text(caption)
-                        .font(.system(size: 11.5))
-                        .foregroundColor(theme.secondaryText)
+                        .assignedTypography("component.library.18.caption", fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -84,7 +90,7 @@ struct InlineBanner: View {
                 Button(action: secondaryAction.handler) {
                     Text(secondaryAction.title)
                 }
-                .buttonStyle(SecondaryButtonStyle(size: .compact))
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
             }
 
             if let action {
@@ -92,66 +98,66 @@ struct InlineBanner: View {
                     HStack(spacing: 5) {
                         if let icon = action.icon {
                             Image(systemName: icon)
-                                .font(.system(size: 10.5, weight: .semibold))
+                                .glyphSize(10.5, weight: .semibold)
                         }
                         Text(action.title)
                     }
                 }
-                .buttonStyle(PrimaryButtonStyle(size: .compact))
+                .assignedSettingsButtonStyle(.primary, size: .compact)
             }
 
             if let onDismiss {
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(tint.opacity(0.7))
-                        .padding(4)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(L("Dismiss"))
+                SettingsIconButton("xmark", help: "Dismiss", size: .compact, action: onDismiss)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, theme.space.s12)
         .padding(.vertical, kind == .action ? 12 : 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: theme.catalogMetric("height", fallback: 0), alignment: .leading)
+        #if OSAURUS_DESIGN_SYSTEM
+        .assignedBaseChrome(18)
+        #else
         .background(background)
+        #endif
     }
 
     @ViewBuilder
     private var iconView: some View {
         if kind == .action {
             ZStack {
-                Circle().fill(theme.accentColor.opacity(0.12))
+                Circle().fill(theme.status.info.background)
                 Image(systemName: icon ?? defaultIcon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(13, weight: .semibold)
+                    #if OSAURUS_DESIGN_SYSTEM
+                    .foregroundColor(baseComponentEnabled ? theme.border.focus : theme.text.disabled)
+                    #else
+                    .foregroundColor(theme.text.link)
+                    #endif
             }
             .frame(width: 30, height: 30)
         } else {
             Image(systemName: icon ?? defaultIcon)
-                .font(.system(size: 12, weight: .semibold))
+                .glyphSize(12, weight: .semibold)
                 .foregroundColor(tint)
                 .padding(.top, caption == nil ? 0 : 1)
         }
     }
 
     private var background: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
+        RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
             .fill(tint.opacity(kind == .action ? 0.06 : 0.08))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(tint.opacity(kind == .action ? 0.18 : 0.25), lineWidth: 1)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .stroke(tint.opacity(kind == .action ? 0.18 : 0.25), lineWidth: theme.stroke.default)
             )
     }
 
     private var tint: Color {
         switch kind {
-        case .error: return theme.errorColor
-        case .warning: return theme.warningColor
-        case .info: return theme.secondaryText
-        case .success: return theme.successColor
-        case .action: return theme.accentColor
+        case .error: return theme.status.error.foreground
+        case .warning: return theme.status.warning.foreground
+        case .info: return theme.text.secondary
+        case .success: return theme.status.success.foreground
+        case .action: return theme.action.primary.default.background
         }
     }
 

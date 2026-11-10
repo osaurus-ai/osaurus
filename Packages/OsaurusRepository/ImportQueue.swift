@@ -48,6 +48,12 @@ public struct ImportRequest: Codable, Sendable, Equatable {
     public var operations: [ImportOperation]
     /// The caller passed `--yes` for the high-risk changes it was shown.
     public var confirmHighRisk: Bool
+    /// The manifest's `onboarding` merged with the command's flags. The app
+    /// keeps it for the bundle; absent leaves what it kept before.
+    public var onboarding: BundleOnboarding?
+    /// A whole-bundle remove: the app forgets what the bundle asked of
+    /// onboarding.
+    public var forgetsOnboarding: Bool?
 
     public init(
         id: String = ImportQueue.newRequestId(),
@@ -56,7 +62,9 @@ public struct ImportRequest: Codable, Sendable, Equatable {
         bundleName: String?,
         bundleVersion: String?,
         operations: [ImportOperation],
-        confirmHighRisk: Bool
+        confirmHighRisk: Bool,
+        onboarding: BundleOnboarding? = nil,
+        forgetsOnboarding: Bool? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -65,6 +73,8 @@ public struct ImportRequest: Codable, Sendable, Equatable {
         self.bundleVersion = bundleVersion
         self.operations = operations
         self.confirmHighRisk = confirmHighRisk
+        self.onboarding = onboarding
+        self.forgetsOnboarding = forgetsOnboarding
     }
 }
 
@@ -113,12 +123,18 @@ public struct ImportResult: Codable, Sendable, Equatable {
     public var bundleId: String
     public var status: Status
     public var items: [ImportItemResult]
+    /// Advisory notes that did not stop anything.
+    public var warnings: [String]?
     public var finishedAt: Date
 
-    public init(requestId: String, bundleId: String, items: [ImportItemResult], finishedAt: Date = Date()) {
+    public init(
+        requestId: String, bundleId: String, items: [ImportItemResult], warnings: [String] = [],
+        finishedAt: Date = Date()
+    ) {
         self.requestId = requestId
         self.bundleId = bundleId
         self.items = items
+        self.warnings = warnings.isEmpty ? nil : warnings
         self.finishedAt = finishedAt
         let failed = items.contains { $0.status == .failed }
         let ok = items.contains { $0.status == .done || $0.status == .unchanged }

@@ -25,8 +25,8 @@ import Testing
 
 // MARK: - Shared assertion helper
 
-/// The Orchestrator addendum instructs the model to call
-/// `osaurus_help` / `osaurus_inspect` / `osaurus_config` unconditionally.
+/// The Orchestrator addendum instructs the model to call its routing core
+/// (`status`, `state`, `configurator_handoff`, `architect_handoff`).
 /// Assert that `scope` (what the request may EXECUTE) permits every one of
 /// them — the exact disagreement that produced the live loop.
 func expectOrchestratorAddendumAgrees(
@@ -232,8 +232,8 @@ struct SessionToolScopeAgentSwitchSchemaTests {
     }
 
     /// The live defect, as a control: the custom agent's frozen snapshot has
-    /// no configure tools, and the Orchestrator composed against it lacks
-    /// `osaurus_help`. Proves the fix below is doing the work.
+    /// no routing tools, and the Orchestrator composed against it lacks
+    /// `configurator_handoff`. Proves the fix below is doing the work.
     @Test func control_orchestratorFilteredByCustomAgentSnapshot_lacksOsaurusHelp() {
         ConfigurationDomainBootstrap.registerBuiltIns()
         let customFrozen = Self.firstTurnFrozenNames(agentId: UUID())
@@ -249,7 +249,7 @@ struct SessionToolScopeAgentSwitchSchemaTests {
         )
         let scope = ToolExecutionScope(exposed: starved)
         #expect(
-            !scope.permits("osaurus_help"),
+            !scope.permits(ConfiguratorHandoffTool.toolName),
             "control failed: the frozen filter no longer starves the Orchestrator — re-check the mechanism"
         )
         #expect(
@@ -261,7 +261,7 @@ struct SessionToolScopeAgentSwitchSchemaTests {
     /// The fix end to end at the store + composer boundary: a session
     /// frozen under a custom agent, switched to the Default agent, is
     /// invalidated by the agent-aware fingerprint, so the Orchestrator
-    /// composes with NO frozen names and its schema contains `osaurus_help`;
+    /// composes with NO frozen names and its schema contains `configurator_handoff`;
     /// the addendum's required names and the exposed scope agree.
     @Test func agentSwitchToDefault_reFreezesAndExposesOsaurusHelp() async {
         ConfigurationDomainBootstrap.registerBuiltIns()
@@ -304,7 +304,7 @@ struct SessionToolScopeAgentSwitchSchemaTests {
             frozenAlwaysLoadedNames: cached?.initialAlwaysLoadedNames
         )
         let scope = ToolExecutionScope(exposed: tools)
-        #expect(scope.permits("osaurus_help"))
+        #expect(scope.permits(ConfiguratorHandoffTool.toolName))
         expectOrchestratorAddendumAgrees(with: scope)
 
         // Re-freeze for the new agent: the snapshot now carries the trio, so
@@ -359,7 +359,7 @@ struct SessionToolScopeAgentSwitchSchemaTests {
             frozenAlwaysLoadedNames: cached?.initialAlwaysLoadedNames
         )
         let names = Set(tools.map { $0.function.name })
-        for name in ToolRegistry.configureToolNames {
+        for name in ToolRegistry.configureToolNames.union(DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames) {
             #expect(!names.contains(name), "`\(name)` leaked into a custom agent's schema")
         }
     }
@@ -371,34 +371,14 @@ struct SessionToolScopeAgentSwitchSchemaTests {
 @MainActor
 struct OrchestratorAddendumRequiredToolsTests {
 
-    private static func probe(id: String, writeToolNames: [String]) -> ConfigurationDomain {
-        ConfigurationDomain(
-            id: id,
-            displayName: id.capitalized,
-            summary: "Summary for \(id).",
-            menuHint: "do / things",
-            searchKeywords: [],
-            exampleQueries: [],
-            tools: [],
-            writeToolNames: Set(writeToolNames)
-        )
-    }
-
     /// The static required-name list and the rendered prose cannot drift:
     /// every required name is advertised (in backticks) by BOTH addendum
-    /// variants, and every required name is a real configure tool the
-    /// Default agent's allowlist carries.
+    /// variants (`state` through the injected block's rule line), and every
+    /// required name is a routing tool the Default agent's allowlist carries.
     @Test func requiredNames_areAdvertisedByBothVariantsAndAllowed() {
-        // The allow-list assertions below read the live domain registry;
-        // register the shipped domain so the test does not depend on
-        // another suite having bootstrapped it first.
-        ConfigurationDomainBootstrap.registerBuiltIns()
-        let domains = [Self.probe(id: "config", writeToolNames: ["osaurus_config"])]
         for compact in [false, true] {
-            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
-                domains: domains,
-                compact: compact
-            )
+            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(compact: compact, exposure: .full)
+                + "\n" + OrchestratorTurnBlock.stateRuleLine
             for name in DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames {
                 #expect(
                     rendered.contains("`\(name)`"),
@@ -407,7 +387,7 @@ struct OrchestratorAddendumRequiredToolsTests {
             }
         }
         #expect(
-            ToolRegistry.configureToolNames.isSuperset(
+            ToolRegistry.orchestratorRoutingToolNames.isSuperset(
                 of: DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames
             )
         )
@@ -420,11 +400,12 @@ struct OrchestratorAddendumRequiredToolsTests {
 
     @Test func missingRequiredToolNames_reportsExactlyTheGap() {
         let full = DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames
+        let handoff = ConfiguratorHandoffTool.toolName
         #expect(DefaultAgentSystemPromptBuilder.missingRequiredToolNames(exposed: full).isEmpty)
         #expect(
             DefaultAgentSystemPromptBuilder.missingRequiredToolNames(
-                exposed: full.subtracting(["osaurus_help"])
-            ) == ["osaurus_help"]
+                exposed: full.subtracting([handoff])
+            ) == [handoff]
         )
         #expect(DefaultAgentSystemPromptBuilder.missingRequiredToolNames(exposed: []) == full)
     }

@@ -201,17 +201,6 @@ public final class ModelManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Model Deprecation
-
-    struct DeprecationNotice: Identifiable {
-        let id: String
-        let oldId: String
-        let newId: String
-    }
-
-    /// Maps deprecated model IDs to their recommended OsaurusAI replacements.
-    nonisolated static let deprecatedModelReplacements: [String: String] = [:]
-
     // MARK: - Published Properties
     @Published var availableModels: [MLXModel] = []
     @Published var isLoadingModels: Bool = false
@@ -231,7 +220,6 @@ public final class ModelManager: NSObject, ObservableObject {
     var ownsModelUpdatePolling = false
     var modelUpdatePollingTask: Task<Void, Never>?
     let automaticModelUpdateSweep = ModelUpdateSweep()
-    @Published var deprecationNotices: [DeprecationNotice] = []
 
     /// True while a refresh of the OsaurusAI org listing is in flight. Drives
     /// the spinner on the Recommended tab's refresh button.
@@ -331,26 +319,10 @@ public final class ModelManager: NSObject, ObservableObject {
 
         isLoadingModels = false
 
-        checkForDeprecatedModels()
-
         let allModels = availableModels + suggestedModels
         Task { [downloadService] in
             await downloadService.topUpCompletedModels(allModels)
         }
-    }
-
-    /// Scans locally installed models for deprecated entries and populates deprecation notices.
-    func checkForDeprecatedModels() {
-        deprecationNotices = Self.deprecatedModelReplacements.compactMap { oldId, newId in
-            let probe = MLXModel(id: oldId, name: "", description: "", downloadURL: "")
-            guard probe.isDownloaded else { return nil }
-            return DeprecationNotice(id: oldId, oldId: oldId, newId: newId)
-        }
-    }
-
-    /// Returns the replacement model ID if the given model is deprecated, nil otherwise.
-    nonisolated static func replacementForDeprecatedModel(_ modelId: String) -> String? {
-        deprecatedModelReplacements[modelId]
     }
 
     /// Re-evaluate download states for all known models against the current
@@ -374,7 +346,6 @@ public final class ModelManager: NSObject, ObservableObject {
                 with: localModels,
                 refreshLocalInstallationMetadata: true
             )
-            self.checkForDeprecatedModels()
             self.refreshTotalDownloadedSize()
         }
     }
@@ -869,8 +840,8 @@ extension ModelManager {
     }
 
     /// Fully curated models with descriptions we control.
-    /// Order is a fallback only — `ModelDownloadView.filteredSuggestedModels`
-    /// sorts by curated-first → top-pick → `releasedAt` desc → name.
+    /// Order is a fallback only — `LanguageModelCatalog.makeLists` sorts by
+    /// top-pick → `releasedAt` desc → name.
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
         // MARK: Gemma 4 — multimodal
         //

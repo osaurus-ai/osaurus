@@ -1,0 +1,51 @@
+{
+  "id": "configurator.history-when-changed",
+  "domain": "configurator",
+  "label": "configurator • when a setting changed and who changed it",
+  "query": "When did spell check get turned off, and was that me in Settings or you?",
+  "notes": "Versioning. Same seeds as history-what-changed: spell check went off twenty hours ago outside any apply, so history records it as Changed in Settings, not as a Configurator change. The answer must come from history (time and who), never from memory. Read-only.",
+  "fixtures": {
+    "seedConfigHistory": {
+      "prepare": "chat:\n  spell_check: true\n",
+      "steps": [
+        {
+          "yaml": "agents:\n- name: Research Buddy\n  description: Finds and summarizes sources on a topic.\n",
+          "caller": "configurator",
+          "callerDetail": "eval-session",
+          "requestText": "make me a research agent called Research Buddy",
+          "hoursAgo": 72
+        },
+        {
+          "yaml": "chat:\n  spell_check: false\n",
+          "caller": "observed",
+          "callerDetail": "before_apply",
+          "hoursAgo": 20
+        }
+      ]
+    }
+  },
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Gives when spell check was turned off as about a day ago (yesterday, roughly 20 hours ago, or the matching date), not a made-up time.",
+        "Says the change was made in Settings (by the user), not by the assistant or the Configurator."
+      ],
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "history"
+          }
+        }
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "maxIterations": 6
+    }
+  }
+}

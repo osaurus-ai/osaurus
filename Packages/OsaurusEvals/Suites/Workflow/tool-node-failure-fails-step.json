@@ -1,0 +1,65 @@
+{
+  "id": "workflow.tool-node-failure-fails-step",
+  "domain": "workflow",
+  "label": "workflow \u2022 a failed tool call fails its step and the run",
+  "query": "a failed tool call fails its step and the run",
+  "notes": "No model. `file_read` of a file that does not exist returns a failure envelope; the step must fail (not pass the envelope on as output), the run must fail, and the step after it must be skipped.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [
+          {
+            "from": "load",
+            "to": "save"
+          }
+        ],
+        "examples": [],
+        "input_schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "load",
+            "input": {
+              "path": "does-not-exist/missing.md"
+            },
+            "kind": "tool",
+            "name": "Read Missing",
+            "output_schema": {},
+            "tool": {
+              "name": "file_read"
+            }
+          },
+          {
+            "id": "save",
+            "input": {
+              "content": "{{nodes.load.output.text}}",
+              "path": "copy.md"
+            },
+            "kind": "tool",
+            "name": "Copy",
+            "output_schema": {},
+            "tool": {
+              "name": "file_write"
+            }
+          }
+        ],
+        "output": "{{nodes.save.output}}",
+        "output_schema": {
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {},
+      "status": "failed",
+      "nodeStatuses": {
+        "load": "failed",
+        "save": "skipped"
+      }
+    }
+  }
+}

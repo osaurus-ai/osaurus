@@ -59,40 +59,43 @@ struct WatcherFolderDispatchTests {
     // MARK: - Trigger → dispatch request
 
     @Test
-    func dispatchRequestCarriesTheResolvedFolderAndTheBookmark() {
+    func dispatchRequestCarriesTheResolvedFolderAndTheBookmark() throws {
         let bookmark = Data([0x01, 0x02, 0x03])
-        // A GUI watcher whose display path was never stored: only the
-        // bookmark exists. The engine resolves the bookmark to a real path
+        // A GUI folder event whose display path was never stored: only the
+        // bookmark exists. The source resolves the bookmark to a real path
         // for its own FSEvents stream — that path must reach the run too.
-        let watcher = Watcher(
+        let agentId = UUID()
+        let event = OsaurusEvent(
             name: "Voice Memo Watcher",
-            instructions: "transcribe",
-            agentId: UUID(),
-            watchPath: nil,
-            watchBookmark: bookmark
+            source: .folder(FolderSourceConfig(path: nil, bookmark: bookmark)),
+            action: .agent(
+                AgentEventAction(
+                    target: .local(agentId), instructions: "transcribe",
+                    folderPath: "/Users/probe/Elsewhere", freshSessionPerFire: false))
         )
-        let request = WatcherManager.shared.makeDispatchRequest(
-            for: watcher,
-            prompt: "p",
-            resolvedWatchPath: "/Users/probe/Music/Voice Memos"
+        let occurrence = EventOccurrence(
+            eventId: event.id,
+            payload: .object([:]),
+            agentPrompt: "p",
+            folderPath: "/Users/probe/Music/Voice Memos",
+            folderBookmark: bookmark
         )
+        let request = AgentTurnWorker.dispatchRequest(
+            event: event, action: try #require(event.action.agent), occurrence: occurrence)
         #expect(request.folderPath == "/Users/probe/Music/Voice Memos")
         #expect(request.folderBookmark == bookmark)
-        #expect(request.source == .watcher)
-        #expect(request.externalSessionKey == watcher.id.uuidString)
-        #expect(request.agentId == watcher.agentId)
+        #expect(request.source == .automation)
+        #expect(request.automationKind == .folder)
+        #expect(request.externalSessionKey == event.id.uuidString)
+        #expect(request.agentId == agentId)
         #expect(request.loadIntent == .background)
 
-        // No resolved path (engine could not resolve) → the display path
-        // still travels, so the run's plain-path fallback has something.
-        let pathOnly = Watcher(
-            name: "Config Watcher", instructions: "organize", agentId: UUID(),
-            watchPath: "/Users/probe/Inbox", watchBookmark: nil
-        )
-        let fallback = WatcherManager.shared.makeDispatchRequest(
-            for: pathOnly, prompt: "p", resolvedWatchPath: nil
-        )
-        #expect(fallback.folderPath == "/Users/probe/Inbox")
+        // An occurrence without a folder (not a folder source) runs in the
+        // action's working folder.
+        let plain = EventOccurrence(eventId: event.id, payload: .object([:]), agentPrompt: "p")
+        let fallback = AgentTurnWorker.dispatchRequest(
+            event: event, action: try #require(event.action.agent), occurrence: plain)
+        #expect(fallback.folderPath == "/Users/probe/Elsewhere")
         #expect(fallback.folderBookmark == nil)
     }
 
@@ -147,12 +150,8 @@ struct WatcherFolderDispatchTests {
         #expect(section.contains(folderContext.rootPath.path))
         #expect(!section.contains("/workspace/agents"))
         // … and the trigger prompt anchors the run on the same folder.
-        let watcher = Watcher(
-            name: "Voice Memo Watcher", instructions: "transcribe new voice memos",
-            agentId: agentId, watchPath: nil, watchBookmark: Data([0x01])
-        )
-        let prompt = WatcherManager.shared.buildDispatchPrompt(
-            for: watcher, iteration: 1, resolvedWatchPath: dir.path,
+        let prompt = FolderEventSource.buildDispatchPrompt(
+            instructions: "transcribe new voice memos", iteration: 1, resolvedWatchPath: dir.path,
             changedPaths: ["New Recording 12.m4a"]
         )
         #expect(prompt.contains("work HERE, not in any other directory): \(dir.path)"))

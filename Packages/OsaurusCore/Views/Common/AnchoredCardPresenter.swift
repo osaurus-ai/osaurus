@@ -14,14 +14,18 @@ extension View {
     /// has more room there. Content receives the actual screen-constrained
     /// size and owns its surface, border and corner treatment. A zero height
     /// lets content report its measured size before the card first appears.
+    /// A zero width matches the source view's width.
     /// Shadow padding extends only the transparent drawing surface, not layout.
     func anchoredCard<Card: View>(
         isPresented: Binding<Bool>,
         size: CGSize,
         alignment: HorizontalAlignment = .leading,
+        besideAnchor: Bool = false,
         constrainToWindow: Bool = false,
         takesFocus: Bool = true,
         shadowPadding: CGFloat = 0,
+        shadowPassesThrough: Bool = false,
+        gap: CGFloat = 8,
         accessibilityLabel: String = "Options",
         @ViewBuilder content: () -> Card
     ) -> some View {
@@ -30,10 +34,13 @@ extension View {
                 isPresented: isPresented,
                 size: size,
                 alignment: alignment,
+                besideAnchor: besideAnchor,
                 constrainToWindow: constrainToWindow,
                 takesFocus: takesFocus,
                 shadowPadding: shadowPadding,
+                shadowPassesThrough: shadowPassesThrough,
                 accessibilityLabel: accessibilityLabel,
+                gap: gap,
                 content: content()
             )
         )
@@ -55,6 +62,10 @@ struct HoverPreviewPresence {
 /// Screen coordinates use AppKit's bottom-left origin. Keep this calculation
 /// independent of the window so edge cases can be checked without showing UI.
 enum AnchoredCardPlacement {
+    /// The transparent drawing/shadow margin must not occlude its trigger.
+    static func ignoresPointer(_ point: CGPoint, cardFrame: CGRect) -> Bool {
+        !cardFrame.contains(point)
+    }
     static func availableFrame(visibleFrame: CGRect, containerFrame: CGRect? = nil) -> CGRect {
         let intersection = containerFrame.map { visibleFrame.intersection($0) } ?? visibleFrame
         let bounds = intersection.isEmpty ? visibleFrame : intersection
@@ -68,12 +79,21 @@ enum AnchoredCardPlacement {
         rightToLeft: Bool = false,
         trailingAligned: Bool = false,
         containerFrame: CGRect? = nil,
-        preferAbove: Bool? = nil
+        preferAbove: Bool? = nil,
+        besideAnchor: Bool = false,
+        gap: CGFloat = 8
     ) -> CGRect {
-        let gap: CGFloat = 8
         let safe = availableFrame(visibleFrame: visibleFrame, containerFrame: containerFrame)
-        let width = min(max(1, size.width), safe.width)
+        let width = min(max(1, size.width > 0 ? size.width : anchor.width), safe.width)
         let desiredHeight = max(1, size.height)
+        if besideAnchor {
+            let height = min(desiredHeight, safe.height)
+            let preferredX = rightToLeft ? anchor.minX - gap - width : anchor.maxX + gap
+            return CGRect(
+                x: min(max(preferredX, safe.minX), safe.maxX - width),
+                y: min(max(anchor.minY, safe.minY), safe.maxY - height),
+                width: width, height: height)
+        }
         let above = max(0, safe.maxY - anchor.maxY - gap)
         let below = max(0, anchor.minY - gap - safe.minY)
         let placeAbove = preferAbove ?? (above >= desiredHeight || (below < desiredHeight && above >= below))
@@ -153,10 +173,13 @@ private struct AnchoredCardAnchor<Card: View>: NSViewRepresentable {
     @Binding var isPresented: Bool
     let size: CGSize
     let alignment: HorizontalAlignment
+    let besideAnchor: Bool
     let constrainToWindow: Bool
     let takesFocus: Bool
     let shadowPadding: CGFloat
+    let shadowPassesThrough: Bool
     let accessibilityLabel: String
+    let gap: CGFloat
     let content: Card
 
     @Environment(\.theme) private var theme
@@ -178,23 +201,33 @@ private struct AnchoredCardAnchor<Card: View>: NSViewRepresentable {
     func updateNSView(_ view: AnchoredCardMarkerView, context: Context) {
         let coordinator = context.coordinator
         coordinator.isPresented = $isPresented
+        #if OSAURUS_DESIGN_SYSTEM
+        // Read the binding during the view update so content actions such as
+        // Done invalidate this bridge, even when the trigger has no active fill.
+        coordinator.requestedVisibility = isPresented
+        #endif
         coordinator.requestedSize = size
         coordinator.accessibilityLabel = accessibilityLabel
         coordinator.rightToLeft = layoutDirection == .rightToLeft
         coordinator.trailingAligned = alignment == .trailing
+        coordinator.besideAnchor = besideAnchor
         coordinator.constrainToWindow = constrainToWindow
         coordinator.takesFocus = takesFocus
         coordinator.shadowPadding = max(0, shadowPadding)
+        coordinator.shadowPassesThrough = shadowPassesThrough
+        coordinator.gap = max(0, gap)
         coordinator.content = { metrics in
-            AnyView(content
-                .environment(\.anchoredCardMetrics, metrics)
-                // A separate hosting window needs its own focus environment.
-                // Forward visual values rather than the parent's focus bridge.
-                .environment(\.theme, theme)
-                .environment(\.colorScheme, colorScheme)
-                .environment(\.layoutDirection, layoutDirection)
-                .environment(\.locale, locale)
-                .tint(theme.accentColor))
+            AnyView(
+                content
+                    .environment(\.anchoredCardMetrics, metrics)
+                    // A separate hosting window needs its own focus environment.
+                    // Forward visual values rather than the parent's focus bridge.
+                    .environment(\.theme, theme)
+                    .environment(\.colorScheme, colorScheme)
+                    .environment(\.layoutDirection, layoutDirection)
+                    .environment(\.locale, locale)
+                    .tint(theme.action.primary.default.background)
+            )
         }
         coordinator.scheduleUpdate()
     }
@@ -211,13 +244,17 @@ private struct AnchoredCardAnchor<Card: View>: NSViewRepresentable {
 private final class AnchoredCardCoordinator {
     weak var anchor: AnchoredCardMarkerView?
     var isPresented: Binding<Bool>?
+    var requestedVisibility = true
     var requestedSize: CGSize = .zero
     var accessibilityLabel = ""
     var rightToLeft = false
     var trailingAligned = false
+    var besideAnchor = false
     var constrainToWindow = false
     var takesFocus = true
     var shadowPadding: CGFloat = 0
+    var shadowPassesThrough = false
+    var gap: CGFloat = 8
     var content: (AnchoredCardMetrics) -> AnyView = { _ in AnyView(EmptyView()) }
 
     private weak var parent: NSWindow?
@@ -255,7 +292,7 @@ private final class AnchoredCardCoordinator {
     }
 
     private func updatePresentation() {
-        guard isPresented?.wrappedValue == true else {
+        guard requestedVisibility, isPresented?.wrappedValue == true else {
             tearDown(restoreFocus: true)
             return
         }
@@ -335,6 +372,7 @@ private final class AnchoredCardCoordinator {
         }
         panel.alphaValue = 1
         panel.ignoresMouseEvents = false
+        updateShadowHitTesting(at: NSEvent.mouseLocation)
         panel.setAccessibilityHidden(false)
         if takesFocus {
             if !panel.isVisible || !belongsToCard(NSApp.keyWindow) { panel.makeKeyAndOrderFront(nil) }
@@ -402,7 +440,9 @@ private final class AnchoredCardCoordinator {
                 rightToLeft: rightToLeft,
                 trailingAligned: trailingAligned,
                 containerFrame: containerFrame,
-                preferAbove: !suppressNextAnimation && lastAnchorFrame?.origin == anchorFrame.origin ? prefersAbove : nil
+                preferAbove: !suppressNextAnimation && lastAnchorFrame?.origin == anchorFrame.origin ? prefersAbove : nil,
+                besideAnchor: besideAnchor,
+                gap: gap
             ),
             anchorFrame,
             safeFrame.size
@@ -430,6 +470,7 @@ private final class AnchoredCardCoordinator {
         panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = false
         panel.hidesOnDeactivate = false
+        panel.acceptsMouseMovedEvents = shadowPassesThrough
         panel.becomesKeyOnlyIfNeeded = !takesFocus
         panel.level = parent.level
         panel.collectionBehavior = [.transient, .fullScreenAuxiliary]
@@ -493,8 +534,10 @@ private final class AnchoredCardCoordinator {
                 }
             }
         })
+        var monitoredEvents: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
+        if shadowPassesThrough { monitoredEvents.formUnion([.mouseMoved, .leftMouseDragged, .rightMouseDragged]) }
         eventMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
+            matching: monitoredEvents
         ) { [weak self] event in
             let consumed = MainActor.assumeIsolated {
                 guard let self else { return false }
@@ -514,8 +557,19 @@ private final class AnchoredCardCoordinator {
         return false
     }
 
+    private func updateShadowHitTesting(at point: CGPoint) {
+        guard shadowPassesThrough, let panel, requestedSize.height > 0 else { return }
+        let ignores = AnchoredCardPlacement.ignoresPointer(point, cardFrame: presentedFrame)
+        if panel.ignoresMouseEvents != ignores { panel.ignoresMouseEvents = ignores }
+    }
+
     private func handle(_ event: NSEvent) -> NSEvent? {
         guard let panel else { return event }
+        if event.type == .mouseMoved || event.type == .leftMouseDragged || event.type == .rightMouseDragged {
+            let point = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
+            updateShadowHitTesting(at: point)
+            return event
+        }
         if event.type == .keyDown {
             // Parent chat windows have their own Escape-to-close shortcut.
             // Keep focus here and consume Escape before it can reach that.

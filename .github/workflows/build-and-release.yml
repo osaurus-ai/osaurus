@@ -96,6 +96,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
+          lfs: true
           fetch-depth: 0 # Fetch all history for changelog generation
 
       - name: Set up Xcode ${{ env.XCODE_VERSION }}
@@ -133,6 +134,17 @@ jobs:
 
       - name: Verify App Launch (spawn gate)
         run: bash scripts/build/verify_launch.sh
+
+      # Workflow code steps need the JavaScriptCore helper, and first-run
+      # sandbox setup installs the bundled kernel; an app missing either
+      # installs fine and then fails at run time.
+      - name: Verify bundled helpers and sandbox kernel
+        run: |
+          set -euo pipefail
+          APP="build_output/Osaurus.app"
+          test -x "$APP/Contents/Helpers/osaurus"
+          test -x "$APP/Contents/Helpers/osaurus-js-host"
+          test -f "$APP/Contents/Resources/SandboxRuntime/vmlinux"
 
       # Hand the signed light app to `build_full` so the model-bundled DMG
       # never needs a second Xcode compile. ditto keeps Sparkle.framework's
@@ -271,6 +283,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       - name: Set up Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
@@ -354,6 +368,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
+          lfs: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Switch "pending release" → "released"

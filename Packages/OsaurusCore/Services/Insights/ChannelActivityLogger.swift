@@ -21,6 +21,8 @@ enum ChannelActivityLogger {
         case publish
         /// Reply to an inbound channel message (auto-reply).
         case autoReply = "auto_reply"
+        /// A workflow's `reply` step, relayed form question, or final post.
+        case workflowReply = "workflow_reply"
     }
 
     /// Bare host the provider API lives on; nil when the hop stays on this
@@ -31,7 +33,8 @@ enum ChannelActivityLogger {
         case .slack: return "slack.com"
         case .telegram: return "api.telegram.org"
         case .whatsapp: return "graph.facebook.com"
-        case .imessage: return nil
+        // Each mail account has its own server (or Mail sends it).
+        case .imessage, .email: return nil
         case .n8n: return EgressInfo.host(from: connection?.n8n?.outbound.webhookURL)
         case .customHTTP: return EgressInfo.host(from: connection?.customHTTP?.baseURL)
         case nil: return nil
@@ -45,6 +48,7 @@ enum ChannelActivityLogger {
         case .telegram: return "Telegram"
         case .whatsapp: return "WhatsApp"
         case .imessage: return "iMessage"
+        case .email: return "Email"
         case .n8n: return "n8n"
         case .customHTTP: return connection?.name ?? L("Custom HTTP channel")
         case nil: return connection?.name ?? fallback

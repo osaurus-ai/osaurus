@@ -190,6 +190,13 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// real. `agentId` must match a `seedAgents` entry id (schedules
         /// require a custom agent owner). Other domains ignore this field.
         public let seedSchedules: [SeedSchedule]?
+        /// Workflows to install before a `default_agent` case runs, then
+        /// uninstall afterwards. Automation cases bind a workflow by name;
+        /// with none installed the honest answer is a handoff to the
+        /// Architect, so a binding case needs the workflow to exist. Each
+        /// is a no-step workflow with the declared inputs: the case proves
+        /// the binding, never a run. Other domains ignore this field.
+        public let seedInstalledWorkflows: [SeedInstalledWorkflow]?
         /// MCP servers to pre-register before a `default_agent` case runs,
         /// then remove afterwards. Mutation cases (disable) reference a
         /// server by name; with an empty store an honest inspect-first model
@@ -228,6 +235,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// read path (two-tier planner → `[Memory]` prefix) is the
         /// real one. Other domains ignore this.
         public let seedMemory: MemorySeeds?
+        /// Configuration history for `configurator` cases about past
+        /// changes: the document as found (after the other fixtures) becomes
+        /// version 0, then each step is applied to the isolated store and
+        /// recorded with its caller, request, label, and age. Cleared after
+        /// the case.
+        public let seedConfigHistory: SeedConfigHistory?
+        /// Day-one teammates (`Teammate` raw values) to create from their
+        /// bundled templates before a `default_agent` case runs, with every
+        /// working folder in a scratch directory. The post-case registry
+        /// sweep deletes them. Other domains ignore this field.
+        public let seedTeammates: [String]?
 
         public init(
             requirePlugins: [String]? = nil,
@@ -243,9 +261,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             seedAgents: [SeedAgent]? = nil,
             seedProviders: [SeedProvider]? = nil,
             seedSchedules: [SeedSchedule]? = nil,
+            seedInstalledWorkflows: [SeedInstalledWorkflow]? = nil,
             seedMCPServers: [SeedMCPServer]? = nil,
             seedSql: [String]? = nil,
-            seedMemory: MemorySeeds? = nil
+            seedMemory: MemorySeeds? = nil,
+            seedConfigHistory: SeedConfigHistory? = nil,
+            seedTeammates: [String]? = nil
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
@@ -260,9 +281,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.seedAgents = seedAgents
             self.seedProviders = seedProviders
             self.seedSchedules = seedSchedules
+            self.seedInstalledWorkflows = seedInstalledWorkflows
             self.seedMCPServers = seedMCPServers
             self.seedSql = seedSql
             self.seedMemory = seedMemory
+            self.seedConfigHistory = seedConfigHistory
+            self.seedTeammates = seedTeammates
         }
     }
 
@@ -342,8 +366,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// (via guest-side exec, so ownership matches the agent user).
         /// `path` is relative to the agent home.
         public let seedFiles: [WorkspaceFile]?
-        /// Secrets pre-seeded into `AgentSecretsKeychain` for the eval
-        /// agent (deleted after the case). Headless note: cases must use
+        /// Keys pre-seeded as the eval agent's own values (deleted after
+        /// the case). Headless note: cases must use
         /// this (or pass `value` to `sandbox_secret_set`) — the no-value
         /// prompt flow can only be answered from ChatView.
         public let seedSecrets: [SeedSecret]?
@@ -595,6 +619,34 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         }
     }
 
+    /// A workflow to install for a `default_agent` automation case: no
+    /// steps, the named string inputs, and whether the Orchestrator may run
+    /// it with `run_workflow` (Let Osaurus Run This).
+    public struct SeedInstalledWorkflow: Sendable, Codable {
+        public let id: String
+        public let name: String
+        public let summary: String?
+        public let inputs: [String]?
+        public let required: [String]?
+        public let orchestratorVisible: Bool?
+
+        public init(
+            id: String,
+            name: String,
+            summary: String? = nil,
+            inputs: [String]? = nil,
+            required: [String]? = nil,
+            orchestratorVisible: Bool? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.summary = summary
+            self.inputs = inputs
+            self.required = required
+            self.orchestratorVisible = orchestratorVisible
+        }
+    }
+
     /// An MCP server to pre-register for a `default_agent` mutation case.
     /// HTTP transport, enabled, `autoConnect: false` (never dials), with a
     /// non-routable placeholder URL unless `url` is given.
@@ -619,6 +671,47 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// `RemoteProviderManager.addProvider(_:apiKey:isEphemeral:false)` so it
     /// survives the eval's ephemeral-provider read filter, and removes it
     /// after the case.
+    public struct SeedConfigHistory: Sendable, Codable {
+        /// Applied before version 0 is taken, so the case starts from a
+        /// known state whatever the isolated store's defaults are.
+        public let prepare: String?
+        /// A name on version 0.
+        public let foundLabel: String?
+        public let steps: [SeedConfigHistoryStep]
+
+        public init(prepare: String? = nil, foundLabel: String? = nil, steps: [SeedConfigHistoryStep]) {
+            self.prepare = prepare
+            self.foundLabel = foundLabel
+            self.steps = steps
+        }
+    }
+
+    /// One seeded configuration version. `caller` is a history caller kind
+    /// (`configurator`, `observed`, `template_install`, `file_import`,
+    /// `paired_phone`, `admin_api`, `other`) with optional `callerDetail`.
+    public struct SeedConfigHistoryStep: Sendable, Codable {
+        public let yaml: String
+        public let prune: Bool?
+        public let caller: String
+        public let callerDetail: String?
+        public let requestText: String?
+        public let label: String?
+        public let hoursAgo: Double
+
+        public init(
+            yaml: String, prune: Bool? = nil, caller: String, callerDetail: String? = nil,
+            requestText: String? = nil, label: String? = nil, hoursAgo: Double
+        ) {
+            self.yaml = yaml
+            self.prune = prune
+            self.caller = caller
+            self.callerDetail = callerDetail
+            self.requestText = requestText
+            self.label = label
+            self.hoursAgo = hoursAgo
+        }
+    }
+
     public struct SeedProvider: Sendable, Codable {
         public let id: String
         public let name: String
@@ -777,6 +870,25 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// the production baseline. The census attribution rides in the
         /// report's `context` block. CI-safe like `schema` / `prefix_hash`.
         public let promptSurface: PromptSurfaceExpectations?
+        /// Run expectation for `domain == "workflow"` cases: a workflow
+        /// template run through the production node executor with every
+        /// model slot bound to the eval model.
+        public let workflow: WorkflowExpectations?
+        /// Build expectation for `domain == "architect"` cases: The
+        /// Architect turns a brief into a draft through the shared loop.
+        public let architect: ArchitectExpectations?
+        /// Expectation for `domain == "architect_inline"` cases: the case
+        /// `query` goes through `architect_handoff`.
+        public let architectInline: ArchitectInlineExpectations?
+        /// Expectation for `domain == "onboarding"` cases: one deterministic
+        /// check of the first run (`OnboardingEvalHarness`). No model.
+        public let onboarding: OnboardingExpectations?
+        /// Expectation for `domain == "agent_creation"` cases: the
+        /// Configurator drafts a new agent in a New Agent chat.
+        public let agentCreation: AgentCreationExpectations?
+        /// Expectation for `domain == "chat_import_reader"` cases: the import
+        /// reader and verifier over fixture documents (`ChatImportEvalHarness`).
+        public let chatImport: ChatImportReaderExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -801,8 +913,15 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             httpAPI: HTTPAPIExpectations? = nil,
             memory: MemoryExpectations? = nil,
             agentChannels: AgentChannelsExpectations? = nil,
-            promptSurface: PromptSurfaceExpectations? = nil
+            promptSurface: PromptSurfaceExpectations? = nil,
+            workflow: WorkflowExpectations? = nil,
+            architect: ArchitectExpectations? = nil,
+            architectInline: ArchitectInlineExpectations? = nil,
+            onboarding: OnboardingExpectations? = nil,
+            agentCreation: AgentCreationExpectations? = nil,
+            chatImport: ChatImportReaderExpectations? = nil
         ) {
+            self.chatImport = chatImport
             self.schema = schema
             self.toolEnvelope = toolEnvelope
             self.toolResultGrounding = toolResultGrounding
@@ -826,6 +945,211 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.memory = memory
             self.agentChannels = agentChannels
             self.promptSurface = promptSurface
+            self.workflow = workflow
+            self.architect = architect
+            self.architectInline = architectInline
+            self.onboarding = onboarding
+            self.agentCreation = agentCreation
+        }
+    }
+
+    /// Expectation for `domain == "agent_creation"` cases. The case `query`
+    /// is the person's first message in a New Agent chat; the row scores
+    /// the draft the Configurator leaves (`AgentCreationEvalHarness`).
+    public struct AgentCreationExpectations: Sendable, Codable {
+        public let maxIterations: Int?
+        /// Scripted answers to `clarify`, in order.
+        public let replies: [String]?
+        /// `agent_draft` capability keys that must be on / stay off.
+        public let capabilitiesOn: [String]?
+        public let capabilitiesOff: [String]?
+        /// `auto` or `manual`.
+        public let toolMode: String?
+        public let maxClarifications: Int?
+        /// A name typed in the panel before the turn; the draft must keep it.
+        public let handEditedName: String?
+        /// The message shares something to import: one `agent_draft` import
+        /// must queue these item kinds for Create.
+        public let importKinds: [String]?
+    }
+
+    /// Expectation for `domain == "chat_import_reader"` cases. `documents`
+    /// stand in for downloaded pages (`d1`, `d2`, … in order); the case
+    /// `query` is the user's message. Each `items` row must come out with
+    /// that kind and a name containing `name`; no row may carry a
+    /// `forbidden` value.
+    public struct ChatImportReaderExpectations: Sendable, Codable {
+        public struct Document: Sendable, Codable {
+            public let origin: String
+            public let path: String?
+            public let text: String
+        }
+
+        public struct Item: Sendable, Codable {
+            public let kind: String
+            public let name: String
+        }
+
+        public let documents: [Document]
+        public let items: [Item]
+        public let forbidden: [String]?
+    }
+
+    /// Expectation for `domain == "onboarding"` cases.
+    public struct OnboardingExpectations: Sendable, Codable {
+        /// One of `OnboardingEvalHarness.checks`.
+        public let check: String
+    }
+
+    /// Expectation for `domain == "architect_inline"` cases. `result` is the
+    /// tool's outcome: `completed` (the draft ran), `failed`, `needs_choice`,
+    /// or `handed_back` (the deadline passed and the request went back to
+    /// the Orchestrator).
+    public struct ArchitectInlineExpectations: Sendable, Codable {
+        public let result: String
+        /// Whether the keep offer is there (default: only when `completed`).
+        public let keepOffer: Bool?
+        /// Seconds from the handoff the first step may take to start
+        /// (default: the draft budget plus the 10 s step budget).
+        public let maxFirstStepSeconds: Double?
+        /// Steps the draft may have at most (default 5).
+        public let maxNodes: Int?
+        /// Seconds for the draft and for the first step alike; moves the
+        /// shipped budgets.
+        public let deadline: Double?
+        /// The deadline a hand back must be attributed to: `draft` or `step`.
+        public let fallbackPhase: String?
+        /// The draft never starts, so the deadline always wins; the row
+        /// makes no model call.
+        public let holdDraft: Bool?
+        /// The options a `needs_choice` must offer, in order.
+        public let options: [String]?
+        public let failSteps: Bool?
+        /// Steps return this text instead of running.
+        public let stubStepText: String?
+        /// Say yes to the keep offer: the Save card is raised and saving
+        /// installs a valid workflow.
+        public let keep: Bool?
+    }
+
+    /// Expectation for `domain == "workflow"` cases. Inference nodes need
+    /// native structured output, so a local MLX eval model reports the row
+    /// as skipped with the typed reason rather than running it.
+    public struct WorkflowExpectations: Sendable, Codable {
+        /// A `WorkflowDefinition` in its saved JSON form.
+        public let definition: JSONValue?
+        /// Instead of `definition`: a bundled day-one workflow or prepared
+        /// ask by resource name (`default-workflow-end-of-day`), so the row
+        /// runs the shipped file.
+        public let bundled: String?
+        public let input: JSONValue
+        /// Form answers by field key, standing in for the user.
+        public let answers: [String: JSONValue]?
+        /// `completed` (default), `failed`, or `cancelled`.
+        public let status: String?
+        /// Node id -> `done`, `skipped`, or `failed`.
+        public let nodeStatuses: [String: String]?
+        /// Output paths that must be present and non-null.
+        public let outputKeys: [String]?
+        /// Output path -> allowed values.
+        public let outputValues: [String: [JSONValue]]?
+        /// Output path -> words the text there must contain (grounding in
+        /// the fixture), or must not.
+        public let outputContains: [String: [String]]?
+        public let outputExcludes: [String: [String]]?
+        /// Tool step id (a `map` body is `<map id>.item`) -> the result its
+        /// tool returns. Set, every tool step runs on a fixture, under its
+        /// teammate, and nothing on this Mac is read.
+        public let toolResults: [String: JSONValue]?
+        /// Tool step id -> argument -> the value it is called with;
+        /// `{{date:today_start}}` and the other date tokens are this Mac's
+        /// calendar at run time.
+        public let toolArguments: [String: [String: JSONValue]]?
+    }
+
+    /// Expectation for `domain == "architect"` cases. The case `query` is
+    /// the brief handed to the Architect.
+    public struct ArchitectExpectations: Sendable, Codable {
+        public let answers: [String: JSONValue]?
+        public let maxIterations: Int?
+        /// Node kinds the draft must contain (`inference`, `dialog`, `code`, `tool`).
+        public let nodeKinds: [String]?
+        public let inputKeys: [String]?
+        public let outputKeys: [String]?
+        /// Default true: a `workflow_test` run must complete.
+        public let requireTestRun: Bool?
+        /// Default true: the Architect must offer to save the draft.
+        public let requireProposeSave: Bool?
+        /// The person's replies to `clarify`, in order.
+        public let replies: [String]?
+        /// Values the person holds for declared secrets, by key (`"*"` for any).
+        public let secrets: [String: String]?
+        /// A saved workflow the chat starts editing; with `failingInput` it
+        /// is run once first and the failed run handed over to fix.
+        public let seed: Seed?
+        /// Checks on the latest completed test run's output.
+        public let testOutputKeys: [String]?
+        public let testOutputValues: [String: [JSONValue]]?
+        /// Output path -> substrings it must contain (case-insensitive).
+        public let testOutputContains: [String: [String]]?
+        /// Runs of the finished draft after the chat, in order.
+        public let postRuns: [PostRun]?
+        public let structure: Structure?
+        /// `name` or `name.arg` tool calls that must (or must not) appear.
+        public let requiredCalls: [String]?
+        public let forbiddenCalls: [String]?
+        public let maxClarifications: Int?
+        /// Question marks across every `clarify` question.
+        public let maxQuestions: Int?
+        /// Soft budgets, reported as warnings.
+        public let maxToolCalls: Int?
+        public let maxPromptTokens: Int?
+        /// Skipped as blocked when no image model is available.
+        public let needsImageModel: Bool?
+        /// A loopback HTTP API the case's workflow talks to. Its base URL
+        /// replaces `{{fixture.base_url}}` in the brief, replies, and seed.
+        public let fixtureAPI: EvalFixtureAPI?
+        /// Path -> minimum number of requests the fixture API must see.
+        public let fixtureRequests: [String: Int]?
+        /// File name -> contents, written to a folder of the person's own;
+        /// its path replaces `{{fixture.files_dir}}`, and it is the folder
+        /// the person picks for a folder field `answers` leaves out.
+        public let fixtureFiles: [String: String]?
+        /// Paths, relative to the `fixtureFiles` folder, that must exist
+        /// there once the chat is over.
+        public let fixtureFilesWritten: [String]?
+
+        public struct Seed: Sendable, Codable {
+            public let name: String
+            public let definition: JSONValue
+            public let failingInput: JSONValue?
+        }
+
+        public struct PostRun: Sendable, Codable {
+            public let input: JSONValue?
+            public let status: String?
+            public let outputKeys: [String]?
+            public let outputValues: [String: [JSONValue]]?
+            public let outputContains: [String: [String]]?
+            public let outputExcludes: [String: [String]]?
+        }
+
+        public struct Structure: Sendable, Codable {
+            public let conditionalEdges: Int?
+            public let errorHandling: Bool?
+            public let retries: Bool?
+            public let paginate: Bool?
+            public let secretAuth: Bool?
+            public let fileOutput: Bool?
+            public let minExamples: Int?
+            public let examplesTested: Bool?
+            public let describedInputs: Bool?
+            public let noAbsolutePaths: Bool?
+            public let keepsNodes: [String]?
+            public let editsSeed: Bool?
+            public let declaresFolder: Bool?
+            public let folderInput: Bool?
+            public let maxAddedNodes: Int?
         }
     }
 
@@ -2175,10 +2499,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         }
     }
 
-    /// Expectation for `domain == "default_agent"` cases. The runner drives
-    /// the multi-turn agent loop pinned to the built-in Default
-    /// (configuration) agent via `DefaultAgentConfigurationEvaluator`, then
-    /// scores:
+    /// Expectation for `domain == "orchestrator"` and `domain ==
+    /// "configurator"` cases (and the retired `default_agent` domain). The
+    /// `orchestrator` lane drives the multi-turn loop pinned to the built-in
+    /// Orchestrator (handoffs execute for real); the `configurator` lane drives
+    /// one real Configurator handoff seeded with the case `query`. Both score:
     ///   1. **Deterministic** transcript checks — `mustCallTools` /
     ///      `mustNotCallTools` and per-call `argsMustContain` argument
     ///      assertions (e.g. `osaurus_config` was called with
@@ -2222,6 +2547,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let argsMustNotContain: [ToolArgsMatcher]?
         /// Cap on model round-trips. nil → evaluator default.
         public let maxIterations: Int?
+        /// Automations that must exist once the loop ends, checked against
+        /// the live store (not the transcript) before the post-case sweep.
+        /// Each matcher must match at least one automation the case created.
+        public let expectAutomations: [AutomationMatcher]?
+        /// How many automations the case may create; 0 pins "proposed, not
+        /// applied" (a handoff, or a plan the user still has to confirm).
+        public let expectAutomationCount: Int?
+        /// Every Settings breadcrumb in the final answer ("Settings → A → B",
+        /// "A › B") must appear in what the model was given or read this run
+        /// (its seed and tool results). Catches invented Settings paths.
+        public let settingsPathsMustBeGrounded: Bool?
 
         public init(
             rubric: [String]? = nil,
@@ -2229,7 +2565,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             mustNotCallTools: [String]? = nil,
             argsMustContain: [ToolArgsMatcher]? = nil,
             argsMustNotContain: [ToolArgsMatcher]? = nil,
-            maxIterations: Int? = nil
+            maxIterations: Int? = nil,
+            expectAutomations: [AutomationMatcher]? = nil,
+            expectAutomationCount: Int? = nil,
+            settingsPathsMustBeGrounded: Bool? = nil
         ) {
             self.rubric = rubric
             self.mustCallTools = mustCallTools
@@ -2237,6 +2576,48 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.argsMustContain = argsMustContain
             self.argsMustNotContain = argsMustNotContain
             self.maxIterations = maxIterations
+            self.expectAutomations = expectAutomations
+            self.expectAutomationCount = expectAutomationCount
+            self.settingsPathsMustBeGrounded = settingsPathsMustBeGrounded
+        }
+
+        /// One created automation: every present field must hold.
+        /// `sourceKind` / `action` are raw values (`schedule`, `webhook`,
+        /// `rss`, `folder`; `workflow`, `agent`, `prompt`). `workflow` is the
+        /// bound workflow's name, `agent` the custom agent's name (both
+        /// case-insensitive). `inputKeys` must all be bound to non-empty
+        /// templates. `cron` matches a cron schedule's expression after
+        /// whitespace is collapsed; `instructionsContain` is a
+        /// case-insensitive substring of the agent or prompt instructions.
+        public struct AutomationMatcher: Sendable, Codable {
+            public let nameContains: String?
+            public let sourceKind: String?
+            public let action: String?
+            public let workflow: String?
+            public let agent: String?
+            public let inputKeys: [String]?
+            public let cron: String?
+            public let instructionsContain: String?
+
+            public init(
+                nameContains: String? = nil,
+                sourceKind: String? = nil,
+                action: String? = nil,
+                workflow: String? = nil,
+                agent: String? = nil,
+                inputKeys: [String]? = nil,
+                cron: String? = nil,
+                instructionsContain: String? = nil
+            ) {
+                self.nameContains = nameContains
+                self.sourceKind = sourceKind
+                self.action = action
+                self.workflow = workflow
+                self.agent = agent
+                self.inputKeys = inputKeys
+                self.cron = cron
+                self.instructionsContain = instructionsContain
+            }
         }
 
         /// One per-call argument assertion: at least one call to `tool` whose

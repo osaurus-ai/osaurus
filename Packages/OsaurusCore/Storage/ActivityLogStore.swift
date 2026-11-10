@@ -50,7 +50,12 @@ public enum ActivityLogStoreError: Error, LocalizedError {
 public final class ActivityLogStore: @unchecked Sendable {
     public static let shared = ActivityLogStore()
 
+    /// Stable Osaurus refuses to open an activity log stamped above 1, and
+    /// beta testers switch back to it on the same `~/.osaurus`. Additive
+    /// columns therefore replay on every open instead of bumping this.
     static let latestSchemaVersion = 1
+    /// What earlier beta builds stamped after adding `workflow_run_id`.
+    static let earlierBetaSchemaVersion = 2
     static let genesisHash = String(repeating: "0", count: 64)
 
     /// Clip for `EgressInfo.details` values so a runaway caller can't bloat
@@ -94,7 +99,7 @@ public final class ActivityLogStore: @unchecked Sendable {
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.activity())
             let path = OsaurusPaths.activityLogDatabaseFile().path
             do {
-                db = try OsaurusStorageOpener.open(path: path)
+                db = try OsaurusStorageOpener.open(path: path, cacheTier: .cold)
             } catch let error as EncryptedSQLiteError {
                 throw ActivityLogStoreError.failedToOpen(error.localizedDescription)
             }
@@ -195,6 +200,14 @@ public final class ActivityLogStore: @unchecked Sendable {
         }
     }
 
+    /// Test hook: runs pending migrations and returns the resulting version.
+    func migrateForTesting() throws -> Int {
+        try queue.sync {
+            try runMigrations()
+            return try schemaVersion()
+        }
+    }
+
     public func close() {
         OsaurusDatabaseHandle.deregister(name: "activity-log")
         queue.sync {
@@ -221,13 +234,21 @@ public final class ActivityLogStore: @unchecked Sendable {
     // MARK: - Schema
 
     private func runMigrations() throws {
-        let current = try schemaVersion()
+        var current = try schemaVersion()
+        if current == Self.earlierBetaSchemaVersion, try hasWorkflowRunColumn() {
+            try executeRaw("PRAGMA user_version = \(Self.latestSchemaVersion)")
+            current = Self.latestSchemaVersion
+        }
         guard current <= Self.latestSchemaVersion else {
             throw ActivityLogStoreError.migrationFailed(
                 "on-disk schema v\(current) is newer than supported v\(Self.latestSchemaVersion)"
             )
         }
         if current < 1 { try migrateToV1() }
+        try addWorkflowRunColumn()
+        try addTaskColumn()
+        try addParticipantColumn()
+        try addAgentAddressColumn()
     }
 
     private func schemaVersion() throws -> Int {
@@ -313,6 +334,60 @@ public final class ActivityLogStore: @unchecked Sendable {
         try executeRaw("PRAGMA user_version = 1")
     }
 
+    /// The workflow run a row belongs to, so Insights can list every event
+    /// of one run. Existing rows keep NULL; their payloads are unchanged.
+    private func addWorkflowRunColumn() throws {
+        if try !hasWorkflowRunColumn() {
+            try executeRaw("ALTER TABLE activity ADD COLUMN workflow_run_id TEXT")
+        }
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_activity_workflow_run ON activity(workflow_run_id)")
+    }
+
+    private func hasWorkflowRunColumn() throws -> Bool {
+        try hasColumn("workflow_run_id")
+    }
+
+    /// The task a row belongs to, so Insights can list every event of one
+    /// task. Additive like `workflow_run_id`; existing rows keep NULL.
+    private func addTaskColumn() throws {
+        if try !hasColumn("task_id") {
+            try executeRaw("ALTER TABLE activity ADD COLUMN task_id TEXT")
+        }
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_activity_task ON activity(task_id)")
+    }
+
+    /// `Participant.key` of the row's participant (wallet, agent address,
+    /// or channel sender), so Insights can list everything one person or
+    /// agent did. Additive; the participant itself lives in the payload.
+    private func addParticipantColumn() throws {
+        if try !hasColumn("participant_key") {
+            try executeRaw("ALTER TABLE activity ADD COLUMN participant_key TEXT")
+        }
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_activity_participant ON activity(participant_key)")
+    }
+
+    /// The agent address a row is about: a calling remote agent, or the
+    /// shared agent an interaction was on. Lets Insights list everything one
+    /// agent took part in, including agents that live on another Mac.
+    private func addAgentAddressColumn() throws {
+        if try !hasColumn("agent_address") {
+            try executeRaw("ALTER TABLE activity ADD COLUMN agent_address TEXT")
+        }
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_activity_agent_address ON activity(agent_address)")
+    }
+
+    private func hasColumn(_ column: String) throws -> Bool {
+        var hasColumn = false
+        try executeRaw("PRAGMA table_info(activity)") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let name = sqlite3_column_text(stmt, 1), String(cString: name) == column {
+                    hasColumn = true
+                }
+            }
+        }
+        return hasColumn
+    }
+
     // MARK: - Append
 
     /// Persist one record, assigning `seq`, `prevHash` and `hash`. Returns
@@ -347,14 +422,14 @@ public final class ActivityLogStore: @unchecked Sendable {
                 agent_id, agent_name, session_id, turn_id, request_id, plugin_id, access_key_id, audience,
                 input_tokens, output_tokens, tokens_per_second, bytes_sent, bytes_received,
                 privacy_filter_applied, redacted_count, finish_reason, error_message, title,
-                payload, prev_hash, hash
+                payload, prev_hash, hash, workflow_run_id, task_id, participant_key, agent_address
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
                 ?12, ?13, ?14, ?15, ?16, ?17,
                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
                 ?26, ?27, ?28, ?29, ?30,
                 ?31, ?32, ?33, ?34, ?35,
-                ?36, ?37, ?38
+                ?36, ?37, ?38, ?39, ?40, ?41, ?42
             )
             """
         try executeUpdate(sql) { stmt in
@@ -399,6 +474,10 @@ public final class ActivityLogStore: @unchecked Sendable {
             }
             Self.bindText(stmt, 37, r.prevHash ?? Self.genesisHash)
             Self.bindText(stmt, 38, r.hash ?? "")
+            Self.bindText(stmt, 39, r.workflowRunId?.uuidString)
+            Self.bindText(stmt, 40, r.taskId?.uuidString)
+            Self.bindText(stmt, 41, r.participant?.key)
+            Self.bindText(stmt, 42, r.relatedAgentAddress)
         }
     }
 
@@ -422,7 +501,9 @@ public final class ActivityLogStore: @unchecked Sendable {
             wireResponseBody: log.wireResponseBody, bodyTruncation: log.bodyTruncation,
             connection: log.connection,
             category: log.category, locality: log.locality, egress: egress, agentId: log.agentId,
-            agentName: log.agentName, sessionId: log.sessionId, clientIP: log.clientIP
+            agentName: log.agentName, sessionId: log.sessionId, clientIP: log.clientIP,
+            workflowRunId: log.workflowRunId, workflowNodeId: log.workflowNodeId, taskId: log.taskId,
+            participant: log.participant
         )
     }
 
@@ -753,6 +834,20 @@ public final class ActivityLogStore: @unchecked Sendable {
         try first(where: "access_key_id = ?1", binds: [.text(accessKeyId)])
     }
 
+    /// The run row of a workflow run.
+    func find(workflowRunId: UUID) throws -> RequestLog? {
+        try first(
+            where: "workflow_run_id = ?1 AND category = ?2",
+            binds: [.text(workflowRunId.uuidString), .text(ActivityCategory.workflowRun.rawValue)])
+    }
+
+    /// The row of a task.
+    func find(taskId: UUID) throws -> RequestLog? {
+        try first(
+            where: "task_id = ?1 AND category = ?2",
+            binds: [.text(taskId.uuidString), .text(ActivityCategory.task.rawValue)])
+    }
+
     /// Presence checks skip the payload: decoding a full `RequestLog` (wire
     /// bodies included) just to test for a row is the expensive part.
     func exists(turnId: UUID) throws -> Bool {
@@ -952,6 +1047,19 @@ public final class ActivityLogStore: @unchecked Sendable {
         }
         if let agentId = f.agentId {
             clauses.append("agent_id = \(add(.text(agentId.uuidString)))")
+        }
+        if let runId = f.workflowRunId {
+            clauses.append("workflow_run_id = \(add(.text(runId.uuidString)))")
+        }
+        if let participantKey = f.participantKey {
+            clauses.append("participant_key = \(add(.text(participantKey)))")
+        }
+        if let address = f.agentAddress?.lowercased() {
+            let bound = add(.text(address))
+            clauses.append("(agent_address = \(bound) OR participant_key = \(bound))")
+        }
+        if let taskId = f.taskId {
+            clauses.append("task_id = \(add(.text(taskId.uuidString)))")
         }
         switch f.status {
         case .all: break

@@ -15,6 +15,16 @@ import Foundation
 enum FolderToolError: LocalizedError {
     case invalidArguments(String)
     case pathOutsideRoot(String)
+    /// A workflow step named an absolute path outside every folder the run
+    /// may use. `absolutePath` is the expanded path the person can be
+    /// asked to allow; `allowed` lists the run's folders.
+    case pathOutsideWorkflowScopes(path: String, absolutePath: String, allowed: [String])
+    /// A workflow step tried to save into a folder it may only read.
+    /// `writable` lists where the run may save.
+    case pathOutsideWorkflowWriteScope(path: String, absolutePath: String, writable: [String])
+    /// A workflow step would replace an existing file on this Mac and the
+    /// person did not allow it (or nobody could be asked).
+    case replaceDenied(path: String, folder: String)
     case fileNotFound(String)
     case directoryNotFound(String)
     case operationFailed(String)
@@ -114,10 +124,23 @@ enum FolderToolError: LocalizedError {
         }
     }
 
+    /// A workflow run's folder limits refused the path; the envelope carries
+    /// what the run may ask to allow.
+    var isWorkflowScope: Bool {
+        switch self {
+        case .pathOutsideWorkflowScopes, .pathOutsideWorkflowWriteScope, .replaceDenied: return true
+        default: return false
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case .invalidArguments(let msg): return "Invalid arguments: \(msg)"
         case .pathOutsideRoot(let path): return "Path is outside working directory: \(path)"
+        case .pathOutsideWorkflowScopes(let path, _, _): return "Path is outside the workflow's folders: \(path)"
+        case .pathOutsideWorkflowWriteScope(let path, _, _):
+            return "The workflow may only read this folder, not save in it: \(path)"
+        case .replaceDenied(let path, _): return "Not allowed to replace the existing file: \(path)"
         case .fileNotFound(let path): return "File not found: \(path)"
         case .directoryNotFound(let path): return "Directory not found: \(path)"
         case .operationFailed(let msg): return "Operation failed: \(msg)"
@@ -153,7 +176,12 @@ enum FolderToolHelpers {
     /// resolved path must equal root or be a strict child (`root + "/"`)
     /// so traversal and sibling directories like `<root>-other` cannot slip
     /// through a substring match.
-    static func resolvePath(_ relativePath: String, rootPath: URL) throws -> URL {
+    static func resolvePath(_ path: String, rootPath: URL, intent: PathIntent = .read) throws -> URL {
+        let inWorkflowRun = ChatExecutionContext.currentWorkflowRunId != nil
+        // A workflow step has no shell to expand `~`; treat it as the home
+        // folder rather than a directory named `~` under the root.
+        let relativePath =
+            inWorkflowRun && (path == "~" || path.hasPrefix("~/")) ? (path as NSString).expandingTildeInPath : path
         let rootStandardized = rootPath.standardized.path
         let resolvedURL: URL
         if relativePath.hasPrefix("/") {
@@ -161,6 +189,21 @@ enum FolderToolHelpers {
             let isWithinRoot =
                 absStandardized == rootStandardized
                 || absStandardized.hasPrefix(rootStandardized + "/")
+            // A workflow run may also use the folders and files the person
+            // picked for it (and its own workspace); each granted path is
+            // checked as a root of its own, symlink containment included.
+            if !isWithinRoot, let granted = workflowGrantedRoot(containing: absStandardized) {
+                let url = try resolvePath(relativePath, rootPath: granted)
+                if intent == .write { try checkWorkflowWritable(url, path: path) }
+                return url
+            }
+            if !isWithinRoot, inWorkflowRun {
+                throw FolderToolError.pathOutsideWorkflowScopes(
+                    path: path, absolutePath: absStandardized,
+                    allowed: [rootStandardized]
+                        + (ChatExecutionContext.workflowGrantedPaths ?? []).map(\.standardized.path)
+                        .filter { $0 != rootStandardized })
+            }
             guard isWithinRoot else {
                 throw FolderToolError.invalidArguments(
                     "path must be relative to the working directory or absolute under it "
@@ -212,6 +255,91 @@ enum FolderToolHelpers {
             throw FolderToolError.pathOutsideRoot(relativePath)
         }
         return resolvedURL
+    }
+
+    enum PathIntent: Sendable { case read, write }
+
+    /// A save into a granted workflow folder must land under one of the
+    /// run's writable roots. Inert when no writable roots are bound.
+    static func checkWorkflowWritable(_ url: URL, path: String) throws {
+        guard let writable = ChatExecutionContext.workflowWritableRoots else { return }
+        if isWithin(url, anyOf: writable) { return }
+        throw FolderToolError.pathOutsideWorkflowWriteScope(
+            path: path, absolutePath: url.standardized.path, writable: writable.map(\.standardized.path))
+    }
+
+    /// `url` equals or lies under one of `roots`, both lexically and after
+    /// resolving symlinks in the parts that exist, so a link inside a
+    /// writable folder cannot carry a save out of it.
+    static func isWithin(_ url: URL, anyOf roots: [URL]) -> Bool {
+        let lexical = url.standardized.path
+        let real = realPath(url)
+        return roots.contains { root in
+            let rootLexical = root.standardized.path
+            let rootReal = realPath(root)
+            let lexicalInside = lexical == rootLexical || lexical.hasPrefix(rootLexical + "/")
+            let realInside = real == rootReal || real.hasPrefix(rootReal + "/")
+            return lexicalInside && realInside
+        }
+    }
+
+    /// The path with symlinks resolved in its deepest existing ancestor and
+    /// the not-yet-existing tail kept as written.
+    static func realPath(_ url: URL) -> String {
+        var existing = url.standardized
+        var tail: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path) {
+            let parent = existing.deletingLastPathComponent()
+            if parent.path == existing.path { break }
+            tail.insert(existing.lastPathComponent, at: 0)
+            existing = parent
+        }
+        var resolved = existing.resolvingSymlinksInPath().standardized
+        for part in tail { resolved.appendPathComponent(part) }
+        return resolved.path
+    }
+
+    /// Before a workflow step replaces or changes a file that already
+    /// exists in a folder granted to the run (not its workspace), the
+    /// person allows it once per run (or always). Throws `replaceDenied`
+    /// when they decline or nobody can be asked. Inert outside a workflow.
+    static func confirmWorkflowReplace(_ url: URL, path: String) async throws {
+        guard let hooks = ChatExecutionContext.workflowHostFiles,
+            FileManager.default.fileExists(atPath: url.path),
+            !isWithin(url, anyOf: [hooks.workspace]),
+            let root = workflowGrantedRoot(containing: url.standardized.path)
+        else { return }
+        guard try await hooks.approveReplace(root, url) else {
+            throw FolderToolError.replaceDenied(path: path, folder: root.path)
+        }
+    }
+
+    /// Notes a file a workflow step created or replaced on this Mac outside
+    /// the run's workspace, for the run's result summary.
+    static func recordWorkflowHostWrite(_ url: URL, replaced: Bool) async {
+        guard let hooks = ChatExecutionContext.workflowHostFiles, !isWithin(url, anyOf: [hooks.workspace]) else {
+            return
+        }
+        await hooks.record(url.standardized, replaced)
+    }
+
+    /// The granted workflow path `absolutePath` lives under, when the
+    /// current execution is a workflow run that was given one. A granted
+    /// file counts for itself only; a granted folder for everything in it.
+    static func workflowGrantedRoot(containing absolutePath: String) -> URL? {
+        guard let granted = ChatExecutionContext.workflowGrantedPaths, !granted.isEmpty else { return nil }
+        for root in granted {
+            let rootPath = root.standardized.path
+            if absolutePath == rootPath {
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: rootPath, isDirectory: &isDirectory), !isDirectory.boolValue {
+                    return root.deletingLastPathComponent()
+                }
+                return root
+            }
+            if absolutePath.hasPrefix(rootPath + "/") { return root }
+        }
+        return nil
     }
 
     /// Parse JSON arguments to dictionary
@@ -273,6 +401,39 @@ enum FolderToolHelpers {
         return url.lastPathComponent
     }
 
+    /// A path a later call can pass back: relative under `rootPath`, and
+    /// absolute outside it (a folder granted to a workflow run), where a
+    /// bare file name would not resolve.
+    static func resultPath(for url: URL, under rootPath: URL) -> String {
+        let display = displayPath(for: url, under: rootPath)
+        guard display == url.lastPathComponent else { return display }
+        let parent = url.deletingLastPathComponent()
+        let inRoot =
+            parent.standardized.path == rootPath.standardized.path
+            || parent.resolvingSymlinksInPath().standardized.path
+                == rootPath.resolvingSymlinksInPath().standardized.path
+        return inRoot ? display : grantedForm(of: url)
+    }
+
+    /// `url` spelled under the granted workflow folder it lives in, so the
+    /// scope check accepts it back: enumeration hands out symlink-resolved
+    /// URLs (`/private/var/…` for a folder granted as `/var/…`). The last
+    /// component stays unresolved, so `resolvePath` still checks a symlink.
+    private static func grantedForm(of url: URL) -> String {
+        let path = url.standardized.path
+        let real =
+            url.deletingLastPathComponent().resolvingSymlinksInPath().standardized
+            .appendingPathComponent(url.lastPathComponent).path
+        for root in ChatExecutionContext.workflowGrantedPaths ?? [] {
+            let granted = root.standardized.path
+            if path == granted || path.hasPrefix(granted + "/") { return path }
+            let realGranted = root.resolvingSymlinksInPath().standardized.path
+            if real == realGranted { return granted }
+            if real.hasPrefix(realGranted + "/") { return granted + real.dropFirst(realGranted.count) }
+        }
+        return path
+    }
+
     /// Resolve the working-folder root for a folder tool. Tools registered
     /// process-wide carry no fixed root and resolve the EXECUTING chat's
     /// folder from the TaskLocal scope bound by the send/run surfaces;
@@ -320,15 +481,15 @@ enum FolderToolHelpers {
         return results
     }
 
+    static let noActiveFolderMessage = "No working folder is selected for this chat — folder tools are unavailable."
+
     /// Typed failure returned when a folder tool executes with no working
     /// folder in scope (e.g. the model guessed a tool name outside a folder
     /// session, or the folder was cleared mid-run).
     static func noActiveFolderEnvelope(tool: String) -> String {
         ToolEnvelope.failure(
             kind: .unavailable,
-            message:
-                "No working folder is selected for this chat — folder tools are "
-                + "unavailable. " + PromptWorkingFolderTool.attachFolderSteer,
+            message: noActiveFolderMessage + " " + PromptWorkingFolderTool.attachFolderSteer,
             tool: tool,
             retryable: false
         )
@@ -696,8 +857,13 @@ struct FileTreeTool: OsaurusTool {
     /// the working root, so the model can copy a `path` field straight into
     /// the next `file_read` call instead of parsing a glyph tree. Honors the
     /// same ignore/secret/cap rules as `buildTree`. `truncated` is true when
-    /// the file cap or a per-directory file cap dropped entries.
-    func entries(for targetURL: URL, maxDepth: Int) -> (entries: [[String: Any]], truncated: Bool) {
+    /// the file cap or a per-directory file cap dropped entries. `recentFirst`
+    /// lists each directory's files newest first, before its subdirectories,
+    /// with each file's `modified` date, so the per-directory cap keeps the
+    /// newest files instead of the first names.
+    func entries(for targetURL: URL, maxDepth: Int, recentFirst: Bool = false)
+        -> (entries: [[String: Any]], truncated: Bool)
+    {
         guard let rootPath else { return ([], false) }
         var out: [[String: Any]] = []
         var fileCount = 0
@@ -707,7 +873,7 @@ struct FileTreeTool: OsaurusTool {
         let ignorePatterns = FolderToolHelpers.detectProjectType(rootPath).ignorePatterns
 
         func relativePath(_ url: URL) -> String {
-            FolderToolHelpers.displayPath(for: url, under: rootPath)
+            FolderToolHelpers.resultPath(for: url, under: rootPath)
         }
 
         func traverse(_ currentURL: URL, depth: Int) {
@@ -716,15 +882,23 @@ struct FileTreeTool: OsaurusTool {
             guard
                 let contents = try? fm.contentsOfDirectory(
                     at: currentURL,
-                    includingPropertiesForKeys: [.isDirectoryKey],
+                    includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
                     options: [.skipsHiddenFiles]
                 )
             else { return }
 
+            func modified(_ url: URL) -> Date {
+                (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                    ?? .distantPast
+            }
             let sorted = contents.sorted { a, b in
                 let aIsDir = (try? a.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 let bIsDir = (try? b.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-                if aIsDir != bIsDir { return aIsDir }
+                if aIsDir != bIsDir { return recentFirst ? bIsDir : aIsDir }
+                if recentFirst, !aIsDir {
+                    let (aDate, bDate) = (modified(a), modified(b))
+                    if aDate != bDate { return aDate > bDate }
+                }
                 return a.lastPathComponent.lowercased() < b.lastPathComponent.lowercased()
             }
 
@@ -749,7 +923,11 @@ struct FileTreeTool: OsaurusTool {
                         truncated = true
                         continue
                     }
-                    out.append(["name": name, "path": relativePath(item), "type": "file"])
+                    var entry: [String: Any] = ["name": name, "path": relativePath(item), "type": "file"]
+                    if recentFirst {
+                        entry["modified"] = ISO8601DateFormatter().string(from: modified(item))
+                    }
+                    out.append(entry)
                     filesShownHere += 1
                     fileCount += 1
                 }
@@ -897,6 +1075,13 @@ struct FileReadTool: OsaurusTool {
             "max_depth": .object([
                 "type": .string("integer"),
                 "description": .string("Optional directory listing depth when path is a directory (default: 3)"),
+            ]),
+            "sort": .object([
+                "type": .string("string"),
+                "enum": .array([.string("name"), .string("recent")]),
+                "description": .string(
+                    "Optional directory listing order: `recent` lists the newest files first, with their modified date"
+                ),
             ]),
             "sheet_name": .object([
                 "type": .string("string"),
@@ -1367,7 +1552,8 @@ struct FileReadTool: OsaurusTool {
             !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext)
         {
             let maxDepth = coerceInt(args["max_depth"]) ?? 3
-            let listing = FileTreeTool(rootPath: rootPath).entries(for: fileURL, maxDepth: maxDepth)
+            let recent = (args["sort"] as? String)?.lowercased() == "recent"
+            let listing = FileTreeTool(rootPath: rootPath).entries(for: fileURL, maxDepth: maxDepth, recentFirst: recent)
             return ToolEnvelope.listing(
                 tool: name,
                 path: relativePath,
@@ -2718,7 +2904,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
             return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
         }
-        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath, intent: .write)
         // Writable combined mode: refuse secret-file writes on the host —
         // the write channel is the tampering half of the agent-as-bridge
         // surface. Inert in plain folder mode (no host scope bound).
@@ -2734,10 +2920,12 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             case .failureEnvelope(let envelope): return envelope
             }
         }
+        let existed = FileManager.default.fileExists(atPath: fileURL.path)
+        if !dryRun { try await FolderToolHelpers.confirmWorkflowReplace(fileURL, path: relativePath) }
         // Document generation by extension (.xlsx / .docx / .pdf) — the
         // content is CSV/TSV/JSON rows or Markdown/HTML, not the bytes.
         if let target = FileWriteDocumentRouting.target(forExtension: fileURL.pathExtension.lowercased()) {
-            return try await writeDocument(
+            let result = try await writeDocument(
                 target: target,
                 content: content,
                 mode: mode,
@@ -2746,6 +2934,10 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                 fileURL: fileURL,
                 rootPath: rootPath
             )
+            if !dryRun, !ToolEnvelope.isError(result) {
+                await FolderToolHelpers.recordWorkflowHostWrite(fileURL, replaced: existed)
+            }
+            return result
         }
 
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
@@ -2799,6 +2991,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
 
         // Write content
         try proposedContent.write(to: fileURL, atomically: true, encoding: .utf8)
+        await FolderToolHelpers.recordWorkflowHostWrite(fileURL, replaced: existed)
 
         if let setId = ChatExecutionContext.currentChangeSetId {
             preview.payload["operation_id"] = setId.uuidString
@@ -3632,7 +3825,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
             return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
         }
-        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath, intent: .write)
         // Same secret-write gate as `file_write` — the denylist must not be
         // bypassable by switching to the edit tool.
         if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
@@ -3712,7 +3905,9 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 warnings: dryRunWarnings
             )
         }
+        try await FolderToolHelpers.confirmWorkflowReplace(fileURL, path: relativePath)
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
+        await FolderToolHelpers.recordWorkflowHostWrite(fileURL, replaced: true)
 
         if let setId = ChatExecutionContext.currentChangeSetId {
             preview.payload["operation_id"] = setId.uuidString
@@ -3748,11 +3943,17 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
             return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
         }
-        return try await Self.editDocument(
-            at: try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath),
+        let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath, intent: .write)
+        if !dryRun { try await FolderToolHelpers.confirmWorkflowReplace(fileURL, path: relativePath) }
+        let result = try await Self.editDocument(
+            at: fileURL,
             relativePath: relativePath,
             resolveOperand: { try FolderToolHelpers.resolvePath($0, rootPath: rootPath) },
             args: args, ext: ext, dryRun: dryRun, replaceAll: replaceAll, tool: name)
+        if !dryRun, !ToolEnvelope.isError(result) {
+            await FolderToolHelpers.recordWorkflowHostWrite(fileURL, replaced: true)
+        }
+        return result
     }
 
     /// In-place document edit of a `/workspace/...` path. The share is a host
@@ -3785,12 +3986,12 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             at: resolved.hostURL,
             relativePath: resolved.sandboxPath,
             resolveOperand: { operand in
-                if let absolute = WorkspaceShareRoute.absoluteSandboxPath(operand, home: home),
-                    WorkspaceShareRoute.shareRelativePath(forSandboxPath: absolute) != nil
-                {
-                    return try WorkspaceShareRoute.hostURL(forSandboxPath: absolute)
+                guard let absolute = WorkspaceShareRoute.absoluteSandboxPath(operand, home: home) else {
+                    throw FolderToolError.invalidArguments(
+                        "'\(operand)' is outside your sandbox home and `\(SandboxAgentPathScope.sharedMountPath)`."
+                    )
                 }
-                return try FolderToolHelpers.resolvePath(operand, rootPath: WorkspaceShareRoute.shareRoot)
+                return try WorkspaceShareRoute.hostURL(forSandboxPath: absolute, home: home)
             },
             args: args, ext: ext, dryRun: dryRun, replaceAll: replaceAll, tool: tool)
     }
@@ -5024,7 +5225,7 @@ struct FileSearchTool: OsaurusTool {
             guard resourceValues?.isRegularFile == true else { continue }
             if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) { continue }
             let entryName = fileURL.lastPathComponent
-            let relativePath = FolderToolHelpers.displayPath(for: fileURL, under: rootPath)
+            let relativePath = FolderToolHelpers.resultPath(for: fileURL, under: rootPath)
             // A query carrying a path separator ("orders/", "src/main.py")
             // can never match a basename — match it against the relative
             // path instead (observed live: a model searched the perfectly
@@ -5284,7 +5485,7 @@ struct FileSearchTool: OsaurusTool {
         }
 
         guard let rootPath else { return .skipped(.undecodable) }
-        let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
+        let relativePath = FolderToolHelpers.resultPath(for: url, under: rootPath)
 
         let lines = FolderToolHelpers.contentLines(content)
         var matches: [String] = []
@@ -5322,7 +5523,7 @@ struct FileSearchTool: OsaurusTool {
             return .skipped(.document(extension: ext))
         }
         guard let rootPath else { return .skipped(.document(extension: ext)) }
-        let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
+        let relativePath = FolderToolHelpers.resultPath(for: url, under: rootPath)
         var matches: [String] = []
         for unit in extracted.units {
             try Task.checkCancellation()
@@ -5522,9 +5723,43 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         self.fixedRootPath = rootPath
     }
 
+    /// Rewrites host paths under the container share (the host side of the
+    /// VirtioFS mount) to the `/workspace/...` paths the VM sees. Exact
+    /// prefix mapping only; nothing else in the command is touched.
+    static func mappingShareToVM(_ command: String) -> String {
+        let hostRoot = OsaurusPaths.containerWorkspace().standardized.path
+        guard !hostRoot.isEmpty, command.contains(hostRoot) else { return command }
+        return command.replacingOccurrences(of: hostRoot, with: WorkspaceShareRoute.mountPoint)
+    }
+
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        // A workflow runs every shell step in its own sandbox environment,
+        // in the run workspace (which the host shares), whatever folder root
+        // the caller has.
+        if let workflow = ChatExecutionContext.workflowSandbox {
+            if coerceBool(args["background"]) == true {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`background` is not available in a workflow step.",
+                    field: "background",
+                    expected: "omit",
+                    tool: name
+                )
+            }
+            var routed = args
+            routed["cwd"] = workflow.inVMWorkingDirectory
+            // `{{run.workspace}}` binds to the host side of the share; the
+            // VM sees the same directory under `/workspace`.
+            if let command = args["command"] as? String {
+                routed["command"] = Self.mappingShareToVM(command)
+            }
+            let data = (try? JSONSerialization.data(withJSONObject: routed)) ?? Data()
+            return try await sandboxBridgeExec(
+                workflow.bridge, argumentsJSON: String(data: data, encoding: .utf8) ?? argumentsJSON)
+        }
 
         if FolderToolHelpers.resolveRoot(fixed: fixedRootPath) == nil,
             let bridge = ChatExecutionContext.sandboxReadBridge
@@ -5681,7 +5916,13 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         }
 
         do {
-            try await FolderToolHelpers.runProcessAsync(process)
+            // Stopping the chat run must stop the command too; otherwise it
+            // keeps running after the card already reads "Stopped".
+            try await withTaskCancellationHandler {
+                try await FolderToolHelpers.runProcessAsync(process)
+            } onCancel: {
+                Task { await terminate(2) }
+            }
         } catch {
             sink.markExited(code: -1)
             await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
@@ -5809,9 +6050,20 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
 /// `NSLock` guards the same data with no scheduling overhead, and
 /// every callsite is already short and non-blocking.
 final class ShellRunOutputCollector: @unchecked Sendable {
+    /// Per-stream retention. The model sees at most
+    /// `ToolOutputCaps.shellOutput` characters (head + tail) and the live
+    /// card has its own 1 MB seed, so a command that prints for hours must
+    /// not grow this copy without limit.
+    static let streamHeadCapBytes = 1 << 20
+    static let streamTailCapBytes = 1 << 20
+
     private let lock = NSLock()
-    private var stdoutBuf = Data()
-    private var stderrBuf = Data()
+    private var stdoutBuf = HeadTailByteCapture(
+        headCap: ShellRunOutputCollector.streamHeadCapBytes,
+        tailCap: ShellRunOutputCollector.streamTailCapBytes)
+    private var stderrBuf = HeadTailByteCapture(
+        headCap: ShellRunOutputCollector.streamHeadCapBytes,
+        tailCap: ShellRunOutputCollector.streamTailCapBytes)
     private var _lastActivity = Date()
     private var _idleKilled = false
 
@@ -5859,12 +6111,57 @@ final class ShellRunOutputCollector: @unchecked Sendable {
     }
 
     func snapshot() -> (stdout: String, stderr: String) {
-        lock.withLock {
-            (
-                String(data: stdoutBuf, encoding: .utf8) ?? "",
-                String(data: stderrBuf, encoding: .utf8) ?? ""
-            )
+        lock.withLock { (stdoutBuf.string, stderrBuf.string) }
+    }
+}
+
+/// Keeps the first `headCap` and the last `tailCap` bytes of a stream and
+/// counts what fell between them.
+struct HeadTailByteCapture {
+    let headCap: Int
+    let tailCap: Int
+    private(set) var head = Data()
+    private(set) var tail = Data()
+    private(set) var omittedBytes = 0
+
+    init(headCap: Int, tailCap: Int) {
+        self.headCap = headCap
+        self.tailCap = tailCap
+    }
+
+    mutating func append(_ data: Data) {
+        guard !data.isEmpty else { return }
+        var rest = data[...]
+        let room = headCap - head.count
+        if room > 0 {
+            head.append(rest.prefix(room))
+            rest = rest.dropFirst(room)
         }
+        guard !rest.isEmpty else { return }
+        tail.append(contentsOf: rest)
+        // Trim in batches so a chatty pipe doesn't memmove on every chunk.
+        if tail.count > tailCap * 2 {
+            omittedBytes += tail.count - tailCap
+            tail = Data(tail.suffix(tailCap))
+        }
+    }
+
+    var string: String {
+        var excess = 0
+        var tailBytes = tail
+        if tailBytes.count > tailCap {
+            excess = tailBytes.count - tailCap
+            tailBytes = Data(tailBytes.suffix(tailCap))
+        }
+        let omitted = omittedBytes + excess
+        guard omitted > 0 else {
+            var all = head
+            all.append(tailBytes)
+            return String(decoding: all, as: UTF8.self)
+        }
+        return String(decoding: head, as: UTF8.self)
+            + "\n… [\(omitted) bytes omitted] …\n"
+            + String(decoding: tailBytes, as: UTF8.self)
     }
 }
 
@@ -6026,6 +6323,90 @@ struct GitDiffTool: OsaurusTool {
     }
 }
 
+// MARK: Git Log Tool
+
+struct GitLogTool: OsaurusTool {
+    let name = "git_log"
+    let description =
+        "Show the commit history: hash, date, author, and subject of each commit, newest first. Use `since` for a time window such as \"7 days ago\" or \"2026-11-01\"."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "since": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Optional. Only commits after this time: \"7 days ago\", \"yesterday\", or a date like \"2026-11-01\"."
+                ),
+            ]),
+            "limit": .object([
+                "type": .string("integer"),
+                "description": .string("Most commits to list (default 30, at most 200)."),
+            ]),
+            "stat": .object([
+                "type": .string("boolean"),
+                "description": .string("Also list the files each commit changed (default: false)."),
+            ]),
+        ]),
+        "required": .array([]),
+    ])
+
+    static let defaultLimit = 30
+    static let maxLimit = 200
+
+    private let fixedRootPath: URL?
+
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
+    }
+
+    /// The `git log` arguments for a call. `since` rides inside one
+    /// `--since=` argument, so it can never become an option of its own.
+    static func arguments(since: String?, limit: Int?, stat: Bool) -> [String] {
+        let count = min(max(limit ?? defaultLimit, 1), maxLimit)
+        var arguments = ["log", "--no-color", "--date=short", "--pretty=format:%h %ad %an%n    %s", "-n", "\(count)"]
+        if let since = since?.trimmingCharacters(in: .whitespacesAndNewlines), !since.isEmpty {
+            arguments.append("--since=\(since)")
+        }
+        if stat { arguments.append("--stat=100") }
+        return arguments
+    }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
+
+        let since = args["since"] as? String
+        let limit = ArgumentCoercion.int(args["limit"])
+        let stat = coerceBool(args["stat"]) ?? false
+
+        let (output, exitCode) = try await FolderToolHelpers.runGitCommand(
+            arguments: Self.arguments(since: since, limit: limit, stat: stat),
+            in: rootPath
+        )
+
+        if exitCode != 0 {
+            if output.contains("does not have any commits yet") {
+                return ToolEnvelope.success(tool: name, text: "No commits yet")
+            }
+            throw FolderToolError.operationFailed("git log failed: \(output)")
+        }
+
+        let truncated = HeadTailTruncation.apply(
+            output,
+            cap: ToolOutputCaps.gitDiff,
+            headFraction: 0.8,
+            hint: "re-run git_log with a smaller `limit` or a later `since`"
+        )
+        let empty = since.map { _ in "No commits in that time" } ?? "No commits yet"
+        return ToolEnvelope.success(tool: name, text: truncated.isEmpty ? empty : truncated)
+    }
+}
+
 // MARK: Git Commit Tool
 
 struct GitCommitTool: OsaurusTool, PermissionedTool {
@@ -6179,6 +6560,7 @@ enum FolderToolFactory {
         return [
             GitStatusTool(rootPath: rootPath),
             GitDiffTool(rootPath: rootPath),
+            GitLogTool(rootPath: rootPath),
             GitCommitTool(rootPath: rootPath),
         ]
     }

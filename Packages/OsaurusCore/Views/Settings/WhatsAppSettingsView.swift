@@ -39,11 +39,15 @@ struct WhatsAppSettingsView: View {
     @State private var attachmentIngestionEnabled: Bool = false
     @State private var allowedAttachmentRootsText: String = ""
     @State private var maxAttachmentMB: String = "25"
-    @State private var inboundDispatchEnabled = false
-    @State private var inboundTarget: AgentDispatchTarget?
-    @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
-    @State private var inboundAutoReplyEnabled = false
-    @State private var requireMention = false
+    /// Incoming messages are handled by the events that listen to this
+    /// channel; these read them so readiness checks stay honest.
+    private var channelEvents: [OsaurusEvent] {
+        EventManager.shared.events(kind: .whatsapp, connectionId: AgentChannelConnection.nativeWhatsAppConnectionId).filter(\.isEnabled)
+    }
+    private var inboundDispatchEnabled: Bool { !channelEvents.isEmpty }
+    private var inboundAutoReplyEnabled: Bool {
+        channelEvents.contains { $0.reply.replies(for: $0.action.kind) }
+    }
     @State private var statusMessage: String?
     @State private var statusDetails: [String] = []
     @State private var statusIsError = false
@@ -96,11 +100,6 @@ struct WhatsAppSettingsView: View {
         var attachmentIngestionEnabled: Bool
         var allowedAttachmentRootsText: String
         var maxAttachmentMB: String
-        var inboundDispatchEnabled: Bool
-        var inboundTarget: AgentDispatchTarget?
-        var inboundRoutes: [AgentChannelDispatchRoute]
-        var inboundAutoReplyEnabled: Bool
-        var requireMention: Bool
     }
 
     private var currentDraft: DraftSnapshot {
@@ -115,12 +114,7 @@ struct WhatsAppSettingsView: View {
             sendReadReceipts: sendReadReceipts,
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             allowedAttachmentRootsText: allowedAttachmentRootsText,
-            maxAttachmentMB: maxAttachmentMB,
-            inboundDispatchEnabled: inboundDispatchEnabled,
-            inboundTarget: inboundTarget,
-            inboundRoutes: inboundRoutes,
-            inboundAutoReplyEnabled: inboundAutoReplyEnabled,
-            requireMention: requireMention
+            maxAttachmentMB: maxAttachmentMB
         )
     }
 
@@ -139,10 +133,12 @@ struct WhatsAppSettingsView: View {
                 switch AgentChannelProviderSetupSection(rawValue: sectionId) {
                 case .connect:
                     connectSectionContent
-                case .access:
+                case .receiving:
                     accessSectionContent
-                case .behavior:
-                    behaviorSectionContent
+                case .routing:
+                    routingSectionContent
+                case .sending:
+                    sendingSectionContent
                 case .verify, nil:
                     stepVerifySection
                 }
@@ -230,14 +226,15 @@ struct WhatsAppSettingsView: View {
                 return false
             }
             return isSendOnlySetup || receiveEnabled
-        case .access:
+        case .receiving:
             if isSendOnlySetup {
                 return !parseIds(writableChatIdsText).isEmpty
             }
             return !parseIds(readableChatIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
-        case .behavior:
-            return (inboundDispatchEnabled && (inboundTarget != nil || !inboundRoutes.isEmpty))
-                || writeEnabled
+        case .routing:
+            return inboundDispatchEnabled
+        case .sending:
+            return writeEnabled
         case .verify:
             return verifySucceeded
         case nil:
@@ -258,14 +255,12 @@ struct WhatsAppSettingsView: View {
                 "WhatsApp runs through a local bridge helper speaking the WhatsApp Web protocol, linked to your own account like a browser session — no bot account, token, or Meta Business setup. This uses an unofficial protocol: WhatsApp may log the session out, and a dedicated number is recommended.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
             helperStatusSection
-            SettingsDivider()
             linkSection
-            SettingsDivider()
             stepReceiveSection
         }
     }
@@ -276,10 +271,10 @@ struct WhatsAppSettingsView: View {
             helperRow
             if case .failed(let message) = helperInstallState.phase {
                 Text(message)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.errorColor)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.status.error.foreground)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 23)
+                    .padding(.leading, theme.space.s24)
             }
         }
     }
@@ -288,16 +283,16 @@ struct WhatsAppSettingsView: View {
         let helperVerified = diagnostics?.helperVerified ?? false
         return HStack(alignment: .top, spacing: 10) {
             Image(systemName: helperIconName)
-                .font(.system(size: 13))
+                .glyphSize(13)
                 .foregroundColor(helperIconColor)
-                .padding(.top, 1)
+                .padding(.top, theme.space.s2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(L("Integrity-verified helper (osaurus-wa)"))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(helperDetailText)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
@@ -362,9 +357,9 @@ struct WhatsAppSettingsView: View {
 
     private var helperIconColor: Color {
         switch diagnostics?.helperState {
-        case "verified", "dev_override": return theme.successColor
-        case "digest_mismatch", "unpinned": return theme.warningColor
-        default: return theme.tertiaryText
+        case "verified", "dev_override": return theme.status.success.foreground
+        case "digest_mismatch", "unpinned": return theme.status.warning.foreground
+        default: return theme.text.tertiary
         }
     }
 
@@ -417,16 +412,16 @@ struct WhatsAppSettingsView: View {
         }
         return HStack(alignment: .top, spacing: 10) {
             Image(systemName: linked ? "checkmark.circle.fill" : "qrcode")
-                .font(.system(size: 13))
-                .foregroundColor(linked ? theme.successColor : theme.tertiaryText)
-                .padding(.top, 1)
+                .glyphSize(13)
+                .foregroundColor(linked ? theme.status.success.foreground : theme.text.tertiary)
+                .padding(.top, theme.space.s2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(linked ? L("Account linked") : L("No account linked"))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(detail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
@@ -462,22 +457,22 @@ struct WhatsAppSettingsView: View {
                     .interpolation(.none)
                     .resizable()
                     .frame(width: 220, height: 220)
-                    .background(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .background(FixedPalette.qrPaper)
+                    .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
                 Text(
                     "Scan with your phone: WhatsApp → Settings → Linked Devices → Link a Device. Codes rotate about every 20 seconds.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
                 ProgressView()
                     .scaleEffect(0.8)
                 Text("Waiting for a QR code from the helper...", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             AgentChannelSheetActionButton(
@@ -488,11 +483,8 @@ struct WhatsAppSettingsView: View {
             )
         }
         .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.tertiaryBackground.opacity(0.4))
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.inset)
     }
 
     // MARK: - Passkey linking gate
@@ -505,14 +497,14 @@ struct WhatsAppSettingsView: View {
     private var passkeyChallengeContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(L("This account is protected by a passkey"), systemImage: "person.badge.key.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .textStyle(.caption, weight: 600)
+                .foregroundColor(theme.text.primary)
             Text(
                 "WhatsApp requires a passkey check to link a new device. In a browser, open web.whatsapp.com, open the developer console (Cmd-Opt-J or F12), run the copied command, approve the passkey prompt, then paste the JSON line it prints below.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             AgentChannelSheetActionButton(
@@ -522,15 +514,7 @@ struct WhatsAppSettingsView: View {
                 action: copyPasskeyCommand
             )
 
-            TextEditor(text: $passkeyResponseText)
-                .font(.system(size: 10, design: .monospaced))
-                .frame(height: 64)
-                .scrollContentBackground(.hidden)
-                .padding(6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.tertiaryBackground.opacity(0.6))
-                )
+            SettingsTextEditor(text: $passkeyResponseText, minHeight: 64, maxHeight: 64, monospaced: true)
 
             AgentChannelSheetActionButton(
                 title: L("Submit Passkey Response"),
@@ -549,17 +533,17 @@ struct WhatsAppSettingsView: View {
     private func passkeyConfirmContent(code: String) -> some View {
         VStack(spacing: 8) {
             Label(L("Check your phone"), systemImage: "iphone.badge.play")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .textStyle(.caption, weight: 600)
+                .foregroundColor(theme.text.primary)
             Text(code)
-                .font(.system(size: 22, weight: .bold, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.mono)
+                .foregroundColor(theme.text.primary)
             Text(
                 "Confirm this code matches the one WhatsApp shows on your phone, then continue.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
             AgentChannelSheetActionButton(
@@ -754,11 +738,11 @@ struct WhatsAppSettingsView: View {
             AgentChannelSectionHeading(L("Turn on receiving"))
 
             SettingsToggle(
-                title: L("Receive Messages"),
+                title: "Receive Messages",
                 description: L(
                     "Keep a live connection to WhatsApp and store authorized incoming messages in the local inbox while the app runs."
                 ),
-                isOn: $receiveEnabled.animation(.easeOut(duration: 0.2))
+                isOn: $receiveEnabled.animation(theme.motion.quick)
             )
 
             if !receiveEnabled {
@@ -769,8 +753,8 @@ struct WhatsAppSettingsView: View {
                         )
                         : L("Receiving is off: agents will not see new WhatsApp messages and no agent can reply.")
                 )
-                .font(.system(size: 11))
-                .foregroundColor(writeEnabled ? theme.tertiaryText : theme.warningColor)
+                .textStyle(.footnote)
+                .foregroundColor(writeEnabled ? theme.text.tertiary : theme.status.warning.foreground)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -781,7 +765,8 @@ struct WhatsAppSettingsView: View {
     private var accessSectionContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             stepAccessSection
-            SettingsDivider()
+            receiveOptionsSection
+            attachmentsSection
             advancedSection
         }
     }
@@ -793,14 +778,14 @@ struct WhatsAppSettingsView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(discoveredChats.isEmpty ? L("Load known WhatsApp chats") : L("WhatsApp chats loaded"))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     Text(
                         "Requires the helper and a linked account. Chats come from the local session store; nothing leaves this machine.",
                         bundle: .module
                     )
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
                 AgentChannelSheetActionButton(
@@ -820,8 +805,8 @@ struct WhatsAppSettingsView: View {
                 "Read lets agents see a chat, Write lets them post there, and the sender allowlist marks whose messages are handled. Manual IDs are under Advanced.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             senderPickerSection
@@ -838,14 +823,14 @@ struct WhatsAppSettingsView: View {
     private var senderPickerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Authorized senders", bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
             Text(
                 "Only messages from allowed phone numbers are handled — required for receive. Manual numbers are under Advanced.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             if senderCandidates.isEmpty {
@@ -853,8 +838,8 @@ struct WhatsAppSettingsView: View {
                     "Mark a direct chat as Read above to choose its number here, or add numbers under Advanced.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
                 let allowed = Set(parseIds(senderAllowlistText))
@@ -862,12 +847,12 @@ struct WhatsAppSettingsView: View {
                     ForEach(senderCandidates, id: \.self) { handle in
                         HStack(spacing: 9) {
                             Image(systemName: "person.crop.circle")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
+                                .glyphSize(11, weight: .semibold)
+                                .foregroundColor(theme.text.secondary)
                                 .frame(width: 20)
                             Text(handle)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.primaryText)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.primary)
                                 .lineLimit(1)
                             Spacer(minLength: 6)
                             AgentChannelSelectorToggle(
@@ -877,17 +862,13 @@ struct WhatsAppSettingsView: View {
                                 senderAllowlistText = toggledIdText(senderAllowlistText, id: handle)
                             }
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, theme.space.s8)
+                        .padding(.vertical, theme.space.s8)
                         if handle != senderCandidates.last {
-                            SettingsDivider()
                         }
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground.opacity(0.4))
-                )
+                .settingsChrome(.inset)
             }
         }
     }
@@ -908,15 +889,15 @@ struct WhatsAppSettingsView: View {
     private var missingSendersWarning: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
-                .foregroundColor(theme.warningColor)
-                .padding(.top, 1)
+                .glyphSize(11)
+                .foregroundColor(theme.status.warning.foreground)
+                .padding(.top, theme.space.s2)
             Text(
                 "Receiving stays off until you add at least one authorized sender.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.warningColor)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.status.warning.foreground)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -939,12 +920,12 @@ struct WhatsAppSettingsView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Known Chats", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 Text("\(discoveredChats.count) found")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             AgentChannelSelectorSearchField(
@@ -967,18 +948,18 @@ struct WhatsAppSettingsView: View {
     ) -> some View {
         HStack(spacing: 9) {
             Image(systemName: chat.kind == "group" ? "person.3.fill" : "person.crop.circle.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(11, weight: .semibold)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(chat.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                 Text(chat.id)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(1)
             }
 
@@ -991,8 +972,8 @@ struct WhatsAppSettingsView: View {
                 writableChatIdsText = toggledIdText(writableChatIdsText, id: chat.id)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
     }
 
     private var advancedSection: some View {
@@ -1002,8 +983,8 @@ struct WhatsAppSettingsView: View {
                     "Manual IDs are a fallback for chats not returned by discovery. Direct chats use E.164 phone numbers (+15551234567); groups use their JID (1203630XXXX@g.us).",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
 
                 AgentChannelMultilineSettingsField(
                     title: L("Readable Chat IDs"),
@@ -1017,11 +998,11 @@ struct WhatsAppSettingsView: View {
                     placeholder: L("+15551234567 — one per line"),
                     help: L("Only messages from these numbers trigger inbound handling; required for receive.")
                 )
-                StyledSettingsTextField(
-                    label: L("Default Read Limit"),
+                SettingsTextFieldRow(
+                    label: "Default Read Limit",
                     text: $defaultReadLimit,
                     placeholder: "50",
-                    help: L("Default recent-message count for WhatsApp reads. Clamped to 1-100.")
+                    help: "Default recent-message count for WhatsApp reads. Clamped to 1-100."
                 )
             }
         }
@@ -1029,57 +1010,23 @@ struct WhatsAppSettingsView: View {
 
     // MARK: - Behavior
 
-    private var behaviorSectionContent: some View {
+    private var routingSectionContent: some View {
+        ChannelRoutingSection(kind: .whatsapp, connectionId: AgentChannelConnection.nativeWhatsAppConnectionId)
+    }
+
+    private var sendingSectionContent: some View {
         VStack(alignment: .leading, spacing: 20) {
-            stepDispatchSection
-            SettingsDivider()
-            attachmentsSection
-            SettingsDivider()
             sendingSection
+            ChannelPostingSection(kind: .whatsapp, connectionId: AgentChannelConnection.nativeWhatsAppConnectionId)
         }
     }
 
-    private var stepDispatchSection: some View {
+    private var receiveOptionsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AgentChannelSectionHeading(L("Reply to incoming messages"))
+            AgentChannelSectionHeading(L("Incoming message options"))
 
             SettingsToggle(
-                title: L("Reply with an Agent"),
-                description: L(
-                    "Choose which agent answers allowlisted WhatsApp messages. Replies run in a private channel session; external-surface tool restrictions still apply."
-                ),
-                isOn: $inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
-            )
-
-            if inboundDispatchEnabled {
-                AgentChannelDispatchRoutingEditor(
-                    roomNoun: L("chat"),
-                    rooms: routableRooms,
-                    defaultTarget: $inboundTarget,
-                    routes: $inboundRoutes
-                )
-                AgentChannelPluginPreloadOverflowNotice(agentId: inboundTarget?.localId)
-                SettingsToggle(
-                    title: L("Reply Automatically"),
-                    description: L(
-                        "Reply to the incoming WhatsApp message with the selected agent's sanitized response. WhatsApp and global writes plus the write allowlist still apply."
-                    ),
-                    isOn: $inboundAutoReplyEnabled
-                )
-                if !inboundAutoReplyEnabled {
-                    AgentChannelAutoReplyOffNotice()
-                }
-                SettingsToggle(
-                    title: L("Require Mention in Groups"),
-                    description: L(
-                        "In group chats, only handle messages that mention the linked account. Direct chats always dispatch."
-                    ),
-                    isOn: $requireMention
-                )
-            }
-
-            SettingsToggle(
-                title: L("Ignore Messages You Send"),
+                title: "Ignore Messages You Send",
                 description: L(
                     "Skip messages sent from the linked account itself (including your phone and other linked devices). Turn this off to test the full loop from a single number by messaging yourself — the sender must still be in the authorized list, and automatic replies can loop if the agent answers itself."
                 ),
@@ -1087,7 +1034,7 @@ struct WhatsAppSettingsView: View {
             )
 
             SettingsToggle(
-                title: L("Send Read Receipts"),
+                title: "Send Read Receipts",
                 description: L(
                     "Mark handled messages as read on WhatsApp (blue ticks) after they are stored. Senders can see this."
                 ),
@@ -1097,14 +1044,14 @@ struct WhatsAppSettingsView: View {
     }
 
     private var attachmentsSection: some View {
-        SettingsSubsection(label: L("Attachments")) {
+        SettingsFieldRow(label: "Attachments") {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggle(
-                    title: L("Handle Attachments"),
+                    title: "Handle Attachments",
                     description: L(
                         "Download incoming media (images, video, audio, documents) from allowlisted chats so agents can use it, and allow agents to send files from the allowed folders below."
                     ),
-                    isOn: $attachmentIngestionEnabled.animation(.easeOut(duration: 0.2))
+                    isOn: $attachmentIngestionEnabled.animation(theme.motion.quick)
                 )
 
                 if attachmentIngestionEnabled {
@@ -1118,8 +1065,8 @@ struct WhatsAppSettingsView: View {
                                 "Agents may only send files from inside these folders. Downloaded media always lands in the default media folder, which stays allowed."
                             )
                         )
-                        StyledSettingsTextField(
-                            label: L("Max Attachment Size (MB)"),
+                        SettingsTextFieldRow(
+                            label: "Max Attachment Size (MB)",
                             text: $maxAttachmentMB,
                             placeholder: "25",
                             help: L(
@@ -1134,14 +1081,14 @@ struct WhatsAppSettingsView: View {
     }
 
     private var sendingSection: some View {
-        SettingsSubsection(label: L("Sending")) {
+        SettingsFieldRow(label: "Sending") {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggle(
-                    title: L("Allow Sending on WhatsApp"),
+                    title: "Allow Sending on WhatsApp",
                     description: L(
                         "Let agents post to write-allowlisted chats through the linked account. The global Sending switch in Channels must also be on."
                     ),
-                    isOn: $writeEnabled.animation(.easeOut(duration: 0.2))
+                    isOn: $writeEnabled.animation(theme.motion.quick)
                 )
 
                 if writeEnabled {
@@ -1167,8 +1114,8 @@ struct WhatsAppSettingsView: View {
                 "Changes save automatically, and receiving starts once Connect and Conversations are complete. Send a WhatsApp message from an authorized sender in a readable chat, then watch each stage appear here.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             AgentChannelTransportHealthView(
@@ -1199,9 +1146,6 @@ struct WhatsAppSettingsView: View {
         }
     }
 
-    private var routableRooms: [AgentChannelRoutableRoom] {
-        discoveredChats.map { AgentChannelRoutableRoom(id: $0.id, name: $0.name) }
-    }
 
     // MARK: - Load / save
 
@@ -1218,33 +1162,25 @@ struct WhatsAppSettingsView: View {
         attachmentIngestionEnabled = configuration.attachmentIngestionEnabled
         allowedAttachmentRootsText = configuration.allowedAttachmentRoots.joined(separator: "\n")
         maxAttachmentMB = "\(configuration.maxAttachmentBytes / (1_024 * 1_024))"
-        inboundDispatchEnabled = configuration.inboundDispatch.enabled
-        inboundTarget = configuration.inboundDispatch.target
-        inboundRoutes = configuration.inboundDispatch.routes
-        inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
-        requireMention = configuration.inboundDispatch.requireMention
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
         lastSavedDraft = currentDraft
     }
 
     private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
-        if inboundDispatchEnabled, inboundTarget == nil, inboundRoutes.isEmpty {
-            return (
-                L("Choose an agent to reply, or add a rule for incoming WhatsApp messages."),
-                .behavior
-            )
-        }
         if inboundDispatchEnabled, inboundAutoReplyEnabled {
             guard writeEnabled else {
-                return (L("Enable WhatsApp sending before automatic channel replies."), .behavior)
+                return (L("Enable WhatsApp sending before automatic channel replies."), .sending)
             }
-            let readable = Set(parseIds(readableChatIdsText))
-            let writable = Set(parseIds(writableChatIdsText))
-            guard readable.isSubset(of: writable) else {
+            let missing = ChannelAgentRoster.autoReplyRoomsNotWritable(
+                ChannelAgentRoster.replyingRules(channelEvents),
+                readable: parseIds(readableChatIdsText), writable: parseIds(writableChatIdsText))
+            guard missing.isEmpty else {
                 return (
-                    L("Every readable WhatsApp chat must also be writable when automatic replies are enabled."),
-                    .access
+                    L(
+                        "Automatic replies need these WhatsApp chats to be writable: \(missing.joined(separator: ", ")). Make them writable, or set their routing rules to After approval."
+                    ),
+                    .receiving
                 )
             }
         }
@@ -1272,15 +1208,7 @@ struct WhatsAppSettingsView: View {
             sendReadReceipts: sendReadReceipts,
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             allowedAttachmentRoots: roots,
-            maxAttachmentBytes: (Int(maxAttachmentMB) ?? 25) * 1_024 * 1_024,
-            inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                enabled: inboundDispatchEnabled,
-                target: inboundTarget,
-                routes: inboundRoutes,
-                requireMention: requireMention,
-                continueThreads: true,
-                autoReplyEnabled: inboundAutoReplyEnabled
-            )
+            maxAttachmentBytes: (Int(maxAttachmentMB) ?? 25) * 1_024 * 1_024
         )
     }
 
@@ -1513,7 +1441,7 @@ struct WhatsAppSettingsView: View {
         statusIsError = isError
         if isError, let section {
             attentionSectionId = section.rawValue
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 selectedSectionId = section.rawValue
             }
         } else if !isError {

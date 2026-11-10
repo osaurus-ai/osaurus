@@ -14,12 +14,12 @@ struct RedeemRetryCountdownHint: View {
             if remaining > 0 {
                 HStack(spacing: 5) {
                     Image(systemName: "clock")
-                        .font(.system(size: 9, weight: .semibold))
+                        .glyphSize(9, weight: .semibold)
                     Text("You can try again in \(remaining)s.", bundle: .module)
-                        .font(theme.font(size: 11))
+                        .textStyle(.footnote)
                         .monospacedDigit()
                 }
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(theme.text.tertiary)
             }
         }
     }

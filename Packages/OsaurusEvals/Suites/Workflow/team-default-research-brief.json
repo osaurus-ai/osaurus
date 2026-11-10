@@ -1,0 +1,71 @@
+{
+  "id": "workflow.team-default-research-brief",
+  "domain": "workflow",
+  "label": "workflow • Research Brief searches, reads the pages, and writes a sourced note",
+  "query": "Research Brief searches, reads the pages, and writes a sourced note",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. The fixture is the shape `search_and_extract` returns: an extracted page carries its text in `markdown`, one that was not read has only its `snippet`.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "default-workflow-research-brief",
+      "input": {
+        "topic": "cold-climate heat pumps"
+      },
+      "toolResults": {
+        "search.item": {
+          "mode": "search_and_extract",
+          "query": "cold-climate heat pumps",
+          "results": [
+            {
+              "rank": 1,
+              "url": "https://example.test/heat-pumps-cold",
+              "title": "Heat pumps in cold climates",
+              "snippet": "How cold-climate heat pumps hold up in winter.",
+              "extract_status": "ok",
+              "extracted": true,
+              "markdown": "Cold-climate heat pumps keep most of their heating capacity down to -15 C. Field tests in Maine found a seasonal efficiency near 2.5.",
+              "truncated": false,
+              "word_count": 24
+            },
+            {
+              "rank": 2,
+              "url": "https://example.test/defrost-cycles",
+              "title": "Defrost cycles explained",
+              "snippet": "A heat pump runs short defrost cycles in freezing, humid weather.",
+              "extracted": false
+            }
+          ],
+          "extraction_attempted_count": 1,
+          "extracted_count": 1,
+          "extraction_failed_count": 0
+        }
+      },
+      "toolArguments": {
+        "search.item": {
+          "max_results": 5,
+          "extract_count": 2
+        }
+      },
+      "outputKeys": [
+        "note",
+        "sources"
+      ],
+      "outputContains": {
+        "sources": [
+          "example.test"
+        ],
+        "note": [
+          "heat pump"
+        ]
+      },
+      "outputExcludes": {
+        "note": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

@@ -32,12 +32,13 @@ private struct AttestationFactory {
         role: String = "member",
         expiresIn: TimeInterval = 600,
         signWith key: Curve25519.Signing.PrivateKey? = nil,
-        workspaceIdClaim: String = "workspace_id"
+        workspaceIdClaim: String = "workspace_id",
+        workspaceStatus: String? = nil
     ) throws -> String {
         let now = Int(Date().timeIntervalSince1970)
         // The router still emits `dino_id` (null unless claimed on the web);
         // the app ignores it, so keep it in the fixture to prove that.
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "v": v,
             workspaceIdClaim: workspaceId,
             "account_id": accountId,
@@ -47,6 +48,7 @@ private struct AttestationFactory {
             "iat": now,
             "exp": now + Int(expiresIn),
         ]
+        if let workspaceStatus { payload["workspace_status"] = workspaceStatus }
         let payloadData = try JSONSerialization.data(
             withJSONObject: payload, options: [.sortedKeys]
         )
@@ -164,6 +166,18 @@ struct WorkspaceMembershipAttestationTests {
         // member/admin affordances.
         #expect(attestation.payload.typedRole == .viewer)
     }
+
+    @Test func workspaceStatus_onlySuspendedReadsAsSuspended() throws {
+        func suspended(_ status: String?) throws -> Bool {
+            let token = try factory.token(wallet: wallet, workspaceStatus: status)
+            return try WorkspaceMembershipAttestation.verify(
+                token: token, publicKeyBase64URL: factory.publicKeyBase64URL
+            ).payload.workspaceSuspended
+        }
+        #expect(try suspended("suspended"))
+        #expect(try !suspended("active"))
+        #expect(try !suspended(nil), "tokens from an older router read as active")
+    }
 }
 
 // MARK: - Redeem wire shapes
@@ -252,6 +266,66 @@ struct WorkspaceAgentAccessHostTests {
         )
         let nonce = try #require(challengeNonce(outcome))
         #expect(!nonce.isEmpty)
+    }
+
+    @Test func stepOne_refusesASuspendedWorkspace() async throws {
+        let host = await makeHost()
+        let outcome = await host.handle(
+            .init(
+                v: 1,
+                agentAddress: agentAddress,
+                attestation: try factory.token(wallet: wallet, workspaceStatus: "suspended"),
+                nonce: nil,
+                walletSignature: nil,
+                encPub: nil
+            )
+        )
+        guard case .rejected(.workspaceSuspended) = outcome else {
+            Issue.record("Expected workspaceSuspended, got \(outcome)")
+            return
+        }
+        #expect(WorkspaceRedeemRejection.workspaceSuspended.wireMessage.contains("suspended"))
+    }
+
+    @Test func currentAccess_stopsOnASuspendedClaimOrRouterRefusal() async throws {
+        func record(_ token: String) -> WorkspaceAgentAccessHost.WorkspaceKeyRecord {
+            WorkspaceAgentAccessHost.WorkspaceKeyRecord(
+                keyId: UUID(), workspaceId: "team-1", accountId: "acct-1", wallet: wallet.lowercased(),
+                role: "member", agentAddressLower: agentAddress, attestationToken: token,
+                attestationExpiresAt: Date().addingTimeInterval(600))
+        }
+        func failure(_ host: WorkspaceAgentAccessHost, _ token: String) async -> WorkspaceRedeemRejection? {
+            do {
+                try await host.validateCurrentAccess(record(token))
+                return nil
+            } catch {
+                return error as? WorkspaceRedeemRejection
+            }
+        }
+
+        let calls = Counter()
+        let host = WorkspaceAgentAccessHost()
+        await host.setSeams(verifyCurrentAccess: { _, _, _ in calls.increment() })
+        let suspendedToken = try factory.token(wallet: wallet, workspaceStatus: "suspended")
+        #expect(await failure(host, suspendedToken) == .workspaceSuspended)
+        #expect(calls.value == 0, "a suspended claim refuses without asking the router")
+        #expect(await failure(host, try factory.token(wallet: wallet)) == nil)
+        #expect(calls.value == 1)
+
+        let refusing = WorkspaceAgentAccessHost()
+        await refusing.setSeams(verifyCurrentAccess: { _, _, _ in
+            throw OsaurusRouterAPIError.server(code: "SUBSCRIPTION_INACTIVE", message: "workspace is suspended", status: 402)
+        })
+        #expect(await failure(refusing, try factory.token(wallet: wallet)) == .workspaceSuspended)
+
+        let offline = WorkspaceAgentAccessHost()
+        await offline.setSeams(verifyCurrentAccess: { _, _, _ in throw OsaurusRouterAPIError.transport("offline") })
+        do {
+            try await offline.validateCurrentAccess(record(try factory.token(wallet: wallet)))
+            Issue.record("an unreachable router must still refuse")
+        } catch {
+            #expect(error as? WorkspaceRedeemRejection == nil, "other failures pass through unchanged")
+        }
     }
 
     @Test func stepOne_rejectsExpiredAttestation() async throws {
@@ -693,4 +767,57 @@ struct SharedAgentModelBadgeTests {
         #expect(RemoteAgent.shortModelLabel(" qwen3/ ") == "qwen3/")
         #expect(RemoteAgent.shortModelLabel("mlx-community/Qwen3-8B-4bit") == "Qwen3-8B-4bit")
     }
+}
+
+// MARK: - Guest handles
+
+@Suite("Wallet handle resolver")
+struct RouterWalletHandleResolverTests {
+    private let guest = "0x" + String(repeating: "ab", count: 20)
+
+    @Test func cachesHits_retriesMissesAfterTheirTTL_andSkipsNonWallets() async throws {
+        let calls = Counter()
+        let resolver = RouterWalletHandleResolver(hitTTL: 600, missTTL: 0)
+        let known = guest
+        await resolver.setLookup { wallet in
+            calls.increment()
+            return wallet == known ? "rex-42" : nil
+        }
+
+        #expect(await resolver.handle(forWallet: guest.uppercased().replacingOccurrences(of: "0X", with: "0x")) == "rex-42")
+        #expect(await resolver.handle(forWallet: guest) == "rex-42")
+        #expect(calls.value == 1, "a hit is cached per lowercased wallet")
+
+        let stranger = "0x" + String(repeating: "cd", count: 20)
+        #expect(await resolver.handle(forWallet: stranger) == nil)
+        #expect(await resolver.handle(forWallet: stranger) == nil)
+        #expect(calls.value == 3, "a miss is retried once its TTL passes")
+
+        #expect(await resolver.handle(forWallet: "key-nonce-123") == nil)
+        #expect(calls.value == 3, "only wallets are looked up")
+    }
+
+    @Test func anUnreachableRouterAnswersNil() async {
+        let resolver = RouterWalletHandleResolver()
+        await resolver.setLookup { _ in throw OsaurusRouterAPIError.transport("offline") }
+        #expect(await resolver.handle(forWallet: guest) == nil)
+    }
+
+    @Test func aRouterWithoutIDLookupLeavesTheShortWallet() async {
+        let resolver = RouterWalletHandleResolver()
+        await resolver.setLookup { _ in
+            throw OsaurusRouterAPIError.server(code: "not_found", message: "Not found", status: 404)
+        }
+        let handle = await resolver.handle(forWallet: guest)
+        #expect(handle == nil)
+        let caller = Participant(kind: .invitePeer, handle: handle, wallet: guest)
+        #expect(ParticipantFormatter.short(caller) == ParticipantFormatter.shortAddress(guest))
+    }
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() { lock.withLock { count += 1 } }
 }

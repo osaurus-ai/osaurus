@@ -2,26 +2,38 @@
 //  Theme.swift
 //  osaurus
 //
-//  Modern minimalistic theme system with dark/light mode support
-//  Extended with full customization support for backgrounds, glass effects, and typography
+//  Runtime theme: semantic roles resolved to SwiftUI values. See
+//  ThemeRoles.swift for the dotted-name map.
 //
 
 import AppKit
 import SwiftUI
 
+extension NSFont {
+    /// The same face with tabular digits, so live counters don't jitter.
+    func withMonospacedDigits() -> NSFont {
+        let descriptor = fontDescriptor.addingAttributes([
+            .featureSettings: [
+                [
+                    NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
+                    NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector,
+                ]
+            ]
+        ])
+        return NSFont(descriptor: descriptor, size: pointSize) ?? self
+    }
+}
+
 /// Decides whether a theme font-family name means "use the system font".
 ///
-/// `font(size:weight:)` and `monoFont(size:weight:)` used to lowercase the
-/// family name and substring-scan it on every call. Fonts are resolved many
-/// times per render across every view, so those per-call allocations added up
-/// on the main thread and appeared in hang samples under body getters. The
-/// answer depends only on the name, and theme font families come from a small
-/// fixed set, so it is memoized for the life of the process.
+/// Fonts are resolved many times per render across every view, so the
+/// classification is memoized for the life of the process.
 enum ThemeFontNameClassifier {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var memo: [String: Bool] = [:]
 
-    /// True when `name` is empty or names the given system family.
+    /// True when `name` is empty, the shared `system` sentinel, or names the
+    /// given system family.
     static func isSystemFamily(_ name: String, matching needle: String) -> Bool {
         if name.isEmpty { return true }
         let key = "\(needle)\u{0}\(name)"
@@ -30,7 +42,8 @@ enum ThemeFontNameClassifier {
         lock.unlock()
         if let cached { return cached }
 
-        let result = name.lowercased().contains(needle)
+        let lower = name.lowercased()
+        let result = lower == "system" || lower == "systemmonospaced" || lower.contains(needle)
         lock.lock()
         memo[key] = result
         lock.unlock()
@@ -40,104 +53,32 @@ enum ThemeFontNameClassifier {
 
 // MARK: - Theme Protocol
 
-protocol ThemeProtocol {
-    // Primary colors
-    var primaryText: Color { get }
-    var secondaryText: Color { get }
-    var tertiaryText: Color { get }
-    var placeholderText: Color { get }
+protocol ThemeProtocol: Sendable {
+    // Semantic color roles (resolved)
+    var colors: ThemeColorRoles<Color> { get }
+    var inspectionRevision: String { get }
 
-    // Background colors
-    var primaryBackground: Color { get }
-    var secondaryBackground: Color { get }
-    var tertiaryBackground: Color { get }
+    // Typography and geometry
+    var typography: ThemeTypography { get }
+    var radius: ThemeRadii { get }
+    var stroke: ThemeStrokes { get }
+    var focusOffset: Double { get }
+    var space: ThemeSpaceScale { get }
+    var controlSize: ThemeControlSizes { get }
+    var motion: ThemeMotion { get }
+    var elevation: ThemeElevation { get }
+    var effects: ThemeEffects { get }
+    var windowMaterial: ThemeWindowMaterial { get }
 
-    // Sidebar colors
-    var sidebarBackground: Color { get }
-    var sidebarSelectedBackground: Color { get }
-
-    // Accent colors
-    var accentColor: Color { get }
-    var accentColorLight: Color { get }
-
-    // Border colors
-    var primaryBorder: Color { get }
-    var secondaryBorder: Color { get }
-    var focusBorder: Color { get }
-
-    // Status colors
-    var successColor: Color { get }
-    var warningColor: Color { get }
-    var errorColor: Color { get }
-    var infoColor: Color { get }
-
-    // Component specific
-    var cardBackground: Color { get }
-    var cardBorder: Color { get }
-    var buttonBackground: Color { get }
-    var buttonBorder: Color { get }
-    var inputBackground: Color { get }
-    var inputBorder: Color { get }
-    // Glass / Code styling
-    var glassTintOverlay: Color { get }
-    var codeBlockBackground: Color { get }
-
-    // Selection (text highlight)
-    var selectionColor: Color { get }
-
-    // Cursor
-    var cursorColor: Color { get }
+    /// Global font zoom applied exactly once by `textStyle(_:)` and the size bridges.
+    var fontScale: Double { get }
 
     // Appearance
     var isDark: Bool { get }
 
-    // Glass specific
-    var glassEnabled: Bool { get }
-    var glassSidebarEnabled: Bool { get }
-    var glassInputEnabled: Bool { get }
-    var glassOpacityPrimary: Double { get }
-    var glassOpacitySecondary: Double { get }
-    var glassOpacityTertiary: Double { get }
-    var glassBlurRadius: Double { get }
-    var glassEdgeLight: Color { get }
-    var glassMaterial: NSVisualEffectView.Material { get }
-    var glassTintColor: Color? { get }
-    var glassTintOpacity: Double { get }
-    var windowBackingOpacity: Double { get }
-
-    // Card shadows (enhanced)
-    var cardShadowRadius: Double { get }
-    var cardShadowRadiusHover: Double { get }
-    var cardShadowY: Double { get }
-    var cardShadowYHover: Double { get }
-
-    // Animation timing
-    var animationDurationQuick: Double { get }
-    var animationDurationMedium: Double { get }
-    var animationDurationSlow: Double { get }
-    var animationSpringResponse: Double { get }
-    var animationSpringDamping: Double { get }
-    var animationSpring: Animation { get }
-
-    // Shadows
-    var shadowColor: Color { get }
-    var shadowOpacity: Double { get }
-
-    // Background customization
-    var backgroundImage: NSImage? { get }
-    var backgroundImageOpacity: Double { get }
-    var backgroundOverlayColor: Color? { get }
-    var backgroundOverlayOpacity: Double { get }
-
-    // Typography
-    var primaryFontName: String { get }
-    var monoFontName: String { get }
-    var titleSize: Double { get }
-    var headingSize: Double { get }
-    var bodySize: Double { get }
-    var smallBodySize: Double { get }
-    var captionSize: Double { get }
-    var codeSize: Double { get }
+    // Product preferences carried by the theme document
+    var showInlineAvatar: Bool { get }
+    var showAgentName: Bool { get }
 
     // Code syntax highlighting theme (Highlightr name). nil = auto.
     var codeHighlightTheme: String? { get }
@@ -145,281 +86,369 @@ protocol ThemeProtocol {
     // Custom theme reference (for editing)
     var customThemeConfig: CustomTheme? { get }
 
-    // Message bubble customization
-    var bubbleCornerRadius: Double { get }
-    var userBubbleOpacity: Double { get }
-    var assistantBubbleOpacity: Double { get }
-    var userBubbleColor: Color? { get }
-    var assistantBubbleColor: Color? { get }
-    var messageBorderWidth: Double { get }
-    var showEdgeLight: Bool { get }
-    var showInlineAvatar: Bool { get }
-    var inlineAvatarSize: Double { get }
-    var showAgentName: Bool { get }
-    var agentNameSize: Double { get }
-
-    // Border customization
-    var defaultBorderWidth: Double { get }
-    var cardCornerRadius: Double { get }
-    var inputCornerRadius: Double { get }
-    var borderOpacity: Double { get }
+    /// Changes whenever any token that affects rendering changes (colors,
+    /// typography, geometry, materials, font zoom, appearance). Native views
+    /// compare it to decide when cached layout and attributed text are stale.
+    var renderFingerprint: Int { get }
 }
 
-// MARK: - Default Protocol Extensions
+// MARK: - Role group accessors
 
 extension ThemeProtocol {
-    // Provide defaults for new properties so existing themes don't break
-    var glassEnabled: Bool { false }
-    var glassSidebarEnabled: Bool { false }
-    var glassInputEnabled: Bool { false }
-    var glassMaterial: NSVisualEffectView.Material { .hudWindow }
-    var glassTintColor: Color? { nil }
-    var glassTintOpacity: Double { 0 }
-    var windowBackingOpacity: Double { 0.55 }
+    var inspectionRevision: String { "" }
+    var surface: ThemeSurfaceRoles<Color> { colors.surface }
+    var text: ThemeTextRoles<Color> { colors.text }
+    var chat: ThemeChatRoles<Color> { colors.chat }
+    var action: ThemeActionRoles<Color> { colors.action }
+    var border: ThemeBorderRoles<Color> { colors.border }
+    var selection: ThemeSelectionRoles<Color> { colors.selection }
+    var cursor: Color { colors.cursor }
+    var status: ThemeStatusRoles<Color> { colors.status }
+    var danger: ThemeDangerRoles<Color> { colors.danger }
+    var scrim: Color { colors.scrim }
+    /// A light wash for pauses that keep the content behind them readable.
+    /// Derived from `scrim` because surface roles are opaque.
+    var scrimSubtle: Color { colors.scrim.opacity(0.2) }
+    var shadow: Color { colors.shadow }
 
-    var backgroundImage: NSImage? { nil }
-    var backgroundImageOpacity: Double { 1.0 }
-    var backgroundOverlayColor: Color? { nil }
-    var backgroundOverlayOpacity: Double { 0 }
-
-    var primaryFontName: String { "SF Pro" }
-    var monoFontName: String { "SF Mono" }
-    var titleSize: Double { 28 }
-    var headingSize: Double { 18 }
-    var bodySize: Double { 14 }
-    var smallBodySize: Double { 14 }
-    var captionSize: Double { 12 }
-    var codeSize: Double { 13 }
-
+    var showInlineAvatar: Bool { true }
+    var showAgentName: Bool { true }
     var codeHighlightTheme: String? { nil }
     var customThemeConfig: CustomTheme? { nil }
+}
 
-    // Message bubble defaults
-    var bubbleCornerRadius: Double { 20 }
-    var userBubbleOpacity: Double { 0.3 }
-    var assistantBubbleOpacity: Double { 0.85 }
-    var userBubbleColor: Color? { nil }
-    var assistantBubbleColor: Color? { nil }
-    var messageBorderWidth: Double { 0.5 }
-    var showEdgeLight: Bool { true }
-    var showInlineAvatar: Bool { true }
-    var inlineAvatarSize: Double { 24 }
-    var showAgentName: Bool { true }
-    var agentNameSize: Double { 13 }
+// MARK: - Typography helpers
 
-    // Border defaults
-    var defaultBorderWidth: Double { 1.0 }
-    var cardCornerRadius: Double { 12 }
-    var inputCornerRadius: Double { 8 }
-    var borderOpacity: Double { 0.3 }
+extension ThemeProtocol {
+    /// The complete named text recipe, scaled once by the user's font zoom.
+    func scaledTextStyle(_ role: ThemeTextStyleRole) -> ThemeTextStyle {
+        var style = typography.styles[role]
+        style.size *= fontScale
+        style.lineHeight *= fontScale
+        return style
+    }
 
-    // MARK: - Font Helpers
+    /// SwiftUI font for a named text style (family + size + weight).
+    func textStyle(_ role: ThemeTextStyleRole) -> Font {
+        let style = scaledTextStyle(role)
+        return font(for: style)
+    }
 
-    /// Creates a font using the theme's primary font family
+    /// Minimum line height for a named text style, in points.
+    func lineHeight(_ role: ThemeTextStyleRole) -> CGFloat {
+        CGFloat(scaledTextStyle(role).lineHeight)
+    }
+
+    /// Tracking for a named text style, in points.
+    func tracking(_ role: ThemeTextStyleRole) -> CGFloat {
+        CGFloat(scaledTextStyle(role).tracking)
+    }
+
+    /// AppKit font for a named text style (for NSTextView / table cells),
+    /// optionally at another weight or set in the other shared family.
+    func nsFont(
+        _ role: ThemeTextStyleRole, weight: NSFont.Weight? = nil, family: ThemeFontFamilyRole? = nil
+    ) -> NSFont {
+        #if OSAURUS_DESIGN_SYSTEM
+        if family == nil, let scoped = self as? CatalogResolvedTheme,
+            let assigned = scoped.nativeAssignedFont(role) { return assigned }
+        #endif
+        var style = scaledTextStyle(role)
+        if let family { style.family = family }
+        guard let weight else { return nsFont(for: style) }
+        let base = nsFont(for: style)
+        let isSystem =
+            style.family == .ui
+            ? ThemeFontNameClassifier.isSystemFamily(typography.families.ui, matching: "sf pro")
+            : ThemeFontNameClassifier.isSystemFamily(typography.families.code, matching: "sf mono")
+        guard isSystem else {
+            return weight >= .semibold ? NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask) : base
+        }
+        return style.family == .code
+            ? NSFont.monospacedSystemFont(ofSize: base.pointSize, weight: weight)
+            : NSFont.systemFont(ofSize: base.pointSize, weight: weight)
+    }
+
+    /// AppKit font for a role with tabular digits, for live counters.
+    func nsFont(_ role: ThemeTextStyleRole, weight: NSFont.Weight? = nil, monospacedDigit: Bool) -> NSFont {
+        let base = nsFont(role, weight: weight)
+        guard monospacedDigit else { return base }
+        let style = scaledTextStyle(role)
+        if style.family == .ui, ThemeFontNameClassifier.isSystemFamily(typography.families.ui, matching: "sf pro") {
+            return NSFont.monospacedDigitSystemFont(ofSize: CGFloat(style.size), weight: weight ?? style.nsFontWeight)
+        }
+        return base.withMonospacedDigits()
+    }
+
+    /// The role's scaled point size, for sizing SF Symbols next to its text.
+    func pointSize(_ role: ThemeTextStyleRole) -> CGFloat {
+        CGFloat(scaledTextStyle(role).size)
+    }
+
+    /// SF Symbol configuration matching a role's size and weight.
+    func symbolConfiguration(_ role: ThemeTextStyleRole, weight: NSFont.Weight? = nil) -> NSImage.SymbolConfiguration {
+        let style = scaledTextStyle(role)
+        return NSImage.SymbolConfiguration(pointSize: CGFloat(style.size), weight: weight ?? style.nsFontWeight)
+    }
+
+    func font(for style: ThemeTextStyle) -> Font {
+        switch style.family {
+        case .ui: return font(size: style.size, weight: style.fontWeight)
+        case .code: return monoFont(size: style.size, weight: style.fontWeight)
+        }
+    }
+
+    func nsFont(for style: ThemeTextStyle) -> NSFont {
+        let size = CGFloat(style.size)
+        switch style.family {
+        case .ui:
+            if ThemeFontNameClassifier.isSystemFamily(typography.families.ui, matching: "sf pro") {
+                return NSFont.systemFont(ofSize: size, weight: style.nsFontWeight)
+            }
+            return NSFont(name: typography.families.ui, size: size)
+                ?? NSFont.systemFont(ofSize: size, weight: style.nsFontWeight)
+        case .code:
+            if ThemeFontNameClassifier.isSystemFamily(typography.families.code, matching: "sf mono") {
+                return NSFont.monospacedSystemFont(ofSize: size, weight: style.nsFontWeight)
+            }
+            return NSFont(name: typography.families.code, size: size)
+                ?? NSFont.monospacedSystemFont(ofSize: size, weight: style.nsFontWeight)
+        }
+    }
+
+    /// Creates a font using the theme's UI font family at an explicit size.
     func font(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        if ThemeFontNameClassifier.isSystemFamily(primaryFontName, matching: "sf pro") {
+        if ThemeFontNameClassifier.isSystemFamily(typography.families.ui, matching: "sf pro") {
             return .system(size: size, weight: weight)
         }
-        // Use Font.custom with family name - SwiftUI handles weight variants
-        return .custom(primaryFontName, size: size).weight(weight)
+        return .custom(typography.families.ui, size: size).weight(weight)
     }
 
-    /// Creates a monospace font using the theme's mono font family
+    /// Creates a monospace font using the theme's code font family.
     func monoFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        if ThemeFontNameClassifier.isSystemFamily(monoFontName, matching: "sf mono") {
+        if ThemeFontNameClassifier.isSystemFamily(typography.families.code, matching: "sf mono") {
             return .system(size: size, weight: weight, design: .monospaced)
         }
-        // Use Font.custom with family name - SwiftUI handles weight variants
-        return .custom(monoFontName, size: size).weight(weight)
+        return .custom(typography.families.code, size: size).weight(weight)
     }
 
-    // MARK: - Animation Helpers
-
-    /// Quick animation using theme settings
-    func animationQuick() -> Animation {
-        .easeInOut(duration: animationDurationQuick)
+    /// Leading added between wrapped lines so each line lands on the
+    /// style's target line height. Zero when the font is already taller.
+    func lineSpacing(_ role: ThemeTextStyleRole) -> CGFloat {
+        let style = scaledTextStyle(role)
+        return ThemeTextMetrics.extraLeading(for: nsFont(for: style), lineHeight: CGFloat(style.lineHeight))
     }
 
-    /// Medium animation using theme settings
-    func animationMedium() -> Animation {
-        .easeInOut(duration: animationDurationMedium)
+    /// Paragraph style carrying the role's minimum line height, for AppKit text.
+    func paragraphStyle(
+        _ role: ThemeTextStyleRole,
+        alignment: NSTextAlignment = .natural,
+        lineBreakMode: NSLineBreakMode = .byWordWrapping
+    ) -> NSMutableParagraphStyle {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = lineHeight(role)
+        paragraph.alignment = alignment
+        paragraph.lineBreakMode = lineBreakMode
+        return paragraph
     }
 
-    /// Slow animation using theme settings
-    func animationSlow() -> Animation {
-        .easeInOut(duration: animationDurationSlow)
+    /// The complete AppKit attribute set for a role: font, tracking (kern)
+    /// and paragraph style with the role's minimum line height.
+    func textAttributes(
+        _ role: ThemeTextStyleRole,
+        color: NSColor? = nil,
+        alignment: NSTextAlignment = .natural,
+        lineBreakMode: NSLineBreakMode = .byWordWrapping
+    ) -> [NSAttributedString.Key: Any] {
+        let style = scaledTextStyle(role)
+        let font = nsFont(role)
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: paragraphStyle(role, alignment: alignment, lineBreakMode: lineBreakMode),
+        ]
+        if style.tracking != 0 { attributes[.kern] = CGFloat(style.tracking) }
+        if let color { attributes[.foregroundColor] = color }
+        return attributes
+    }
+}
+
+// MARK: - Text metrics
+
+/// Natural font metrics used to turn a target line height into the extra
+/// leading SwiftUI / AppKit need. Memoized per font name and size.
+enum ThemeTextMetrics {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var memo: [String: CGFloat] = [:]
+
+    /// Height of one unadorned line set in `font`.
+    static func naturalLineHeight(for font: NSFont) -> CGFloat {
+        let key = "\(font.fontName)\u{0}\(font.pointSize)"
+        lock.lock()
+        let cached = memo[key]
+        lock.unlock()
+        if let cached { return cached }
+        let height = ceil(font.ascender - font.descender + font.leading)
+        lock.lock()
+        memo[key] = height
+        lock.unlock()
+        return height
     }
 
-    /// Spring animation using theme settings
-    func springAnimation() -> Animation {
-        .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
+    static func extraLeading(for font: NSFont, lineHeight: CGFloat) -> CGFloat {
+        max(0, lineHeight - naturalLineHeight(for: font))
+    }
+}
+
+// MARK: - Geometry helpers
+
+extension ThemeProtocol {
+    /// One physical pixel for the given display scale (`stroke.hairline`).
+    func hairline(forBackingScale scale: CGFloat) -> CGFloat {
+        stroke.hairlineRule.width(forBackingScale: scale)
     }
 
-    /// Spring animation with custom response multiplier
+    /// One physical pixel on the main display; prefer the display-specific
+    /// overload inside views that know their window.
+    var hairline: CGFloat {
+        hairline(forBackingScale: NSScreen.main?.backingScaleFactor ?? 2)
+    }
+
+    /// One physical pixel for the display `view` is on.
+    @MainActor
+    func hairline(for view: NSView) -> CGFloat {
+        hairline(forBackingScale: view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
+    }
+}
+
+// MARK: - Motion helpers
+
+extension ThemeMotion {
+    /// True when the user asked macOS to reduce motion. Nonessential
+    /// animation resolves to an instant state change in that case.
+    static var reduceMotionEnabled: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    private func timing(_ duration: Double) -> Animation {
+        if Self.reduceMotionEnabled { return .linear(duration: 0) }
+        switch easing {
+        case .easeInOut: return .easeInOut(duration: duration)
+        case .easeIn: return .easeIn(duration: duration)
+        case .easeOut: return .easeOut(duration: duration)
+        case .linear: return .linear(duration: duration)
+        }
+    }
+
+    var quick: Animation { timing(durationQuick) }
+    var standard: Animation { timing(durationStandard) }
+    var slow: Animation { timing(durationSlow) }
+
+    /// `NSAnimationContext` / Core Animation durations; 0 under Reduce Motion.
+    var quickInterval: TimeInterval { Self.reduceMotionEnabled ? 0 : durationQuick }
+    var standardInterval: TimeInterval { Self.reduceMotionEnabled ? 0 : durationStandard }
+    var slowInterval: TimeInterval { Self.reduceMotionEnabled ? 0 : durationSlow }
+
+    /// The theme easing as a Core Animation timing function.
+    var timingFunction: CAMediaTimingFunction {
+        switch easing {
+        case .easeInOut: return CAMediaTimingFunction(name: .easeInEaseOut)
+        case .easeIn: return CAMediaTimingFunction(name: .easeIn)
+        case .easeOut: return CAMediaTimingFunction(name: .easeOut)
+        case .linear: return CAMediaTimingFunction(name: .linear)
+        }
+    }
+
+    /// The shared spring recipe; instant under Reduce Motion.
+    var springAnimation: Animation {
+        if Self.reduceMotionEnabled { return .linear(duration: 0) }
+        return .spring(response: spring.response, dampingFraction: spring.dampingFraction)
+    }
+
+    /// A repeating animation for spinners, pulses and shimmer. `duration` is
+    /// the loop's own period, not a theme duration. Nil under Reduce Motion,
+    /// so the state change lands without looping.
+    func loop(
+        _ curve: ThemeEasing = .linear,
+        duration: Double,
+        autoreverses: Bool = false,
+        delay: Double = 0
+    ) -> Animation? {
+        if Self.reduceMotionEnabled { return nil }
+        let base: Animation
+        switch curve {
+        case .easeInOut: base = .easeInOut(duration: duration)
+        case .easeIn: base = .easeIn(duration: duration)
+        case .easeOut: base = .easeOut(duration: duration)
+        case .linear: base = .linear(duration: duration)
+        }
+        return base.repeatForever(autoreverses: autoreverses).delay(delay)
+    }
+
+    /// A one-shot animation whose length is part of the effect (a countdown
+    /// bar, an attention pulse), not a theme duration. Nil under Reduce Motion.
+    func timed(_ curve: ThemeEasing = .linear, duration: Double) -> Animation? {
+        if Self.reduceMotionEnabled { return nil }
+        switch curve {
+        case .easeInOut: return .easeInOut(duration: duration)
+        case .easeIn: return .easeIn(duration: duration)
+        case .easeOut: return .easeOut(duration: duration)
+        case .linear: return .linear(duration: duration)
+        }
+    }
+
     func springAnimation(responseMultiplier: Double = 1.0, dampingMultiplier: Double = 1.0) -> Animation {
-        .spring(
-            response: animationSpringResponse * responseMultiplier,
-            dampingFraction: min(1.0, animationSpringDamping * dampingMultiplier)
+        if Self.reduceMotionEnabled { return .linear(duration: 0) }
+        return .spring(
+            response: spring.response * responseMultiplier,
+            dampingFraction: min(1.0, spring.dampingFraction * dampingMultiplier)
         )
     }
 }
 
-// MARK: - Light Theme
+// MARK: - Elevation helpers
 
-struct LightTheme: ThemeProtocol {
-    // Primary colors - Warm, rich blacks (WCAG AA compliant)
-    let primaryText = Color(hex: "1a1a18")  // ~17:1 contrast ✓
-    let secondaryText = Color(hex: "555550")  // ~7:1 contrast ✓ (was #6b6b66)
-    let tertiaryText = Color(hex: "717168")  // ~5.5:1 contrast ✓ (was #9c9c96, ~2.8:1)
-    let placeholderText = Color(hex: "555550")  // Matches secondaryText for better visibility
-
-    // Background colors - Warm whites with depth
-    let primaryBackground = Color(hex: "ffffff")
-    let secondaryBackground = Color(hex: "f9f9f7")
-    let tertiaryBackground = Color(hex: "f2f2ef")
-
-    // Sidebar colors - Warm and inviting
-    let sidebarBackground = Color(hex: "f7f7f5")
-    let sidebarSelectedBackground = Color(hex: "eaeae6")
-
-    // Accent colors - Rich warm black
-    let accentColor = Color(hex: "1a1a18")
-    let accentColorLight = Color(hex: "3d3d3a")
-
-    // Border colors - Warm with improved visibility (WCAG AA for UI: 3:1)
-    let primaryBorder = Color(hex: "d0d0cc")  // ~2.2:1, subtle but visible (was #e8e8e4)
-    let secondaryBorder = Color(hex: "e0e0dc")  // Decorative borders (was #f0f0ec)
-    let focusBorder = Color(hex: "4a4a46")
-
-    // Status colors - Accessible on light backgrounds (WCAG AA compliant)
-    let successColor = Color(hex: "15803d")  // ~4.5:1 on white ✓ (was #22c55e, ~2.3:1)
-    let warningColor = Color(hex: "a16207")  // ~4.5:1 on white ✓ (was #eab308, ~1.9:1)
-    let errorColor = Color(hex: "dc2626")  // ~4.5:1 on white ✓ (was #ef4444, ~3.1:1)
-    let infoColor = Color(hex: "555550")  // Matches secondaryText (was #6b6b66)
-
-    // Component specific - Warm and layered
-    let cardBackground = Color(hex: "ffffff")
-    let cardBorder = Color(hex: "d0d0cc")  // Improved visibility
-    let buttonBackground = Color(hex: "1a1a18")
-    let buttonBorder = Color(hex: "1a1a18")
-    let inputBackground = Color(hex: "ffffff")
-    let inputBorder = Color(hex: "a8a8a3")  // ~3.5:1 for UI ✓ (was #d8d8d4, ~1.6:1)
-    let glassTintOverlay = Color(hex: "f5f5f2").opacity(0.6)
-    let codeBlockBackground = Color(hex: "f5f5f2")
-
-    // Selection - Light blue highlight
-    let selectionColor = Color(hex: "3b82f6").opacity(0.3)
-
-    // Cursor - High contrast black
-    let cursorColor = Color(hex: "1a1a18")
-
-    // Glass specific - Rich depth with improved contrast
-    let glassOpacityPrimary: Double = 0.25
-    let glassOpacitySecondary: Double = 0.18
-    let glassOpacityTertiary: Double = 0.10
-    let glassBlurRadius: Double = 24
-    let glassEdgeLight = Color.white.opacity(0.5)
-
-    // Card shadows - Soft and diffuse
-    let cardShadowRadius: Double = 12
-    let cardShadowRadiusHover: Double = 20
-    let cardShadowY: Double = 3
-    let cardShadowYHover: Double = 8
-
-    // Animation timing
-    let animationDurationQuick: Double = 0.2
-    let animationDurationMedium: Double = 0.3
-    let animationDurationSlow: Double = 0.4
-    let animationSpringResponse: Double = 0.4
-    let animationSpringDamping: Double = 0.8
-    var animationSpring: Animation {
-        .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
-    }
-
-    // Shadows - Warm and soft
-    let shadowColor = Color(hex: "8e8e93")
-    let shadowOpacity: Double = 0.08
-
-    let isDark = false
+extension ThemeElevationRecipe {
+    var swiftUIColor: Color { Color(themeHex: color) }
 }
 
-// MARK: - Dark Theme
+struct ThemeElevationModifier: ViewModifier {
+    let recipe: ThemeElevationRecipe
 
-struct DarkTheme: ThemeProtocol {
-    // Primary colors - Warm off-white (WCAG AA compliant)
-    let primaryText = Color(hex: "f5f5f2")  // ~17:1 contrast ✓
-    let secondaryText = Color(hex: "a8a8a3")  // ~8.5:1 contrast ✓
-    let tertiaryText = Color(hex: "9c9c97")  // ~7:1 contrast ✓ (was #8a8a85, ~5.5:1)
-    let placeholderText = Color(hex: "a1a1aa")  // Matches secondaryText for better visibility
-
-    // Background colors - Rich, warm blacks with depth
-    let primaryBackground = Color(hex: "0c0c0b")
-    let secondaryBackground = Color(hex: "161614")
-    let tertiaryBackground = Color(hex: "1e1e1c")
-
-    // Sidebar colors - Deep and warm
-    let sidebarBackground = Color(hex: "111110")
-    let sidebarSelectedBackground = Color(hex: "222220")
-
-    // Accent colors - Warm cream
-    let accentColor = Color(hex: "f0f0eb")
-    let accentColorLight = Color(hex: "a8a8a3")
-
-    // Border colors - Warm and subtle
-    let primaryBorder = Color(hex: "2a2a28")
-    let secondaryBorder = Color(hex: "363633")
-    let focusBorder = Color(hex: "8a8a85")
-
-    // Status colors - Keep functional
-    let successColor = Color(hex: "22c55e")
-    let warningColor = Color(hex: "eab308")
-    let errorColor = Color(hex: "ef4444")
-    let infoColor = Color(hex: "a8a8a3")
-
-    // Component specific - Layered depth
-    let cardBackground = Color(hex: "161614")
-    let cardBorder = Color(hex: "2a2a28")
-    let buttonBackground = Color(hex: "f0f0eb")
-    let buttonBorder = Color(hex: "f0f0eb")
-    let inputBackground = Color(hex: "1a1a18")
-    let inputBorder = Color(hex: "363633")
-    let glassTintOverlay = Color(hex: "1a1a18").opacity(0.7)
-    let codeBlockBackground = Color(hex: "1a1a18")
-
-    // Selection - Subtle warm highlight
-    let selectionColor = Color(hex: "f0f0eb").opacity(0.25)
-
-    // Cursor - High contrast white
-    let cursorColor = Color(hex: "f0f0eb")
-
-    // Glass specific - Rich and premium with improved contrast
-    let glassOpacityPrimary: Double = 0.20
-    let glassOpacitySecondary: Double = 0.15
-    let glassOpacityTertiary: Double = 0.08
-    let glassBlurRadius: Double = 28
-    let glassEdgeLight = Color.white.opacity(0.12)
-
-    // Card shadows - Soft glow
-    let cardShadowRadius: Double = 16
-    let cardShadowRadiusHover: Double = 24
-    let cardShadowY: Double = 4
-    let cardShadowYHover: Double = 10
-
-    // Animation timing
-    let animationDurationQuick: Double = 0.2
-    let animationDurationMedium: Double = 0.3
-    let animationDurationSlow: Double = 0.4
-    let animationSpringResponse: Double = 0.4
-    let animationSpringDamping: Double = 0.8
-    var animationSpring: Animation {
-        .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
+    func body(content: Content) -> some View {
+        if recipe.opacity <= 0 || recipe.blur <= 0 {
+            content
+        } else {
+            content.shadow(
+                color: recipe.swiftUIColor.opacity(recipe.opacity),
+                radius: recipe.blur / 2,
+                x: recipe.x,
+                y: recipe.y
+            )
+        }
     }
+}
 
-    // Shadows - Deep and rich
-    let shadowColor = Color.black
-    let shadowOpacity: Double = 0.4
+extension View {
+    /// Applies a shadow recipe. `blur` is treated as the CSS-style blur
+    /// diameter and halved for SwiftUI's radius.
+    func themeElevation(_ recipe: ThemeElevationRecipe) -> some View {
+        modifier(ThemeElevationModifier(recipe: recipe))
+    }
+}
 
-    let isDark = true
+extension CALayer {
+    /// The AppKit twin of `themeElevation(_:)`. Recipe `y` points down the
+    /// screen, so it is negated for an unflipped layer.
+    func applyThemeElevation(_ recipe: ThemeElevationRecipe) {
+        guard recipe.opacity > 0, recipe.blur > 0 else {
+            shadowOpacity = 0
+            return
+        }
+        shadowColor = NSColor(recipe.swiftUIColor).cgColor
+        shadowOpacity = Float(recipe.opacity)
+        shadowRadius = recipe.blur / 2
+        shadowOffset = CGSize(width: recipe.x, height: isGeometryFlipped ? recipe.y : -recipe.y)
+    }
 }
 
 // MARK: - Customizable Theme (Wraps CustomTheme)
@@ -432,158 +461,80 @@ struct CustomizableTheme: ThemeProtocol {
     /// construction; ThemeManager rebuilds live theme instances when it changes.
     let fontScale: Double
 
+    /// Resolved once per theme instance so view bodies don't re-parse hex.
+    let colors: ThemeColorRoles<Color>
+
+    let renderFingerprint: Int
+    let inspectionRevision: String
+
     init(config: CustomTheme, fontScale: Double = ThemeManager.fontScale) {
-        // Substituting here covers every construction site (startup,
-        // appearance resolution, custom apply, per-agent chat themes,
-        // font-scale rebuilds) without touching them individually.
-        var config = config
-        if config.followsSystemAccent,
-            let accentHex = SystemAccentColor.currentAccentHex(isDark: config.isDark)
-        {
-            config.colors = config.colors.applyingAccent(accentHex, isDark: config.isDark)
-        }
+        #if OSAURUS_DESIGN_SYSTEM
+        self.init(
+            resolved: DesignThemeOverlay.shared.resolve(config), fontScale: fontScale,
+            inspectionRevision: DesignThemeOverlay.shared.current()?.generation ?? "")
+        #else
+        self.init(resolved: config, fontScale: fontScale)
+        #endif
+    }
+
+    /// A theme over `config` exactly as given, without the design overlay
+    /// replacing its tokens.
+    init(resolved config: CustomTheme, fontScale: Double, inspectionRevision: String = "") {
         self.config = config
         self.fontScale = fontScale
+        self.inspectionRevision = inspectionRevision
+        self.colors = config.colors.map { Color(themeHex: $0) }
+        self.renderFingerprint = Self.fingerprint(config: config, fontScale: fontScale)
     }
 
-    // Primary colors
-    var primaryText: Color { Color(themeHex: config.colors.primaryText) }
-    var secondaryText: Color { Color(themeHex: config.colors.secondaryText) }
-    var tertiaryText: Color { Color(themeHex: config.colors.tertiaryText) }
-    var placeholderText: Color {
-        if let placeholder = config.colors.placeholderText {
-            return Color(themeHex: placeholder)
-        }
-        return Color(themeHex: config.colors.tertiaryText)
+    private static func fingerprint(config: CustomTheme, fontScale: Double) -> Int {
+        var hasher = Hasher()
+        hasher.combine(config.colors)
+        hasher.combine(config.typography)
+        hasher.combine(config.radius)
+        hasher.combine(config.stroke)
+        hasher.combine(config.focusOffset)
+        hasher.combine(config.space)
+        hasher.combine(config.controlSize)
+        hasher.combine(config.motion)
+        hasher.combine(config.elevation)
+        hasher.combine(config.effects)
+        hasher.combine(config.windowMaterial)
+        hasher.combine(config.messages)
+        hasher.combine(config.codeHighlightTheme)
+        hasher.combine(config.isDark)
+        hasher.combine(fontScale)
+        return hasher.finalize()
     }
 
-    // Background colors
-    var primaryBackground: Color { Color(themeHex: config.colors.primaryBackground) }
-    var secondaryBackground: Color { Color(themeHex: config.colors.secondaryBackground) }
-    var tertiaryBackground: Color { Color(themeHex: config.colors.tertiaryBackground) }
+    var typography: ThemeTypography { config.typography }
+    var radius: ThemeRadii { config.radius }
+    var stroke: ThemeStrokes { config.stroke }
+    var focusOffset: Double { config.focusOffset }
+    var space: ThemeSpaceScale { config.space }
+    var controlSize: ThemeControlSizes { config.controlSize }
+    var motion: ThemeMotion { config.motion }
+    var elevation: ThemeElevation { config.elevation }
+    var effects: ThemeEffects { config.effects }
+    var windowMaterial: ThemeWindowMaterial { config.windowMaterial }
 
-    // Sidebar colors
-    var sidebarBackground: Color { Color(themeHex: config.colors.sidebarBackground) }
-    var sidebarSelectedBackground: Color { Color(themeHex: config.colors.sidebarSelectedBackground) }
-
-    // Accent colors
-    var accentColor: Color { Color(themeHex: config.colors.accentColor) }
-    var accentColorLight: Color { Color(themeHex: config.colors.accentColorLight) }
-
-    // Border colors
-    var primaryBorder: Color { Color(themeHex: config.colors.primaryBorder) }
-    var secondaryBorder: Color { Color(themeHex: config.colors.secondaryBorder) }
-    var focusBorder: Color { Color(themeHex: config.colors.focusBorder) }
-
-    // Status colors
-    var successColor: Color { Color(themeHex: config.colors.successColor) }
-    var warningColor: Color { Color(themeHex: config.colors.warningColor) }
-    var errorColor: Color { Color(themeHex: config.colors.errorColor) }
-    var infoColor: Color { Color(themeHex: config.colors.infoColor) }
-
-    // Component specific
-    var cardBackground: Color { Color(themeHex: config.colors.cardBackground) }
-    var cardBorder: Color { Color(themeHex: config.colors.cardBorder) }
-    var buttonBackground: Color { Color(themeHex: config.colors.buttonBackground) }
-    var buttonBorder: Color { Color(themeHex: config.colors.buttonBorder) }
-    var inputBackground: Color { Color(themeHex: config.colors.inputBackground) }
-    var inputBorder: Color { Color(themeHex: config.colors.inputBorder) }
-    var glassTintOverlay: Color { Color(themeHex: config.colors.glassTintOverlay) }
-    var codeBlockBackground: Color { Color(themeHex: config.colors.codeBlockBackground) }
-
-    // Selection
-    var selectionColor: Color { Color(themeHex: config.colors.selectionColor) }
-
-    // Cursor
-    var cursorColor: Color { Color(themeHex: config.colors.cursorColor) }
-
-    // Appearance
     var isDark: Bool { config.isDark }
 
-    // Glass specific
-    var glassOpacityPrimary: Double { config.glass.opacityPrimary }
-    var glassOpacitySecondary: Double { config.glass.opacitySecondary }
-    var glassOpacityTertiary: Double { config.glass.opacityTertiary }
-    var glassBlurRadius: Double { config.glass.blurRadius }
-    var glassEdgeLight: Color { Color(themeHex: config.glass.edgeLight) }
-    var glassEnabled: Bool { config.glass.enabled }
-    var glassSidebarEnabled: Bool { config.glass.sidebarEnabled }
-    var glassInputEnabled: Bool { config.glass.inputEnabled }
-    var glassMaterial: NSVisualEffectView.Material { config.glass.material.nsMaterial }
-    var glassTintColor: Color? {
-        guard let tint = config.glass.tintColor else { return nil }
-        return Color(themeHex: tint)
-    }
-    var glassTintOpacity: Double { config.glass.tintOpacity ?? 0 }
-    var windowBackingOpacity: Double { config.glass.windowBackingOpacity }
+    var showInlineAvatar: Bool { config.messages.showInlineAvatar }
+    var showAgentName: Bool { config.messages.showAgentName }
 
-    // Card shadows
-    var cardShadowRadius: Double { config.shadows.cardShadowRadius }
-    var cardShadowRadiusHover: Double { config.shadows.cardShadowRadiusHover }
-    var cardShadowY: Double { config.shadows.cardShadowY }
-    var cardShadowYHover: Double { config.shadows.cardShadowYHover }
-
-    // Animation timing
-    var animationDurationQuick: Double { config.animationConfig.durationQuick }
-    var animationDurationMedium: Double { config.animationConfig.durationMedium }
-    var animationDurationSlow: Double { config.animationConfig.durationSlow }
-    var animationSpringResponse: Double { config.animationConfig.springResponse }
-    var animationSpringDamping: Double { config.animationConfig.springDamping }
-    var animationSpring: Animation { config.animationConfig.spring }
-
-    // Shadows
-    var shadowColor: Color { Color(themeHex: config.colors.shadowColor) }
-    var shadowOpacity: Double { config.shadows.shadowOpacity }
-
-    // Background customization
-    var backgroundImage: NSImage? { config.background.decodedImage() }
-    var backgroundImageOpacity: Double { config.background.imageOpacity ?? 1.0 }
-    var backgroundOverlayColor: Color? {
-        guard let overlay = config.background.overlayColor else { return nil }
-        return Color(themeHex: overlay)
-    }
-    var backgroundOverlayOpacity: Double { config.background.overlayOpacity ?? 0 }
-
-    // Typography
-    var primaryFontName: String { config.typography.primaryFont }
-    var monoFontName: String { config.typography.monoFont }
-    var titleSize: Double { config.typography.titleSize * fontScale }
-    var headingSize: Double { config.typography.headingSize * fontScale }
-    var bodySize: Double { config.typography.bodySize * fontScale }
-    var smallBodySize: Double { config.typography.smallBodySize * fontScale }
-    var captionSize: Double { config.typography.captionSize * fontScale }
-    var codeSize: Double { config.typography.codeSize * fontScale }
-
-    // Code syntax highlighting
     var codeHighlightTheme: String? { config.codeHighlightTheme }
-
-    // Custom theme reference
     var customThemeConfig: CustomTheme? { config }
 
-    // Message bubble customization
-    var bubbleCornerRadius: Double { config.messages.bubbleCornerRadius }
-    var userBubbleOpacity: Double { config.messages.userBubbleOpacity }
-    var assistantBubbleOpacity: Double { config.messages.assistantBubbleOpacity }
-    var userBubbleColor: Color? {
-        guard let hex = config.messages.userBubbleColor else { return nil }
-        return Color(themeHex: hex)
+    /// Canonical Light preset resolved as a theme (previews, tests, fallbacks).
+    static func light(fontScale: Double = 1.0) -> CustomizableTheme {
+        CustomizableTheme(config: .lightDefault, fontScale: fontScale)
     }
-    var assistantBubbleColor: Color? {
-        guard let hex = config.messages.assistantBubbleColor else { return nil }
-        return Color(themeHex: hex)
-    }
-    var messageBorderWidth: Double { config.messages.borderWidth }
-    var showEdgeLight: Bool { config.messages.showEdgeLight }
-    var showInlineAvatar: Bool { config.messages.showInlineAvatar }
-    var inlineAvatarSize: Double { config.messages.inlineAvatarSize }
-    var showAgentName: Bool { config.messages.showAgentName }
-    var agentNameSize: Double { config.messages.agentNameSize * fontScale }
 
-    // Border customization
-    var defaultBorderWidth: Double { config.borders.defaultWidth }
-    var cardCornerRadius: Double { config.borders.cardCornerRadius }
-    var inputCornerRadius: Double { config.borders.inputCornerRadius }
-    var borderOpacity: Double { config.borders.borderOpacity }
+    /// Canonical Dark preset resolved as a theme (previews, tests, fallbacks).
+    static func dark(fontScale: Double = 1.0) -> CustomizableTheme {
+        CustomizableTheme(config: .darkDefault, fontScale: fontScale)
+    }
 }
 
 // MARK: - Theme Manager
@@ -595,23 +546,13 @@ extension Notification.Name {
 @MainActor
 public class ThemeManager: ObservableObject {
     public static let shared = ThemeManager()
-    private static let builtInDarkThemeID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
-    private static let builtInLightThemeID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2))
 
-    struct StartupThemeSelection {
-        var appearanceMode: AppearanceMode
-        var activeTheme: CustomTheme?
-        var shouldClearActiveTheme: Bool
-    }
+    /// UserDefaults key the retired theme library stored its active theme in.
+    static let retiredActiveThemeKey = "activeThemeId"
 
     @Published var currentTheme: ThemeProtocol
     @Published var chatTheme: ThemeProtocol
     @Published public private(set) var appearanceMode: AppearanceMode = .system
-    @Published public private(set) var activeCustomTheme: CustomTheme?
-    @Published public private(set) var installedThemes: [CustomTheme] = []
-
-    /// Whether a custom theme is currently active
-    public var isCustomThemeActive: Bool { activeCustomTheme != nil }
 
     /// Global font zoom applied on top of every theme's typography. Static so
     /// `CustomizableTheme` instances can capture it at construction wherever
@@ -619,7 +560,7 @@ public class ThemeManager: ObservableObject {
     /// argument in the nonisolated `CustomizableTheme.init`; all writes stay
     /// on the main actor (this class), and themes are built on it too.
     nonisolated(unsafe) public private(set) static var fontScale: Double = 1.0
-    private static let fontScaleStep: Double = 0.1
+    static let fontScaleStep: Double = 0.1
 
     public var canZoomFontIn: Bool {
         Self.fontScale < ServerConfiguration.fontSizeMultiplierRange.upperBound
@@ -645,284 +586,97 @@ public class ThemeManager: ObservableObject {
         }
 
         // Rebuild the live theme instances so every observer re-renders with
-        // the new scale; agent-specific chat themes rebuild via the
-        // globalThemeChanged notification.
-        if let custom = activeCustomTheme {
-            let themeInstance = CustomizableTheme(config: custom)
-            currentTheme = themeInstance
-            chatTheme = themeInstance
-        } else {
-            applyResolvedTheme(for: appearanceMode, animated: false)
-        }
+        // the new scale.
+        applyResolvedTheme(for: appearanceMode, animated: false)
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
-    private init() {
-        print("[Osaurus] ThemeManager: Initializing...")
+    #if OSAURUS_DESIGN_SYSTEM
+    /// Rebuild published app themes from the immutable working snapshot, without
+    /// changing the persisted appearance or the sent engineering handoff.
+    /// Development preview range is independent of the saved product zoom limit.
+    func setDesignInspectionScale(_ scale: Double) {
+        Self.fontScale = min(max(scale, 0.7), 2.0)
+        refreshDesignInspection()
+    }
+    func refreshDesignInspection() {
+        let refreshed = CustomizableTheme(config: Self.seed(isDark: currentTheme.isDark))
+        currentTheme = refreshed
+        chatTheme = refreshed
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
+    }
+    #endif
 
-        // Load saved appearance mode (cheap config read).
+    private init() {
         let config = ServerConfigurationStore.load() ?? ServerConfiguration.default
         // Restore the persisted font zoom before any theme instance is built
         // so the initial themes capture the correct scale.
         Self.fontScale = ServerConfiguration.clampedFontSizeMultiplier(config.fontSizeMultiplier)
-        let savedActiveTheme = ThemeConfigurationStore.loadActiveTheme()
-        let startupSelection = Self.startupSelection(
-            savedActiveTheme: savedActiveTheme,
-            configuredAppearanceMode: config.appearanceMode
-        )
 
-        if startupSelection.shouldClearActiveTheme {
-            ThemeConfigurationStore.saveActiveThemeId(nil)
-            ServerConfigurationStore.updateAppearanceMode(startupSelection.appearanceMode)
-        }
+        let mode = Self.migrateRetiredActiveTheme(configured: config.appearanceMode)
+        let themeInstance = CustomizableTheme(config: Self.seed(isDark: Self.isDarkMode(for: mode)))
+        self.currentTheme = themeInstance
+        self.chatTheme = themeInstance
+        self.appearanceMode = mode
 
-        // Resolve the *initial* theme synchronously with as little disk work
-        // as possible. `.shared` is constructed during `osaurusApp` struct
-        // setup — before any window exists — so the full
-        // `installBuiltInThemesIfNeeded()` + `listThemes()` directory walk and
-        // per-theme JSON decode must NOT run on this launch-critical path.
-        //
-        //  • Active custom theme: a single JSON decode, so honor it here to
-        //    avoid a visible flash for users who picked a custom theme.
-        //  • Otherwise: seed the compiled-in Dark/Light default. The
-        //    disk-installed built-in (identical palette) is swapped in by the
-        //    deferred load below once it finishes — invisible to the user.
-        if let customTheme = startupSelection.activeTheme {
-            print("[Osaurus] ThemeManager: Restoring active theme '\(customTheme.metadata.name)'")
-            self.activeCustomTheme = customTheme
-            let themeInstance = CustomizableTheme(config: customTheme)
-            self.currentTheme = themeInstance
-            self.chatTheme = themeInstance
-        } else {
-            let fallbackTheme =
-                Self.isDarkMode(for: startupSelection.appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
-            let themeInstance = CustomizableTheme(config: fallbackTheme)
-            self.currentTheme = themeInstance
-            self.chatTheme = themeInstance
-        }
-
-        // Now we can assign to self properties. `installedThemes` is published
-        // empty and filled in by the deferred load.
-        self.appearanceMode = startupSelection.appearanceMode
-        self.installedThemes = []
-
-        // Observe system appearance changes (Distributed Notification)
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(systemAppearanceChanged),
             name: Notification.Name("AppleInterfaceThemeChangedNotification"),
             object: nil
         )
-
-        // Observe system accent color changes so themes that opt in via
-        // `followsSystemAccent` re-derive their palette live. AppKit posts
-        // the in-process notification when system colors change; the
-        // distributed one covers accent changes made in System Settings.
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(systemAccentColorChanged),
-            name: NSColor.systemColorsDidChangeNotification,
-            object: nil
-        )
-        DistributedNotificationCenter.default().addObserver(
-            self,
-            selector: #selector(systemAccentColorChanged),
-            name: Notification.Name("AppleColorPreferencesChangedNotification"),
-            object: nil
-        )
-
-        // Defer the heavy disk work (built-in install + full theme decode)
-        // off the *synchronous* launch-critical path. `ThemeConfigurationStore`
-        // is `@MainActor` (it guards a static install-cache + UserDefaults), so
-        // the walk stays on the main actor — but as a later main-actor turn, it
-        // no longer blocks `osaurusApp` struct construction. It then publishes
-        // `installedThemes` and upgrades the initial fallback to the disk
-        // built-in when ready.
-        let appearanceMode = startupSelection.appearanceMode
-        Task { @MainActor [weak self] in
-            ThemeConfigurationStore.installBuiltInThemesIfNeeded()
-            // Decoding every installed theme's JSON synchronously on the main
-            // actor can take 3+ seconds on a cold disk with many themes
-            // installed, producing "App Hanging" reports at launch. Decode
-            // off the main actor; the install step above must still run here
-            // since it guards a main-actor install-cache flag + UserDefaults.
-            let loaded = await Task.detached(priority: .utility) {
-                ThemeConfigurationStore.listThemesFromDisk()
-            }.value
-
-            guard let self else { return }
-            print("[Osaurus] ThemeManager: Found \(loaded.count) installed themes (deferred)")
-            self.installedThemes = loaded
-
-            // Only swap the live theme if the user hasn't picked a custom one;
-            // matching the original synchronous built-in resolution.
-            if self.activeCustomTheme == nil,
-                let builtIn = Self.resolveBuiltInTheme(for: appearanceMode, from: loaded) {
-                let themeInstance = CustomizableTheme(config: builtIn)
-                self.currentTheme = themeInstance
-                self.chatTheme = themeInstance
-            }
-        }
-
-        print("[Osaurus] ThemeManager: Initialization complete")
     }
 
-    static func startupSelection(
-        savedActiveTheme: CustomTheme?,
-        configuredAppearanceMode: AppearanceMode
-    ) -> StartupThemeSelection {
-        guard let savedActiveTheme else {
-            return StartupThemeSelection(
-                appearanceMode: configuredAppearanceMode,
-                activeTheme: nil,
-                shouldClearActiveTheme: false
-            )
-        }
-        guard let builtInMode = appearanceMode(forBuiltInTheme: savedActiveTheme) else {
-            return StartupThemeSelection(
-                appearanceMode: configuredAppearanceMode,
-                activeTheme: savedActiveTheme,
-                shouldClearActiveTheme: false
-            )
-        }
-        return StartupThemeSelection(
-            appearanceMode: builtInMode,
-            activeTheme: nil,
-            shouldClearActiveTheme: true
+    /// Custom themes were retired. A user who still has one active keeps its
+    /// light or dark look as their appearance; the theme file stays on disk.
+    private static func migrateRetiredActiveTheme(configured: AppearanceMode) -> AppearanceMode {
+        let defaults = UserDefaults.standard
+        guard let rawId = defaults.string(forKey: retiredActiveThemeKey) else { return configured }
+        defaults.removeObject(forKey: retiredActiveThemeKey)
+        let themesDirectory = OsaurusPaths.resolvePath(new: OsaurusPaths.themes(), legacy: "Themes")
+        let mode = retiredThemeAppearance(
+            activeThemeId: rawId,
+            readThemeFile: { id in
+                try? Data(contentsOf: themesDirectory.appendingPathComponent("\(id.uuidString).json"))
+            },
+            configured: configured
         )
-    }
-
-    /// Find the appropriate built-in theme based on appearance mode
-    private static func resolveBuiltInTheme(for mode: AppearanceMode, from themes: [CustomTheme]) -> CustomTheme? {
-        // Find the built-in Dark or Light theme based on appearance
-        let targetId = isDarkMode(for: mode) ? builtInDarkThemeID : builtInLightThemeID
-
-        return themes.first { $0.metadata.id == targetId }
-    }
-
-    public static func appearanceMode(forBuiltInTheme theme: CustomTheme) -> AppearanceMode? {
-        guard theme.isBuiltIn else { return nil }
-        switch theme.metadata.id {
-        case builtInDarkThemeID:
-            return .dark
-        case builtInLightThemeID:
-            return .light
-        default:
-            return nil
+        if mode != configured {
+            ServerConfigurationStore.updateAppearanceMode(mode)
         }
+        return mode
+    }
+
+    /// The appearance a retired active theme maps to: the built-in Dark and
+    /// Light ids map directly, any other theme by its stored `isDark` flag.
+    /// Unreadable or unknown themes keep the configured mode.
+    static func retiredThemeAppearance(
+        activeThemeId: String,
+        readThemeFile: (UUID) -> Data?,
+        configured: AppearanceMode
+    ) -> AppearanceMode {
+        guard let id = UUID(uuidString: activeThemeId) else { return configured }
+        if id == CustomTheme.builtInDarkID { return .dark }
+        if id == CustomTheme.builtInLightID { return .light }
+        guard let data = readThemeFile(id),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let isDark = object["isDark"] as? Bool
+        else { return configured }
+        return isDark ? .dark : .light
     }
 
     /// Update the appearance mode and apply the theme
-    public func setAppearanceMode(
-        _ mode: AppearanceMode,
-        clearActiveTheme: Bool = false,
-        persist: Bool = true
-    ) {
+    public func setAppearanceMode(_ mode: AppearanceMode, persist: Bool = true) {
         appearanceMode = mode
-
         if persist {
             ServerConfigurationStore.updateAppearanceMode(mode)
         }
-        if clearActiveTheme {
-            activeCustomTheme = nil
-            ThemeConfigurationStore.saveActiveThemeId(nil)
-        }
-
-        // If a user-selected custom theme is active, don't change it based on appearance mode
-        guard activeCustomTheme == nil else { return }
-
         applyResolvedTheme(for: mode, animated: true)
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
-    /// Apply a custom theme (global - affects both management and chat views)
-    /// - Parameters:
-    ///   - theme: The theme to apply
-    ///   - persist: Whether to save the theme ID to disk (default: true). Set to false for temporary theme changes like agent themes.
-    ///   - animated: Whether to animate the theme transition (default: true). Set to false for instant changes on initial load.
-    public func applyCustomTheme(_ theme: CustomTheme, persist: Bool = true, animated: Bool = true) {
-        activeCustomTheme = theme
-        if persist {
-            ThemeConfigurationStore.saveActiveThemeId(theme.metadata.id)
-        }
-
-        let themeInstance = CustomizableTheme(config: theme)
-        if animated {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = themeInstance
-                chatTheme = themeInstance
-            }
-        } else {
-            currentTheme = themeInstance
-            chatTheme = themeInstance
-        }
-        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
-    }
-
-    /// Clear custom theme and revert to system appearance (global - affects both management and chat views)
-    /// - Parameters:
-    ///   - persist: Whether to save the cleared state to disk (default: true). Set to false for temporary theme changes.
-    ///   - animated: Whether to animate the theme transition (default: true). Set to false for instant changes.
-    func clearCustomTheme(persist: Bool = true, animated: Bool = true) {
-        activeCustomTheme = nil
-        if persist {
-            ThemeConfigurationStore.saveActiveThemeId(nil)
-        }
-
-        applyResolvedTheme(for: appearanceMode, animated: animated)
-        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
-    }
-
-    /// Refresh the list of installed themes
-    func refreshInstalledThemes() {
-        installedThemes = ThemeConfigurationStore.listThemes()
-        print("[Osaurus] ThemeManager: Refreshed themes, found \(installedThemes.count) themes")
-    }
-
-    /// Save a theme and refresh the list
-    func saveTheme(_ theme: CustomTheme) {
-        ThemeConfigurationStore.saveTheme(theme)
-        refreshInstalledThemes()
-
-        // If this is the active theme, re-apply it (which also posts the
-        // notification). Otherwise still post `.globalThemeChanged` so any
-        // open chat window using this theme via a per-agent `themeId` picks
-        // up the edit without us having to switch the user's active theme.
-        if activeCustomTheme?.metadata.id == theme.metadata.id {
-            applyCustomTheme(theme)
-        } else {
-            NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
-        }
-    }
-
-    /// Delete a theme
-    /// Returns true if deletion was successful
-    @discardableResult
-    func deleteTheme(id: UUID) -> Bool {
-        // Check if theme exists and is not built-in
-        if let theme = installedThemes.first(where: { $0.metadata.id == id }) {
-            if theme.isBuiltIn {
-                print("[Osaurus] Cannot delete built-in theme: \(theme.metadata.name)")
-                return false
-            }
-        }
-
-        let success = ThemeConfigurationStore.deleteTheme(id: id)
-        if success {
-            refreshInstalledThemes()
-
-            // If this was the active theme, clear it
-            if activeCustomTheme?.metadata.id == id {
-                clearCustomTheme()
-            }
-        }
-        return success
-    }
-
-    /// Force reinstall built-in themes (for recovery)
-    func forceReinstallBuiltInThemes() {
-        ThemeConfigurationStore.forceReinstallBuiltInThemes()
-        refreshInstalledThemes()
+    private static func seed(isDark: Bool) -> CustomTheme {
+        isDark ? CustomTheme.darkDefault : CustomTheme.lightDefault
     }
 
     /// Determine if dark mode should be used based on appearance mode
@@ -944,54 +698,25 @@ public class ThemeManager: ObservableObject {
     }
 
     @objc private func systemAppearanceChanged() {
-        // `DistributedNotificationCenter` delivers this selector on an arbitrary
-        // thread, so hop to the main actor before touching any @Published theme
-        // state. Mutating it on the delivery thread is the "Updating
-        // ObservedObject<ThemeManager> from background threads will cause
-        // undefined behavior" hazard observed in the crash log.
+        // Delivered on an arbitrary thread; hop to the main actor before
+        // touching any @Published theme state.
         Task { @MainActor [weak self] in
             self?.applySystemAppearanceChange()
         }
     }
 
     private func applySystemAppearanceChange() {
-        // Only update if we're following system appearance and no user-selected theme is active
-        guard appearanceMode == .system, activeCustomTheme == nil else { return }
+        guard appearanceMode == .system else { return }
 
         applyResolvedTheme(for: .system, animated: true)
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
-    @objc private func systemAccentColorChanged() {
-        // Delivered on an arbitrary thread (see `systemAppearanceChanged`);
-        // hop to the main actor before touching @Published theme state.
-        Task { @MainActor [weak self] in
-            self?.applySystemAccentChange()
-        }
-    }
-
-    private func applySystemAccentChange() {
-        if let custom = activeCustomTheme {
-            // Rebuilding `CustomizableTheme` re-runs the accent substitution;
-            // static themes have nothing to re-derive.
-            guard custom.followsSystemAccent else { return }
-            applyCustomTheme(custom, persist: false)
-            return
-        }
-
-        applyResolvedTheme(for: appearanceMode, animated: true)
-        // Notify so per-agent chat windows rebuild their themes too.
-        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
-    }
-
     private func applyResolvedTheme(for mode: AppearanceMode, animated: Bool) {
-        let resolvedTheme =
-            Self.resolveBuiltInTheme(for: mode, from: installedThemes)
-            ?? (Self.isDarkMode(for: mode) ? CustomTheme.darkDefault : CustomTheme.lightDefault)
-        let themeInstance = CustomizableTheme(config: resolvedTheme)
+        let themeInstance = CustomizableTheme(config: Self.seed(isDark: Self.isDarkMode(for: mode)))
 
         if animated {
-            withAnimation(.easeInOut(duration: 0.3)) {
+            withAnimation(themeInstance.motion.standard) {
                 currentTheme = themeInstance
                 chatTheme = themeInstance
             }
@@ -1000,44 +725,13 @@ public class ThemeManager: ObservableObject {
             chatTheme = themeInstance
         }
     }
-
-    // MARK: - Chat Theme (Agent-specific)
-
-    /// Apply a theme only to the chat view (does not affect management views)
-    /// Used for agent-specific theming
-    /// - Parameters:
-    ///   - theme: The theme to apply to chat
-    ///   - animated: Whether to animate the theme transition
-    func applyChatTheme(_ theme: CustomTheme, animated: Bool = true) {
-        let themeInstance = CustomizableTheme(config: theme)
-        if animated {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                chatTheme = themeInstance
-            }
-        } else {
-            chatTheme = themeInstance
-        }
-    }
-
-    /// Sync chat theme back to the current global theme
-    /// Called when leaving chat or when agent has no custom theme
-    /// - Parameter animated: Whether to animate the theme transition
-    func syncChatTheme(animated: Bool = true) {
-        if animated {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                chatTheme = currentTheme
-            }
-        } else {
-            chatTheme = currentTheme
-        }
-    }
 }
 
 // MARK: - Theme Environment Key
 
 struct ThemeEnvironmentKey: EnvironmentKey {
-    // Use a computed property to avoid storing a non-Sendable static globally
-    static var defaultValue: ThemeProtocol { LightTheme() }
+    // Computed so a non-Sendable value is not stored as a global.
+    static var defaultValue: ThemeProtocol { CustomizableTheme(config: .lightDefault, fontScale: 1.0) }
 }
 
 extension EnvironmentValues {
@@ -1050,65 +744,19 @@ extension EnvironmentValues {
 // MARK: - View Extension
 
 extension View {
-    func themedBackground(_ style: ThemedBackgroundStyle = .primary) -> some View {
-        self.modifier(ThemedBackgroundModifier(style: style))
-    }
-
-    func themedCard() -> some View {
-        self.modifier(ThemedCardModifier())
+    /// Paints the canvas role and injects the current theme.
+    func themedBackground() -> some View {
+        self.modifier(ThemedBackgroundModifier())
     }
 }
-
-// MARK: - Themed Background Styles
-
-enum ThemedBackgroundStyle {
-    case primary
-    case secondary
-    case tertiary
-}
-
-// MARK: - Modifiers
 
 struct ThemedBackgroundModifier: ViewModifier {
     @ObservedObject private var themeManager = ThemeManager.shared
-    let style: ThemedBackgroundStyle
 
     func body(content: Content) -> some View {
         content
-            .background(backgroundColor)
+            .background(themeManager.currentTheme.surface.canvas)
             .environment(\.theme, themeManager.currentTheme)
-    }
-
-    private var backgroundColor: Color {
-        switch style {
-        case .primary:
-            return themeManager.currentTheme.primaryBackground
-        case .secondary:
-            return themeManager.currentTheme.secondaryBackground
-        case .tertiary:
-            return themeManager.currentTheme.tertiaryBackground
-        }
-    }
-}
-
-struct ThemedCardModifier: ViewModifier {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    func body(content: Content) -> some View {
-        let theme = themeManager.currentTheme
-        content
-            .background(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: theme.cardCornerRadius)
-                    .stroke(theme.cardBorder.opacity(theme.borderOpacity), lineWidth: theme.defaultBorderWidth)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: theme.cardCornerRadius))
-            .shadow(
-                color: theme.shadowColor.opacity(theme.shadowOpacity),
-                radius: 8,
-                x: 0,
-                y: 2
-            )
     }
 }
 
@@ -1128,12 +776,7 @@ extension Color {
             (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
         case 6:  // RGB (24-bit)
             (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8:  // RGBA (32-bit) — every 8-digit color in the theme catalog is
-            // authored web-style with trailing alpha ("#3b82f680", accent+"45").
-            // This case previously read ARGB, so the leading red byte became
-            // the alpha: system-accent selection colors like "#007aff26"
-            // resolved to ~0% opacity and the selection highlight painted
-            // invisibly (issue #2129).
+        case 8:  // RGBA (32-bit), trailing alpha (issue #2129)
             (r, g, b, a) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
         default:
             (a, r, g, b) = (1, 1, 1, 0)

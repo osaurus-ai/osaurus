@@ -47,6 +47,9 @@ enum TypingIndicatorPhase: Equatable {
     /// The model has not finished producing output yet (load, prefill, or
     /// the first token is still pending).
     case generating
+    /// This turn's request is waiting on a cold model load (weights are not
+    /// resident yet). Scoped to the request's session, never a global load.
+    case loadingModel
     /// Output is complete but the run has not closed: the engine is draining
     /// its post-generation tail (cache store, allocator teardown) and the
     /// step's result (tool dispatch, stats, footer) lands only after it.
@@ -81,7 +84,8 @@ enum ContentBlockKind: Equatable {
         attachments: [Attachment],
         timestamp: Date,
         responseTurnId: UUID?,
-        envelope: DispatchEnvelope?
+        envelope: DispatchEnvelope?,
+        author: ParticipantRef? = nil
     )
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
@@ -141,6 +145,16 @@ enum ContentBlockKind: Equatable {
     /// `ChatSession.rebuildVisibleBlocks` (like `compactionMarker`) — never
     /// stored in the block cache, so it stays keyed to the live turn.
     case followUpSuggestions(turnId: UUID, suggestions: [String])
+    /// A participant event in the conversation ("You allowed web_fetch for
+    /// @alice"). Injected at display time from `ConversationEventLog`; never
+    /// a turn, so no model reads it.
+    case conversationEvent(id: UUID, text: String, icon: String, attentionId: UUID?)
+    /// Where a first-run reply ran ("On this Mac · 42 tok/s"). Injected at
+    /// display time from the turn's `runLocation`.
+    case runLocation(turnId: UUID, text: String)
+    /// The first run's cards and buttons under its latest authored line.
+    /// Injected at display time from `OnboardingFirstRun`.
+    case onboardingPanel(turnId: UUID, panel: OnboardingPanel)
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -168,10 +182,10 @@ enum ContentBlockKind: Equatable {
             return lText == rText
 
         case let (
-            .userMessage(lText, lAttach, lTime, lResp, lEnv),
-            .userMessage(rText, rAttach, rTime, rResp, rEnv)
+            .userMessage(lText, lAttach, lTime, lResp, lEnv, lAuthor),
+            .userMessage(rText, rAttach, rTime, rResp, rEnv, rAuthor)
         ):
-            guard lTime == rTime && lResp == rResp else { return false }
+            guard lTime == rTime && lResp == rResp && lAuthor == rAuthor else { return false }
             guard lAttach.count == rAttach.count else { return false }
             return lText == rText && lAttach == rAttach && lEnv == rEnv
 
@@ -228,6 +242,15 @@ enum ContentBlockKind: Equatable {
         case let (.followUpSuggestions(lId, lSugg), .followUpSuggestions(rId, rSugg)):
             return lId == rId && lSugg == rSugg
 
+        case let (.conversationEvent(lId, lText, lIcon, lAttention), .conversationEvent(rId, rText, rIcon, rAttention)):
+            return lId == rId && lText == rText && lIcon == rIcon && lAttention == rAttention
+
+        case let (.runLocation(lId, lText), .runLocation(rId, rText)):
+            return lId == rId && lText == rText
+
+        case let (.onboardingPanel(lId, lPanel), .onboardingPanel(rId, rPanel)):
+            return lId == rId && lPanel == rPanel
+
         default:
             return false
         }
@@ -252,7 +275,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .activityGroup, .sharedArtifact, .pendingToolCall,
             .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions,
-            .emptyResponseNotice, .fileDiff, .compactionMarker, .followUpSuggestions:
+            .emptyResponseNotice, .fileDiff, .compactionMarker, .followUpSuggestions, .conversationEvent,
+            .runLocation, .onboardingPanel:
             return .assistant
         case .userMessage: return .user
         }
@@ -283,7 +307,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .paragraph(_, text, _, role) where role == .user || role == .assistant:
             return text
-        case let .userMessage(text, _, _, _, envelope):
+        case let .userMessage(text, _, _, _, envelope, _):
             // The displayed text, not the raw envelope, so find-bar
             // occurrence indices line up with what the bubble paints.
             return envelope?.displayText ?? text
@@ -412,6 +436,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         timestamp: Date,
         responseTurnId: UUID?,
         envelope: DispatchEnvelope? = nil,
+        author: ParticipantRef? = nil,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
@@ -422,7 +447,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
                 attachments: attachments,
                 timestamp: timestamp,
                 responseTurnId: responseTurnId,
-                envelope: envelope
+                envelope: envelope,
+                author: author
             ),
             position: position
         )
@@ -554,6 +580,35 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
+    static func conversationEvent(_ event: ConversationEvent, beforeTurnId: UUID) -> ContentBlock {
+        ContentBlock(
+            id: "event-\(event.id.uuidString)",
+            turnId: beforeTurnId,
+            kind: .conversationEvent(
+                id: event.id, text: event.text, icon: event.icon, attentionId: event.attentionId
+            ),
+            position: .only
+        )
+    }
+
+    static func runLocation(turnId: UUID, text: String) -> ContentBlock {
+        ContentBlock(
+            id: "runlocation-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .runLocation(turnId: turnId, text: text),
+            position: .only
+        )
+    }
+
+    static func onboardingPanel(turnId: UUID, panel: OnboardingPanel) -> ContentBlock {
+        ContentBlock(
+            id: "onboarding-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .onboardingPanel(turnId: turnId, panel: panel),
+            position: .only
+        )
+    }
+
     static func followUpSuggestions(
         turnId: UUID,
         suggestions: [String]
@@ -678,6 +733,7 @@ extension ContentBlock {
                         responseTurnId: responseTurnId,
                         // Memoized on the turn: one parse per turn, not per tick.
                         envelope: turn.dispatchEnvelope(sessionSource: sessionSource),
+                        author: turn.author,
                         position: .only
                     )
                 )
@@ -787,7 +843,9 @@ extension ContentBlock {
                 turnBlocks.append(
                     .typingIndicator(
                         turnId: turn.id,
-                        phase: isStreaming ? .generating : .finishing,
+                        phase: !isStreaming
+                            ? .finishing
+                            : (turn.isLoadingModel && turn.prefillProgress == nil ? .loadingModel : .generating),
                         prefillProgress: turn.prefillProgress,
                         position: .middle
                     )
@@ -1458,9 +1516,11 @@ extension ContentBlock {
 
     /// Tools whose results are surfaced through dedicated inline UI
     /// (todo banner, completion banner, clarify overlay) rather than
-    /// the generic tool-call chip group. Centralized so the chip
-    /// filter and any other render-time skip stay in lockstep.
-    private static let agentLoopToolNames: Set<String> = ["todo", "complete", "clarify"]
+    /// the generic tool-call chip group, plus the Orchestrator's `state`,
+    /// which is bookkeeping and never shown (Insights keeps it).
+    /// Centralized so the chip filter and any other render-time skip stay
+    /// in lockstep.
+    private static let agentLoopToolNames: Set<String> = ["todo", "complete", "clarify", StateTool.toolName]
 
     static func isAgentLoopToolName(_ name: String) -> Bool {
         agentLoopToolNames.contains(name)
@@ -1561,4 +1621,21 @@ extension ContentBlock {
         }
     }
 
+}
+
+
+extension ContentBlock {
+    /// The table and inspector both hide normal benchmark rows; their metadata
+    /// belongs in the action overflow. Only the actual reasoning warning stays,
+    /// unless the agent opted into Show Response Metrics.
+    static func tablePresentationBlocks(
+        _ blocks: [ContentBlock], showResponseMetrics: Bool = false
+    ) -> [ContentBlock] {
+        blocks.filter { block in
+            if case let .generationStats(_, _, _, unclosed, _, _, _) = block.kind {
+                return showResponseMetrics || unclosed
+            }
+            return true
+        }
+    }
 }

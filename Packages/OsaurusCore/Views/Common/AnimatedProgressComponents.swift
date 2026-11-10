@@ -45,7 +45,7 @@ struct ShimmerProgressBar: View {
                     .frame(width: max(0, geometry.size.width * progress), height: height)
                     .overlay(shimmerOverlay(width: geometry.size.width * progress))
                     .clipShape(RoundedRectangle(cornerRadius: height / 2))
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: progress)
+                    .animation(theme.motion.springAnimation, value: progress)
 
                 // Glow effect at the leading edge
                 if showGlow && progress > 0 && progress < 1 {
@@ -55,7 +55,7 @@ struct ShimmerProgressBar: View {
                         .blur(radius: 4)
                         .opacity(0.6)
                         .offset(x: max(0, geometry.size.width * progress - height))
-                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: progress)
+                        .animation(theme.motion.springAnimation, value: progress)
                 }
             }
         }
@@ -69,9 +69,9 @@ struct ShimmerProgressBar: View {
         GeometryReader { _ in
             LinearGradient(
                 colors: [
-                    Color.white.opacity(0),
-                    Color.white.opacity(0.4),
-                    Color.white.opacity(0),
+                    FixedPalette.onMedia.opacity(0),
+                    FixedPalette.onMedia.opacity(0.4),
+                    FixedPalette.onMedia.opacity(0),
                 ],
                 startPoint: .leading,
                 endPoint: .trailing
@@ -85,7 +85,7 @@ struct ShimmerProgressBar: View {
 
     private func startShimmerAnimation() {
         withAnimation(
-            .easeInOut(duration: 1.5)
+            theme.motion.slow
                 .repeatForever(autoreverses: false)
         ) {
             shimmerOffset = 2
@@ -97,6 +97,7 @@ struct ShimmerProgressBar: View {
 
 /// Animated indeterminate progress indicator with flowing gradient
 struct IndeterminateShimmerProgress: View {
+    @Environment(\.theme) private var theme
     let color: Color
     var height: CGFloat = 4
 
@@ -123,7 +124,7 @@ struct IndeterminateShimmerProgress: View {
             )
             .onAppear {
                 withAnimation(
-                    .easeInOut(duration: 1.2)
+                    theme.motion.slow
                         .repeatForever(autoreverses: true)
                 ) {
                     phase = 1
@@ -136,6 +137,7 @@ struct IndeterminateShimmerProgress: View {
 
 /// Three-dot typing indicator with staggered bounce animation and configurable colors
 struct ConfigurableTypingIndicator: View {
+    @Environment(\.theme) private var theme
     let color: Color
     var dotSize: CGFloat = 6
     var spacing: CGFloat = 4
@@ -150,7 +152,7 @@ struct ConfigurableTypingIndicator: View {
                     .frame(width: dotSize, height: dotSize)
                     .offset(y: animatingDots[index] ? -4 : 0)
                     .animation(
-                        .easeInOut(duration: 0.4)
+                        theme.motion.slow
                             .repeatForever(autoreverses: true)
                             .delay(Double(index) * 0.15),
                         value: animatingDots[index]
@@ -186,7 +188,7 @@ struct PulsingStatusDot: View {
             // Pulsing ring
             if isPulsing {
                 Circle()
-                    .stroke(color.opacity(pulseOpacity), lineWidth: 2)
+                    .stroke(color.opacity(pulseOpacity), lineWidth: theme.stroke.focus)
                     .frame(width: size, height: size)
                     .scaleEffect(pulseScale)
             }
@@ -211,7 +213,7 @@ struct PulsingStatusDot: View {
 
     private func startPulseAnimation() {
         withAnimation(
-            .easeOut(duration: 1.2)
+            theme.motion.slow
                 .repeatForever(autoreverses: false)
         ) {
             pulseScale = 2.5
@@ -264,19 +266,19 @@ struct MorphingStatusIcon: View {
 
     private var pendingIcon: some View {
         Circle()
-            .strokeBorder(theme.tertiaryText.opacity(0.4), lineWidth: 1.5)
+            .strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
             .frame(width: size, height: size)
     }
 
     private var failedIcon: some View {
         ZStack {
             Circle()
-                .fill(theme.errorColor)
+                .fill(theme.status.error.foreground)
                 .frame(width: size, height: size)
 
             Image(systemName: "xmark")
-                .font(.system(size: size * 0.5, weight: .bold))
-                .foregroundColor(.white)
+                .glyphSize(size * 0.5, weight: .bold)
+                .foregroundColor(theme.text.onDanger)
         }
     }
 }
@@ -284,6 +286,7 @@ struct MorphingStatusIcon: View {
 // MARK: - Active Spinner Icon
 
 private struct ActiveSpinnerIcon: View {
+    @Environment(\.theme) private var theme
     let accentColor: Color
     let size: CGFloat
 
@@ -300,7 +303,7 @@ private struct ActiveSpinnerIcon: View {
 
                 // Smooth spinning arc
                 SmallSpinnerShape(progress: progress)
-                    .stroke(accentColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .stroke(accentColor, style: StrokeStyle(lineWidth: theme.stroke.default, lineCap: .round))
                     .frame(width: size - 4, height: size - 4)
             }
         }
@@ -353,18 +356,18 @@ private struct CompletedCheckmarkIcon: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(theme.successColor)
+                .fill(theme.status.success.foreground)
                 .frame(width: size, height: size)
                 .scaleEffect(revealed ? 1 : 0.5)
 
             Image(systemName: "checkmark")
-                .font(.system(size: size * 0.5, weight: .bold))
-                .foregroundColor(.white)
+                .glyphSize(size * 0.5, weight: .bold)
+                .foregroundColor(FixedPalette.onMedia)
                 .scaleEffect(revealed ? 1 : 0.4)
                 .opacity(revealed ? 1 : 0)
         }
         .onAppear {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+            withAnimation(theme.motion.springAnimation) {
                 revealed = true
             }
         }
@@ -385,35 +388,14 @@ struct AnimatedStepCounter: View {
         HStack(spacing: 2) {
             Text("\(current)", bundle: .module)
                 .contentTransition(.numericText())
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: current)
+                .animation(theme.motion.springAnimation, value: current)
 
             Text("/")
 
             Text("\(total)", bundle: .module)
         }
-        .font(.system(size: 11, weight: .medium, design: .monospaced))
+        .textStyle(.footnote, weight: 500, family: .code)
         .foregroundColor(color)
-    }
-}
-
-// MARK: - Glow Effect Modifier
-
-/// Adds a soft glow effect around a view
-struct GlowModifier: ViewModifier {
-    let color: Color
-    let radius: CGFloat
-    let isActive: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .shadow(color: isActive ? color.opacity(0.5) : .clear, radius: radius)
-            .shadow(color: isActive ? color.opacity(0.3) : .clear, radius: radius * 2)
-    }
-}
-
-extension View {
-    func glow(color: Color, radius: CGFloat = 8, isActive: Bool = true) -> some View {
-        modifier(GlowModifier(color: color, radius: radius, isActive: isActive))
     }
 }
 
@@ -426,21 +408,21 @@ extension View {
                 // Shimmer Progress
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Shimmer Progress Bar", bundle: .module)
-                        .font(.caption)
+                        .textStyle(.micro)
                     ShimmerProgressBar(progress: 0.6, color: .blue)
                 }
 
                 // Indeterminate Progress
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Indeterminate Progress", bundle: .module)
-                        .font(.caption)
+                        .textStyle(.micro)
                     IndeterminateShimmerProgress(color: .blue)
                 }
 
                 // Typing Indicator
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Typing Indicator", bundle: .module)
-                        .font(.caption)
+                        .textStyle(.micro)
                     ConfigurableTypingIndicator(color: .blue)
                 }
 
@@ -448,25 +430,25 @@ extension View {
                 HStack(spacing: 20) {
                     VStack {
                         MorphingStatusIcon(state: .pending, accentColor: .blue)
-                        Text("Pending", bundle: .module).font(.caption2)
+                        Text("Pending", bundle: .module).textStyle(.micro)
                     }
                     VStack {
                         MorphingStatusIcon(state: .active, accentColor: .blue)
-                        Text("Active", bundle: .module).font(.caption2)
+                        Text("Active", bundle: .module).textStyle(.micro)
                     }
                     VStack {
                         MorphingStatusIcon(state: .completed, accentColor: .green)
-                        Text("Done", bundle: .module).font(.caption2)
+                        Text("Done", bundle: .module).textStyle(.micro)
                     }
                     VStack {
                         MorphingStatusIcon(state: .failed, accentColor: .red)
-                        Text("Failed", bundle: .module).font(.caption2)
+                        Text("Failed", bundle: .module).textStyle(.micro)
                     }
                 }
             }
             .padding()
             .frame(width: 300)
-            .background(Color.black.opacity(0.8))
+            .background(CustomizableTheme.dark().surface.canvas)
         }
     }
 #endif

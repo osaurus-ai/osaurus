@@ -76,6 +76,20 @@ enum MCPElicitationPromptService {
         if RuntimeEnvironment.isUnderTests && presentationOverrideForTests == nil { return .cancel }
         return await withCheckedContinuation { continuation in
             queue.append(Entry(request: request, continuation: continuation))
+            let id = request.id
+            AttentionProducers.beginWaiting(itemId: id, step: L("Waiting for your input"))
+            AttentionCenter.shared.raise(
+                AttentionProducers.item(
+                    id: id,
+                    kind: .elicitation,
+                    title: L("\(request.providerName) needs your input"),
+                    body: request.message
+                )
+            ) { resolution in
+                // Answered on this Mac: `perform` already acted.
+                guard settlingLocally.remove(id) == nil else { return }
+                perform(.respond(.cancel), id: id, attention: resolution)
+            }
             pump()
         }
     }
@@ -85,9 +99,13 @@ enum MCPElicitationPromptService {
     /// completion notification.
     static func cancel(clientKey: ObjectIdentifier) {
         for entry in allEntries where entry.request.clientKey == clientKey && !entry.isAnswered {
-            perform(.respond(.cancel), id: entry.request.id)
+            perform(.respond(.cancel), id: entry.request.id, attention: AttentionProducers.abandoned)
         }
     }
+
+    /// Ids whose attention item is being settled by `perform` itself, so the
+    /// item's resolver does not act a second time.
+    private static var settlingLocally: Set<UUID> = []
 
     /// `notifications/elicitation/complete`: the user finished the browser step.
     static func markCompleted(elicitationId: String) {
@@ -103,7 +121,8 @@ enum MCPElicitationPromptService {
         (presented.map { [$0.entry] } ?? []) + queue
     }
 
-    private static func perform(_ action: MCPElicitationAction, id: UUID) {
+    private static func perform(_ action: MCPElicitationAction, id: UUID, attention: AttentionResolution? = nil) {
+        defer { settleAttention(id: id, action: action, attention: attention) }
         if let index = queue.firstIndex(where: { $0.request.id == id }) {
             switch action {
             case .respond(let outcome): queue.remove(at: index).answer(outcome)
@@ -122,6 +141,20 @@ enum MCPElicitationPromptService {
             current.entry.answer(.accept([:]))
             close(current)
         }
+    }
+
+    private static func settleAttention(id: UUID, action: MCPElicitationAction, attention: AttentionResolution?) {
+        AttentionProducers.endWaiting(itemId: id)
+        guard AttentionCenter.shared.item(id: id)?.isPending == true else { return }
+        let outcome: AttentionResolution.Outcome
+        switch action {
+        case .respond(.accept), .openedURL, .done: outcome = .replied
+        case .respond(.decline): outcome = .denied
+        case .respond(.cancel): outcome = .dismissed
+        }
+        settlingLocally.insert(id)
+        AttentionCenter.shared.resolve(id: id, with: attention ?? AttentionProducers.inline(outcome))
+        settlingLocally.remove(id)
     }
 
     private static func close(_ current: (entry: Entry, handles: PanelHandles?)) {

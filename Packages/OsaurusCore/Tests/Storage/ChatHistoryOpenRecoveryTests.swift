@@ -30,7 +30,7 @@ struct ChatHistoryOpenRecoveryTests {
                 turns: [ChatTurnData(role: .assistant, content: "Stored fixture, not generated output")]
             )
             try ChatHistoryDatabase.shared.open()
-            try ChatHistoryDatabase.shared.saveSession(session)
+            try ChatHistoryDatabase.shared.seedForTesting(session)
             ChatHistoryDatabase.shared.close()
             let path = OsaurusPaths.chatHistoryDatabaseFile()
             let healthy = try Data(contentsOf: path)

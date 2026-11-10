@@ -41,9 +41,9 @@ jobs:
 
   build-core-tests:
     runs-on: macos-26
-    # Cold builds measured35–38 minutes in run36031218815. Keep the45-minute
-    # limit, but give the full test suite its own job instead of its leftovers.
-    timeout-minutes: 45
+    # Cold builds measured 35–38 minutes in run 36031218815 and 44–47 minutes
+    # by November 2026. The full test suite runs in its own job, not here.
+    timeout-minutes: 60
     outputs:
       artifact-name: ${{ steps.bundle.outputs.artifact-name }}
       cache-hit: ${{ steps.dd-deps-cache.outputs.cache-hit }}
@@ -55,6 +55,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       - name: Test product transfer helper
         run: python3 -m unittest discover -s scripts/ci -p test_core_test_products.py
@@ -238,6 +240,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       - name: Set up Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
@@ -640,6 +644,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       # OsaurusCLI's Package.swift requires `swift-tools-version: 6.2`, which
       # ships with the pinned Xcode. The runner's default `swift` may be older
@@ -676,6 +682,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       # Same toolchain pinning rationale as test-cli: the packages require
       # `swift-tools-version: 6.2`, which ships with the pinned Xcode.
@@ -717,6 +725,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       - name: Set up Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
@@ -774,6 +784,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       - name: Set up Xcode ${{ env.XCODE_VERSION }}
         uses: maxim-lobanov/setup-xcode@v1
@@ -833,6 +845,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       - name: Install SwiftLint
         run: brew install swiftlint
@@ -846,6 +860,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          lfs: true
 
       - name: Lint shell scripts
         run: |

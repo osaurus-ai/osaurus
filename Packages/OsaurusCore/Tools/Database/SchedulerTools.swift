@@ -8,8 +8,8 @@
 //  depend on the agent having opted into the database feature.
 //
 //  All three delegate to `LocalAgentBridge.shared`; the bridge applies
-//  the clamp ladder, writes through to `SchedulerDatabase`, and surfaces
-//  notifications via `NotificationService.postAgentEvent`.
+//  the clamp ladder, arms the agent's owned schedule automation, and
+//  surfaces notifications via `NotificationService.postAgentEvent`.
 //
 
 import Foundation
@@ -173,14 +173,14 @@ final class ScheduleNextRunTool: OsaurusTool, @unchecked Sendable {
             scheduledBy: .agent
         )
 
-        let bounds = await MainActor.run { resolveAgentScheduleBounds(agentId) }
-
         do {
-            let result = try LocalAgentBridge.shared.scheduleNextRun(
-                agentId: agentId,
-                request: request,
-                bounds: bounds
-            )
+            let result = try await MainActor.run {
+                try LocalAgentBridge.shared.scheduleNextRun(
+                    agentId: agentId,
+                    request: request,
+                    bounds: resolveAgentScheduleBounds(agentId)
+                )
+            }
             return Self.envelope(name: name, result: result)
         } catch {
             return DatabaseToolHelpers.envelope(for: error, tool: name)
@@ -274,7 +274,7 @@ final class CancelNextRunTool: OsaurusTool, @unchecked Sendable {
         let agentReq = DatabaseToolHelpers.requireAgentId(tool: name)
         guard case .value(let agentId) = agentReq else { return agentReq.failureEnvelope ?? "" }
         do {
-            let removed = try LocalAgentBridge.shared.cancelNextRun(agentId: agentId)
+            let removed = try await MainActor.run { try LocalAgentBridge.shared.cancelNextRun(agentId: agentId) }
             return ToolEnvelope.success(tool: name, result: ["cancelled": removed])
         } catch {
             return DatabaseToolHelpers.envelope(for: error, tool: name)

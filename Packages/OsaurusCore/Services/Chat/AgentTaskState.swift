@@ -180,7 +180,7 @@ public final class AgentTaskState {
     /// invalidates (see `record`).
     private static let configurationReadTools: Set<String> = ["osaurus_inspect", "osaurus_help"]
     /// The configuration writes that can change what those reads return.
-    private static let configurationWriteTools: Set<String> = ["osaurus_config"]
+    private static let configurationWriteTools: Set<String> = ["osaurus_config", "osaurus_import"]
 
     /// Read-like tools that can explicitly classify a failure as
     /// non-retryable for the exact same arguments. `search_and_extract` uses

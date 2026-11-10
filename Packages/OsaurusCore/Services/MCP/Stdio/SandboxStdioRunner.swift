@@ -34,6 +34,9 @@
         private let stdoutWriter: SandboxStdioWriter
         private let stderrWriter: SandboxStdioWriter
         private let stderrCapture = MCPStdioStderrCapture()
+        /// Requests the server has not answered yet; a pod restart waits
+        /// while any are open.
+        private let activity = SandboxInteractiveActivity()
 
         /// Public transport the `MCP.Client` connects to. Created upfront so
         /// callers can hold onto it before `start()` resolves.
@@ -84,9 +87,14 @@
             self.stderrWriter = stderrWriter
             self.transport = MCPStdioSandboxTransport(
                 stdinBridge: stdinBridge,
-                stdoutStream: stdoutWriter.makeOutputStream()
+                stdoutStream: stdoutWriter.makeOutputStream(),
+                activity: activity
             )
         }
+
+        /// Pod generation the subprocess started in. A later generation at
+        /// exit means a pod restart stopped it, not a crash.
+        public private(set) var startedInPodGeneration: Int?
 
         /// Set once a global spawn slot is held so `stop()` releases exactly
         /// one slot even if called twice.
@@ -125,9 +133,11 @@
                     cwd: cwd,
                     stdin: stdinBridge,
                     stdout: stdoutWriter,
-                    stderr: stderrWriter
+                    stderr: stderrWriter,
+                    activity: activity
                 )
                 self.process = proc
+                startedInPodGeneration = await SandboxManager.shared.podGeneration
                 startExitWatch(for: proc)
             } catch {
                 await MCPChildSpawnLimiter.shared.release()
@@ -149,9 +159,19 @@
             }
         }
 
-        private func handleProcessExit(exitCode: Int32) {
+        private func handleProcessExit(exitCode: Int32) async {
             exitWatchTask?.cancel()
+            activity.reset()
+            if let proc = process {
+                await SandboxManager.shared.interactiveProcessEnded(processID: proc.id)
+            }
             onProcessExitHandler?(exitCode)
+        }
+
+        /// True when the pod restarted since this subprocess started.
+        public func wasStoppedByPodRestart() async -> Bool {
+            guard let started = startedInPodGeneration else { return false }
+            return await SandboxManager.shared.podGeneration != started
         }
 
         public func lastStderrTail() -> String {
@@ -178,8 +198,10 @@
                     try? await proc.kill(.kill)
                 }
                 try? await proc.delete()
+                await SandboxManager.shared.interactiveProcessEnded(processID: proc.id)
                 self.process = nil
             }
+            activity.reset()
             if spawnSlotHeld {
                 spawnSlotHeld = false
                 await MCPChildSpawnLimiter.shared.release()
@@ -299,6 +321,7 @@
     public actor MCPStdioSandboxTransport: MCP.Transport {
         private let stdinBridge: SandboxStdioInputStream
         private let stdoutStream: AsyncStream<Data>
+        private let activity: SandboxInteractiveActivity?
 
         private var isConnected = false
         private var pumpTask: Task<Void, Never>?
@@ -311,10 +334,12 @@
 
         init(
             stdinBridge: SandboxStdioInputStream,
-            stdoutStream: AsyncStream<Data>
+            stdoutStream: AsyncStream<Data>,
+            activity: SandboxInteractiveActivity? = nil
         ) {
             self.stdinBridge = stdinBridge
             self.stdoutStream = stdoutStream
+            self.activity = activity
             self.logger = Logger(
                 label: "mcp.transport.sandbox.stdio",
                 factory: { _ in SwiftLogNoOpLogHandler() }
@@ -345,6 +370,7 @@
             guard isConnected else {
                 throw MCPStdioTransportError.processSpawnFailed("transport not connected")
             }
+            activity?.noteSent(data)
             var framed = data
             if framed.last != 0x0A {
                 framed.append(0x0A)
@@ -367,7 +393,9 @@
                 while let newlineIndex = lineBuffer.firstIndex(of: 0x0A) {
                     let line = lineBuffer[..<newlineIndex]
                     if !line.isEmpty {
-                        messageContinuation.yield(Data(line))
+                        let frame = Data(line)
+                        activity?.noteReceived(frame)
+                        messageContinuation.yield(frame)
                     }
                     lineBuffer.removeSubrange(...newlineIndex)
                 }

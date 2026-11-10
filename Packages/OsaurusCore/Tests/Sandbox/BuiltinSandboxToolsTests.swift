@@ -586,6 +586,8 @@ struct BuiltinSandboxToolsTests {
             Issue.record("expected apk install via execAsRoot")
             return
         }
+        // apk runs in the calling agent's own container, not a shared one.
+        #expect(await runner.rootTargets == [.agent("test-agent")])
         // Refresh the index first so a stale apk db can't poison `add`.
         #expect(command.contains("apk update --quiet"))
         #expect(command.contains("apk add --no-cache"))
@@ -625,7 +627,8 @@ struct BuiltinSandboxToolsTests {
         // the rightmost non-zero exit (mirroring the foreground path) and
         // the wrapper leads its own process group so `kill -- -<pid>` can
         // take down the whole job tree.
-        #expect(command.contains("nohup setsid bash -c 'set -o pipefail; python3 server.py'"))
+        #expect(command.contains("nohup setsid bash -c 'set -o pipefail; {\npython3 server.py\n} 2>&1 | "))
+        #expect(command.contains("head -c \(SandboxExecTool.backgroundLogCapBytes)"))
         #expect(command.contains("echo $!"))
         #expect(calls.count == 2, "the launch and its owned liveness probe must both finish in this fixture")
         guard case .agent(let pollAgent, let pollCommand) = try #require(calls.last) else {
@@ -790,6 +793,71 @@ struct BuiltinSandboxToolsTests {
                 await LiveExecRegistry.shared.unregister(toolCallId: callId)
                 await SandboxBackgroundJobs.shared.unregister(agentName: backgroundAgent, pid: pid)
                 await LiveExecRegistry.shared.unregister(toolCallId: unrelatedId)
+            }
+        }
+    }
+
+    @Test
+    func backgroundCommand_capsTheLogWithoutStoppingTheJob() async throws {
+        let command = SandboxExecTool.backgroundCommand(
+            "for i in $(seq 1 3); do echo it'\''s $i; done # trailing comment", cwd: "/tmp", logFile: "/tmp/bg-test.log")
+        // The cap filter drains everything past the limit instead of exiting,
+        // so the job never sees SIGPIPE; a trailing comment can't swallow the
+        // closing brace.
+        #expect(command.contains("cat > /dev/null"))
+        #expect(command.contains("# trailing comment\n} 2>&1"))
+        #expect(command.hasSuffix("> /tmp/bg-test.log 2>&1 & echo $!"))
+    }
+
+    @Test
+    func sandboxExec_usesTheRequestAgentsKeysNotTheRegisteringAgents() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            try await CredentialStore.$taskLocalStore.withValue(CredentialStore.makeIsolated()) {
+                let manager = AgentManager.shared
+                let registering = Agent(
+                    name: "Exec Registering", agentAddress: "test-exec-registering",
+                    autonomousExec: AutonomousExecConfig(enabled: true))
+                let requesting = Agent(
+                    name: "Exec Requesting", agentAddress: "test-exec-requesting",
+                    autonomousExec: AutonomousExecConfig(enabled: true))
+                manager.add(registering)
+                manager.add(requesting)
+                let store = CredentialStore.current
+                store.save("TOKEN", scope: .agent(registering.id), value: "registering-secret", origin: .user)
+                store.save("TOKEN", scope: .agent(requesting.id), value: "requesting-secret", origin: .user)
+
+                let runner = MockSandboxToolCommandRunner(
+                    rootResults: [], agentResults: [],
+                    execResults: [.init(stdout: "requesting-secret\n", stderr: "", exitCode: 0)])
+                await SandboxToolCommandRunnerRegistry.shared.setRunner(runner)
+                ToolRegistry.shared.unregisterAllSandboxTools()
+                BuiltinSandboxTools.register(
+                    agentId: registering.id.uuidString,
+                    agentName: SandboxAgentProvisioner.linuxName(for: registering.id.uuidString),
+                    config: AutonomousExecConfig(enabled: true))
+
+                let output = try? await ChatExecutionContext.$currentAgentId.withValue(requesting.id) {
+                    try await withSandboxToolScope {
+                        try await ToolRegistry.shared.execute(
+                            name: "sandbox_exec", argumentsJSON: #"{"command":"echo $TOKEN"}"#)
+                    }
+                }
+                let calls = await runner.calls
+                let logScrub = await runner.logScrubSecrets
+                ToolRegistry.shared.unregisterAllSandboxTools()
+                await SandboxToolCommandRunnerRegistry.shared.reset()
+                _ = await manager.delete(id: registering.id)
+                _ = await manager.delete(id: requesting.id)
+
+                let text = try #require(output)
+                guard case .exec(let user, _, let env) = try #require(calls.first) else {
+                    Issue.record("Expected exec call")
+                    return
+                }
+                #expect(env["TOKEN"] == "requesting-secret")
+                #expect(logScrub.first?["TOKEN"] == "requesting-secret", "the live log redacts it too")
+                #expect(user == "agent-\(SandboxAgentProvisioner.linuxName(for: requesting.id.uuidString))")
+                #expect(!text.contains("requesting-secret"), "the request agent's value is scrubbed")
             }
         }
     }
@@ -2234,6 +2302,10 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
     }
 
     private(set) var calls: [Call] = []
+    /// Container each `execAsRoot` targeted, in call order.
+    private(set) var rootTargets: [SandboxExecTarget] = []
+    /// What the live sandbox log would redact for each `exec`.
+    private(set) var logScrubSecrets: [[String: String]] = []
     private var execResults: [ContainerExecResult]
     private var rootResults: [ContainerExecResult]
     private var agentResults: [ContainerExecResult]
@@ -2274,11 +2346,13 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
         // the unit tests.
         let recorded = cwd.map { "cd \($0) && \(command)" } ?? command
         calls.append(.exec(user, recorded, env))
+        logScrubSecrets.append(SandboxLogScrubbing.secrets)
         return execResults.isEmpty ? .init(stdout: "", stderr: "", exitCode: 0) : execResults.removeFirst()
     }
 
     func execAsRoot(
         command: String,
+        target: SandboxExecTarget,
         timeout _: TimeInterval?,
         streamToLogs _: Bool,
         logSource _: String?,
@@ -2286,6 +2360,7 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
         stderrTee _: (any Writer)?
     ) async throws -> ContainerExecResult {
         calls.append(.root(command))
+        rootTargets.append(target)
         return rootResults.isEmpty ? .init(stdout: "", stderr: "", exitCode: 0) : rootResults.removeFirst()
     }
 
@@ -2365,10 +2440,10 @@ private func withRegisteredSandboxTools<T: Sendable>(
             let result: T
             if let backgroundCallId {
                 result = try await ChatExecutionContext.$currentToolCallId.withValue(backgroundCallId) {
-                    try await body()
+                    try await withSandboxToolScope { try await body() }
                 }
             } else {
-                result = try await body()
+                result = try await withSandboxToolScope { try await body() }
             }
             await finishFixture()
             return result
@@ -2401,6 +2476,25 @@ private func drainBackgroundFixture(toolCallId: String, agentName: String) async
 
 private enum SandboxFixtureBodyError: Error {
     case expected
+}
+
+/// The sandbox adapters run by name only inside a request scope, as they do
+/// behind a chat or agent request.
+func withSandboxToolScope<T: Sendable>(
+    isolation: isolated (any Actor)? = #isolation,
+    _ body: () async throws -> T
+) async rethrows -> T {
+    let names = await MainActor.run {
+        ToolRegistry.sandboxBackendAdapterToolNames
+            .union(ToolRegistry.sandboxControlPlaneToolNames)
+            .union(ToolRegistry.shared.builtInSandboxToolNamesSnapshot)
+    }
+    let scope = ToolExecutionScope(
+        exposed: names.sorted().map {
+            Tool(type: "function", function: ToolFunction(name: $0, description: nil, parameters: nil))
+        }
+    )
+    return try await ChatExecutionContext.$toolExecutionScope.withValue(scope) { try await body() }
 }
 
 private func parseJSON(_ string: String) throws -> [String: Any]? {

@@ -31,8 +31,22 @@
 import Foundation
 
 @MainActor
-final class InboundSharedRunBridge {
+final class InboundSharedRunBridge: ObservableObject {
     static let shared = InboundSharedRunBridge()
+
+    /// Someone else's run on one of this Mac's agents, for Inbox → Live Now.
+    struct LiveRun: Identifiable, Equatable {
+        var id: String { runKey }
+        let runKey: String
+        let taskId: UUID
+        let agentId: UUID
+        let caller: Participant
+        let startedAt: Date
+    }
+
+    /// Live runs from teammates, guests and other people's agents (the
+    /// owner's own devices are left out), oldest first.
+    @Published private(set) var liveRuns: [LiveRun] = []
 
     /// Opaque handle the HTTP handler holds for the run's lifetime.
     struct Handle: Sendable, Equatable {
@@ -102,7 +116,39 @@ final class InboundSharedRunBridge {
         requestMessages: [ChatMessage],
         stop: @escaping @Sendable () -> Void
     ) -> Handle {
-        let turns = ChatHistoryWriter.turns(from: requestMessages)
+        beginRun(
+            runKey: runKey,
+            agentId: agentId,
+            context: context,
+            externalKey: externalKey,
+            requestMessages: requestMessages,
+            hostHistory: false,
+            stop: stop
+        ).handle
+    }
+
+    /// What the request loop needs from a started run.
+    struct Start {
+        let handle: Handle
+        /// The conversation already on this Mac ahead of this request's new
+        /// turns, owner turns included.
+        let priorTurns: [ChatTurnData]
+    }
+
+    /// `begin`, plus the hosted history the request loop builds its model
+    /// context from. `hostHistory`: the caller sent only its new message
+    /// (`"osaurus_history": "host"`) and this Mac's transcript is the
+    /// conversation, so the row is matched by key alone.
+    func beginRun(
+        runKey: String,
+        agentId: UUID,
+        context: WorkspaceSessionContext,
+        externalKey: String,
+        requestMessages: [ChatMessage],
+        hostHistory: Bool,
+        stop: @escaping @Sendable () -> Void
+    ) -> Start {
+        let turns = Self.stampingCaller(ChatHistoryWriter.turns(from: requestMessages), context: context)
         // The owner's own phone chats are titled from what was asked, like
         // any chat; "caller → agent" names a teammate's conversation, and on
         // every phone chat it left History with rows that all read the same.
@@ -114,12 +160,13 @@ final class InboundSharedRunBridge {
             title = "\(context.callerLabel ?? "Teammate") → \(agentName)"
         }
 
-        let (taskId, session) = resolveHostedSession(
+        let (taskId, session, priorTurns) = resolveHostedSession(
             agentId: agentId,
             context: context,
             externalKey: externalKey,
             title: title,
-            turns: turns
+            turns: turns,
+            hostHistory: hostHistory
         )
 
         let token = InterruptToken()
@@ -127,13 +174,64 @@ final class InboundSharedRunBridge {
         let handle = Handle(runKey: runKey, taskId: taskId, agentId: agentId, token: token)
         live[runKey] = Live(handle: handle, context: context, stop: stop)
         runsByTask[taskId, default: []].insert(runKey)
+        let caller = Participant.caller(from: context)
+        if caller.kind != .owner, caller.kind != .ownerDevice {
+            liveRuns.append(
+                LiveRun(runKey: runKey, taskId: taskId, agentId: agentId, caller: caller, startedAt: Date())
+            )
+        }
         if let sessionId = session.sessionId {
             monitor.reportSession(sessionId, status: .working)
             if RemoteSessionContinuation.isFromPairedPhone(context) {
                 PhoneChatHandoff.shared.notePhoneActivity(sessionId: sessionId)
             }
         }
-        return handle
+        if !RemoteSessionContinuation.isFromPairedPhone(context) {
+            raiseSharedRunAttention(taskId: taskId, agentId: agentId, context: context, turns: turns)
+        }
+        return Start(handle: handle, priorTurns: priorTurns)
+    }
+
+    /// The caller wrote the request's user turns. The owner's own phone
+    /// chats stay unattributed, like any chat of theirs.
+    static func stampingCaller(_ turns: [ChatTurnData], context: WorkspaceSessionContext) -> [ChatTurnData] {
+        guard !RemoteSessionContinuation.isFromPairedPhone(context) else { return turns }
+        let caller = Participant.caller(from: context)
+        return turns.map { turn in
+            guard turn.role == .user, turn.author == nil else { return turn }
+            var stamped = turn
+            stamped.author = caller
+            return stamped
+        }
+    }
+
+    /// "@alice is talking to Research Agent": one item per conversation,
+    /// replaced on each new turn, withdrawn when the run ends.
+    private func raiseSharedRunAttention(
+        taskId: UUID,
+        agentId: UUID,
+        context: WorkspaceSessionContext,
+        turns: [ChatTurnData]
+    ) {
+        let center = AttentionCenter.shared
+        center.retractAll(sessionId: taskId, kinds: [.inboundSharedRun])
+        let caller = Participant.caller(from: context)
+        let agent = AgentManager.shared.agent(for: agentId)
+        let lastAsk = turns.last { $0.role == .user }?.content ?? ""
+        center.raise(
+            AttentionItem(
+                kind: .inboundSharedRun,
+                requester: caller,
+                agent: agent.map { Participant.agent(name: $0.name, address: $0.agentAddress) },
+                agentId: agentId,
+                sessionId: taskId,
+                taskId: taskId,
+                title: L("\(ParticipantFormatter.short(caller)) is talking to \(agent?.name ?? L("your shared agent"))"),
+                body: String(lastAsk.prefix(240)),
+                hasInlineCard: false,
+                link: .task(taskId)
+            )
+        )
     }
 
     /// Find the task + session hosting this conversation, reviving or
@@ -143,8 +241,9 @@ final class InboundSharedRunBridge {
         context: WorkspaceSessionContext,
         externalKey: String,
         title: String,
-        turns: [ChatTurnData]
-    ) -> (UUID, ChatSession) {
+        turns: [ChatTurnData],
+        hostHistory: Bool = false
+    ) -> (UUID, ChatSession, [ChatTurnData]) {
         // Reuse only an idle, same-scope conversation whose observed history
         // is an exact prefix of the request. Edits, truncation and overlapping
         // runs create independent rows; caller input never rewrites evidence.
@@ -156,6 +255,7 @@ final class InboundSharedRunBridge {
                 row.workspace?.callerWallet?.lowercased() == context.callerWallet?.lowercased(),
                 runsByTask[row.id]?.isEmpty != false
             else { return false }
+            if hostHistory { return true }
             let observed =
                 manager.taskState(for: row.id)?.chatSession?.toSessionData()
                 ?? ChatSessionStore.load(id: row.id)
@@ -179,13 +279,14 @@ final class InboundSharedRunBridge {
         if let rowId = existingRowId, let task = manager.taskState(for: rowId), task.isInboundRun,
             let session = manager.reviveInboundRun(task.id)
         {
-            session.appendHostedTurns(Array(turns.dropFirst(session.turns.count)))
+            let prior = session.toSessionData().turns
+            session.appendHostedTurns(Self.newTurns(turns, after: prior, hostHistory: hostHistory))
             session.save()
             MobileConnectLog.hostedRun(
                 "reused live task \(task.id) (session turns=\(session.turns.count), "
                     + "shown in a window=\(ChatWindowManager.shared.session(forSessionId: rowId) === session))"
             )
-            return (task.id, session)
+            return (task.id, session, prior)
         }
 
         // 2. A history row without a task (tab dismissed, or app relaunched
@@ -200,7 +301,7 @@ final class InboundSharedRunBridge {
             let staleTitle =
                 stored.title == "New Chat"
                 || (RemoteSessionContinuation.isFromPairedPhone(context)
-                    && stored.title.hasPrefix("\(MobilePairingService.legacyKeyLabel) → "))
+                    && stored.title.hasPrefix("Osaurus Connect → "))
             data.title = staleTitle ? title : stored.title
         } else {
             data = ChatSessionData(
@@ -217,7 +318,8 @@ final class InboundSharedRunBridge {
         data.sourcePluginId = ChatHistoryWriter.workspacePseudoPluginId
         data.externalSessionKey = externalKey
         data.workspace = context
-        data.turns.append(contentsOf: turns.dropFirst(data.turns.count))
+        let priorTurns = data.turns
+        data.turns.append(contentsOf: Self.newTurns(turns, after: priorTurns, hostHistory: hostHistory))
         data.updatedAt = Date()
         data.capabilities = SessionCapability.derive(from: turns)
 
@@ -248,13 +350,20 @@ final class InboundSharedRunBridge {
             externalSessionKey: context.callerLabel
         )
         manager.registerInboundRun(state)
-        return (data.id, session)
+        return (data.id, session, priorTurns)
+    }
+
+    /// The request's turns this Mac doesn't have yet. A stateless caller
+    /// replays the conversation without the turns the host added.
+    static func newTurns(_ incoming: [ChatTurnData], after prior: [ChatTurnData], hostHistory: Bool) -> [ChatTurnData] {
+        hostHistory ? incoming : Array(incoming.dropFirst(MultiPartyTranscript.callerVisible(prior).count))
     }
 
     /// Compare wire-visible content, preserving IDs, timestamps and host-only
     /// metadata on already observed turns. Reasoning need not be replayed by
     /// the caller, so it is never used to replace the owner's reasoning.
     static func isUnchangedPrefix(_ observed: [ChatTurnData], of incoming: [ChatTurnData]) -> Bool {
+        let observed = MultiPartyTranscript.callerVisible(observed)
         guard observed.count <= incoming.count else { return false }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -272,6 +381,9 @@ final class InboundSharedRunBridge {
     }
 
     private var streamingTurns: [String: UUID] = [:]
+    /// Per live run: the reply streaming to the user's other devices. Its
+    /// checkpoint saves wait for the stream to commit it.
+    private var syncStreamers: [String: SyncTurnStreamer] = [:]
     private var lastStreamSave: [String: Date] = [:]
     private var lastStreamRender: [String: Date] = [:]
     /// Runs with a trailing redraw scheduled (see `renderStreamed`).
@@ -287,6 +399,11 @@ final class InboundSharedRunBridge {
             let turn = ChatTurnData(role: .assistant, content: "", createdAt: Date())
             streamingTurns[handle.runKey] = turn.id
             session.appendHostedTurns([turn])
+            if SyncTurnStreamer.canStream(session), let streamed = session.turns.first(where: { $0.id == turn.id }) {
+                let streamer = SyncTurnStreamer()
+                streamer.runStarted(session, streaming: streamed)
+                syncStreamers[handle.runKey] = streamer
+            }
             let shown = session.sessionId.flatMap { ChatWindowManager.shared.session(forSessionId: $0) }
             MobileConnectLog.hostedRun(
                 "first delta of run \(handle.runKey) into session \(session.sessionId?.uuidString ?? "nil") "
@@ -301,10 +418,19 @@ final class InboundSharedRunBridge {
         turn.notifyContentChanged()
         session.markHostedTranscriptChanged()
         renderStreamed(handle, session)
-        if Date().timeIntervalSince(lastStreamSave[handle.runKey] ?? .distantPast) >= 0.25 {
+        if syncStreamers[handle.runKey] == nil,
+            Date().timeIntervalSince(lastStreamSave[handle.runKey] ?? .distantPast) >= 0.25
+        {
             session.save()
             lastStreamSave[handle.runKey] = Date()
         }
+    }
+
+    /// Commits the streamed reply to the user's other devices, ahead of the
+    /// save that writes the rest of the step.
+    private func endSyncStream(_ runKey: String) {
+        guard let streamer = syncStreamers.removeValue(forKey: runKey) else { return }
+        streamer.runEnded()
     }
 
     /// Redraws the window's blocks for streamed text. Blocks hold a copy of
@@ -375,6 +501,7 @@ final class InboundSharedRunBridge {
                 Self.mergeCompletedTurn(completed, into: streamed)
             }
             streamed.notifyContentChanged()
+            endSyncStream(handle.runKey)
             streamingTurns.removeValue(forKey: handle.runKey)
             lastStreamSave.removeValue(forKey: handle.runKey)
             lastStreamRender.removeValue(forKey: handle.runKey)
@@ -426,11 +553,13 @@ final class InboundSharedRunBridge {
     /// a no-op on the (already cancelled) task.
     func finish(_ handle: Handle, success: Bool, summary: String) {
         guard let ended = live.removeValue(forKey: handle.runKey) else { return }
+        liveRuns.removeAll { $0.runKey == handle.runKey }
         MobileConnectLog.hostedRun(
             "finished run \(handle.runKey) success=\(success) "
                 + "(session turns=\(manager.taskState(for: handle.taskId)?.chatSession?.turns.count ?? -1))"
         )
         let session = manager.taskState(for: handle.taskId)?.chatSession
+        endSyncStream(handle.runKey)
         session?.save()
         // A long phone run may end after the user left the Mac.
         if let sessionId = session?.sessionId, RemoteSessionContinuation.isFromPairedPhone(ended.context) {
@@ -443,10 +572,17 @@ final class InboundSharedRunBridge {
         lastStreamRender.removeValue(forKey: handle.runKey)
         pendingStreamRender.remove(handle.runKey)
         SubagentInterruptCenter.shared.unregister(handle.runKey)
+        participantSinks.removeValue(forKey: handle.runKey)
+        pendingInjections.removeValue(forKey: handle.runKey)
         var remaining = runsByTask[handle.taskId] ?? []
         remaining.remove(handle.runKey)
         if remaining.isEmpty {
             runsByTask.removeValue(forKey: handle.taskId)
+            let center = AttentionCenter.shared
+            for item in center.pending where item.sessionId == handle.taskId && item.kind.isBlocking {
+                center.resolve(id: item.id, with: AttentionProducers.abandoned)
+            }
+            center.retractAll(sessionId: handle.taskId)
             manager.finishInboundRun(handle.taskId, success: success, summary: summary)
             monitor.reportSession(handle.taskId, status: nil)
         } else {
@@ -486,6 +622,135 @@ final class InboundSharedRunBridge {
         entry.stop()
         monitor.reportSession(entry.handle.taskId, status: nil)
     }
+
+    // MARK: - The owner speaking in a hosted conversation
+
+    /// Per live run: where an `osaurus_participant_message` chunk goes.
+    private var participantSinks: [String: @Sendable (ParticipantMessage) -> Void] = [:]
+    /// Per live run: owner turns the model reads at its next step.
+    private var pendingInjections: [String: [ChatMessage]] = [:]
+
+    func attachParticipantSink(_ handle: Handle, _ sink: @escaping @Sendable (ParticipantMessage) -> Void) {
+        guard live[handle.runKey] != nil else { return }
+        participantSinks[handle.runKey] = sink
+    }
+
+    /// Owner turns posted since the run's last model step, labelled for the
+    /// model. Already in the transcript; the caller is told separately.
+    func drainInjections(_ handle: Handle) -> [ChatMessage] {
+        pendingInjections.removeValue(forKey: handle.runKey) ?? []
+    }
+
+    /// Whether the owner can speak in this hosted conversation: a teammate's
+    /// or invite peer's, not the owner's own phone chat.
+    func acceptsOwnerMessages(sessionId: UUID) -> Bool {
+        guard let row = sessions.sessions.first(where: { $0.id == sessionId }),
+            row.sourcePluginId == ChatHistoryWriter.workspacePseudoPluginId,
+            let context = row.workspace
+        else { return false }
+        return !RemoteSessionContinuation.isFromPairedPhone(context)
+    }
+
+    /// The owner writes into a hosted conversation. The turn is appended to
+    /// the transcript as theirs; a live run's model reads it at its next
+    /// step and its caller gets it on the stream; with no run live, the
+    /// caller collects it from the conversation mailbox.
+    @discardableResult
+    func postOwnerMessage(sessionId: UUID, text: String) -> ParticipantMessage? {
+        guard let turn = appendOwnerTurn(sessionId: sessionId, text: text, author: Participant.owner()) else {
+            return nil
+        }
+        return deliverOwnerTurn(sessionId: sessionId, turn: turn)
+    }
+
+    /// Appends the owner's turn, as `author`, to the hosted transcript and
+    /// saves it. Nil when the conversation takes no owner messages or the
+    /// text is empty or too long.
+    func appendOwnerTurn(sessionId: UUID, text: String, author: Participant) -> ChatTurnData? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= AttentionLimits.textCharacters,
+            acceptsOwnerMessages(sessionId: sessionId)
+        else { return nil }
+        let turn = ChatTurnData(role: .user, content: trimmed, createdAt: Date(), author: author)
+        if let session = manager.taskState(for: sessionId)?.chatSession
+            ?? ChatWindowManager.shared.session(forSessionId: sessionId)
+        {
+            session.appendHostedTurns([turn])
+            session.markHostedTranscriptChanged()
+            session.rebuildVisibleBlocks()
+            session.save()
+        } else if var stored = ChatSessionStore.load(id: sessionId) {
+            stored.turns.append(turn)
+            stored.updatedAt = Date()
+            ChatSessionStore.save(stored)
+        } else {
+            return nil
+        }
+        return turn
+    }
+
+    /// Hands an owner turn that is already in the transcript to the run and
+    /// its caller: the live run's next step, the caller's stream or mailbox,
+    /// Insights and the workspace audit. A turn another of the owner's
+    /// devices wrote is also shown in this Mac's open copy of the chat.
+    @discardableResult
+    func deliverOwnerTurn(sessionId: UUID, turn: ChatTurnData) -> ParticipantMessage? {
+        guard turn.role == .user, let author = turn.author, author.kind == .owner || author.kind == .ownerDevice,
+            !turn.content.isEmpty, acceptsOwnerMessages(sessionId: sessionId)
+        else { return nil }
+        if let session = manager.taskState(for: sessionId)?.chatSession
+            ?? ChatWindowManager.shared.session(forSessionId: sessionId),
+            !session.turns.contains(where: { $0.id == turn.id })
+        {
+            session.appendHostedTurns([turn])
+            session.markHostedTranscriptChanged()
+            session.rebuildVisibleBlocks()
+        }
+        let message = ConversationMailbox.shared.post(taskId: sessionId, author: author, text: turn.content)
+        if let context = sessions.sessions.first(where: { $0.id == sessionId })?.workspace {
+            let caller = Participant.caller(from: context)
+            AttentionLog.info("owner message posted session=\(sessionId) caller=\(caller.kind.rawValue)")
+            InsightsService.logEgress(
+                category: .interaction,
+                source: .chatUI,
+                method: "MESSAGE",
+                path: "/conversations/participant_message",
+                statusCode: 200,
+                durationMs: 0,
+                egress: EgressInfo(details: [
+                    "kind": "participant_message",
+                    "author": ParticipantFormatter.short(author),
+                    "requester": ParticipantFormatter.short(caller),
+                    "requester_kind": caller.kind.rawValue,
+                    "message": String(turn.content.prefix(AttentionLimits.insightsMessageCharacters)),
+                ]),
+                locality: .local,
+                attribution: InsightsService.ActivityAttribution(
+                    agentId: manager.taskState(for: sessionId)?.agentId,
+                    sessionId: sessionId,
+                    participant: caller
+                )
+            )
+            if !context.workspaceId.isEmpty {
+                let agentName = manager.taskState(for: sessionId).flatMap { AgentManager.agentDisplayName(for: $0.agentId) }
+                Task {
+                    await WorkspaceAuditLog.shared.recordParticipantMessage(
+                        workspaceId: context.workspaceId,
+                        agentAddress: context.agentAddress,
+                        agentName: agentName,
+                        conversation: sessionId.uuidString,
+                        caller: caller
+                    )
+                }
+            }
+        }
+        let labelled = MultiPartyTranscript.message(from: turn, multiParty: true)
+        for key in runsByTask[sessionId] ?? [] where live[key] != nil {
+            participantSinks[key]?(message)
+            if let labelled { pendingInjections[key, default: []].append(labelled) }
+        }
+        return message
+    }
 }
 
 /// Per-request bundle the HTTP agent-run handler carries for an inbound
@@ -495,6 +760,8 @@ struct InboundSharedRun: Sendable {
     let context: WorkspaceSessionContext
     let handle: InboundSharedRunBridge.Handle
     let externalKey: String
+    /// The hosted conversation ahead of this request's new turns.
+    var priorTurns: [ChatTurnData] = []
 
     /// Mutable terminal outcome recorded by the handler before its `defer`
     /// finishes the run. Defaults to a failed/stopped row so an early

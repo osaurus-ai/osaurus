@@ -50,12 +50,18 @@ protocol AgentChannelSecretResolving {
 }
 
 struct KeychainAgentChannelSecretResolver: AgentChannelSecretResolving {
-    static let pluginIdPrefix = "osaurus.agent-channel"
+    static let pluginIdPrefix = ChannelCredentials.agentChannelPluginIdPrefix
 
     func secret(named name: String, keychainId: String, connection: AgentChannelConnection) -> String? {
-        let pluginId = "\(Self.pluginIdPrefix).\(connection.id)"
-        return ToolSecretsKeychain.getSecret(id: keychainId, for: pluginId, agentId: Agent.defaultId)
-            ?? ToolSecretsKeychain.getSecret(id: name, for: pluginId, agentId: Agent.defaultId)
+        let ids = keychainId.isEmpty || keychainId == name ? [name] : [keychainId, name]
+        for id in ids {
+            if let value = ChannelCredentials.agentChannelValue(
+                connectionId: connection.id, connectionName: connection.name, secretName: id)
+            {
+                return value
+            }
+        }
+        return nil
     }
 }
 

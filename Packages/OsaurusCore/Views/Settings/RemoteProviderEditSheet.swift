@@ -244,19 +244,19 @@ private struct AddProviderFlow: View {
                         .transition(stepTransition)
                 }
             }
-            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selectedPreset)
-            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showingAPIKeyPicker)
+            .animation(theme.motion.springAnimation, value: selectedPreset)
+            .animation(theme.motion.springAnimation, value: showingAPIKeyPicker)
         }
         .fittedSheetFrame(width: 540, height: 620)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(theme.surface.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge)
+                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
         )
         .opacity(hasAppeared ? 1 : 0)
         .scaleEffect(hasAppeared ? 1 : 0.95)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
+        .animation(theme.motion.springAnimation, value: hasAppeared)
         .onAppear {
             if let initialPreset {
                 initializeKnownConnection(for: initialPreset)
@@ -311,64 +311,25 @@ private struct AddProviderFlow: View {
     // MARK: - Header
 
     private var sheetHeader: some View {
-        HStack(spacing: 12) {
-            ZStack {
+        let title: LocalizedStringKey =
+            switch selectedPreset {
+            case nil: "Add Provider"
+            case .custom: "Connect Custom Provider"
+            case let preset?: "Connect \(preset.name)"
+            }
+        var header = SettingsSheetHeader(
+            icon: selectedPreset == .custom ? "server.rack" : "cloud.fill",
+            title: title,
+            subtitle: "Connect to a remote API provider"
+        ) { dismiss() }
+        if let preset = selectedPreset, preset != .custom {
+            header.leading = AnyView(
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [theme.accentColor.opacity(0.2), theme.accentColor.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: "cloud.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Add Provider", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Connect to a remote API provider", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
-            Button(
-                action: { dismiss() },
-                label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.tertiaryBackground))
-                }
+                    .fill(LinearGradient(colors: preset.gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .overlay(ProviderIcon(preset: preset, size: 13, color: .white))
             )
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    LinearGradient(
-                        colors: [theme.accentColor.opacity(0.03), Color.clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        return header
     }
 
     // MARK: - Step 1: Provider Selection
@@ -380,7 +341,7 @@ private struct AddProviderFlow: View {
                 // a single "Use an API key" drill-in that holds every
                 // paste-a-key vendor and Ollama (local), and a direct row for
                 // the custom endpoint.
-                VStack(alignment: .leading, spacing: 10) {
+                SettingsGroup {
                     ForEach(ProviderCatalog.topLevel) { entry in
                         ProviderRowCard(entry: entry) {
                             selectCatalogEntry(entry)
@@ -389,10 +350,10 @@ private struct AddProviderFlow: View {
 
                     ProviderRowCard(
                         icon: "key.fill",
-                        title: "Use an API key",
+                        title: "Use an API Key",
                         subtitle: "Anthropic, Google, Ollama, and more"
                     ) {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        withAnimation(theme.motion.springAnimation) {
                             showingAPIKeyPicker = true
                         }
                     }
@@ -403,7 +364,7 @@ private struct AddProviderFlow: View {
                     if let custom = ProviderCatalog.entry(for: .custom) {
                         ProviderRowCard(
                             icon: custom.preset.icon,
-                            title: "Add custom endpoint",
+                            title: "Add Custom Endpoint",
                             subtitle: custom.pickerSubtitle(preferAPIKey: false)
                         ) {
                             selectCatalogEntry(custom)
@@ -413,14 +374,14 @@ private struct AddProviderFlow: View {
 
                 HStack(spacing: 4) {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 10))
+                        .glyphSize(10)
                     Text("Your API key never leaves your device.", bundle: .module)
-                        .font(.system(size: 12))
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                 }
-                .foregroundColor(theme.tertiaryText)
-                .padding(.top, 4)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.top, theme.space.s4)
             }
-            .padding(24)
+            .padding(theme.space.s24)
         }
     }
 
@@ -429,53 +390,31 @@ private struct AddProviderFlow: View {
     private var apiKeyProviderSelectionStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                SettingsBackButton(title: "Providers") {
+                    withAnimation(theme.motion.springAnimation) {
                         showingAPIKeyPicker = false
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Back", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
                 }
-                .buttonStyle(PlainButtonStyle())
 
                 // The custom endpoint has its own row on the top level, so
                 // the sub-list only carries the key vendors and Ollama.
                 ForEach(ProviderCatalog.apiKeyGroups(includeAzure: true).filter { $0.id != "custom" }) {
                     section in
-                    VStack(alignment: .leading, spacing: 10) {
-                        pickerSectionHeader(section.title)
-
-                        VStack(spacing: 10) {
-                            ForEach(section.entries) { entry in
-                                ProviderRowCard(entry: entry, preferAPIKey: true) {
-                                    selectCatalogEntry(entry, preferAPIKey: true)
-                                }
+                    SettingsSection(title: section.title) {
+                        ForEach(section.entries) { entry in
+                            ProviderRowCard(entry: entry, preferAPIKey: true) {
+                                selectCatalogEntry(entry, preferAPIKey: true)
                             }
                         }
                     }
                 }
             }
-            .padding(24)
+            .padding(theme.space.s24)
         }
     }
 
     /// Small uppercase label above a group of picker rows. `title` is a
     /// localization key.
-    private func pickerSectionHeader(_ title: String) -> some View {
-        Text(LocalizedStringKey(title), bundle: .module)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundColor(theme.tertiaryText)
-            .tracking(0.5)
-            .textCase(.uppercase)
-            .padding(.horizontal, 4)
-    }
-
     /// Commit a catalog selection from either picker level and drill into its
     /// configuration step.
     ///
@@ -484,7 +423,7 @@ private struct AddProviderFlow: View {
     /// sub-list (`preferAPIKey`) uses `.apiKey`. There is no in-form fork, so we
     /// pin `selectedAuthMethod` here at selection time.
     private func selectCatalogEntry(_ entry: ProviderCatalogEntry, preferAPIKey: Bool = false) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        withAnimation(theme.motion.springAnimation) {
             initializeKnownConnection(for: entry.preset)
             selectedAuthMethod = preferAPIKey ? .apiKey : (entry.authMethods.first ?? .apiKey)
             enteredFromAPIKeyPicker = preferAPIKey
@@ -506,28 +445,6 @@ private struct AddProviderFlow: View {
                 VStack(alignment: .leading, spacing: 20) {
                     // Back button
                     backToSelectionButton
-
-                    // Title
-                    HStack(spacing: 12) {
-                        ZStack {
-                            Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: selectedPreset?.gradient ?? [theme.tertiaryBackground],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
-                                .frame(width: 40, height: 40)
-                            Image(systemName: selectedPreset?.icon ?? "cloud")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(selectedPreset == nil ? theme.secondaryText : .white)
-                        }
-
-                        Text("Connect \(selectedPreset?.name ?? "Provider")", bundle: .module)
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                    }
 
                     if selectedPreset == .azureOpenAI {
                         azureConnectionSection
@@ -552,7 +469,7 @@ private struct AddProviderFlow: View {
                     // Advanced settings toggle
                     advancedSettingsSection
                 }
-                .padding(24)
+                .padding(theme.space.s24)
             }
 
             // Footer
@@ -575,11 +492,6 @@ private struct AddProviderFlow: View {
                     // Back button
                     backToSelectionButton
 
-                    // Title
-                    Text("Connect custom provider", bundle: .module)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
                     // Connection form card
                     VStack(alignment: .leading, spacing: 0) {
                         connectionFormSection
@@ -590,12 +502,11 @@ private struct AddProviderFlow: View {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 8) {
                                 Image(systemName: "key.fill")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(theme.accentColor)
-                                Text("AUTHENTICATION", bundle: .module)
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(theme.secondaryText)
-                                    .tracking(0.5)
+                                    .glyphSize(12, weight: .semibold)
+                                    .foregroundColor(theme.text.link)
+                                Text("Authentication", bundle: .module)
+                                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                                    .foregroundColor(theme.text.secondary)
                             }
 
                             SegmentedToggle {
@@ -608,27 +519,25 @@ private struct AddProviderFlow: View {
                             }
 
                             if customAuthType == .apiKey {
-                                ProviderSecureField(placeholder: "sk-...", text: $apiKey)
+                                SettingsTextField(
+                                    placeholder: "sk-...",
+                                    text: $apiKey,
+                                    monospaced: true,
+                                    isSecure: true
+                                )
                                     .onChange(of: apiKey) { _, _ in testResult = nil }
                                     .transition(.opacity.combined(with: .move(edge: .top)))
                             }
                         }
-                        .padding(16)
-                        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: customAuthType)
+                        .padding(theme.space.s16)
+                        .animation(theme.motion.springAnimation, value: customAuthType)
                     }
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(theme.cardBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(theme.cardBorder, lineWidth: 1)
-                            )
-                    )
+                    .settingsChrome(.card)
 
                     // Advanced settings toggle
                     advancedSettingsSection
                 }
-                .padding(24)
+                .padding(theme.space.s24)
             }
 
             // Footer
@@ -646,7 +555,7 @@ private struct AddProviderFlow: View {
 
     private var backToSelectionButton: some View {
         Button {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            withAnimation(theme.motion.springAnimation) {
                 // Return to the level the form was reached from. Dual-mode
                 // presets appear at both levels and the custom endpoint sits on
                 // the top level despite pinning `.apiKey`, so use the origin
@@ -677,11 +586,11 @@ private struct AddProviderFlow: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .semibold))
+                    .glyphSize(11, weight: .semibold)
                 Text("Back", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
             }
-            .foregroundColor(theme.secondaryText)
+            .foregroundColor(theme.text.secondary)
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -726,21 +635,15 @@ private struct AddProviderFlow: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Image(systemName: "network")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text("AZURE ENDPOINT", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundColor(theme.text.link)
+                Text("Azure endpoint", bundle: .module)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.secondary)
             }
 
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("PROTOCOL", bundle: .module)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
-                        .tracking(0.5)
-
+                SettingsFieldRow(label: "Protocol") {
                     SegmentedToggle {
                         SegmentedToggleButton("HTTPS", isSelected: knownProtocol == .https) { knownProtocol = .https }
                         SegmentedToggleButton("HTTP", isSelected: knownProtocol == .http) { knownProtocol = .http }
@@ -748,63 +651,44 @@ private struct AddProviderFlow: View {
                 }
                 .frame(width: 140)
 
-                ProviderTextField(
-                    label: "Host",
-                    placeholder: "resource.cognitiveservices.azure.com",
-                    text: $knownHost,
-                    isMonospaced: true
-                )
+                SettingsFieldRow(label: "Host") {
+                    SettingsTextField(placeholder: "resource.cognitiveservices.azure.com", text: $knownHost, monospaced: true)
+                }
                 .onChange(of: knownHost) { previous, value in
                     handleKnownHostChange(previous: previous, value: value)
                 }
             }
 
             HStack(spacing: 12) {
-                ProviderTextField(
-                    label: "Port",
-                    placeholder: knownProtocol == .https ? "443" : "80",
-                    text: $knownPort,
-                    isMonospaced: true
-                )
+                SettingsFieldRow(label: "Port") {
+                    SettingsTextField(placeholder: knownProtocol == .https ? "443" : "80", text: $knownPort, monospaced: true)
+                }
                 .frame(width: 90)
                 .onChange(of: knownPort) { _, _ in testResult = nil }
 
-                ProviderTextField(
-                    label: "Base Path",
-                    placeholder: "/openai/v1",
-                    text: $knownBasePath,
-                    isMonospaced: true
-                )
+                SettingsFieldRow(label: "Base Path") {
+                    SettingsTextField(placeholder: "/openai/v1", text: $knownBasePath, monospaced: true)
+                }
                 .onChange(of: knownBasePath) { _, _ in testResult = nil }
             }
 
             if !knownHost.trimmingCharacters(in: .whitespaces).isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "link")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(11)
+                        .foregroundColor(theme.text.link)
                     Text(buildKnownEndpointPreview())
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.secondary)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
+                .settingsChrome(.selected)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.card)
     }
 
     private var azureDeploymentsSection: some View {
@@ -846,27 +730,22 @@ private struct AddProviderFlow: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "network")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text("ENDPOINT", bundle: .module)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
+                    .glyphSize(11, weight: .semibold)
+                    .foregroundColor(theme.text.link)
+                Text("Endpoint", bundle: .module)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             Text(
                 "Override the base URL to route through a proxy or self-hosted gateway. Leave as-is for the official endpoint.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
 
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("PROTOCOL", bundle: .module)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
-                        .tracking(0.5)
+                SettingsFieldRow(label: "Protocol") {
                     SegmentedToggle {
                         SegmentedToggleButton("HTTPS", isSelected: knownProtocol == .https) { knownProtocol = .https }
                         SegmentedToggleButton("HTTP", isSelected: knownProtocol == .http) { knownProtocol = .http }
@@ -874,49 +753,40 @@ private struct AddProviderFlow: View {
                 }
                 .frame(width: 140)
 
-                ProviderTextField(
-                    label: "Host",
-                    placeholder: officialHost,
-                    text: $knownHost,
-                    isMonospaced: true
-                )
+                SettingsFieldRow(label: "Host") {
+                    SettingsTextField(placeholder: officialHost, text: $knownHost, monospaced: true)
+                }
                 .onChange(of: knownHost) { previous, value in
                     handleKnownHostChange(previous: previous, value: value)
                 }
             }
 
             HStack(spacing: 12) {
-                ProviderTextField(
-                    label: "Port",
-                    placeholder: knownProtocol == .https ? "443" : "80",
-                    text: $knownPort,
-                    isMonospaced: true
-                )
+                SettingsFieldRow(label: "Port") {
+                    SettingsTextField(placeholder: knownProtocol == .https ? "443" : "80", text: $knownPort, monospaced: true)
+                }
                 .frame(width: 90)
                 .onChange(of: knownPort) { _, _ in testResult = nil }
 
-                ProviderTextField(
-                    label: "Base Path",
-                    placeholder: selectedPreset?.configuration.basePath ?? "/v1",
-                    text: $knownBasePath,
-                    isMonospaced: true
-                )
+                SettingsFieldRow(label: "Base Path") {
+                    SettingsTextField(placeholder: selectedPreset?.configuration.basePath ?? "/v1", text: $knownBasePath, monospaced: true)
+                }
                 .onChange(of: knownBasePath) { _, _ in testResult = nil }
             }
 
             if !knownHost.trimmingCharacters(in: .whitespaces).isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "link")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(11)
+                        .foregroundColor(theme.text.link)
                     Text(buildKnownEndpointPreview())
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.secondary)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor.opacity(0.1)))
+                .settingsChrome(.selected)
             }
         }
     }
@@ -924,21 +794,25 @@ private struct AddProviderFlow: View {
     private var apiKeySection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(selectedPreset == .openai ? "OPENAI PLATFORM API KEY" : "API KEY", bundle: .module)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
+                Text(selectedPreset == .openai ? "OpenAI platform API key" : "API key", bundle: .module)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.tertiary)
                 Spacer()
                 HStack(spacing: 4) {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 9))
+                        .glyphSize(9)
                     Text("Stored in Keychain", bundle: .module)
-                        .font(.system(size: 10))
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
                 }
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(theme.text.tertiary)
             }
 
-            ProviderSecureField(placeholder: "sk-...", text: $apiKey)
+            SettingsTextField(
+                placeholder: "sk-...",
+                text: $apiKey,
+                monospaced: true,
+                isSecure: true
+            )
                 .onChange(of: apiKey) { _, _ in testResult = nil }
         }
     }
@@ -958,33 +832,26 @@ private struct AddProviderFlow: View {
     private func oauthInfoSection(for kind: ProviderOAuthKind) -> some View {
         HStack(spacing: 12) {
             Image(systemName: kind.icon)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(16, weight: .semibold)
+                .foregroundColor(theme.text.link)
                 .frame(width: 28, height: 28)
-                .background(Circle().fill(theme.accentColor.opacity(0.12)))
+                .background(Circle().fill(theme.status.info.background))
             Text(LocalizedStringKey(kind.subtitle), bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(14)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.card)
     }
 
     private func helpSection(for preset: ProviderPreset) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Don't have a key?", bundle: .module)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
+                .foregroundColor(theme.text.secondary)
 
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(preset.helpSteps.enumerated()), id: \.offset) { index, text in
@@ -994,32 +861,25 @@ private struct AddProviderFlow: View {
 
             ProviderHelpLinks(
                 preset: preset,
-                accentColor: theme.accentColor,
-                secondaryTextColor: theme.secondaryText
+                accentColor: theme.status.info.foreground,
+                secondaryTextColor: theme.text.secondary
             )
-            .padding(.top, 4)
+            .padding(.top, theme.space.s4)
         }
-        .padding(16)
+        .padding(theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.card)
     }
 
     private func helpStep(number: Int, text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text("\(number).", bundle: .module)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 16, alignment: .trailing)
             Text(text)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
         }
     }
 
@@ -1029,23 +889,19 @@ private struct AddProviderFlow: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Image(systemName: "network")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text("CONNECTION", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundColor(theme.text.link)
+                Text("Connection", bundle: .module)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.secondary)
             }
 
-            ProviderTextField(label: "Name", placeholder: "e.g. My Provider", text: $customName)
+            SettingsFieldRow(label: "Name") {
+                SettingsTextField(placeholder: L("e.g. My Provider"), text: $customName)
+            }
 
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("PROTOCOL", bundle: .module)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
-                        .tracking(0.5)
-
+                SettingsFieldRow(label: "Protocol") {
                     SegmentedToggle {
                         SegmentedToggleButton("HTTPS", isSelected: customProtocol == .https) { customProtocol = .https }
                         SegmentedToggleButton("HTTP", isSelected: customProtocol == .http) { customProtocol = .http }
@@ -1053,52 +909,45 @@ private struct AddProviderFlow: View {
                 }
                 .frame(width: 140)
 
-                ProviderTextField(label: "Host", placeholder: "api.example.com", text: $customHost, isMonospaced: true)
+                SettingsFieldRow(label: "Host") {
+                    SettingsTextField(placeholder: "api.example.com", text: $customHost, monospaced: true)
+                }
                     .onChange(of: customHost) { previous, value in
                         handleCustomHostChange(previous: previous, value: value)
                     }
             }
 
             HStack(spacing: 12) {
-                ProviderTextField(
-                    label: "Port",
-                    placeholder: customProtocol == .https ? "443" : "80",
-                    text: $customPort,
-                    isMonospaced: true
-                )
+                SettingsFieldRow(label: "Port") {
+                    SettingsTextField(placeholder: customProtocol == .https ? "443" : "80", text: $customPort, monospaced: true)
+                }
                 .frame(width: 90)
 
-                ProviderTextField(
-                    label: "Base Path",
-                    placeholder: "/v1",
-                    text: $customBasePath,
-                    isMonospaced: true
-                )
+                SettingsFieldRow(label: "Base Path") {
+                    SettingsTextField(placeholder: "/v1", text: $customBasePath, monospaced: true)
+                }
             }
 
             if !customHost.trimmingCharacters(in: .whitespaces).isEmpty {
                 endpointPreview
             }
         }
-        .padding(16)
+        .padding(theme.space.s16)
     }
 
     private var endpointPreview: some View {
         HStack(spacing: 8) {
             Image(systemName: "link")
-                .font(.system(size: 11))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(11)
+                .foregroundColor(theme.text.link)
             Text(buildEndpointPreview())
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                .foregroundColor(theme.text.secondary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.accentColor.opacity(0.1))
-        )
+        .settingsChrome(.selected)
     }
 
     private func buildEndpointPreview() -> String {
@@ -1114,9 +963,9 @@ private struct AddProviderFlow: View {
 
     private var sectionDivider: some View {
         Rectangle()
-            .fill(theme.cardBorder)
+            .fill(theme.border.default)
             .frame(height: 1)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, theme.space.s16)
     }
 
     // MARK: - Advanced Settings
@@ -1125,29 +974,26 @@ private struct AddProviderFlow: View {
         VStack(alignment: .leading, spacing: 0) {
             Button(
                 action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    withAnimation(theme.motion.springAnimation) {
                         showAdvanced.toggle()
                     }
                 },
                 label: {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
+                            .glyphSize(10, weight: .semibold)
+                            .foregroundColor(theme.text.tertiary)
                             .rotationEffect(.degrees(showAdvanced ? 90 : 0))
 
                         Text(showAdvanced ? L("Hide advanced settings") : L("Show advanced settings"))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.secondary)
 
                         Spacer()
                     }
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground.opacity(0.5))
-                    )
+                    .padding(.vertical, theme.space.s8)
+                    .padding(.horizontal, theme.space.s12)
+                    .settingsChrome(.inset)
                     .contentShape(Rectangle())
                 }
             )
@@ -1166,31 +1012,20 @@ private struct AddProviderFlow: View {
                     // Custom headers
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("CUSTOM HEADERS", bundle: .module)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(theme.tertiaryText)
-                                .tracking(0.5)
+                            Text("Custom headers", bundle: .module)
+                                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                                .foregroundColor(theme.text.tertiary)
                             Spacer()
-                            Button(
-                                action: {
-                                    customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
-                                },
-                                label: {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .foregroundColor(theme.accentColor)
-                                        .frame(width: 24, height: 24)
-                                        .background(Circle().fill(theme.accentColor.opacity(0.1)))
-                                }
-                            )
-                            .buttonStyle(PlainButtonStyle())
+                            SettingsIconButton("plus", help: L("Add header"), size: .compact) {
+                                customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
+                            }
                         }
 
                         if customHeaders.isEmpty {
                             Text("No custom headers configured", bundle: .module)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.vertical, 6)
+                                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                                .foregroundColor(theme.text.tertiary)
+                                .padding(.vertical, theme.space.s6)
                         } else {
                             ForEach($customHeaders) { $header in
                                 CompactHeaderRow(header: $header) {
@@ -1200,7 +1035,7 @@ private struct AddProviderFlow: View {
                         }
                     }
                 }
-                .padding(.top, 12)
+                .padding(.top, theme.space.s12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -1210,26 +1045,14 @@ private struct AddProviderFlow: View {
 
     private var timeoutSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("REQUEST TIMEOUT", bundle: .module)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
-                Spacer()
-                Text(disableTimeout ? "No limit" : "\(Int(timeout))s", bundle: .module)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.inputBackground)
-                    )
-            }
-            Slider(value: $timeout, in: 10 ... 300, step: 10)
-                .tint(theme.accentColor)
-                .disabled(disableTimeout)
-                .opacity(disableTimeout ? 0.4 : 1)
+            SettingsSlider(
+                title: "Request Timeout",
+                valueText: disableTimeout ? L("No limit") : "\(Int(timeout))s",
+                value: $timeout,
+                range: 10 ... 300,
+                step: 10
+            )
+            .disabled(disableTimeout)
 
             // Intercepting binding: turning the switch ON only opens the warning;
             // `disableTimeout` flips to true after the user confirms. Turning OFF
@@ -1238,11 +1061,11 @@ private struct AddProviderFlow: View {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Disable timeout", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     Text("Let requests run with no time limit", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
                 Toggle(
@@ -1258,11 +1081,9 @@ private struct AddProviderFlow: View {
                         }
                     )
                 )
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(theme.accentColor)
+                .settingsSwitch()
             }
-            .padding(.top, 6)
+            .padding(.top, theme.space.s6)
         }
     }
 
@@ -1279,48 +1100,22 @@ private struct AddProviderFlow: View {
             } label: {
                 Text("Cancel", bundle: .module)
             }
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.secondary)
+            .keyboardShortcut(.cancelAction)
 
             Button(action: onAction) {
-                HStack(spacing: 6) {
-                    if isTesting {
-                        ProgressView()
-                            .scaleEffect(0.5)
-                            .frame(width: 14, height: 14)
-                    }
-                    Text(actionButtonTitle)
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(canProceed ? actionButtonColor : theme.accentColor.opacity(0.4))
-                )
+                Text(actionButtonTitle)
             }
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.primary, isLoading: isTesting)
             .disabled(!canProceed || isTesting)
             .keyboardShortcut(.return, modifiers: .command)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
         .background(
-            theme.secondaryBackground
+            theme.surface.subtle
                 .overlay(
-                    Rectangle().fill(theme.primaryBorder).frame(height: 1),
+                    Rectangle().fill(theme.border.subtle).frame(height: 1),
                     alignment: .top
                 )
         )
@@ -1333,27 +1128,24 @@ private struct AddProviderFlow: View {
                 switch result {
                 case .success(let models):
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.successColor)
+                        .glyphSize(12)
+                        .foregroundColor(theme.status.success.foreground)
                     Text("\(models.count) model\(models.count == 1 ? "" : "s") found", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.successColor)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.status.success.foreground)
                 case .failure(let error):
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
+                        .glyphSize(12)
+                        .foregroundColor(theme.status.error.foreground)
                     Text(error)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.errorColor)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.status.error.foreground)
                         .lineLimit(2)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(result.isSuccess ? theme.successColor.opacity(0.1) : theme.errorColor.opacity(0.1))
-            )
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s6)
+            .settingsChrome(result.isSuccess ? .status(.success) : .status(.error))
         }
     }
 
@@ -1366,12 +1158,6 @@ private struct AddProviderFlow: View {
             return NSLocalizedString(oauthKind.ctaTitle, bundle: .module, comment: "")
         }
         return L("Test Connection")
-    }
-
-    private var actionButtonColor: Color {
-        if testResult?.isSuccess == true || canSaveKnownProviderWithoutSuccessfulTest { return theme.successColor }
-        if case .failure = testResult { return theme.errorColor }
-        return theme.accentColor
     }
 
     private var canTestCustom: Bool {
@@ -1699,6 +1485,7 @@ private struct EditProviderFlow: View {
 
     // Editable fields
     @State private var apiKey: String = ""
+    @State private var pendingOAuthTokens: RemoteProviderOAuthTokens?
     @State private var manualModelIdsText: String = ""
 
     // Advanced
@@ -1733,13 +1520,20 @@ private struct EditProviderFlow: View {
         }
     }
 
+    private var usesCodexOAuth: Bool {
+        provider.authType == .openAICodexOAuth || provider.providerType == .openAICodex
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             sheetHeader
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if let preset = matchedPreset {
+                    if usesCodexOAuth {
+                        providerReauthorizeSection
+                        advancedSettingsSection(showConnectionDetails: true)
+                    } else if let preset = matchedPreset {
                         knownProviderEditContent(preset: preset)
                     } else {
                         customProviderEditContent
@@ -1750,21 +1544,21 @@ private struct EditProviderFlow: View {
                     ProviderDiagnosticsRowsView(report: diagnosticsReport, maxRows: nil)
                         .padding(.horizontal, -24)
                 }
-                .padding(24)
+                .padding(theme.space.s24)
             }
 
             sheetFooter
         }
         .frame(width: 540, height: matchedPreset != nil ? 520 : 580)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(theme.surface.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge)
+                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
         )
         .opacity(hasAppeared ? 1 : 0)
         .scaleEffect(hasAppeared ? 1 : 0.95)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
+        .animation(theme.motion.springAnimation, value: hasAppeared)
         .onAppear {
             loadProvider()
             Task { await refreshCredentialState() }
@@ -1785,79 +1579,19 @@ private struct EditProviderFlow: View {
     // MARK: - Header
 
     private var sheetHeader: some View {
-        HStack(spacing: 12) {
-            if let preset = matchedPreset {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: preset.gradient,
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    ProviderIcon(preset: preset, size: 16, color: .white)
-                }
-                .frame(width: 40, height: 40)
-            } else {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [theme.accentColor.opacity(0.2), theme.accentColor.opacity(0.05)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    Image(systemName: "pencil.circle.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-                .frame(width: 40, height: 40)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Edit \(provider.name)", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Modify your API connection", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
-            Button(
-                action: { dismiss() },
-                label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.tertiaryBackground))
-                }
+        var header = SettingsSheetHeader(
+            icon: "pencil",
+            title: "Edit \(provider.name)",
+            subtitle: "Modify your API connection"
+        ) { dismiss() }
+        if let preset = matchedPreset {
+            header.leading = AnyView(
+                Circle()
+                    .fill(LinearGradient(colors: preset.gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .overlay(ProviderIcon(preset: preset, size: 13, color: .white))
             )
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    LinearGradient(
-                        colors: [theme.accentColor.opacity(0.03), Color.clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        return header
     }
 
     // MARK: - Known Provider Edit
@@ -1865,27 +1599,31 @@ private struct EditProviderFlow: View {
     private func knownProviderEditContent(preset: ProviderPreset) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             if preset == .openrouter {
-                openRouterReauthorizeSection
+                providerReauthorizeSection
             }
 
             // API Key section
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("API KEY", bundle: .module)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
-                        .tracking(0.5)
+                    Text("API key", bundle: .module)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.tertiary)
                     Spacer()
                     HStack(spacing: 4) {
                         Image(systemName: "lock.fill")
-                            .font(.system(size: 9))
+                            .glyphSize(9)
                         Text("Stored in Keychain", bundle: .module)
-                            .font(.system(size: 10))
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
                     }
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 }
 
-                ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
+                SettingsTextField(
+                    placeholder: L("Leave blank to keep current"),
+                    text: $apiKey,
+                    monospaced: true,
+                    isSecure: true
+                )
                     .onChange(of: apiKey) { _, _ in
                         // User edited the field manually — clear any prior
                         // re-authorize confirmation/error so we don't show
@@ -1915,66 +1653,48 @@ private struct EditProviderFlow: View {
         }
     }
 
-    // MARK: - OpenRouter Re-authorize
+    // MARK: - Provider Re-authorization
 
-    /// Inline card on the OpenRouter edit screen. Lets the user mint a fresh
-    /// `sk-or-v1-...` key without leaving the sheet — useful when the previous
-    /// key has been revoked from openrouter.ai/keys. On success the key is
-    /// written into the `apiKey` field and persisted via the usual Save path.
-    private var openRouterReauthorizeSection: some View {
+    /// Reuse browser sign-in for existing providers. Stage the refreshed
+    /// credential until Save, preserving the provider ID and configuration.
+    private var providerReauthorizeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("ACCOUNT", bundle: .module)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.5)
+            Text("Account", bundle: .module)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
 
             HStack(spacing: 12) {
                 Image(systemName: "person.crop.circle.badge.checkmark")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(16, weight: .semibold)
+                    .foregroundColor(theme.text.link)
                     .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.accentColor.opacity(0.12)))
+                    .background(Circle().fill(theme.status.info.background))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Re-authorize with OpenRouter", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text("Mint a fresh key in your browser without leaving this sheet.", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                    Text(usesCodexOAuth ? "Sign in with ChatGPT" : "Re-authorize with OpenRouter", bundle: .module)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
+                    Text(usesCodexOAuth ? "Use your ChatGPT account with Codex access. Save after signing in." : "Mint a fresh key in your browser without leaving this sheet.", bundle: .module)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                 }
 
                 Spacer()
 
                 let signingIn = reauthorizeState.isSigningIn
-                Button(action: reauthorizeOpenRouter) {
+                Button(action: reauthorizeProvider) {
                     HStack(spacing: 6) {
                         if signingIn {
                             ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
                         }
                         Text(signingIn ? "Signing in..." : "Sign in", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(signingIn ? theme.accentColor.opacity(0.6) : theme.accentColor)
-                    )
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(signingIn)
             }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.accentColor.opacity(0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
-                    )
-            )
+            .padding(theme.space.s12)
+            .settingsChrome(.selected)
 
             reauthorizeStatusLine
         }
@@ -1986,20 +1706,20 @@ private struct EditProviderFlow: View {
         case .succeeded:
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.successColor)
-                Text("New key minted. Save to apply.", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.successColor)
+                    .glyphSize(11)
+                    .foregroundColor(theme.status.success.foreground)
+                Text(usesCodexOAuth ? "Signed in. Save to apply." : "New key minted. Save to apply.", bundle: .module)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                    .foregroundColor(theme.status.success.foreground)
             }
         case .failed(let message):
             HStack(spacing: 6) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.errorColor)
+                    .glyphSize(11)
+                    .foregroundColor(theme.status.error.foreground)
                 Text(message)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.errorColor)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.error.foreground)
                     .lineLimit(2)
             }
         case .idle, .signingIn:
@@ -2007,12 +1727,15 @@ private struct EditProviderFlow: View {
         }
     }
 
-    private func reauthorizeOpenRouter() {
+    private func reauthorizeProvider() {
         reauthorizeState = .signingIn
         Task { @MainActor in
             do {
-                let key = try await OpenRouterOAuthService.signIn()
-                apiKey = key
+                if usesCodexOAuth {
+                    pendingOAuthTokens = try await OpenAICodexOAuthService.signIn()
+                } else {
+                    apiKey = try await OpenRouterOAuthService.signIn()
+                }
                 reauthorizeState = .succeeded
             } catch {
                 reauthorizeState = .failed(error.localizedDescription)
@@ -2034,48 +1757,47 @@ private struct EditProviderFlow: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 8) {
                         Image(systemName: "key.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
-                        Text("AUTHENTICATION", bundle: .module)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(theme.secondaryText)
-                            .tracking(0.5)
+                            .glyphSize(12, weight: .semibold)
+                            .foregroundColor(theme.text.link)
+                        Text("Authentication", bundle: .module)
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.secondary)
                     }
 
                     if authType == .openAICodexOAuth {
                         HStack(spacing: 10) {
                             Image(systemName: "person.crop.circle.badge.checkmark")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(theme.accentColor)
+                                .glyphSize(16, weight: .semibold)
+                                .foregroundColor(theme.text.link)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("ChatGPT / Codex subscription", bundle: .module)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(theme.primaryText)
+                                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                                    .foregroundColor(theme.text.primary)
                                 Text("Signed in with ChatGPT Plus/Pro. Tokens are stored in Keychain.", bundle: .module)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
+                                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                                    .foregroundColor(theme.text.secondary)
                             }
                             Spacer()
                         }
-                        .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(theme.accentColor.opacity(0.08)))
+                        .padding(theme.space.s12)
+                        .settingsChrome(.selected)
                     } else if authType == .xaiOAuth {
                         HStack(spacing: 10) {
                             Image(systemName: "person.crop.circle.badge.checkmark")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(theme.accentColor)
+                                .glyphSize(16, weight: .semibold)
+                                .foregroundColor(theme.text.link)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Grok (SuperGrok / X Premium+)", bundle: .module)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(theme.primaryText)
+                                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                                    .foregroundColor(theme.text.primary)
                                 Text("Signed in with Grok. Tokens are stored in Keychain.", bundle: .module)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
+                                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                                    .foregroundColor(theme.text.secondary)
                             }
                             Spacer()
                         }
-                        .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(theme.accentColor.opacity(0.08)))
+                        .padding(theme.space.s12)
+                        .settingsChrome(.selected)
                     } else {
                         SegmentedToggle {
                             SegmentedToggleButton("No Auth", isSelected: authType == .none) { authType = .none }
@@ -2084,21 +1806,19 @@ private struct EditProviderFlow: View {
                     }
 
                     if authType == .apiKey {
-                        ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
+                        SettingsTextField(
+                            placeholder: L("Leave blank to keep current"),
+                            text: $apiKey,
+                            monospaced: true,
+                            isSecure: true
+                        )
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
-                .padding(16)
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: authType)
+                .padding(theme.space.s16)
+                .animation(theme.motion.springAnimation, value: authType)
             }
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .settingsChrome(.card)
 
             // Advanced settings (timeout + headers only)
             advancedSettingsSection(showConnectionDetails: false)
@@ -2111,23 +1831,19 @@ private struct EditProviderFlow: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Image(systemName: "network")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text("CONNECTION", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundColor(theme.text.link)
+                Text("Connection", bundle: .module)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.secondary)
             }
 
-            ProviderTextField(label: "Name", placeholder: "e.g. My Provider", text: $name)
+            SettingsFieldRow(label: "Name") {
+                SettingsTextField(placeholder: L("e.g. My Provider"), text: $name)
+            }
 
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("PROTOCOL", bundle: .module)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
-                        .tracking(0.5)
-
+                SettingsFieldRow(label: "Protocol") {
                     SegmentedToggle {
                         SegmentedToggleButton("HTTPS", isSelected: providerProtocol == .https) {
                             providerProtocol = .https
@@ -2139,50 +1855,48 @@ private struct EditProviderFlow: View {
                 }
                 .frame(width: 140)
 
-                ProviderTextField(label: "Host", placeholder: "api.example.com", text: $host, isMonospaced: true)
+                SettingsFieldRow(label: "Host") {
+                    SettingsTextField(placeholder: "api.example.com", text: $host, monospaced: true)
+                }
                     .onChange(of: host) { previous, value in
                         handleHostChange(previous: previous, value: value)
                     }
             }
 
             HStack(spacing: 12) {
-                ProviderTextField(
-                    label: "Port",
-                    placeholder: providerProtocol == .https ? "443" : "80",
-                    text: $portString,
-                    isMonospaced: true
-                )
+                SettingsFieldRow(label: "Port") {
+                    SettingsTextField(placeholder: providerProtocol == .https ? "443" : "80", text: $portString, monospaced: true)
+                }
                 .frame(width: 90)
 
-                ProviderTextField(label: "Base Path", placeholder: "/v1", text: $basePath, isMonospaced: true)
+                SettingsFieldRow(label: "Base Path") {
+                    SettingsTextField(placeholder: "/v1", text: $basePath, monospaced: true)
+                }
             }
 
             if !host.trimmingCharacters(in: .whitespaces).isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "link")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(11)
+                        .foregroundColor(theme.text.link)
                     Text(buildEditEndpointPreview())
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.secondary)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
+                .settingsChrome(.selected)
             }
         }
-        .padding(16)
+        .padding(theme.space.s16)
     }
 
     private var sectionDivider: some View {
         Rectangle()
-            .fill(theme.cardBorder)
+            .fill(theme.border.default)
             .frame(height: 1)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, theme.space.s16)
     }
 
     private func buildEditEndpointPreview() -> String {
@@ -2200,25 +1914,18 @@ private struct EditProviderFlow: View {
     private func helpSection(for preset: ProviderPreset) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Need a new key?", bundle: .module)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
+                .foregroundColor(theme.text.secondary)
 
             ProviderHelpLinks(
                 preset: preset,
-                accentColor: theme.accentColor,
-                secondaryTextColor: theme.secondaryText
+                accentColor: theme.status.info.foreground,
+                secondaryTextColor: theme.text.secondary
             )
         }
-        .padding(16)
+        .padding(theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.card)
     }
 
     // MARK: - Advanced Settings (Edit)
@@ -2227,29 +1934,26 @@ private struct EditProviderFlow: View {
         VStack(alignment: .leading, spacing: 0) {
             Button(
                 action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    withAnimation(theme.motion.springAnimation) {
                         showAdvanced.toggle()
                     }
                 },
                 label: {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
+                            .glyphSize(10, weight: .semibold)
+                            .foregroundColor(theme.text.tertiary)
                             .rotationEffect(.degrees(showAdvanced ? 90 : 0))
 
                         Text(showAdvanced ? L("Hide advanced settings") : L("Show advanced settings"))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.secondary)
 
                         Spacer()
                     }
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground.opacity(0.5))
-                    )
+                    .padding(.vertical, theme.space.s8)
+                    .padding(.horizontal, theme.space.s12)
+                    .settingsChrome(.inset)
                     .contentShape(Rectangle())
                 }
             )
@@ -2262,14 +1966,7 @@ private struct EditProviderFlow: View {
                         VStack(alignment: .leading, spacing: 0) {
                             connectionFormSection
                         }
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(theme.cardBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(theme.cardBorder, lineWidth: 1)
-                                )
-                        )
+                        .settingsChrome(.card)
                     }
 
                     // Timeout
@@ -2278,31 +1975,20 @@ private struct EditProviderFlow: View {
                     // Custom headers
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("CUSTOM HEADERS", bundle: .module)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(theme.tertiaryText)
-                                .tracking(0.5)
+                            Text("Custom headers", bundle: .module)
+                                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                                .foregroundColor(theme.text.tertiary)
                             Spacer()
-                            Button(
-                                action: {
-                                    customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
-                                },
-                                label: {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .foregroundColor(theme.accentColor)
-                                        .frame(width: 24, height: 24)
-                                        .background(Circle().fill(theme.accentColor.opacity(0.1)))
-                                }
-                            )
-                            .buttonStyle(PlainButtonStyle())
+                            SettingsIconButton("plus", help: L("Add header"), size: .compact) {
+                                customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
+                            }
                         }
 
                         if customHeaders.isEmpty {
                             Text("No custom headers configured", bundle: .module)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.vertical, 6)
+                                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                                .foregroundColor(theme.text.tertiary)
+                                .padding(.vertical, theme.space.s6)
                         } else {
                             ForEach($customHeaders) { $header in
                                 CompactHeaderRow(header: $header) {
@@ -2312,7 +1998,7 @@ private struct EditProviderFlow: View {
                         }
                     }
                 }
-                .padding(.top, 12)
+                .padding(.top, theme.space.s12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -2322,26 +2008,14 @@ private struct EditProviderFlow: View {
 
     private var timeoutSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("REQUEST TIMEOUT", bundle: .module)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
-                Spacer()
-                Text(disableTimeout ? "No limit" : "\(Int(timeout))s", bundle: .module)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.inputBackground)
-                    )
-            }
-            Slider(value: $timeout, in: 10 ... 300, step: 10)
-                .tint(theme.accentColor)
-                .disabled(disableTimeout)
-                .opacity(disableTimeout ? 0.4 : 1)
+            SettingsSlider(
+                title: "Request Timeout",
+                valueText: disableTimeout ? L("No limit") : "\(Int(timeout))s",
+                value: $timeout,
+                range: 10 ... 300,
+                step: 10
+            )
+            .disabled(disableTimeout)
 
             // Intercepting binding: turning the switch ON only opens the warning;
             // `disableTimeout` flips to true after the user confirms. Turning OFF
@@ -2350,11 +2024,11 @@ private struct EditProviderFlow: View {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Disable timeout", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     Text("Let requests run with no time limit", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
                 Toggle(
@@ -2370,11 +2044,9 @@ private struct EditProviderFlow: View {
                         }
                     )
                 )
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(theme.accentColor)
+                .settingsSwitch()
             }
-            .padding(.top, 6)
+            .padding(.top, theme.space.s6)
         }
     }
 
@@ -2392,41 +2064,22 @@ private struct EditProviderFlow: View {
             } label: {
                 Text("Cancel", bundle: .module)
             }
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.secondary)
+            .keyboardShortcut(.cancelAction)
 
             Button(action: save) {
                 Text("Save Changes", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(canSave ? theme.accentColor : theme.accentColor.opacity(0.4))
-                    )
             }
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.primary)
             .disabled(!canSave)
             .keyboardShortcut(.return, modifiers: .command)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
         .background(
-            theme.secondaryBackground
+            theme.surface.subtle
                 .overlay(
-                    Rectangle().fill(theme.primaryBorder).frame(height: 1),
+                    Rectangle().fill(theme.border.subtle).frame(height: 1),
                     alignment: .top
                 )
         )
@@ -2445,30 +2098,19 @@ private struct EditProviderFlow: View {
                         ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
                     } else if let result = testResult {
                         Image(systemName: result.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .font(.system(size: 12))
+                            .glyphSize(12)
                     } else {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 11))
+                            .glyphSize(11)
                     }
 
                     Text(testButtonLabel)
-                        .font(.system(size: 12, weight: .medium))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
-                .foregroundColor(testButtonColor)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(testButtonBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(testButtonColor.opacity(0.3), lineWidth: 1)
-                        )
-                )
             }
         )
-        .buttonStyle(PlainButtonStyle())
-        .disabled(isTesting)
+        .assignedSettingsButtonStyle(.secondary)
+        .disabled(isTesting || reauthorizeState.isSigningIn || pendingOAuthTokens != nil)
     }
 
     private var testButtonLabel: String {
@@ -2484,16 +2126,18 @@ private struct EditProviderFlow: View {
     }
 
     private var testButtonColor: Color {
-        guard let result = testResult else { return theme.secondaryText }
-        return result.isSuccess ? theme.successColor : theme.errorColor
+        guard let result = testResult else { return theme.text.secondary }
+        return result.isSuccess ? theme.status.success.foreground : theme.status.error.foreground
     }
 
     private var testButtonBackground: Color {
-        guard let result = testResult else { return theme.tertiaryBackground }
-        return result.isSuccess ? theme.successColor.opacity(0.12) : theme.errorColor.opacity(0.12)
+        guard let result = testResult else { return theme.surface.hover }
+        return result.isSuccess
+            ? theme.status.success.background : theme.status.error.background
     }
 
     private var canSave: Bool {
+        guard !reauthorizeState.isSigningIn else { return false }
         if matchedPreset != nil {
             // Known provider: always saveable (name/host come from preset or advanced)
             if providerType == .azureOpenAI {
@@ -2630,7 +2274,7 @@ private struct EditProviderFlow: View {
             }
         }
 
-        onSave(updatedProvider, apiKey.isEmpty ? nil : apiKey, nil)
+        onSave(updatedProvider, apiKey.isEmpty ? nil : apiKey, pendingOAuthTokens)
         dismiss()
     }
 }
@@ -2649,11 +2293,11 @@ private struct NoTimeoutWarningContent: View {
             bullet("Upstream timeouts (LM Studio, proxies, tunnels) still apply")
             bullet("Only use this on trusted hardware for long-running work")
         }
-        .font(.system(size: 13))
-        .foregroundColor(theme.secondaryText)
+        .textStyle(.bodySmall)
+        .foregroundColor(theme.text.secondary)
         .lineSpacing(2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 8)
+        .padding(.top, theme.space.s8)
     }
 
     private func bullet(_ text: LocalizedStringKey) -> some View {
@@ -2679,19 +2323,13 @@ private struct SegmentedToggle<Content: View>: View {
         HStack(spacing: 0) {
             content()
         }
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.control)
     }
 }
 
 private struct SegmentedToggleButton: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let label: LocalizedStringKey
     let isSelected: Bool
@@ -2706,19 +2344,16 @@ private struct SegmentedToggleButton: View {
     var body: some View {
         Button(action: action) {
             Text(localized: label)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                 .foregroundColor(
-                    isSelected ? themeManager.currentTheme.primaryText : themeManager.currentTheme.tertiaryText
+                    isSelected ? theme.text.primary : theme.text.tertiary
                 )
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(isSelected ? themeManager.currentTheme.tertiaryBackground : Color.clear)
-                )
+                .padding(.vertical, theme.space.s8)
+                .settingsChrome(isSelected ? .inset : nil)
         }
         .buttonStyle(PlainButtonStyle())
-        .padding(2)
+        .padding(theme.space.s2)
     }
 }
 
@@ -2783,71 +2418,26 @@ private struct CompactHeaderRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            TextField(text: $header.key, prompt: Text("Key", bundle: .module)) {
-                Text("Key", bundle: .module)
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 12, design: .monospaced))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(width: 120)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .foregroundColor(themeManager.currentTheme.primaryText)
+            SettingsTextField(placeholder: L("Key"), text: $header.key, monospaced: true)
+                .frame(width: 120)
 
-            Group {
-                if header.isSecret {
-                    SecureField(L("Value"), text: $header.value)
-                } else {
-                    TextField(text: $header.value, prompt: Text("Value", bundle: .module)) {
-                        Text("Value", bundle: .module)
-                    }
-                }
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 12, design: .monospaced))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
+            SettingsTextField(
+                placeholder: L("Value"),
+                text: $header.value,
+                monospaced: true,
+                isSecure: header.isSecret
             )
-            .foregroundColor(themeManager.currentTheme.primaryText)
 
-            Button(
-                action: { header.isSecret.toggle() },
-                label: {
-                    Image(systemName: header.isSecret ? "lock.fill" : "lock.open")
-                        .font(.system(size: 10))
-                        .foregroundColor(
-                            header.isSecret
-                                ? themeManager.currentTheme.accentColor : themeManager.currentTheme.tertiaryText
-                        )
-                        .frame(width: 26, height: 26)
-                        .background(Circle().fill(themeManager.currentTheme.tertiaryBackground))
-                }
-            )
-            .buttonStyle(PlainButtonStyle())
-            .help(Text(header.isSecret ? L("This value is stored securely") : L("Click to make this a secret value")))
-
-            Button(action: onDelete) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .frame(width: 22, height: 22)
-                    .background(Circle().fill(themeManager.currentTheme.tertiaryBackground))
+            SettingsIconButton(
+                header.isSecret ? "lock.fill" : "lock.open",
+                help: header.isSecret ? "This value is stored securely" : "Click to make this a secret value",
+                size: .compact,
+                isActive: header.isSecret
+            ) {
+                header.isSecret.toggle()
             }
-            .buttonStyle(PlainButtonStyle())
+
+            SettingsIconButton("xmark", help: "Remove", size: .compact, action: onDelete)
         }
     }
 }
@@ -2863,47 +2453,13 @@ private struct DeploymentNamesEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.5)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
 
-            ZStack(alignment: .topLeading) {
-                if text.isEmpty {
-                    Text(placeholder)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(theme.placeholderText)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 10)
-                        .allowsHitTesting(false)
-                }
-
-                TextEditor(text: $text)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 6)
-            }
-            .frame(minHeight: 82)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
+            SettingsTextEditor(text: $text, placeholder: placeholder, minHeight: 82, monospaced: true)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.card)
     }
 }
 
@@ -2912,6 +2468,6 @@ private struct DeploymentNamesEditor: View {
 #if DEBUG && canImport(PreviewsMacros)
     #Preview {
         RemoteProviderEditSheet(provider: nil) { _, _, _ in }
-            .environment(\.theme, DarkTheme())
+            .environment(\.theme, CustomizableTheme.dark())
     }
 #endif
