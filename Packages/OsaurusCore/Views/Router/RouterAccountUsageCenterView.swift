@@ -3,93 +3,84 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct RouterAccountUsageCenterView: View {
-    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var themeManager = ThemeManager.shared
     @StateObject private var model = RouterAccountUsageCenterViewModel()
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
-    @State private var hasAppeared = false
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol {
+        #if OSAURUS_DESIGN_SYSTEM
+        if let inspectionTheme { return inspectionTheme }
+        #endif
+        return themeManager.currentTheme
+    }
+
+#if OSAURUS_DESIGN_SYSTEM
+    private var inspectionTheme: (any ThemeProtocol)?
+    var inspectionSnapshot: RouterAccountUsageSnapshot?
+#endif
+    private var displayedSnapshot: RouterAccountUsageSnapshot {
+#if OSAURUS_DESIGN_SYSTEM
+        if let value = inspectionSnapshot { return value }
+#endif
+        return model.snapshot
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ManagerHeaderWithActions(
-                title: L("Router Account"),
-                subtitle: L("Account status, usage activity, signed request diagnostics, and support export.")
-            ) {
-                HeaderIconButton(
-                    "arrow.clockwise",
-                    isLoading: model.isRefreshing,
-                    help: "Refresh"
-                ) {
-                    Task { await model.refresh() }
-                }
-
-                HeaderIconButton(
-                    "signature",
-                    isLoading: model.isSigningDiagnostics,
-                    help: "Signed request diagnostics"
-                ) {
-                    Task { await model.runSignedRequestDiagnostics() }
-                }
-
-                HeaderPrimaryButton("Export support", icon: "square.and.arrow.up") {
-                    chooseSupportExportURL()
-                }
-                .disabled(model.isExportingSupport)
-                .opacity(model.isExportingSupport ? 0.6 : 1)
-
-                HeaderIconButton(
-                    "xmark",
-                    help: "Close"
-                ) {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    statusMetrics
-
-                    if let message = model.message, !message.isEmpty {
-                        messageBanner(message)
+        SettingsPage {
+            SettingsPageHeader(
+                title: "Router Account",
+                subtitle: "Account status, usage activity, signed request diagnostics, and support export.",
+                onRefresh: { Task { await model.refresh() } },
+                isRefreshing: model.isRefreshing,
+                utilities: {
+                    SettingsIconButton(
+                        "signature",
+                        isLoading: model.isSigningDiagnostics,
+                        help: "Signed request diagnostics"
+                    ) {
+                        Task { await model.runSignedRequestDiagnostics() }
                     }
-
-                    accountStatusSection
-                    creditsActivitySection
-                    ledgerSection
-                    signedDiagnosticsSection
-                    supportExportSection
+                },
+                overflow: {
+                    Button(L("Export support")) { chooseSupportExportURL() }
+                        .disabled(model.isExportingSupport)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+            )
+        } content: {
+            statusMetrics
+
+            if let message = model.message, !message.isEmpty {
+                messageBanner(message)
             }
-            .opacity(hasAppeared ? 1 : 0)
+
+            accountStatusSection
+            creditsActivitySection
+            ledgerSection
+            signedDiagnosticsSection
+            supportExportSection
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
         .task {
             await model.refresh()
         }
         .onChange(of: accountService.usageRevision) { _, _ in
             Task { await model.refreshUsageAfterBilledTurn() }
         }
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.22).delay(0.04)) {
-                hasAppeared = true
-            }
-        }
     }
 
     private var statusMetrics: some View {
-        let snapshot = model.snapshot
+        ViewThatFits(in: .horizontal) {
+            statusMetricsGrid(columns: 4)
+                .frame(minWidth: 720 + theme.space.s12 * 3)
+            statusMetricsGrid(columns: 2)
+        }
+    }
+
+    private func statusMetricsGrid(columns: Int) -> some View {
+        let snapshot = displayedSnapshot
         return LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 180, maximum: 280), spacing: 12)],
+            columns: Array(repeating: GridItem(.flexible(), spacing: theme.space.s12), count: columns),
             alignment: .leading,
-            spacing: 12
+            spacing: theme.space.s12
         ) {
             metricTile(
                 title: L("Balance"),
@@ -103,14 +94,15 @@ struct RouterAccountUsageCenterView: View {
                 value: snapshot.credits.requestCount.formatted(),
                 detail: OsaurusRouter.formatMicroAsCredits(snapshot.credits.costMicro),
                 icon: "arrow.left.arrow.right",
-                color: theme.accentColor
+                color: theme.action.primary.default.background
             )
             metricTile(
                 title: L("Ledger rows"),
                 value: snapshot.ledger.entryCount.formatted(),
                 detail: L("\(snapshot.ledger.pendingCount) pending / \(snapshot.ledger.issueCount) flagged"),
                 icon: "list.bullet.rectangle.portrait",
-                color: snapshot.ledger.issueCount > 0 ? theme.warningColor : theme.successColor
+                color: snapshot.ledger.issueCount > 0
+                    ? theme.status.warning.foreground : theme.status.success.foreground
             )
             metricTile(
                 title: L("Net credits"),
@@ -120,36 +112,36 @@ struct RouterAccountUsageCenterView: View {
                     : L("\(snapshot.transactions.transactionCount) transactions"),
                 icon: "plus.forwardslash.minus",
                 color: RouterAccountUsageCenter.microValue(snapshot.transactions.netMicro) >= 0
-                    ? theme.successColor : theme.warningColor
+                    ? theme.status.success.foreground : theme.status.warning.foreground
             )
         }
     }
 
     private var accountStatusSection: some View {
         sectionCard(title: L("Account Status"), icon: "person.badge.key.fill") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                HStack(alignment: .center, spacing: theme.space.s12) {
                     statusPill(
-                        statusTitle(model.snapshot.accountStatus.state),
-                        icon: statusIcon(model.snapshot.accountStatus.state),
-                        color: statusColor(model.snapshot.accountStatus.state)
+                        statusTitle(displayedSnapshot.accountStatus.state),
+                        icon: statusIcon(displayedSnapshot.accountStatus.state),
+                        color: statusColor(displayedSnapshot.accountStatus.state)
                     )
                     Spacer()
-                    Text(verbatim: model.snapshot.generatedAt.formatted(date: .abbreviated, time: .standard))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                    Text(verbatim: displayedSnapshot.generatedAt.formatted(date: .abbreviated, time: .standard))
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                 }
 
                 keyValueGrid([
-                    (L("Router"), model.snapshot.accountStatus.routerEnabled ? L("On") : L("Off")),
-                    (L("Identity"), model.snapshot.accountStatus.identityAvailable ? L("Available") : L("Missing")),
-                    (L("Billing"), model.snapshot.accountStatus.frozen ? L("On hold") : L("Ready")),
+                    (L("Router"), displayedSnapshot.accountStatus.routerEnabled ? L("On") : L("Off")),
+                    (L("Identity"), displayedSnapshot.accountStatus.identityAvailable ? L("Available") : L("Missing")),
+                    (L("Billing"), displayedSnapshot.accountStatus.frozen ? L("On hold") : L("Ready")),
                 ])
 
-                if let error = model.snapshot.accountStatus.lastError {
+                if let error = displayedSnapshot.accountStatus.lastError {
                     Text(error)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.status.error.foreground)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -161,7 +153,7 @@ struct RouterAccountUsageCenterView: View {
     /// accounts on a pre-cache router (or with no hits yet) see the original
     /// four rows unchanged.
     private var creditsTotalsRows: [(String, String)] {
-        let credits = model.snapshot.credits
+        let credits = displayedSnapshot.credits
         var rows: [(String, String)] = [
             (L("Input tokens"), credits.inputTokens.formatted())
         ]
@@ -173,23 +165,24 @@ struct RouterAccountUsageCenterView: View {
         }
         rows.append((L("Output tokens"), credits.outputTokens.formatted()))
         rows.append((L("Usage cost"), OsaurusRouter.formatMicroAsCredits(credits.costMicro)))
-        rows.append((L("Top-ups"), OsaurusRouter.formatMicroAsCredits(model.snapshot.transactions.creditMicro)))
+        rows.append((L("Top-ups"), OsaurusRouter.formatMicroAsCredits(displayedSnapshot.transactions.creditMicro)))
         return rows
     }
 
     private var creditsActivitySection: some View {
         sectionCard(title: L("Credits Activity"), icon: "clock.arrow.circlepath") {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 keyValueGrid(creditsTotalsRows)
 
                 Divider()
 
                 let rows = Array(model.activityRows.prefix(8))
                 if rows.isEmpty {
-                    emptyState(
-                        icon: model.isBusy ? "hourglass" : "tray",
-                        title: model.isBusy ? L("Loading activity") : L("No usage activity"),
-                        detail: L("Router usage appears here after a hosted model request is billed.")
+                    SettingsEmptyState(
+                        inline: model.isBusy ? "hourglass" : "tray",
+                        title: model.isBusy ? "Loading activity" : "No usage activity",
+                        hint: "Router usage appears here after a hosted model request is billed.",
+                        isLoading: model.isBusy
                     )
                 } else {
                     VStack(spacing: 0) {
@@ -201,10 +194,10 @@ struct RouterAccountUsageCenterView: View {
                         }
                     }
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.cardBorder, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: theme.radius.medium)
+                            .stroke(theme.border.default, lineWidth: theme.stroke.default)
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
                 }
 
                 if !model.transactions.isEmpty {
@@ -216,24 +209,15 @@ struct RouterAccountUsageCenterView: View {
     }
 
     private var transactionSummaryRows: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text("Transaction ledger", bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-            ForEach(model.snapshot.transactions.entryTypeBreakdown) { row in
-                HStack(spacing: 12) {
-                    Text(verbatim: row.entryType)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(verbatim: "\(row.transactionCount.formatted())")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
-                    Text(verbatim: OsaurusRouter.formatMicroAsCredits(row.netAmountMicro))
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-                        .monospacedDigit()
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.secondary)
+            breakdownGrid {
+                ForEach(displayedSnapshot.transactions.entryTypeBreakdown) { row in
+                    breakdownRow(count: row.transactionCount.formatted(), amount: row.netAmountMicro) {
+                        Text(verbatim: row.entryType)
+                    }
                 }
             }
         }
@@ -241,48 +225,41 @@ struct RouterAccountUsageCenterView: View {
 
     private var ledgerSection: some View {
         sectionCard(title: L("Billing Ledger"), icon: "list.bullet.rectangle") {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 keyValueGrid([
-                    (L("Local rows"), model.snapshot.ledger.entryCount.formatted()),
-                    (L("Ledger cost"), OsaurusRouter.formatMicroAsCredits(model.snapshot.ledger.costMicro)),
-                    (L("Pending"), model.snapshot.ledger.pendingCount.formatted()),
-                    (L("Flagged"), model.snapshot.ledger.issueCount.formatted()),
+                    (L("Local rows"), displayedSnapshot.ledger.entryCount.formatted()),
+                    (L("Ledger cost"), OsaurusRouter.formatMicroAsCredits(displayedSnapshot.ledger.costMicro)),
+                    (L("Pending"), displayedSnapshot.ledger.pendingCount.formatted()),
+                    (L("Flagged"), displayedSnapshot.ledger.issueCount.formatted()),
                 ])
 
                 Divider()
 
-                if model.snapshot.ledger.outcomeBreakdown.isEmpty {
-                    emptyState(
-                        icon: "doc.text.magnifyingglass",
-                        title: L("No local ledger rows"),
-                        detail: L("The encrypted local billing ledger has no rows available.")
+                if displayedSnapshot.ledger.outcomeBreakdown.isEmpty {
+                    SettingsEmptyState(
+                        inline: "doc.text.magnifyingglass",
+                        title: "No local ledger rows",
+                        hint: "The encrypted local billing ledger has no rows available.",
+                        isLoading: model.isBusy
                     )
                 } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(model.snapshot.ledger.outcomeBreakdown) { row in
-                            HStack(spacing: 12) {
-                                Circle()
-                                    .fill(outcomeColor(row.outcome))
-                                    .frame(width: 8, height: 8)
-                                Text(LocalizedStringKey(outcomeLabel(row.outcome)), bundle: .module)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
-                                Spacer()
-                                Text(verbatim: "\(row.entryCount.formatted())")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(theme.secondaryText)
-                                Text(verbatim: OsaurusRouter.formatMicroAsCredits(row.costMicro))
-                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                    .foregroundColor(theme.primaryText)
-                                    .monospacedDigit()
+                    breakdownGrid {
+                        ForEach(displayedSnapshot.ledger.outcomeBreakdown) { row in
+                            breakdownRow(count: row.entryCount.formatted(), amount: row.costMicro) {
+                                HStack(spacing: theme.space.s8) {
+                                    Circle()
+                                        .fill(outcomeColor(row.outcome))
+                                        .frame(width: 8, height: 8)
+                                    Text(LocalizedStringKey(outcomeLabel(row.outcome)), bundle: .module)
+                                }
                             }
                         }
                     }
                 }
 
-                if !model.snapshot.ledger.modelBreakdown.isEmpty {
+                if !displayedSnapshot.ledger.modelBreakdown.isEmpty {
                     Divider()
-                    modelBreakdownRows(model.snapshot.ledger.modelBreakdown)
+                    modelBreakdownRows(displayedSnapshot.ledger.modelBreakdown)
                 }
             }
         }
@@ -290,11 +267,11 @@ struct RouterAccountUsageCenterView: View {
 
     private var signedDiagnosticsSection: some View {
         sectionCard(title: L("Signed Request Diagnostics"), icon: "signature") {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                HStack(alignment: .center, spacing: theme.space.s12) {
                     Text("Last signed checks", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.secondary)
                     Spacer()
                     Button {
                         Task { await model.runSignedRequestDiagnostics() }
@@ -306,16 +283,16 @@ struct RouterAccountUsageCenterView: View {
                             Label(localized: "Run", systemImage: "checkmark.seal")
                         }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
                     .disabled(model.isSigningDiagnostics)
                 }
 
                 if model.signedDiagnostics.isEmpty {
-                    emptyState(
-                        icon: "signature",
-                        title: L("No signed checks yet"),
-                        detail: L("Run a local signing check to inspect the redacted request shape.")
+                    SettingsEmptyState(
+                        inline: "signature",
+                        title: "No signed checks yet",
+                        hint: "Run a local signing check to inspect the redacted request shape.",
+                        isLoading: model.isBusy
                     )
                 } else {
                     let diagnostics = model.signedDiagnostics
@@ -332,7 +309,7 @@ struct RouterAccountUsageCenterView: View {
 
     private var supportExportSection: some View {
         sectionCard(title: L("Support Export"), icon: "square.and.arrow.up") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 keyValueGrid([
                     (L("Schema"), "\(RouterSupportExport.schemaVersion)"),
                     (L("Usage rows"), model.usageItems.count.formatted()),
@@ -342,10 +319,10 @@ struct RouterAccountUsageCenterView: View {
 
                 Divider()
 
-                HStack(alignment: .center, spacing: 12) {
+                HStack(alignment: .center, spacing: theme.space.s12) {
                     Label(localized: "Metadata only", systemImage: "lock.shield")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .componentInspectionText(51, role: .caption, fallback: .caption, weight: 500, theme: theme)
+                        .foregroundColor(theme.text.secondary)
                     Spacer()
                     Button {
                         chooseSupportExportURL()
@@ -357,8 +334,7 @@ struct RouterAccountUsageCenterView: View {
                             Label(localized: "Export", systemImage: "square.and.arrow.up")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .assignedSettingsButtonStyle(.primary, size: .compact)
                     .disabled(model.isExportingSupport)
                 }
             }
@@ -366,20 +342,20 @@ struct RouterAccountUsageCenterView: View {
     }
 
     private func signedDiagnosticRow(_ diagnostic: RouterSignedRequestDiagnostic) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                 Text(verbatim: diagnostic.method)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(theme.accentColor)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.link)
                 Text(verbatim: diagnostic.pathAndQuery)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
                 Text(verbatim: diagnostic.generatedAt.formatted(date: .omitted, time: .standard))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             keyValueGrid([
@@ -391,125 +367,142 @@ struct RouterAccountUsageCenterView: View {
 
             if !diagnostic.warnings.isEmpty {
                 Text(verbatim: diagnostic.warnings.joined(separator: " · "))
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(diagnostic.redactedHeaders.keys.sorted(), id: \.self) { header in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                         Text(verbatim: header)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.secondary)
                             .frame(minWidth: 150, alignment: .leading)
                         Text(verbatim: diagnostic.redactedHeaders[header] ?? "")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.primary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                 }
             }
-            .padding(.top, 2)
+            .padding(.top, theme.space.s2)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, theme.space.s4)
     }
 
     private func activityRow(_ row: CreditsActivityRow) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Circle()
                 .fill(stateColor(row.stateKind))
                 .frame(width: 8, height: 8)
-                .padding(.top, 5)
+                .padding(.top, theme.space.s6)
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s8) {
                     Text(verbatim: row.modelDisplay ?? L("Unknown model"))
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     outcomeBadge(for: row)
                 }
 
                 Text(verbatim: row.metadataLine)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(1)
 
                 Text(verbatim: row.tokensLine)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 0)
 
             Text(verbatim: OsaurusRouter.formatMicroAsCredits(row.costMicro))
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.primaryText)
-                .monospacedDigit()
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.sectionTitle.monospacedDigit())
+                .foregroundColor(theme.text.primary)
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .background(theme.cardBackground)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
+        .background(theme.surface.raised)
     }
 
     private func outcomeBadge(for row: CreditsActivityRow) -> some View {
-        HStack(spacing: 4) {
-            Text(LocalizedStringKey(row.stateLabel), bundle: .module)
-            if let detail = row.stateDetail, !detail.isEmpty {
-                Text(verbatim: "·")
-                Text(LocalizedStringKey(detail), bundle: .module)
-            }
-        }
-        .font(.system(size: 10, weight: .medium))
-        .foregroundColor(stateColor(row.stateKind))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(stateColor(row.stateKind).opacity(0.12)))
-        .fixedSize()
+        StatusChip(
+            [row.stateLabel, row.stateDetail].compactMap { $0 }.filter { !$0.isEmpty }.map { LCached($0) }
+                .joined(separator: " · "),
+            tint: stateColor(row.stateKind)
+        )
+            .fixedSize()
     }
 
     private func modelBreakdownRows(_ rows: [RouterUsageBreakdown]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text("Model totals", bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-            ForEach(rows.prefix(5)) { row in
-                HStack(spacing: 12) {
-                    Text(verbatim: row.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Text(verbatim: "\(row.requestCount.formatted())")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
-                    Text(verbatim: OsaurusRouter.formatMicroAsCredits(row.costMicro))
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-                        .monospacedDigit()
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.secondary)
+            breakdownGrid {
+                ForEach(rows.prefix(5)) { row in
+                    breakdownRow(count: row.requestCount.formatted(), amount: row.costMicro) {
+                        Text(verbatim: row.name)
+                    }
                 }
             }
         }
     }
 
+    private func breakdownGrid<Rows: View>(@ViewBuilder rows: () -> Rows) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: theme.space.s12, verticalSpacing: theme.space.s4) {
+            rows()
+        }
+    }
+
+    private func breakdownRow<Label: View>(count: String, amount: String, @ViewBuilder label: () -> Label) -> some View {
+        GridRow(alignment: .firstTextBaseline) {
+            label()
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(verbatim: count)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall.monospacedDigit())
+                .foregroundColor(theme.text.secondary)
+                .gridColumnAlignment(.trailing)
+            Text(verbatim: OsaurusRouter.formatMicroAsCredits(amount))
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.compactLabel.monospacedDigit())
+                .foregroundColor(theme.text.primary)
+                .gridColumnAlignment(.trailing)
+        }
+    }
+
     private func keyValueGrid(_ items: [(String, String)]) -> some View {
+        ViewThatFits(in: .horizontal) {
+            keyValueGrid(items, columns: items.count)
+                .frame(minWidth: CGFloat(items.count) * 104 + CGFloat(items.count - 1) * theme.space.s12)
+            keyValueGrid(items, columns: 2)
+        }
+    }
+
+    private func keyValueGrid(_ items: [(String, String)], columns: Int) -> some View {
         LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 150, maximum: 260), spacing: 12)],
+            columns: Array(repeating: GridItem(.flexible(), spacing: theme.space.s12), count: columns),
             alignment: .leading,
-            spacing: 10
+            spacing: theme.space.s8
         ) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(LocalizedStringKey(item.0), bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
                     Text(verbatim: item.1)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.sectionTitle.monospacedDigit())
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -519,41 +512,28 @@ struct RouterAccountUsageCenterView: View {
     }
 
     private func metricTile(title: String, value: String, detail: String, icon: String, color: Color) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(color)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(color.opacity(0.13)))
-
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            HStack(spacing: theme.space.s6) {
+                Image(systemName: icon)
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundColor(color)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(color.opacity(0.13)))
                 Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                Text(verbatim: value)
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .monospacedDigit()
-                Text(LocalizedStringKey(detail), bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
             }
-
-            Spacer(minLength: 0)
+            Text(verbatim: value)
+                .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle.monospacedDigit())
+                .foregroundColor(theme.text.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(LocalizedStringKey(detail), bundle: .module)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
         }
-        .padding(14)
-        .frame(minHeight: 112, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .settingsChrome(.surface)
     }
 
     private func sectionCard<Content: View>(
@@ -561,100 +541,48 @@ struct RouterAccountUsageCenterView: View {
         icon: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(13, weight: .semibold)
+                    .foregroundColor(theme.text.link)
                     .frame(width: 20, height: 20)
                 Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
             }
 
             content()
         }
-        .padding(16)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    private func emptyState(icon: String, title: String, detail: String) -> some View {
-        VStack(spacing: 9) {
-            if model.isBusy {
-                ProgressView()
-                    .scaleEffect(0.75)
-            } else {
-                Image(systemName: icon)
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Text(LocalizedStringKey(detail), bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .settingsChrome(.surface)
     }
 
     private func statusPill(_ title: String, icon: String, color: Color) -> some View {
-        Label(title, systemImage: icon)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(color)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(color.opacity(0.12)))
+        StatusChip(title, tint: color, icon: icon)
     }
 
     private func messageBanner(_ message: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "info.circle.fill")
-                .foregroundColor(theme.infoColor)
-            Text(message)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.infoColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.infoColor.opacity(0.25), lineWidth: 1)
-                )
-        )
+        InlineBanner(kind: .info, title: message)
     }
 
     private func stateColor(_ kind: CreditsActivityStateKind) -> Color {
         switch kind {
-        case .success: return theme.successColor
-        case .warning: return theme.warningColor
-        case .error: return theme.errorColor
-        case .secondary: return theme.secondaryText
+        case .success: return theme.status.success.foreground
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
+        case .secondary: return theme.text.secondary
         }
     }
 
     private func outcomeColor(_ outcome: RouterBillingOutcome) -> Color {
         switch outcome {
-        case .rendered, .toolOnly, .reasoningOnly: return theme.successColor
-        case .pending: return theme.secondaryText
-        case .cancelled: return theme.warningColor
-        case .empty, .error: return theme.errorColor
+        case .rendered, .toolOnly, .reasoningOnly: return theme.status.success.foreground
+        case .pending: return theme.text.secondary
+        case .cancelled: return theme.status.warning.foreground
+        case .empty, .error: return theme.status.error.foreground
         }
     }
 
@@ -692,10 +620,10 @@ struct RouterAccountUsageCenterView: View {
 
     private func statusColor(_ state: RouterAccountStatusSnapshot.State) -> Color {
         switch state {
-        case .active: return theme.successColor
-        case .disabled: return theme.secondaryText
-        case .missingIdentity, .frozen: return theme.warningColor
-        case .unavailable: return theme.errorColor
+        case .active: return theme.status.success.foreground
+        case .disabled: return theme.text.secondary
+        case .missingIdentity, .frozen: return theme.status.warning.foreground
+        case .unavailable: return theme.status.error.foreground
         }
     }
 
@@ -713,3 +641,20 @@ struct RouterAccountUsageCenterView: View {
         }
     }
 }
+
+#if OSAURUS_DESIGN_SYSTEM
+extension RouterAccountUsageCenterView {
+    static func inspectionAccount(_ state: String, theme: any ThemeProtocol) -> some View {
+        var view = RouterAccountUsageCenterView()
+        view.inspectionTheme = theme
+        let balance = OsaurusRouterBalanceResponse(balanceMicro: "1234567", frozen: state == "Frozen")
+        let usage = OsaurusRouterUsageItem(id: "local-account-display", requestId: nil, model: "Local display model", provider: "Local sample", inputTokens: 1234, outputTokens: 56, costMicro: "1234", status: "completed", tokenSource: "provider", createdAt: "2026-10-22T12:00:00Z")
+        view.inspectionSnapshot = RouterAccountUsageCenter.snapshot(routerEnabled: state != "Disabled", identityAvailable: state != "Missing identity", balance: state == "Error" ? nil : balance, lastError: state == "Error" ? "Local account error display." : nil, usageItems: [usage], transactions: [], ledgerEntries: [])
+        return VStack(alignment: .leading, spacing: 12) {
+            view.statusMetrics
+            view.accountStatusSection
+            view.sectionCard(title: "Populated totals", icon: "chart.bar") { view.keyValueGrid(view.creditsTotalsRows) }
+        }.environment(\.theme, view.theme).allowsHitTesting(false)
+    }
+}
+#endif

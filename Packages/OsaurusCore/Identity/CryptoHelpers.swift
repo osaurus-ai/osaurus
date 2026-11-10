@@ -165,25 +165,6 @@ func signAccessPayload(_ payload: Data, privateKey: Data) throws -> Data {
     try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Access")
 }
 
-func signPairingPayload(_ payload: Data, privateKey: Data) throws -> Data {
-    try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Pairing")
-}
-
-/// Signed by the advertiser's agent key in the `/pair` response so the
-/// connector can prove the responder actually controls the agent address it
-/// discovered over Bonjour (anti-spoofing), bound to the server-issued
-/// challenge nonce (anti-replay). Distinct domain prefix from the connector's
-/// pairing signature so the two can't be cross-substituted.
-func signPairingServerPayload(_ payload: Data, privateKey: Data) throws -> Data {
-    try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Pairing Server")
-}
-
-/// Canonical bytes for the `/pair` server-identity signature. Centralised so
-/// the advertiser (signer) and connector (verifier) cannot drift.
-func pairingServerSigningPayload(agentAddress: String, nonce: String) -> Data {
-    Data("osaurus-pairing-server-v1:\(agentAddress.lowercased()):\(nonce)".utf8)
-}
-
 /// Sign an `AgentInvite` payload. Distinct domain prefix from access /
 /// pairing so an attacker can't substitute an invite signature for any
 /// other class of token.
@@ -227,7 +208,7 @@ func recoverAddress(payload: Data, signature: Data, domainPrefix: String) throws
     let compactSig = signature.prefix(64)
     // libsecp256k1 aborts the whole process (illegal-argument callback) when
     // the recovery id is outside 0...3, so the byte must be validated before
-    // it reaches the parser: every remote handshake (`/pair`, `/pair-invite`,
+    // it reaches the parser: every remote handshake (`/pair-invite`,
     // `/secure/session`) feeds attacker-controlled bytes into this function.
     // Accept the EIP-191 form (27/28, plus 29/30 for completeness) and the raw
     // 0...3 form some signers emit.

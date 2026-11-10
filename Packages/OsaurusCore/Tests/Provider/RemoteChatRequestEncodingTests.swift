@@ -355,6 +355,19 @@ struct RemoteChatRequestEncodingTests {
         )
     }
 
+    @Test func anthropicImplicitMaxTokens_usesTheModelsOwnLimitWhereTheWindowHasRoom() {
+        let cap = { (modelMax: Int?, window: Int?, prompt: Int) in
+            RemoteProviderService.anthropicImplicitMaxTokens(
+                resolved: 16_384, modelMaxTokens: modelMax, contextWindow: window, estimatedPromptTokens: prompt)
+        }
+        #expect(cap(64_000, 200_000, 20_000) == 64_000)
+        #expect(cap(64_000, 200_000, 120_000) == 50_000, "room left in 85% of the window")
+        #expect(cap(64_000, 200_000, 190_000) == 16_384, "never below the chat-wide budget")
+        #expect(cap(8_192, 200_000, 0) == 16_384, "a smaller published limit is not a raise")
+        #expect(cap(nil, 200_000, 0) == 16_384)
+        #expect(cap(64_000, nil, 0) == 16_384, "no window, no way to check the room")
+    }
+
     /// Adaptive-thinking Claude generations return HTTP 400 "`temperature` is
     /// deprecated for this model." — the encoder must omit the sampler knobs
     /// for them (opus-5 included) while older dated snapshots keep them.

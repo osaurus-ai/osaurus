@@ -280,4 +280,69 @@ struct PiRPCCodecTests {
         #expect(!adapter.tokenAllowsConfigWrites(context: context))
         #expect(adapter.retryMode(after: .turnFailed(runtime: "Pi", detail: "already in use"), context: context) == nil)
     }
+
+    /// The default arguments have no `{system_prompt_file}`; the agent's
+    /// instructions must still arrive.
+    @Test func instructionsArriveWithoutThePlaceholder() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("pi-auto-prompt")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let runtime = HarnessRuntime(name: "Pi", kind: .piRPC)
+        let adapter = PiRPCAdapter(runtime: runtime)
+
+        let context = HarnessFixtures.context(runtime: runtime, workingDirectory: directory, systemPrompt: " Be terse.\n")
+        let plan = try adapter.launchPlan(context: context, token: nil)
+        defer { plan.temporaryFiles.forEach { try? FileManager.default.removeItem(at: $0) } }
+        let args = plan.spec.arguments
+        let index = try #require(args.firstIndex(of: "--append-system-prompt"))
+        let file = try #require(plan.temporaryFiles.first)
+        #expect(args[index + 1] == file.path)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "Be terse.")
+        #expect(args.filter { $0 == "--append-system-prompt" }.count == 1)
+        #expect(!args.contains("--no-builtin-tools"), "only the Architect loses Pi's own tools")
+        #expect(!args.contains("-e"))
+
+        let blank = try adapter.launchPlan(
+            context: HarnessFixtures.context(runtime: runtime, workingDirectory: directory, systemPrompt: "  "),
+            token: nil)
+        #expect(!blank.spec.arguments.contains("--append-system-prompt"))
+        #expect(blank.temporaryFiles.isEmpty)
+    }
+
+    /// The Architect on Pi gets its drafting tools through the bundled
+    /// extension and none of Pi's coding tools.
+    @Test func architectLoadsTheOsaurusExtensionWithoutBuiltins() throws {
+        let directory = try HarnessFixtures.temporaryDirectory("pi-architect")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let runtime = HarnessRuntime(name: "Pi", kind: .piRPC)
+        let adapter = PiRPCAdapter(runtime: runtime)
+        let context = HarnessFixtures.context(
+            runtime: runtime, agentId: Agent.architectId, workingDirectory: directory,
+            systemPrompt: "You are the Architect.", apiBase: "http://127.0.0.1:1337", serverReachable: true)
+
+        let plan = try adapter.launchPlan(context: context, token: "osh_test")
+        defer { plan.temporaryFiles.forEach { try? FileManager.default.removeItem(at: $0) } }
+        let args = plan.spec.arguments
+        #expect(args.contains("--no-builtin-tools"))
+        let extensionPath = try #require(args.firstIndex(of: "-e").map { args[$0 + 1] })
+        let source = try String(contentsOfFile: extensionPath, encoding: .utf8)
+        #expect(source.contains("/mcp/tools"))
+        #expect(source.contains("/mcp/call"))
+        #expect(source.contains("workflow_propose_save"))
+        #expect(adapter.tokenToolScope(context: context) == HarnessGrantStore.architectToolNames)
+        #expect(!adapter.tokenAllowsConfigWrites(context: context))
+
+        let down = try adapter.launchPlan(
+            context: HarnessFixtures.context(
+                runtime: runtime, agentId: Agent.architectId, workingDirectory: directory,
+                systemPrompt: "You are the Architect.", serverReachable: false),
+            token: "osh_test")
+        defer { down.temporaryFiles.forEach { try? FileManager.default.removeItem(at: $0) } }
+        #expect(!down.spec.arguments.contains("-e"))
+        let promptPath = try #require(down.spec.arguments.firstIndex(of: "--append-system-prompt").map {
+            down.spec.arguments[$0 + 1]
+        })
+        let prompt = try String(contentsOfFile: promptPath, encoding: .utf8)
+        #expect(prompt.hasPrefix("You are the Architect."))
+        #expect(prompt.contains("workflow tools are NOT connected"))
+    }
 }

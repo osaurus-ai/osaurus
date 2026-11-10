@@ -58,7 +58,7 @@ struct VADModeSettingsTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 24) {
+            SettingsPageContent {
                 // VAD Mode Toggle Card
                 vadToggleCard
 
@@ -89,8 +89,6 @@ struct VADModeSettingsTab: View {
 
                 Spacer()
             }
-            .padding(24)
-            .frame(maxWidth: .infinity)
         }
         .onAppear {
             if !hasLoadedSettings {
@@ -120,12 +118,12 @@ struct VADModeSettingsTab: View {
     // MARK: - VAD Toggle Card
 
     private var vadToggleCard: some View {
-        SettingsSection(title: "Wake Word", icon: "waveform.circle", anchorId: "voice.stt.vad") {
+        SettingsSection(title: "Wake Word", anchorId: "voice.stt.vad") {
             SettingsToggle(
-                title: L("Enable Wake Word"),
+                title: "Enable Wake Word",
                 description: vadEnabled
-                    ? L("Always listening for agent names")
-                    : L("Say an agent's name to open a chat with it"),
+                    ? "Always listening for agent names"
+                    : "Say an agent's name to open a chat with it",
                 isOn: $vadEnabled
             )
             .disabled(!canEnableVAD)
@@ -157,14 +155,11 @@ struct VADModeSettingsTab: View {
                             .frame(width: 36, height: 36)
                     }
                 }
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(theme.tertiaryBackground.opacity(0.8))
-                )
+                .padding(theme.space.s12)
+                .settingsChrome(.inset)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(theme.successColor.opacity(0.15), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .strokeBorder(theme.status.success.border, lineWidth: theme.stroke.default)
                 )
             }
 
@@ -186,10 +181,10 @@ struct VADModeSettingsTab: View {
     // MARK: - Requirements Card
 
     private var requirementsCard: some View {
-        SettingsSection(title: "Setup Required", icon: "exclamationmark.triangle.fill") {
+        SettingsSection(title: "Setup Required") {
             Text("Complete these steps to enable Wake Word", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
 
             VoiceRequirementRow(
                 title: L("Microphone Access"),
@@ -218,30 +213,23 @@ struct VADModeSettingsTab: View {
     // MARK: - Agent Selection Card
 
     private var agentSelectionCard: some View {
-        SettingsSection(title: "Activated Agents", icon: "person.2") {
+        SettingsSection(title: "Activated Agents") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Select which agents can be activated by voice", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
 
                 if enabledAgentIds.isEmpty {
                     HStack(spacing: 8) {
                         Image(systemName: "info.circle")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.warningColor)
+                            .glyphSize(12)
+                            .foregroundColor(theme.status.warning.foreground)
                         Text("Select at least one agent to enable Wake Word", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.warningColor)
+                            .font(SettingsFont.caption)
+                            .foregroundColor(theme.status.warning.foreground)
                     }
-                    .padding(12)
-                    .background(
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(theme.warningColor.opacity(0.08))
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(theme.warningColor.opacity(0.15), lineWidth: 1)
-                        }
-                    )
+                    .padding(theme.space.s12)
+                    .settingsChrome(.status(.warning))
                 }
 
                 // Agent list
@@ -270,8 +258,8 @@ struct VADModeSettingsTab: View {
     // MARK: - Wake Word Settings Card
 
     private var wakeWordSettingsCard: some View {
-        SettingsSection(title: "Custom Phrase", icon: "text.bubble") {
-            StyledSettingsTextField(
+        SettingsSection(title: "Custom Phrase") {
+            SettingsTextFieldRow(
                 label: "Custom Wake Phrase (Optional)",
                 text: $customWakePhrase,
                 placeholder: "e.g., Hey Osaurus",
@@ -296,9 +284,9 @@ struct VADModeSettingsTab: View {
     // MARK: - Behavior Settings Card
 
     private var behaviorSettingsCard: some View {
-        SettingsSection(title: "Behavior", icon: "gearshape") {
+        SettingsSection(title: "Behavior") {
             SettingsToggle(
-                title: L("Auto-Start Voice Input"),
+                title: "Auto-Start Voice Input",
                 description: "Immediately start voice input after agent activation",
                 isOn: $autoStartVoiceInput
             )
@@ -311,34 +299,17 @@ struct VADModeSettingsTab: View {
     // MARK: - Test Area Card
 
     private var testAreaCard: some View {
-        SettingsSection(title: "Test Wake Word Detection", icon: "mic") {
+        SettingsSection(title: "Test Wake Word Detection") {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Text("Speak an agent name to test detection", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
 
                     Spacer()
 
                     if isTestingVAD {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(theme.errorColor)
-                                .frame(width: 8, height: 8)
-                            Text("LISTENING", bundle: .module)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(theme.errorColor)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background(
-                            ZStack {
-                                Capsule()
-                                    .fill(theme.errorColor.opacity(0.1))
-                                Capsule()
-                                    .strokeBorder(theme.errorColor.opacity(0.2), lineWidth: 1)
-                            }
-                        )
+                        StatusChip(L("Listening"), tone: .error, showsDot: true)
                     }
                 }
 
@@ -351,72 +322,34 @@ struct VADModeSettingsTab: View {
                 // Transcription
                 VStack(alignment: .leading, spacing: 8) {
                     Text(testTranscription.isEmpty ? "Waiting for speech..." : testTranscription)
-                        .font(.system(size: 15))
-                        .foregroundColor(testTranscription.isEmpty ? theme.tertiaryText : theme.primaryText)
+                        .font(SettingsFont.body)
+                        .foregroundColor(testTranscription.isEmpty ? theme.text.tertiary : theme.text.primary)
                         .italic(testTranscription.isEmpty)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(16)
-                .background(
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(theme.inputBackground)
-
-                        if isTestingVAD {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [theme.accentColor.opacity(0.05), Color.clear],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                        }
-                    }
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    isTestingVAD
-                                        ? theme.accentColor.opacity(0.5) : theme.glassEdgeLight.opacity(0.15),
-                                    isTestingVAD ? theme.accentColor.opacity(0.2) : theme.inputBorder,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: isTestingVAD ? 1.5 : 1
-                        )
-                )
+                .padding(theme.space.s16)
+                .settingsChrome(.inset)
 
                 // Detection result
                 if let detection = testDetection {
                     HStack(spacing: 12) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 24))
-                            .foregroundColor(theme.successColor)
+                            .glyphSize(24)
+                            .foregroundColor(theme.status.success.foreground)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Detected: \(detection.agentName)", bundle: .module)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(theme.successColor)
+                                .font(SettingsFont.cardTitle)
+                                .foregroundColor(theme.status.success.foreground)
                             Text("Confidence: \(Int(detection.confidence * 100))%", bundle: .module)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.caption)
+                                .foregroundColor(theme.text.secondary)
                         }
 
                         Spacer()
                     }
-                    .padding(14)
-                    .background(
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(theme.successColor.opacity(0.1))
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(theme.successColor.opacity(0.2), lineWidth: 1)
-                        }
-                    )
+                    .padding(theme.space.s12)
+                    .settingsChrome(.status(.success))
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
 
@@ -424,10 +357,10 @@ struct VADModeSettingsTab: View {
                 if let error = testError {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(theme.errorColor)
+                            .foregroundColor(theme.status.error.foreground)
                         Text(error)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.errorColor)
+                            .font(SettingsFont.caption)
+                            .foregroundColor(theme.status.error.foreground)
                     }
                 }
 
@@ -441,20 +374,8 @@ struct VADModeSettingsTab: View {
                     if testDetection != nil || !testTranscription.isEmpty {
                         Button(action: clearTest) {
                             Text("Clear", bundle: .module)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(
-                                    ZStack {
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .fill(theme.tertiaryBackground)
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-                                    }
-                                )
                         }
-                        .buttonStyle(.plain)
+                        .assignedSettingsButtonStyle(.secondary)
                     }
 
                     Spacer()
@@ -558,13 +479,13 @@ private struct AgentToggleRow: View {
             // Agent icon
             ZStack {
                 Circle()
-                    .fill(isEnabled ? theme.accentColor.opacity(0.15) : theme.tertiaryBackground)
+                    .fill(isEnabled ? theme.surface.selected : theme.surface.hover)
 
                 if isEnabled {
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [theme.accentColor.opacity(0.1), Color.clear],
+                                colors: [theme.surface.hover, Color.clear],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -572,27 +493,27 @@ private struct AgentToggleRow: View {
                 }
 
                 Text(String(agent.name.prefix(1)).uppercased())
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
+                    .font(SettingsFont.cardTitle)
+                    .foregroundColor(isEnabled ? theme.text.link : theme.text.tertiary)
             }
             .frame(width: 36, height: 36)
             .overlay(
                 Circle()
                     .strokeBorder(
-                        isEnabled ? theme.accentColor.opacity(0.25) : theme.primaryBorder.opacity(0.1),
-                        lineWidth: 1
+                        isEnabled ? theme.border.strong : theme.border.subtle,
+                        lineWidth: theme.stroke.default
                     )
             )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(agent.name)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.primary)
 
                 if !agent.routingDescription.isEmpty {
                     Text(agent.routingDescription)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
             }
@@ -606,14 +527,13 @@ private struct AgentToggleRow: View {
                     set: { onToggle($0) }
                 )
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
+            .settingsSwitch()
         }
-        .padding(14)
+        .padding(theme.space.s12)
         .background(rowBackground)
         .overlay(rowBorder)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
@@ -621,42 +541,26 @@ private struct AgentToggleRow: View {
 
     private var rowBackground: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .fill(
                     isEnabled
-                        ? theme.accentColor.opacity(0.06) : theme.tertiaryBackground.opacity(isHovered ? 0.9 : 0.7)
+                        ? theme.surface.selected : (isHovered ? theme.surface.hover : theme.surface.subtle)
                 )
 
             if isEnabled || isHovered {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                     .fill(
-                        LinearGradient(
-                            colors: [
-                                (isEnabled ? theme.accentColor : theme.glassEdgeLight).opacity(isEnabled ? 0.06 : 0.04),
-                                Color.clear,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+                        isEnabled ? theme.selection.background : theme.surface.hover
                     )
             }
         }
     }
 
     private var rowBorder: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
+        RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
             .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        isEnabled
-                            ? theme.accentColor.opacity(0.25) : theme.glassEdgeLight.opacity(isHovered ? 0.15 : 0.08),
-                        isEnabled
-                            ? theme.accentColor.opacity(0.1) : theme.primaryBorder.opacity(isHovered ? 0.1 : 0.05),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
+                isEnabled ? theme.border.focus : (isHovered ? theme.border.default : theme.border.subtle),
+                lineWidth: theme.stroke.default
             )
     }
 }
@@ -667,64 +571,14 @@ private struct TestButton: View {
     let isActive: Bool
     let action: () -> Void
 
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: isActive ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 14))
                 Text(isActive ? L("Stop Test") : L("Start Test"))
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(buttonBackground)
-            .overlay(buttonBorder)
-            .shadow(
-                // Fixed radius: animating shadow radius re-renders the blur
-                // every frame; opacity alone reads the same on hover.
-                color: (isActive ? theme.errorColor : theme.accentColor).opacity(isHovered ? 0.4 : 0.25),
-                radius: 8,
-                x: 0,
-                y: 2
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
             }
         }
-    }
-
-    private var buttonBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isActive ? theme.errorColor : theme.accentColor)
-
-            if isHovered {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(0.1))
-            }
-        }
-    }
-
-    private var buttonBorder: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(isHovered ? 0.3 : 0.2),
-                        (isActive ? theme.errorColor : theme.accentColor).opacity(0.3),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
+        .assignedSettingsButtonStyle(isActive ? .destructive : .primary)
     }
 }
 

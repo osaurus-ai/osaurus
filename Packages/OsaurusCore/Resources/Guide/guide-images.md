@@ -10,8 +10,9 @@ Osaurus can create and edit images entirely on your Mac using local image models
 
 ## Setup
 
-- Settings… (⌘,) → Images → Image Models: browse and download on-device image model bundles, or import one from Hugging Face.
-- Settings… (⌘,) → Images → Defaults: choose the default generation model and (separately) the default edit model, the permission for image jobs and local and cloud video jobs, and the video defaults. The **Image model load policy** is under Advanced.
+- Settings… (⌘,) → Local Models → **Image**: browse and download on-device image model bundles (including native Wan 2.1 video bundles), or import one from Hugging Face.
+- Settings… (⌘,) → Models → Model Defaults → **Images & Video**: the default generation model, the default edit model, the text-to-video and image-to-video models (local Wan or a cloud provider), and the **Image Model Load Policy**.
+- Settings… (⌘,) → Images & Video: the permission for image jobs and local and cloud video jobs, and recent video jobs.
 - Image models are large; they load on demand and can temporarily displace the resident chat model while a job runs.
 
 ## Using it in chat
@@ -29,6 +30,6 @@ Qwen-Image 2.1/Turbo results include `effective_parameters`: the actual dimensio
 
 ## Notes
 
-- Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). The built-in Orchestrator has no image tool of its own — add an image-enabled agent to Settings → Orchestrator → Subagents → Allowed subagents and the Orchestrator delegates "generate an image of …" to it.
-- If no image model is installed, the tool is not offered — download one in Images → Image Models first.
+- Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). The built-in Orchestrator has no image tool of its own — add an image-enabled agent to Settings → Agents → Delegation → Allowed subagents and the Orchestrator delegates "generate an image of …" to it.
+- If no image model is installed, the tool is not offered — download one in Local Models → Image first.
 - Every image or video job is recorded in Settings… (⌘,) → Insights (**Audio & Media** scope tab, **Media** rows) with the prompt, size, step count and provider. Local MLX jobs are **Local**; Venice jobs are **Cloud**; Osaurus Cloud jobs appear as **Router** rows.

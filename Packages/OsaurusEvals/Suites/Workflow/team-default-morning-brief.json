@@ -1,0 +1,82 @@
+{
+  "id": "workflow.team-default-morning-brief",
+  "domain": "workflow",
+  "label": "workflow • Morning Brief reads today's calendar, due reminders, and unread mail",
+  "query": "Morning Brief reads today's calendar, due reminders, and unread mail",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "default-workflow-morning-brief",
+      "input": {},
+      "toolResults": {
+        "events": {
+          "events": [
+            {
+              "id": "event-events-1",
+              "title": "Quarterly review with Dana",
+              "start": "{{date:today_start+960m}}",
+              "end": "{{date:today_start+1020m}}",
+              "calendarTitle": "Work"
+            }
+          ],
+          "count": 1
+        },
+        "due": {
+          "reminders": [
+            {
+              "id": "reminder-due-1",
+              "title": "Renew passport",
+              "dueDate": "{{date:today_start+1380m}}",
+              "listTitle": "Personal",
+              "isCompleted": false
+            }
+          ],
+          "count": 1
+        },
+        "mail": {
+          "messages": [
+            {
+              "id": "<mail-1@mail.test>",
+              "subject": "Invoice 4471 is overdue",
+              "sender": "billing@acme.test",
+              "dateReceived": "{{date:today_start+492m}}",
+              "isRead": false
+            }
+          ],
+          "count": 1
+        }
+      },
+      "toolArguments": {
+        "events": {
+          "start": "{{date:today_start}}",
+          "end": "{{date:today_end}}"
+        },
+        "due": {
+          "due_before": "{{date:today_end}}"
+        },
+        "mail": {
+          "unread_only": true,
+          "limit": 20
+        }
+      },
+      "outputKeys": [
+        "brief"
+      ],
+      "outputContains": {
+        "brief": [
+          "Dana",
+          "passport"
+        ]
+      },
+      "outputExcludes": {
+        "brief": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

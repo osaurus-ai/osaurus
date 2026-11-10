@@ -19,6 +19,17 @@ extension ChatSession {
 
     var isHarnessAgentActive: Bool { harnessSelection != nil }
 
+    /// Tool steps render in their own group, away from the text, so text
+    /// that resumes after one starts a new paragraph instead of running on
+    /// from the sentence before it.
+    nonisolated static func harnessTextLead(resumingAfterTool: Bool, content: String) -> String {
+        guard resumingAfterTool,
+            !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !content.hasSuffix("\n\n")
+        else { return "" }
+        return content.hasSuffix("\n") ? "\n" : "\n\n"
+    }
+
     /// Run one turn on the agent's harness, streaming into `turn`.
     func runHarnessTurn(
         _ selection: HarnessSelection,
@@ -51,6 +62,7 @@ extension ChatSession {
         var firstOutputAt: Date?
         var lastNotice: String?
         var openDialogs: [String: ClarifyPromptState] = [:]
+        var textFollowsTool = false
 
         func noteOutput(_ text: String) {
             let now = Date()
@@ -102,11 +114,14 @@ extension ChatSession {
                 switch event {
                 case .text(let text):
                     noteOutput(text)
-                    processor.receiveDelta(text)
+                    let lead = Self.harnessTextLead(resumingAfterTool: textFollowsTool, content: turn.content)
+                    textFollowsTool = false
+                    processor.receiveDelta(lead + text)
                 case .reasoning(let text):
                     noteOutput(text)
                     processor.receiveReasoning(text)
                 case .toolStarted(let callId, let name):
+                    textFollowsTool = true
                     await processor.finalize()
                     turn.noteRemoteToolStarted(callId: callId ?? name, name: name)
                     rebuildVisibleBlocks()
@@ -147,6 +162,21 @@ extension ChatSession {
         }
         await processor.finalize()
         turn.finalizeRemoteToolActivity()
+
+        // Same card as the built-in loop's; only its Save writes.
+        if let proposal = WorkflowDraftStore.shared.takeSaveProposal(sessionID: chatId.uuidString),
+            isRunActive(runId)
+        {
+            promptQueue.enqueue(
+                .workflowSave(
+                    WorkflowSavePromptState(
+                        draftID: proposal.draftID,
+                        name: proposal.name,
+                        version: proposal.version,
+                        changelog: proposal.changelog,
+                        updates: proposal.updates,
+                        trigger: WorkflowDraftTrigger.proposed(for: proposal.draftID))))
+        }
 
         if let firstOutputAt {
             turn.timeToFirstToken = max(0, firstOutputAt.timeIntervalSince(streamStart))

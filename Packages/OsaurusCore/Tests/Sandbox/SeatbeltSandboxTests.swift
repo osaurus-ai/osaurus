@@ -306,6 +306,45 @@ struct SeatbeltSandboxTests {
         #expect(!FileManager.default.fileExists(atPath: outsideWrite.path))
     }
 
+    @Test("an open-network profile still cannot connect to host loopback")
+    func openProfileDeniesLoopback() async throws {
+        let profile = SeatbeltSandbox.profile(workspaceRoot: "/w", tempDir: "/t", network: .allowed)
+        #expect(profile.contains("(deny network-outbound (remote ip \"localhost:*\"))"))
+
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec"),
+            FileManager.default.isExecutableFile(atPath: "/usr/bin/nc"),
+            let listener = LoopbackListener()
+        else { return }
+        defer { listener.close() }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-seatbelt-loopback-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let request = { (profile: String) in
+            SeatbeltExecutor.Request(
+                command: "/usr/bin/nc -z -w 2 127.0.0.1 \(listener.port)",
+                env: [:],
+                cwd: root.path,
+                timeout: 10,
+                profile: profile,
+                stdoutTee: nil,
+                stderrTee: nil,
+                onProcessStarted: nil
+            )
+        }
+        let open = SeatbeltSandbox.profile(
+            workspaceRoot: root.path, tempDir: SeatbeltSandbox.scratchDir, network: .allowed)
+        guard let result = try await runOrSkip(request(open)) else { return }
+        #expect(result.exitCode != 0, "connected to host loopback: \(result.stdout)\(result.stderr)")
+
+        // The listener itself is reachable: the refusal is the profile's.
+        let loopbackAllowed = open.replacingOccurrences(
+            of: "(deny network-outbound (remote ip \"localhost:*\"))", with: "")
+        guard let control = try await runOrSkip(request(loopbackAllowed)) else { return }
+        #expect(control.exitCode == 0, "control could not connect: \(control.stderr)")
+    }
+
     @Test("network none denies network in the profile")
     func profileDeniesNetwork() {
         let profile = SeatbeltSandbox.profile(
@@ -314,13 +353,18 @@ struct SeatbeltSandboxTests {
         #expect(!profile.contains("(allow network*)"))
     }
 
-    @Test("proxy allowlist mode fails closed to no network")
-    func proxyModeFailsClosed() {
-        #expect(SeatbeltSandbox.NetworkPolicy.from(configNetwork: "outbound") == .allowed)
-        #expect(SeatbeltSandbox.NetworkPolicy.from(configNetwork: "none") == .denied)
+    @Test("each agent's own policy; an allowlist fails closed to no network")
+    @MainActor
+    func perAgentNetworkFailsClosed() {
+        #expect(SandboxManager.seatbeltNetwork(for: .open) == .allowed)
+        #expect(SandboxManager.seatbeltNetwork(for: .none) == .denied)
         // Seatbelt can't enforce a domain allowlist — it must not silently
-        // widen "proxy" to unrestricted egress.
-        #expect(SeatbeltSandbox.NetworkPolicy.from(configNetwork: "proxy") == .denied)
+        // widen it to unrestricted egress.
+        #expect(SandboxManager.seatbeltNetwork(for: .allowlist(["example.com"])) == .denied)
+        // System execs and agent-less users (workflow environments,
+        // diagnostics) keep the network.
+        #expect(SandboxManager.seatbeltNetwork(forUser: nil) == .allowed)
+        #expect(SandboxManager.seatbeltNetwork(forUser: "agent-diag") == .allowed)
     }
 
     @Test("profile paths with quotes are escaped")
@@ -371,4 +415,35 @@ struct SeatbeltSandboxTests {
         #expect(mapped["HOME"] == "\(root)/agents/a")
         #expect(mapped["LANG"] == "C")
     }
+}
+
+/// A TCP socket listening on 127.0.0.1 at an ephemeral port. The kernel
+/// completes the handshake from the backlog, so nothing needs to accept.
+private final class LoopbackListener {
+    let fd: Int32
+    let port: UInt16
+
+    init?() {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        addr.sin_port = 0
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let bound = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, len) == 0 && listen(fd, 8) == 0 && getsockname(fd, $0, &len) == 0
+            }
+        }
+        guard bound else {
+            Darwin.close(fd)
+            return nil
+        }
+        self.fd = fd
+        self.port = UInt16(bigEndian: addr.sin_port)
+    }
+
+    func close() { Darwin.close(fd) }
 }

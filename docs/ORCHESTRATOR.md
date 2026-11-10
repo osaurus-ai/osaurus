@@ -72,6 +72,16 @@ default_agent:
 - "Create a file-organizer agent with a working folder and switch to it."
 - "Export my setup as a template."
 - "Make me an agent from the Cloud Agent template that summarizes RSS feeds." — bases the new agent on a template flagged Available to the Orchestrator (Agents → Templates).
+- "Run Daily Digest every weekday at 8." / "Every morning, send me a quote." — an `automations:` entry (workflow, or instructions alone).
+
+## Workflows and automations
+
+The prompt's routing line (`DefaultAgentSystemPromptBuilder.workflowsLine`, compact and full variants) teaches one order for "run something when X happens", applied as an `automations:` entry through `osaurus_config`:
+
+1. An installed workflow (`workflow` + `input`). `osaurus_config` action `workflows` lists every installed workflow with `orchestrator_can_run`; `run_workflow` itself stays limited to workflows marked visible.
+2. A new workflow: `architect_handoff` with the trigger in the brief. The Architect passes it as `trigger` on `workflow_propose_save`, validated by `ConfigEvents.build` against the draft, and the save card creates the automation on Save (`WorkflowSavePromptState.save`).
+3. An agent, only for open-ended tool work.
+4. `instructions` alone: a `prompt` action (`EventAction.prompt`, `PromptRunWorker`) that runs one tool-less generation. It never runs the Default agent, so `BuiltInAgentGuard` still holds.
 
 ## Scope and security
 

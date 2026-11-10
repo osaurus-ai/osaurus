@@ -22,7 +22,7 @@ struct ToolsTemplatesSection: View {
                 "Parser overrides are applied at model load. Tool-provider and template controls are persisted here until their host bridges land."
         ) {
             SettingsToggle(
-                title: L("Allow Implicit Tool Calls"),
+                title: "Allow Implicit Tool Calls",
                 description:
                     "Let the model invoke tools without an explicit `tool_choice` from the client.",
                 isOn: $draft.tools.enableAutoToolChoice
@@ -57,24 +57,12 @@ struct ToolsTemplatesSection: View {
                     "MCP config-file override is persisted only; the current tool registry still owns provider loading."
             )
 
-            SettingsField(
+            SettingsFieldRow(
                 label: "Custom Chat Template",
                 hint:
                     "Override the model's chat template. Leave blank to use the one shipped with the model."
             ) {
-                TextEditor(text: customTemplateBinding)
-                    .font(.system(size: 12, design: .monospaced))
-                    .frame(minHeight: 100, maxHeight: 180)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                SettingsTextEditor(text: customTemplateBinding, minHeight: 100, maxHeight: 180, monospaced: true)
             }
             ServerSettingsPlannedBanner(
                 blurb:

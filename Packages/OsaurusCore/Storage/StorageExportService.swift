@@ -50,6 +50,7 @@ public actor StorageExportService {
         public var databasesExported: Int
         public var jsonFilesDecrypted: Int
         public var blobsDecrypted: Int
+        public var conversationsExported: Int = 0
         public var destination: URL
     }
 
@@ -92,7 +93,6 @@ public actor StorageExportService {
         // 2. JSON files — decrypt every `.osec` under known dirs.
         let osecRoots = [
             OsaurusPaths.agents(),
-            OsaurusPaths.themes(),
             OsaurusPaths.schedules(),
             OsaurusPaths.watchers(),
             OsaurusPaths.providers(),
@@ -111,7 +111,21 @@ public actor StorageExportService {
             summary.blobsDecrypted = decryptBlobsDir(blobsDir, key: key, into: destination)
         }
 
-        // 4. Metadata stamp so the user knows what they have.
+        // 4. Conversations — one directory per chat, from the sync store.
+        if let core = SyncService.shared.core {
+            let root = destination.appendingPathComponent("conversations", isDirectory: true)
+            for conversation in (try? core.conversations()) ?? [] where conversation.kind == .conversation {
+                let path = root.appendingPathComponent(conversation.scope, isDirectory: true).path
+                do {
+                    _ = try await core.exportConversation(scope: conversation.scope, path: path)
+                    summary.conversationsExported += 1
+                } catch {
+                    log.error("export: skipped conversation: \(error.syncLogDetail, privacy: .public)")
+                }
+            }
+        }
+
+        // 5. Metadata stamp so the user knows what they have.
         let stamp = """
             Osaurus plaintext backup
             Generated: \(ISO8601DateFormatter().string(from: Date()))

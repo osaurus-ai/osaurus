@@ -268,3 +268,16 @@ public final class ClipboardService: ObservableObject {
         hasNewContent = false
     }
 }
+
+#if OSAURUS_DESIGN_INSPECTOR
+extension ClipboardService {
+    /// Separate service instance without monitoring or reading the system pasteboard.
+    static func inspectorMenuSample(content: ClipboardContent = .text("Local menu verification text")) -> ClipboardService {
+        let service = ClipboardService()
+        service.currentContent = content
+        service.lastSourceApp = "Local sample"
+        service.hasNewContent = true
+        return service
+    }
+}
+#endif

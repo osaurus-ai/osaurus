@@ -90,6 +90,10 @@ final class ImageGenerationPanelModel: ObservableObject {
         start { await ImageGenerationService.shared.upscale(params, jobID: self.jobID) }
     }
 
+    #if OSAURUS_DESIGN_SYSTEM
+    func setInspectionResults(_ values: [GeneratedImage]) { results = values }
+    #endif
+
     func cancel() {
         guard isBusy, !isCancelling else { return }
         isCancelling = true
@@ -223,9 +227,25 @@ enum ImageGenerationDurationStore {
 }
 
 struct ImageGenerationPanelView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorVerificationWidth) private var inspectorWidth
+    #endif
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = ImageGenerationPanelModel()
+    #if OSAURUS_DESIGN_SYSTEM
+    struct InspectionDisplay {
+        let phase: ImageGenerationPanelModel.Phase
+        var resultURL: URL? = nil
+        var sampling: ImageSamplingCapabilities? = nil
+        var results: [GeneratedImage] = []
+        var isCancelling = false
+        var previewURL: URL? = nil
+        var sourceURLs: [URL] = []
+        var prompt = ""
+    }
+    #endif
 
     /// Bundle id to drive (e.g. "FLUX.1-schnell"). Locked for this panel.
     let modelId: String
@@ -233,7 +253,16 @@ struct ImageGenerationPanelView: View {
     /// `true` ⇒ image-edit bundle (needs a source image); `false` ⇒ text→image.
     let isEdit: Bool
     let modelInfo: ImageModelInfo
+    #if OSAURUS_DESIGN_SYSTEM
+    var inspectionDisplay: InspectionDisplay? = nil
+    #endif
     private var isUpscale: Bool { modelInfo.capabilities.upscale }
+    private var sheetWidth: CGFloat {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplay != nil { return min(620, inspectorWidth) }
+        #endif
+        return 620
+    }
     private var requestPolicy: ImageModelRequestPolicy {
         ImageModelRequestPolicy(canonical: modelInfo.canonicalName)
     }
@@ -268,17 +297,20 @@ struct ImageGenerationPanelView: View {
         try? ImagePanelParameterInput(steps: stepsText, guidance: guidanceText, seed: seedText)
     }
 
-    private var inputError: String? {
+    private var inputError: ImagePanelParameterInput.InputError? {
         do {
             _ = try ImagePanelParameterInput(steps: stepsText, guidance: guidanceText, seed: seedText)
             return nil
         } catch let error as ImagePanelParameterInput.InputError {
-            return error.localizedMessage
+            return error
         } catch { return nil }
     }
 
     private var canRun: Bool {
-        (isUpscale || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #if OSAURUS_DESIGN_SYSTEM
+        if inspectionDisplay != nil { return false }
+        #endif
+        return (isUpscale || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             && (!(isEdit || isUpscale) || (!sourceURLs.isEmpty && sourceURLs.count <= sourceLimit))
             && parsedInput != nil
             && samplingInputValid
@@ -288,314 +320,321 @@ struct ImageGenerationPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if isEdit || isUpscale { sourcePicker }
-                    if !isUpscale { promptField }
-                    paramsRow
-                    advancedParams
-                    statusCard
-                    if model.isBusy, let preview = model.previewImage {
-                        Image(nsImage: preview).resizable().scaledToFit().frame(maxHeight: 256)
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: theme.space.s24) {
+                        if model.phase != .idle {
+                            activitySection.id("imageGeneration.activity")
+                        }
+                        if isEdit || isUpscale { sourcePicker }
+                        if !isUpscale { promptField }
+                        outputSettings
+                        if !isUpscale { advancedParams }
                     }
-                    if let url = model.resultURL { resultCard(url) }
+                    .padding(theme.space.s24)
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 18)
+                .onChange(of: model.isBusy) { _, _ in
+                    proxy.scrollTo("imageGeneration.activity", anchor: .top)
+                }
             }
+            Divider()
             footer
         }
         .task(id: modelId) {
+            #if OSAURUS_DESIGN_SYSTEM
+            if let inspectionDisplay {
+                model.phase = inspectionDisplay.phase
+                model.resultURL = inspectionDisplay.resultURL
+                model.resultSeed = inspectionDisplay.resultURL == nil ? nil : 1234
+                model.isCancelling = inspectionDisplay.isCancelling
+                model.previewImage = inspectionDisplay.previewURL.flatMap { NSImage(contentsOf: $0) }
+                sourceURLs = inspectionDisplay.sourceURLs
+                prompt = inspectionDisplay.prompt
+                if let sampling = inspectionDisplay.sampling { samplingCapabilities = sampling }
+                model.setInspectionResults(inspectionDisplay.results)
+                return
+            }
+            #endif
             do {
                 samplingCapabilities = try await ImageGenerationService.shared.samplingCapabilities(for: modelId)
             } catch {
                 model.phase = .failed(error.localizedDescription)
             }
         }
-        .fittedSheetFrame(width: 620, height: 640)
-        .background(theme.primaryBackground)
+        .fittedSheetFrame(width: sheetWidth, height: 640)
+        .background(theme.surface.canvas)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: isEdit ? "wand.and.stars" : "photo.badge.plus")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.accentColor)
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text(isUpscale ? "Upscale Image" : (isEdit ? "Edit Image" : "Generate Image"), bundle: .module)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundColor(theme.primaryText)
-            Text(displayName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer()
-            Button(action: { dismiss() }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
+                .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle)
+                .foregroundColor(theme.text.primary)
+                .accessibilityAddTraits(.isHeader)
+            supportingText(displayName)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .overlay(Rectangle().fill(theme.cardBorder).frame(height: 1), alignment: .bottom)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
     }
 
     // MARK: - Inputs
 
     private var sourcePicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        panelSection(sourceLimit > 1 ? "Source images" : "Source image") {
             if sourceLimit > 1 {
-                Text(localized: "Source images (ordered, up to \(sourceLimit))").font(.system(size: 11))
-            } else {
-                fieldLabel("Source image")
+                supportingText(L("Choose up to \(sourceLimit) images in the order they should be used."))
             }
             ForEach(Array(sourceURLs.enumerated()), id: \.offset) { index, url in
                 HStack {
                     Text("\(index + 1). \(url.lastPathComponent)")
-                        .font(.system(size: 11)).lineLimit(1)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription).lineLimit(1)
                     Spacer()
                     if sourceLimit > 1 {
-                        Button { sourceURLs.swapAt(index, index - 1) } label: {
-                            Image(systemName: "arrow.up")
-                        }.disabled(index == 0)
-                        Button { sourceURLs.remove(at: index) } label: {
-                            Image(systemName: "minus.circle")
+                        SettingsIconButton("arrow.up", help: "Move image up", size: .compact, role: .tertiary) {
+                            sourceURLs.swapAt(index, index - 1)
+                        }
+                        .disabled(index == 0)
+                        SettingsIconButton("minus.circle", help: "Remove image", size: .compact, role: .tertiary) {
+                            sourceURLs.remove(at: index)
                         }
                     }
                 }
             }
-            Button(action: pickSource) {
-                Text(sourceURLs.isEmpty ? "Choose…" : "Replace…", bundle: .module)
-            }.buttonStyle(SettingsButtonStyle())
+            SettingsButton(.secondary, sourceURLs.isEmpty ? "Choose…" : "Replace…", icon: "photo", size: .compact, action: pickSource)
             if sourceURLs.count > sourceLimit {
-                Text(localized: "Choose up to \(sourceLimit) source images.").foregroundColor(theme.warningColor)
+                Text(localized: "Choose up to \(sourceLimit) source images.").foregroundColor(
+                    theme.status.warning.foreground
+                )
             }
         }
     }
 
     private var promptField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            fieldLabel("Prompt")
-            TextEditor(text: $prompt)
-                .font(.system(size: 13))
-                .frame(height: 70)
-                .padding(8)
-                .scrollContentBackground(.hidden)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
+        panelSection("Prompt") {
+            SettingsTextEditor(
+                text: $prompt,
+                placeholder: isEdit ? L("Describe what to change") : L("Describe the image you want to create"),
+                minHeight: 70, maxHeight: 144
+            )
+            .settingsFieldAccessibility(L("Prompt"))
+
             if modelInfo.capabilities.negativePrompt && (!isEdit || modelInfo.capabilities.editNegativePrompt) {
-            fieldLabel("Negative prompt (optional)")
-            TextField("", text: $negativePrompt)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-                if requestPolicy.isQwen21 {
-                    Text(localized: "Negative prompt applies when guidance is above 1.")
-                        .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                SettingsFieldRow(
+                    label: "Negative prompt (optional)",
+                    hint: requestPolicy.isQwen21 ? "Negative prompt applies when guidance is above 1." : nil
+                ) {
+                    SettingsTextField(placeholder: L("What to leave out"), text: $negativePrompt)
                 }
             }
             if modelInfo.canonicalName == "ideogram" {
-                Text(localized: "Use a structured JSON caption.")
-                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
-                Text(verbatim: "{\"high_level_description\": \"your description\"}")
-                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                supportingText(L("Use a structured JSON caption."))
+                supportingText(#"{"high_level_description": "your description"}"#)
+            }
+        }
+    }
+
+    private var outputSettings: some View {
+        panelSection("Output") {
+            if isEdit {
+                Toggle(isOn: $useSourceSize) { Text(localized: "Use source aspect ratio") }
+                    .settingsCheckbox()
+            }
+            fieldGrid {
+                if isUpscale {
+                    SettingsFieldRow(label: "Scale") {
+                        segmentedControl(selection: $upscaleFactor, options: [
+                            .init(2, "2×", verbatim: true),
+                            .init(4, "4×", verbatim: true),
+                        ], label: "Scale")
+                    }
+                    seedField
+                } else {
+                    if requestPolicy.isFlux3 {
+                        dimensionField("Width", value: $customWidth, anchor: "imageGeneration.width")
+                        dimensionField("Height", value: $customHeight, anchor: "imageGeneration.height")
+                    } else {
+                        SettingsFieldRow(label: "Size") {
+                            segmentedControl(
+                                selection: $sizeIndex,
+                                options: sizes.indices.map { .init($0, "\(sizes[$0].formatted())²", verbatim: true) },
+                                label: "Size"
+                            )
+                            .disabled(isEdit && useSourceSize)
+                        }
+                    }
+                    if !isEdit {
+                        SettingsFieldRow(label: "Images") {
+                            SettingsMenuPicker(selection: $imageCount) {
+                                ForEach(1...8, id: \.self) { count in Text(verbatim: count.formatted()).tag(count) }
+                            }
+                            .accessibilityLabel(Text("Images", bundle: .module))
+                            .disabled(model.isBusy)
+                        }
+                    }
+                }
+            }
+            if isUpscale {
+                supportingText(L("SeedVR2 restores the image in one step. The source aspect ratio is preserved."))
             }
         }
     }
 
     private var advancedParams: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if isUpscale {
-                Text(localized: "SeedVR2 restores the image in one step. The source aspect ratio is preserved.")
-                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
-            } else {
-            HStack {
-                Text(localized: "Steps").font(.system(size: 11))
-                TextField(String(modelInfo.defaultSteps ?? 20), text: $stepsText).frame(width: 70)
-                    .disabled(modelInfo.canonicalName == "qwen-image-2.1-turbo")
-                    .settingsLandingAnchor("imageGeneration.steps")
+        panelSection("Advanced options") {
+            fieldGrid {
+                seedField
+                parameterField(
+                    "Steps", value: $stepsText, placeholder: String(modelInfo.defaultSteps ?? 20),
+                    error: inputError == .steps ? inputError?.localizedMessage : nil,
+                    anchor: "imageGeneration.steps"
+                )
+                .disabled(modelInfo.canonicalName == "qwen-image-2.1-turbo")
                 if requestPolicy.supportsGuidance {
-                Text(localized: "Guidance").font(.system(size: 11))
-                TextField(String(modelInfo.defaultGuidance ?? 3.5), text: $guidanceText).frame(width: 70)
+                    parameterField(
+                        "Guidance", value: $guidanceText, placeholder: String(modelInfo.defaultGuidance ?? 3.5),
+                        error: inputError == .guidance ? inputError?.localizedMessage : nil
+                    )
                 }
-            }
-            Toggle(isOn: $livePreviews) { Text(localized: "Live previews") }
-                .disabled(model.isBusy)
-                .settingsLandingAnchor("imageGeneration.previews")
-            if !samplingCapabilities.samplers.isEmpty {
-                Picker(selection: $sampler) {
-                    Text(localized: "Bundle default").tag("")
-                    ForEach(samplingCapabilities.samplers, id: \.self) { Text(verbatim: $0).tag($0) }
-                } label: { Text(localized: "Sampler") }
-                .settingsLandingAnchor("imageGeneration.sampler")
-                .disabled(model.isBusy)
-            }
-            if !samplingCapabilities.schedulers.isEmpty {
-                Picker(selection: $scheduler) {
-                    Text(localized: "Bundle default").tag("")
-                    ForEach(samplingCapabilities.schedulers, id: \.self) { Text(verbatim: $0).tag($0) }
-                } label: { Text(localized: "Scheduler") }
-                .settingsLandingAnchor("imageGeneration.scheduler")
-                .disabled(model.isBusy)
-            }
-            if samplingCapabilities.supportsShift {
-                HStack {
-                    Text(localized: "Timestep shift")
-                    TextField("", text: $shiftText).frame(width: 90)
-                        .disabled(model.isBusy)
+                if !samplingCapabilities.samplers.isEmpty {
+                    samplingPicker("Sampler", selection: $sampler, values: samplingCapabilities.samplers,
+                        anchor: "imageGeneration.sampler")
                 }
-                .settingsLandingAnchor("imageGeneration.shift")
-                if !samplingInputValid {
-                    Text(localized: "Timestep shift must be a finite number.")
-                        .foregroundColor(theme.warningColor)
+                if !samplingCapabilities.schedulers.isEmpty {
+                    samplingPicker("Scheduler", selection: $scheduler, values: samplingCapabilities.schedulers,
+                        anchor: "imageGeneration.scheduler")
                 }
-            }
-            if !isEdit {
-                Picker("Images", selection: $imageCount) {
-                    ForEach(1...8, id: \.self) { count in Text("\(count)").tag(count) }
-                }.frame(width: 160).disabled(model.isBusy)
-            }
-            }
-            if isEdit {
-                Toggle(isOn: $useSourceSize) {
-                    Text(localized: "Use source aspect ratio")
-                }.font(.system(size: 11))
+                if samplingCapabilities.supportsShift {
+                    parameterField(
+                        "Timestep shift", value: $shiftText, placeholder: L("Bundle default"),
+                        error: samplingInputValid ? nil : L("Timestep shift must be a finite number."),
+                        anchor: "imageGeneration.shift"
+                    )
+                    .disabled(model.isBusy)
+                }
             }
             if modelInfo.canonicalName == "qwen-image-2.1-turbo" {
-                Text(localized: "Turbo uses the fixed sampling schedule from its bundle.")
-                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                supportingText(L("Turbo uses the fixed sampling schedule from its bundle."))
             } else if requestPolicy.isQwen21 {
-                Text(localized: "Qwen-Image-2.1 uses at least 2 steps.")
-                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                supportingText(L("Qwen-Image-2.1 uses at least 2 steps."))
             }
-            if let inputError {
-                Text(verbatim: inputError).font(.system(size: 11)).foregroundColor(theme.warningColor)
-            }
+            Toggle(isOn: $livePreviews) { Text(localized: "Live previews") }
+                .settingsCheckbox()
+                .disabled(model.isBusy)
+                .settingsLandingAnchor("imageGeneration.previews")
         }
     }
 
-    private var paramsRow: some View {
-        HStack(spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                if isUpscale {
-                    fieldLabel("Scale")
-                    Picker("Scale", selection: $upscaleFactor) {
-                        Text("2×").tag(2)
-                        Text("4×").tag(4)
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 150)
-                } else {
-                if requestPolicy.isFlux3 {
-                    HStack {
-                        VStack(alignment: .leading) {
-                            fieldLabel("Width")
-                            TextField("", value: $customWidth, format: .number.grouping(.never))
-                                .frame(width: 76)
-                                .onSubmit { customWidth = requestPolicy.snappedDimension(customWidth, limits: modelInfo.requestLimits) }
-                        }.settingsLandingAnchor("imageGeneration.width")
-                        VStack(alignment: .leading) {
-                            fieldLabel("Height")
-                            TextField("", value: $customHeight, format: .number.grouping(.never))
-                                .frame(width: 76)
-                                .onSubmit { customHeight = requestPolicy.snappedDimension(customHeight, limits: modelInfo.requestLimits) }
-                        }.settingsLandingAnchor("imageGeneration.height")
-                    }.disabled(isEdit && useSourceSize)
-                } else {
-                fieldLabel("Size")
-                Picker("", selection: $sizeIndex) {
-                    ForEach(sizes.indices, id: \.self) { i in
-                        Text("\(sizes[i])²").tag(i)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .disabled(isEdit && useSourceSize)
-                .frame(width: 150)
-                }
-                }
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                fieldLabel("Seed (optional)")
-                TextField("random", text: $seedText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .frame(width: 120)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-            }
-            Spacer()
+    private var seedField: some View {
+        parameterField(
+            "Seed (optional)", value: $seedText, placeholder: L("Random"),
+            error: inputError == .seed ? inputError?.localizedMessage : nil
+        )
+    }
+
+    private func dimensionField(_ label: String, value: Binding<Int>, anchor: String) -> some View {
+        SettingsFieldRow(label: label, anchorId: anchor) {
+            SettingsTextField(placeholder: "", text: dimensionText(value), monospaced: true, onSubmit: {
+                value.wrappedValue = requestPolicy.snappedDimension(value.wrappedValue, limits: modelInfo.requestLimits)
+            })
+            .disabled(isEdit && useSourceSize)
         }
+    }
+
+    private func parameterField(_ label: String, value: Binding<String>, placeholder: String,
+        error: String?, anchor: String? = nil) -> some View {
+        SettingsFieldRow(label: label, hint: error, anchorId: anchor, verbatimHint: true) {
+            SettingsTextField(placeholder: placeholder, text: value, monospaced: true, isInvalid: error != nil)
+        }
+    }
+
+    private func samplingPicker(_ label: String, selection: Binding<String>, values: [String], anchor: String) -> some View {
+        SettingsFieldRow(label: label, anchorId: anchor) {
+            SettingsMenuPicker(selection: selection) {
+                Text(localized: "Bundle default").tag("")
+                ForEach(values, id: \.self) { Text(verbatim: $0).tag($0) }
+            }
+            .accessibilityLabel(Text(LocalizedStringKey(label), bundle: .module))
+            .disabled(model.isBusy)
+        }
+    }
+
+    private func segmentedControl<Value: Hashable>(selection: Binding<Value>,
+        options: [SettingsPickerRow<Value>.Option], label: LocalizedStringKey) -> some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        AssignedBaseSegmentedPicker(selection: selection, options: options)
+            .accessibilityLabel(Text(label, bundle: .module))
+        #else
+        Picker(selection: selection) {
+            SettingsPickerOptions(options: options)
+        } label: {
+            Text(label, bundle: .module)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        #endif
+    }
+
+    private func fieldGrid<Fields: View>(@ViewBuilder fields: () -> Fields) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: max(156, 112 * theme.fontScale)), spacing: theme.space.s12, alignment: .topLeading)],
+            alignment: .leading, spacing: theme.space.s12, content: fields
+        )
     }
 
     // MARK: - Status + result
 
-    private var statusCard: some View {
-        Group {
-            if model.isCancelling {
-                statusRow(
-                    spinner: true,
-                    text: L("Cancelling…") + " · " + Self.formatDuration(model.elapsed),
-                    color: theme.warningColor
-                )
-            } else {
-                switch model.phase {
-                case .idle:
-                    EmptyView()
-                case .loadingModel(let m):
-                    let base = m.isEmpty ? L("Loading model…") : "Loading \(m)…"
-                    statusRow(spinner: true, text: base + busyTimingSuffix)
-                case .running(let step, let total, let eta):
-                    VStack(alignment: .leading, spacing: 6) {
-                        statusRow(
-                            spinner: true,
-                            text: "Step \(step)/\(total)"
-                                + (eta.map { String(format: " · ~%.0fs", $0) } ?? "")
-                                + " · " + Self.formatDuration(model.elapsed)
-                        )
-                        ProgressView(value: Double(step), total: Double(max(total, 1)))
-                            .tint(theme.accentColor)
-                    }
-                case .done:
-                    let text =
-                        model.lastDuration.map {
-                            L("Done") + " · " + Self.formatDuration($0)
-                        } ?? L("Done")
-                    statusRow(spinner: false, text: text, color: theme.successColor)
-                case .failed(let message):
-                    statusRow(spinner: false, text: message, color: theme.errorColor)
-                case .cancelled:
-                    statusRow(spinner: false, text: L("Cancelled"), color: theme.warningColor)
-                }
+    private var activitySection: some View {
+        panelSection("Results") {
+            statusContent
+            if let url = model.resultURL {
+                resultCard(url)
+            } else if model.isBusy, let preview = model.previewImage {
+                supportingText(L("Live preview"))
+                imagePreview(preview)
             }
         }
     }
 
-    /// " · 12.3s" plus " / ~25s" when a prior-run estimate is known.
-    private var busyTimingSuffix: String {
-        var suffix = " · " + Self.formatDuration(model.elapsed)
+    @ViewBuilder private var statusContent: some View {
+        if model.isCancelling {
+            statusRow(L("Cancelling…"), detail: Self.formatDuration(model.elapsed), spinner: true)
+        } else {
+            switch model.phase {
+            case .idle:
+                EmptyView()
+            case .loadingModel(let name):
+                statusRow(name.isEmpty ? L("Loading model…") : L("Loading \(name)…"),
+                    detail: busyTiming, spinner: true)
+            case .running(let step, let total, let eta):
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    statusRow(L("Step \(step) of \(total)"),
+                        detail: Self.formatDuration(model.elapsed) + (eta.map { " · " + L("\(Self.formatEstimate($0)) remaining") } ?? ""),
+                        spinner: true)
+                    SettingsProgressBar(value: Double(step) / Double(max(total, 1)))
+                        .accessibilityLabel(Text("Image generation progress", bundle: .module))
+                }
+            case .done:
+                statusRow(L("Complete"), detail: model.lastDuration.map(Self.formatDuration),
+                    icon: "checkmark.circle.fill", tint: theme.status.success.foreground)
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: theme.space.s4) {
+                    statusRow(L("Couldn’t finish the image"), icon: "exclamationmark.circle.fill",
+                        tint: theme.status.error.foreground)
+                    supportingText(message)
+                }
+            case .cancelled:
+                statusRow(L("Cancelled"), icon: "xmark.circle")
+            }
+        }
+    }
+
+    /// Elapsed time, with a prior-run estimate when available.
+    private var busyTiming: String {
+        var suffix = Self.formatDuration(model.elapsed)
         if let estimate = model.estimate {
             suffix += " / " + Self.formatEstimate(estimate)
         }
@@ -614,113 +653,96 @@ struct ImageGenerationPanelView: View {
     }
 
     private func resultCard(_ url: URL) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             if model.results.count > 1 {
                 ScrollView(.horizontal) {
-                    HStack {
+                    HStack(spacing: theme.space.s6) {
                         ForEach(Array(model.results.enumerated()), id: \.offset) { index, image in
-                            Button { model.selectResult(image) } label: {
-                                Text("\(L("Image")) \(index + 1)")
-                            }.disabled(image.url == url)
+                            FilterChip(L("Image \(index + 1)"), isSelected: image.url == url) {
+                                model.selectResult(image)
+                            }
                         }
                     }
                 }
             }
-            if let nsImage = NSImage(contentsOf: url) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity)
-                    .frame(maxHeight: 300)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1)
-                    )
+            if let image = NSImage(contentsOf: url) {
+                imagePreview(image)
+            } else {
+                supportingText(L("Preview unavailable. Open the image in Finder to view it."))
             }
             if let parameters = model.resultParameters {
-                if requestPolicy.isFlux3 {
-                Text("\(parameters.width) × \(parameters.height) · \(parameters.steps) steps")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                } else {
-                Text("\(parameters.width) × \(parameters.height) · \(parameters.steps) steps · CFG \(parameters.guidance, specifier: "%g")")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                Group {
+                    if requestPolicy.isFlux3 {
+                        Text("\(parameters.width) × \(parameters.height) · \(parameters.steps) steps")
+                    } else {
+                        Text("\(parameters.width) × \(parameters.height) · \(parameters.steps) steps · CFG \(parameters.guidance, specifier: "%g")")
+                    }
                 }
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption.monospacedDigit())
+                .foregroundColor(theme.text.secondary)
             }
-            HStack(spacing: 12) {
-                if let seed = model.resultSeed {
-                    Text("seed \(String(seed))")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                Spacer()
-                Button(action: {
-                    // Must run on the main thread: `activateFileViewerSelecting`
-                    // can present an error alert internally, and building that
-                    // NSWindow off-main crashes (NSInternalInconsistencyException).
-                    // The occasional multi-second LaunchServices stall is the
-                    // lesser evil versus the crash the detached-task version
-                    // caused.
+            if let seed = model.resultSeed {
+                supportingText(L("Seed \(String(seed))"))
+            }
+            HStack(spacing: theme.space.s8) {
+                Button {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
-                }) {
-                    Label(L("Reveal"), systemImage: "folder")
-                        .font(.system(size: 12, weight: .medium))
+                } label: {
+                    Label(L("Show in Finder"), systemImage: "folder")
+                        .componentInspectionText(54, role: .caption, fallback: .caption, weight: 500, theme: theme)
                 }
-                .buttonStyle(PlainButtonStyle())
-                Button(action: { saveAs(url) }) {
+                .assignedSettingsButtonStyle(.tertiary, size: .compact)
+                Button {
+                    saveAs(url)
+                } label: {
                     Label(L("Save As…"), systemImage: "square.and.arrow.down")
-                        .font(.system(size: 12, weight: .medium))
+                        .componentInspectionText(54, role: .caption, fallback: .caption, weight: 500, theme: theme)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.tertiary, size: .compact)
             }
         }
+    }
+
+    private func imagePreview(_ image: NSImage) -> some View {
+        let shape = RoundedRectangle(cornerRadius: theme.radius.medium)
+        return Image(nsImage: image)
+            .resizable()
+            .scaledToFit()
+            .frame(maxHeight: 224)
+            .clipShape(shape)
+            .overlay { shape.strokeBorder(theme.border.default, lineWidth: theme.stroke.default) }
     }
 
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 12) {
-            Button(action: { dismiss() }) {
-                Text("Close", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+        HStack(spacing: theme.space.s12) {
+            SettingsButton(.tertiary, "Close") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+            Spacer(minLength: 0)
+            if model.isBusy {
+                SettingsButton(.destructive, model.isCancelling ? "Cancelling…" : "Cancel",
+                    action: cancel)
+                    .disabled(model.isCancelling)
+            } else {
+                SettingsButton(.primary, isUpscale ? "Upscale" : (isEdit ? "Edit" : "Generate"),
+                    icon: isUpscale ? "arrow.up.left.and.arrow.down.right" : "sparkles", action: run)
+                    .disabled(!canRun)
             }
-            .buttonStyle(PlainButtonStyle())
-            Spacer()
-            if model.isCancelling {
-                Text("Cancelling…", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            } else if model.isBusy {
-                Button(action: { model.cancel() }) {
-                    Text("Cancel", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.errorColor)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            Button(action: run) {
-                HStack(spacing: 6) {
-                    Image(systemName: isEdit ? "wand.and.stars" : "sparkles")
-                        .font(.system(size: 13))
-                    Text(isUpscale ? "Upscale" : (isEdit ? "Edit" : "Generate"), bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(canRun ? theme.accentColor : theme.accentColor.opacity(0.4))
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(!canRun)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .overlay(Rectangle().fill(theme.cardBorder).frame(height: 1), alignment: .top)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s12)
+    }
+
+    private func cancel() {
+        #if OSAURUS_DESIGN_SYSTEM
+        if inspectionDisplay != nil {
+            model.isCancelling = false
+            model.phase = .cancelled
+            return
+        }
+        #endif
+        model.cancel()
     }
 
     // MARK: - Actions
@@ -792,28 +814,50 @@ struct ImageGenerationPanelView: View {
 
     // MARK: - Subviews
 
-    private func fieldLabel(_ text: String) -> some View {
-        Text(LocalizedStringKey(text), bundle: .module)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(theme.secondaryText)
+    /// Edits a pixel dimension as text; input that is not a whole number is ignored.
+    private func dimensionText(_ value: Binding<Int>) -> Binding<String> {
+        Binding(
+            get: { String(value.wrappedValue) },
+            set: { text in
+                if let number = Int(text.trimmingCharacters(in: .whitespaces)) { value.wrappedValue = number }
+            }
+        )
     }
 
-    private func statusRow(spinner: Bool, text: String, color: Color? = nil) -> some View {
-        HStack(spacing: 8) {
+    private func panelSection<Content: View>(_ title: LocalizedStringKey, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            Text(title, bundle: .module)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.sectionTitle)
+                .foregroundColor(theme.text.primary)
+                .accessibilityAddTraits(.isHeader)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func supportingText(_ text: String) -> some View {
+        Text(verbatim: text)
+            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func statusRow(_ title: String, detail: String? = nil, spinner: Bool = false, icon: String? = nil,
+        tint: Color? = nil) -> some View {
+        HStack(spacing: theme.space.s8) {
             if spinner {
                 ProgressView().controlSize(.small)
+            } else if let icon {
+                Image(systemName: icon)
+                    .foregroundColor(tint ?? theme.text.secondary)
+                    .accessibilityHidden(true)
             }
-            Text(text)
-                .font(.system(size: 12))
-                .foregroundColor(color ?? theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text(verbatim: title)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.primary)
+                if let detail { supportingText(detail) }
+            }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
-        )
     }
 }

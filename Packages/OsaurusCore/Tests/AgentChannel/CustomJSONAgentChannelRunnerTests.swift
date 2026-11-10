@@ -1180,9 +1180,7 @@ struct CustomJSONAgentChannelRunnerTests {
                 senderAllowlist: ["user-1"],
                 roomAllowlist: ["conv-1"]
             ),
-            n8n: AgentChannelN8nConfiguration(
-                inboundDispatch: AgentChannelInboundDispatchConfiguration(enabled: true, autoReplyEnabled: true)
-            )
+            n8n: AgentChannelN8nConfiguration()
         )
         pollOnly = AgentChannelN8nPreset.applyingOutbound(to: pollOnly)
         #expect(
@@ -1233,16 +1231,8 @@ struct CustomJSONAgentChannelRunnerTests {
         #expect(health.outboundSent == 1)
         #expect(health.lastOutboundAt != nil)
 
-        var autoReplyOff = pushed
-        autoReplyOff.n8n?.inboundDispatch.autoReplyEnabled = false
-        #expect(
-            AgentChannelN8nPreset.replyHandler(
-                for: autoReplyOff,
-                envelope: envelope,
-                ingress: ingress,
-                send: sendViaRunner
-            ) == nil
-        )
+        // Whether the reply is pushed at all is the event's Reply setting;
+        // the relay never calls the handler when it is off.
 
         let refuseWrites: @Sendable (AgentChannelConnection, String, String) async throws -> Void = { _, _, _ in
             throw AgentChannelConnectionServiceError.globalWritesDisabled(generation: 7)

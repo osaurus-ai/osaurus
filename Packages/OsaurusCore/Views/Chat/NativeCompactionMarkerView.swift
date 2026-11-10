@@ -37,6 +37,22 @@ final class NativeCompactionMarkerView: NSView {
     private var isExpanded = false
     private var currentWidth: CGFloat = 0
     private var configuredBlockId: String?
+    private var inspectionTheme: (any ThemeProtocol)?
+    #if OSAURUS_DESIGN_SYSTEM
+    private let inspectionHeader = InspectorActivityHeaderSurface()
+    #endif
+    private func metric(_ property: String, _ fallback: CGFloat) -> CGFloat {
+        NativeComponentInspectionStyle.metric(40, property, fallback, inspectionTheme ?? CustomizableTheme.light())
+    }
+    static func inspectionHeaderHeight(_ theme: any ThemeProtocol) -> CGFloat {
+        #if OSAURUS_DESIGN_SYSTEM
+        let font = theme.assignedNativeFont(NativeComponentInspectionStyle.key(40, "label"), fallback: theme.nsFont(.label))
+        return max(NativeComponentInspectionStyle.metric(40, "height", headerH, theme), max(ceil(font.ascender-font.descender+font.leading), theme.assignedLineHeight(NativeComponentInspectionStyle.key(40, "label"), fallback: 18)) + 2 * NativeComponentInspectionStyle.metric(40, "padding", 0, theme))
+        #else
+        return headerH
+        #endif
+    }
+    private var assignedHeaderHeight: CGFloat { Self.inspectionHeaderHeight(inspectionTheme ?? CustomizableTheme.light()) }
 
     private static let headerH: CGFloat = 32
 
@@ -81,24 +97,35 @@ final class NativeCompactionMarkerView: NSView {
         onToggle: @escaping () -> Void,
         onHeightChanged: @escaping () -> Void
     ) {
+        let theme = theme.catalogFamily(40, authoritative: true)
+        inspectionTheme = theme
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
         self.currentWidth = width
 
-        let tint = NSColor(theme.tertiaryText)
+        let tint = NSColor(theme.text.tertiary)
         titleLabel.stringValue =
             savedTokens > 0
             ? L("Older messages summarized — ~\(Self.formatTokens(savedTokens)) tokens reclaimed")
             : L("Older messages summarized")
-        titleLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .medium)
+        titleLabel.font = theme.nsFont(.footnote, weight: .medium)
         titleLabel.textColor = tint
         iconView.contentTintColor = tint
         chevronView.contentTintColor = tint
-        leftLine.layer?.backgroundColor = NSColor(theme.primaryBorder).withAlphaComponent(0.35).cgColor
-        rightLine.layer?.backgroundColor = NSColor(theme.primaryBorder).withAlphaComponent(0.35).cgColor
-        pillContainer.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.5).cgColor
-        pillContainer.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.4).cgColor
-        toolTip = L("Summarized by \(modelName). The visible chat is unchanged; the model sees this summary in place of the messages above.")
+        leftLine.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
+        rightLine.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
+        #if OSAURUS_DESIGN_SYSTEM
+        pillContainer.layer?.backgroundColor = NSColor(theme.assignedColor(AgentContentSurfaceAssignments.key(40, "noticePill"), fallback: theme.surface.hover)).cgColor
+        pillContainer.catalogAssignmentTarget([AgentContentSurfaceAssignments.key(40, "noticePill")], name: "Conversation summary marker", theme: theme)
+        #else
+        pillContainer.layer?.backgroundColor = NSColor(theme.surface.hover).cgColor
+        #endif
+        pillContainer.layer?.borderColor = NSColor(theme.border.subtle).cgColor
+        pillContainer.layer?.borderWidth = theme.stroke.default
+        pillContainer.layer?.cornerRadius = theme.radius.medium
+        toolTip = L(
+            "Summarized by \(modelName). The visible chat is unchanged; the model sees this summary in place of the messages above."
+        )
 
         let isSameBlock = configuredBlockId == blockId
         let expandTransition = isSameBlock && isExpanded && !self.isExpanded
@@ -112,7 +139,7 @@ final class NativeCompactionMarkerView: NSView {
             let mdv = ensureMarkdownView()
             mdv.configure(
                 text: summaryText,
-                width: width - 28,
+                width: width - 2 * metric("padding", 14),
                 theme: theme,
                 cacheKey: "\(blockId)-summary",
                 isStreaming: false
@@ -122,15 +149,35 @@ final class NativeCompactionMarkerView: NSView {
 
         if expandTransition { ExpandFade.run(contentContainer) }
 
+        #if OSAURUS_DESIGN_SYSTEM
+        NativeComponentInspectionStyle.label(titleLabel, family: 40, property: "label", theme: theme)
+        headerButton.constraints.first { $0.firstAttribute == .height }?.constant = assignedHeaderHeight
+        pillContainer.constraints.first { $0.firstAttribute == .height }?.constant = assignedHeaderHeight
+        inspectionHeader.configure(theme: theme, selected: isExpanded)
+        for c in constraints {
+            let v = c.firstItem as? NSView
+            if v === pillContainer, c.firstAttribute == .centerY { c.constant = assignedHeaderHeight / 2 }
+            if v === contentContainer {
+                if c.firstAttribute == .leading { c.constant = metric("padding", 14) }
+                if c.firstAttribute == .trailing { c.constant = -metric("padding", 14) }
+                if c.firstAttribute == .top { c.constant = assignedHeaderHeight + metric("gap", 8) }
+            }
+        }
+        for c in pillContainer.constraints {
+            if c.firstAttribute == .leading { c.constant = metric("gap", c.constant) }
+            if c.firstAttribute == .trailing { c.constant = -metric("padding", 8) }
+        }
+        for line in [leftLine, rightLine] { line.constraints.first { $0.firstAttribute == .height }?.constant = theme.stroke.default }
+        #endif
         applyHeight()
     }
 
     // MARK: Measured height (used by cell coordinator)
 
     func measuredHeight() -> CGFloat {
-        guard isExpanded, let mdv = markdownView else { return Self.headerH + 4 }
-        let contentH = mdv.measuredHeight(for: currentWidth - 28)
-        return Self.headerH + 8 + contentH + 10
+        guard isExpanded, let mdv = markdownView else { return assignedHeaderHeight + metric("padding", 4) }
+        let contentH = mdv.measuredHeight(for: currentWidth - 2 * metric("padding", 14))
+        return assignedHeaderHeight + metric("gap", 8) + contentH + metric("padding", 10)
     }
 
     // MARK: - Private
@@ -158,14 +205,11 @@ final class NativeCompactionMarkerView: NSView {
         for line in [leftLine, rightLine] {
             line.translatesAutoresizingMaskIntoConstraints = false
             line.wantsLayer = true
-            line.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
             addSubview(line)
         }
 
         pillContainer.translatesAutoresizingMaskIntoConstraints = false
         pillContainer.wantsLayer = true
-        pillContainer.layer?.cornerRadius = 10
-        pillContainer.layer?.borderWidth = 1
         addSubview(pillContainer)
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -173,6 +217,11 @@ final class NativeCompactionMarkerView: NSView {
             "arrow.down.right.and.arrow.up.left", accessibilityDescription: nil,
             pointSize: 8, weight: .semibold)
         iconView.imageScaling = .scaleProportionallyDown
+        #if OSAURUS_DESIGN_SYSTEM
+        inspectionHeader.translatesAutoresizingMaskIntoConstraints = false
+        pillContainer.addSubview(inspectionHeader)
+        NSLayoutConstraint.activate([inspectionHeader.leadingAnchor.constraint(equalTo: pillContainer.leadingAnchor), inspectionHeader.trailingAnchor.constraint(equalTo: pillContainer.trailingAnchor), inspectionHeader.topAnchor.constraint(equalTo: pillContainer.topAnchor), inspectionHeader.bottomAnchor.constraint(equalTo: pillContainer.bottomAnchor)])
+        #endif
         pillContainer.addSubview(iconView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -180,6 +229,7 @@ final class NativeCompactionMarkerView: NSView {
         titleLabel.isBordered = false
         titleLabel.drawsBackground = false
         titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         pillContainer.addSubview(titleLabel)
 
         chevronView.translatesAutoresizingMaskIntoConstraints = false
@@ -192,7 +242,7 @@ final class NativeCompactionMarkerView: NSView {
         contentContainer.isHidden = true
         addSubview(contentContainer)
 
-        let h = heightAnchor.constraint(equalToConstant: Self.headerH + 4)
+        let h = heightAnchor.constraint(equalToConstant: assignedHeaderHeight + 4)
         h.priority = NSLayoutConstraint.Priority(rawValue: 750)
         h.isActive = true
         selfHeight = h
@@ -201,10 +251,12 @@ final class NativeCompactionMarkerView: NSView {
             headerButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             headerButton.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerButton.topAnchor.constraint(equalTo: topAnchor),
-            headerButton.heightAnchor.constraint(equalToConstant: Self.headerH),
+            headerButton.heightAnchor.constraint(equalToConstant: assignedHeaderHeight),
 
             pillContainer.centerXAnchor.constraint(equalTo: centerXAnchor),
-            pillContainer.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.headerH / 2),
+            pillContainer.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 10),
+            pillContainer.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
+            pillContainer.centerYAnchor.constraint(equalTo: topAnchor, constant: assignedHeaderHeight / 2),
             pillContainer.heightAnchor.constraint(equalToConstant: 20),
 
             iconView.leadingAnchor.constraint(equalTo: pillContainer.leadingAnchor, constant: 8),
@@ -233,7 +285,7 @@ final class NativeCompactionMarkerView: NSView {
 
             contentContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             contentContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            contentContainer.topAnchor.constraint(equalTo: topAnchor, constant: Self.headerH + 8),
+            contentContainer.topAnchor.constraint(equalTo: topAnchor, constant: assignedHeaderHeight + 8),
         ])
 
         addSubview(headerButton, positioned: .above, relativeTo: nil)

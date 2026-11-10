@@ -80,6 +80,23 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// legacy sessions.
     var generationControls: ChatTurnGenerationControls? = nil
     public var injectedContextPrefix: String?
+    /// Who wrote this turn when it isn't simply "the user" and "the agent":
+    /// a workspace teammate, invite peer, remote agent, channel sender, or
+    /// the owner speaking in a hosted conversation. Snapshot at write time.
+    /// Nil for ordinary one-person chats and legacy sessions.
+    public var author: ParticipantRef?
+    /// The host's id for a message its owner posted into this shared-agent
+    /// conversation, so it is shown once.
+    public var remoteParticipantMessageId: String?
+    /// On a user turn: the request for another device to run the agent.
+    /// Nil for turns this device answers itself.
+    public var hostRun: HostRunRequest?
+    /// Set on a turn Osaurus wrote itself (the first-run opening). Nil for
+    /// generated and typed turns.
+    public var origin: ChatTurnOrigin?
+    /// Where this reply was generated, for the first-run chat's label. Nil
+    /// elsewhere.
+    public var runLocation: ChatRunLocation?
 
     public init(
         id: UUID = UUID(),
@@ -110,7 +127,10 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         modelContextExcluded: Bool = false,
         routerBilling: RouterBillingSummary? = nil,
         injectedContextPrefix: String? = nil,
-        toolCallLogs: [String: SubagentRunLog] = [:]
+        toolCallLogs: [String: SubagentRunLog] = [:],
+        author: ParticipantRef? = nil,
+        remoteParticipantMessageId: String? = nil,
+        hostRun: HostRunRequest? = nil
     ) {
         self.id = id
         self.role = role
@@ -141,6 +161,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.routerBilling = routerBilling
         self.injectedContextPrefix = injectedContextPrefix
         self.toolCallLogs = toolCallLogs
+        self.author = author
+        self.remoteParticipantMessageId = remoteParticipantMessageId
+        self.hostRun = hostRun
     }
 
     // Backward-compatible decoder: migrates old `attachedImages` into unified `attachments`
@@ -180,6 +203,11 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
         generationControls = try container.decodeIfPresent(ChatTurnGenerationControls.self, forKey: .generationControls)
         injectedContextPrefix = try container.decodeIfPresent(String.self, forKey: .injectedContextPrefix)
+        author = try? container.decodeIfPresent(ParticipantRef.self, forKey: .author)
+        remoteParticipantMessageId = try container.decodeIfPresent(String.self, forKey: .remoteParticipantMessageId)
+        hostRun = try container.decodeIfPresent(HostRunRequest.self, forKey: .hostRun)
+        origin = try? container.decodeIfPresent(ChatTurnOrigin.self, forKey: .origin)
+        runLocation = try? container.decodeIfPresent(ChatRunLocation.self, forKey: .runLocation)
 
         if let unified = try container.decodeIfPresent([Attachment].self, forKey: .attachments) {
             attachments = unified
@@ -233,6 +261,11 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(routerBilling, forKey: .routerBilling)
         try container.encodeIfPresent(generationControls, forKey: .generationControls)
         try container.encodeIfPresent(injectedContextPrefix, forKey: .injectedContextPrefix)
+        try container.encodeIfPresent(author, forKey: .author)
+        try container.encodeIfPresent(remoteParticipantMessageId, forKey: .remoteParticipantMessageId)
+        try container.encodeIfPresent(hostRun, forKey: .hostRun)
+        try container.encodeIfPresent(origin, forKey: .origin)
+        try container.encodeIfPresent(runLocation, forKey: .runLocation)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -248,7 +281,12 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case inputTokenCount, cachedInputTokenCount
         case modelContextExcluded
         case routerBilling
-        case injectedContextPrefix, generationControls
+        case injectedContextPrefix
+        case author
+        case remoteParticipantMessageId
+        case hostRun
+        case generationControls
+        case origin, runLocation
     }
 }
 
@@ -301,7 +339,12 @@ extension ChatTurnData {
         self.modelContextExcluded = turn.modelContextExcluded
         self.routerBilling = turn.routerBilling
         self.injectedContextPrefix = turn.injectedContextPrefix
+        self.author = turn.author
+        self.remoteParticipantMessageId = turn.remoteParticipantMessageId
+        self.hostRun = turn.hostRun
         self.generationControls = turn.generationControls
+        self.origin = turn.origin
+        self.runLocation = turn.runLocation
     }
 }
 
@@ -343,6 +386,11 @@ extension ChatTurn {
         self.modelContextExcluded = data.modelContextExcluded
         self.routerBilling = data.routerBilling
         self.injectedContextPrefix = data.injectedContextPrefix
+        self.author = data.author
+        self.remoteParticipantMessageId = data.remoteParticipantMessageId
+        self.hostRun = data.hostRun
         self.generationControls = data.generationControls
+        self.origin = data.origin
+        self.runLocation = data.runLocation
     }
 }

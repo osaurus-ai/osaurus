@@ -63,22 +63,15 @@ extension MemoryView {
     /// The backfill / probe actions live in the card header and surface
     /// their progress inline.
     private var pipelineCard: some View {
-        MemorySectionCard(
-            title: L("Pipeline"),
-            icon: "waveform.path.ecg"
+        SettingsSection(
+            title: "Pipeline"
         ) {
-            MemorySectionActionButton(
-                backfillButtonTitle,
-                icon: "tray.and.arrow.down"
-            ) {
+            SettingsButton(.secondary, backfillButtonTitle, icon: "tray.and.arrow.down", size: .compact) {
                 showBackfillConfirm = true
             }
             .disabled(backfillRunning || !config.enabled)
 
-            MemorySectionActionButton(
-                probeBufferRunning ? L("Probing...") : L("Test buffer"),
-                icon: "syringe"
-            ) {
+            SettingsButton(.secondary, probeBufferRunning ? "Probing..." : "Test buffer", icon: "syringe", size: .compact) {
                 runBufferProbe()
             }
             .disabled(probeBufferRunning)
@@ -118,19 +111,19 @@ extension MemoryView {
                 .fill(summary.color)
                 .frame(width: 8, height: 8)
             Text(summary.text)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(10)
+        .padding(theme.space.s8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: theme.radius.medium)
                 .fill(summary.color.opacity(0.08))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(summary.color.opacity(0.22), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .stroke(summary.color.opacity(0.22), lineWidth: theme.stroke.default)
                 )
         )
     }
@@ -144,10 +137,8 @@ extension MemoryView {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.4)
-                .textCase(.uppercase)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
             content()
         }
     }
@@ -180,42 +171,30 @@ extension MemoryView {
             ProgressView().controlSize(.small)
             VStack(alignment: .leading, spacing: 4) {
                 Text(stageText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 if let title = p.lastSessionTitle, !title.isEmpty {
                     Text(localized: "Last: \(title)")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
                 Text(
                     "buffered \(p.turnsBuffered) turn\(p.turnsBuffered == 1 ? "" : "s") · skipped \(p.sessionsSkipped) session\(p.sessionsSkipped == 1 ? "" : "s")"
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
             }
             Spacer()
             Button {
                 backfillTask?.cancel()
             } label: {
-                Text("Cancel", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.errorColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(theme.errorColor.opacity(0.12)))
+                StatusChip(L("Cancel"), tone: .error)
             }
             .buttonStyle(PlainButtonStyle())
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.accentColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.selected)
     }
 
     func backfillSummaryBanner(_ message: String) -> some View {
@@ -392,7 +371,7 @@ extension MemoryView {
             recoveryButton(
                 title: L("Retry open"),
                 icon: "arrow.clockwise",
-                tint: theme.accentColor,
+                tint: theme.action.primary.default.background,
                 disabled: memoryRecoveryRunning
             ) {
                 runMemoryRecovery(reset: false)
@@ -400,7 +379,7 @@ extension MemoryView {
             recoveryButton(
                 title: L("Reset store…"),
                 icon: "trash",
-                tint: theme.errorColor,
+                tint: theme.status.error.foreground,
                 disabled: memoryRecoveryRunning
             ) {
                 showMemoryResetConfirm = true
@@ -410,7 +389,7 @@ extension MemoryView {
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, 17)
+        .padding(.leading, theme.space.s16)
     }
 
     private func recoveryButton(
@@ -421,16 +400,7 @@ extension MemoryView {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundColor(tint)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(tint.opacity(0.12)))
+            StatusChip(title, tint: tint, icon: icon)
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(disabled)
@@ -490,12 +460,12 @@ extension MemoryView {
                 Button(action: runDistillPending) {
                     HStack(spacing: 6) {
                         Image(systemName: "wand.and.stars")
-                            .font(.system(size: 11))
+                            .glyphSize(11)
                         Text(isDistilling ? L("Distilling...") : L("Distill pending"))
-                            .font(.system(size: 12, weight: .medium))
+                            .font(SettingsFont.compactLabel)
                     }
                 }
-                .buttonStyle(SettingsButtonStyle())
+                .assignedSettingsButtonStyle()
                 .disabled(isDistilling || !config.enabled)
                 .localizedHelp("Distill buffered turns now, loading the core model if needed")
             }
@@ -707,16 +677,15 @@ extension MemoryView {
     // MARK: - Per-agent memory
 
     var perAgentMemoryCard: some View {
-        MemorySectionCard(
-            title: L("Per-Agent Memory"),
-            icon: "person.2",
-            count: agentManager.agents.isEmpty ? nil : agentManager.agents.count
+        SettingsSection(
+            title: "Per-Agent Memory",
+            caption: agentManager.agents.isEmpty ? nil : "\(agentManager.agents.count)"
         ) {
             if agentManager.agents.isEmpty {
                 Text("No agents configured. Create an agent first.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.vertical, 2)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
+                    .padding(.vertical, theme.space.s2)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(agentManager.agents, id: \.id) { agent in
@@ -749,32 +718,27 @@ extension MemoryView {
                 .fill(stateColor)
                 .frame(width: 7, height: 7)
             Text(agent.displayName)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
             Spacer()
             Text(LocalizedStringKey(stateText), bundle: .module)
-                .font(.system(size: 11))
+                .font(SettingsFont.rowDescription)
                 .foregroundColor(stateColor)
             if canEnableHere {
                 Button {
                     enableMemory(for: agent)
                 } label: {
-                    Text("Enable", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                    StatusChip(L("Enable"), tone: .accent)
                 }
                 .buttonStyle(PlainButtonStyle())
             } else if globalDisabled, isOff {
                 Text("toggle below", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, theme.space.s2)
     }
 
     func enableMemory(for agent: Agent) {
@@ -788,19 +752,18 @@ extension MemoryView {
     // MARK: - Recent processing log
 
     var recentProcessingLogCard: some View {
-        MemorySectionCard(
-            title: L("Recent Activity"),
-            icon: "list.bullet.rectangle",
-            count: recentLogs.isEmpty ? nil : recentLogs.count
+        SettingsSection(
+            title: "Recent Activity",
+            caption: recentLogs.isEmpty ? nil : "\(recentLogs.count)"
         ) {
             if recentLogs.isEmpty {
                 Text(
                     "No processing log entries yet. If you've been chatting, the distill pipeline never reached the model.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.vertical, 2)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.vertical, theme.space.s2)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(recentLogs) { row in
@@ -816,47 +779,42 @@ extension MemoryView {
 
     private func processingLogRow(_ row: ProcessingLogRow) -> some View {
         HStack(spacing: 8) {
-            Text(processingLogStatusBadge(row.status))
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(processingLogStatusColor(row.status)))
+            StatusChip(processingLogStatusBadge(row.status), tint: processingLogStatusColor(row.status))
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(row.taskType)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.primary)
                     if let model = row.model, !model.isEmpty {
                         Text("·")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                         Text(model)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(1)
                     }
                 }
                 if let details = row.details, !details.isEmpty {
                     Text(details)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(2)
                 }
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 1) {
                 Text(MemoryView.formatRelativeDate(row.createdAt))
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                 if let ms = row.durationMs, ms > 0 {
                     Text("\(ms)ms")
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, theme.space.s4)
     }
 
     // MARK: - Shared chrome
@@ -876,26 +834,18 @@ extension MemoryView {
     ) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
+                .glyphSize(14, weight: .medium)
                 .foregroundColor(iconColor)
             Text(text)
-                .font(.system(size: 11, design: monospaced ? .monospaced : .default))
-                .foregroundColor(theme.secondaryText)
+                .font(monospaced ? SettingsFont.monoSmall : SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Spacer()
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
+            SettingsIconButton("xmark", help: "Dismiss", size: .compact, action: onDismiss)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground)
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     private func diagnosticRow(
@@ -910,19 +860,19 @@ extension MemoryView {
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
                 Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
                 Text(value)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
             }
             if let detail, !detail.isEmpty {
                 Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.leading, 17)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
+                    .padding(.leading, theme.space.s16)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -957,7 +907,7 @@ extension MemoryView {
     private func coreModelStatusDetail(_ status: CoreModelStatus) -> String? {
         switch status {
         case .unset:
-            return L("Distillation is silently disabled. Pick a model in Settings → General.")
+            return L("Distillation is silently disabled. Pick a Core Model in Models → Model Defaults.")
         case .unavailable(_, let reason):
             return reason
         case .breakerOpen(_, let until):

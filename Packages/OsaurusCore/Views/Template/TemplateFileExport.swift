@@ -5,8 +5,12 @@
 //  How a template leaves or enters the Mac as a file: Export File writes a
 //  sanitized `.osaurustemplate` (JSON) through a save panel, signed with
 //  the master key whenever this Mac has an Osaurus identity, and a dropped
-//  or chosen file is read for the import sheet. There is no link,
-//  clipboard, or paste path.
+//  or chosen file is read for the import sheet. Publish uploads these
+//  same bytes (`exportData`) to the store registry. Files opened from
+//  Finder and `templates-import` links reach the same sheet through
+//  `TemplateImportRouter`; links are accepted only for template files on
+//  the store registry and always end in the same review. There is no
+//  clipboard or paste path.
 //
 
 import AppKit
@@ -78,31 +82,6 @@ enum TemplateFileExport {
         }
         try exportData(outgoing).write(to: url, options: .atomic)
         return outcome
-    }
-
-    /// Export File: asks where to save, then writes the template signed
-    /// with the master key when this Mac has one. An unsigned file carries
-    /// no author name: without the signature it would be an unverifiable
-    /// claim.
-    @MainActor
-    static func export(_ template: Template) {
-        let signs = MasterKey.exists()
-        let authorName = signs ? OsaurusIDService.shared.claimedHandle.map { "@" + $0 } : nil
-        Task { @MainActor in
-            guard let url = await chooseDestination(for: template, signing: signs) else { return }
-            do {
-                let outcome = try write(template, to: url, sign: signs, authorName: authorName)
-                let message: String? = {
-                    if case .signingFailed = outcome { return L("It's unsigned because signing didn't finish.") }
-                    return nil
-                }()
-                ToastManager.shared.action(
-                    L("Saved \"\(template.name)\""), message: message, action: .revealInFinder(url),
-                    buttonTitle: L("Show in Finder"))
-            } catch {
-                ToastManager.shared.error(L("Could not export \"\(template.name)\""), message: error.localizedDescription)
-            }
-        }
     }
 
     static func readFile(_ url: URL) throws -> String {

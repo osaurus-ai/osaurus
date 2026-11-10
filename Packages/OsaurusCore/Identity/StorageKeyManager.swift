@@ -72,8 +72,8 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     /// Posted the first time the DEK becomes resident in this process
     /// (nil -> non-nil cache transition). Subsystems that were gated off
-    /// at launch because storage wasn't ready (e.g. `NextRunScheduler`)
-    /// observe this to start once the key is unlocked. Posted from
+    /// at launch because storage wasn't ready observe this to start once
+    /// the key is unlocked. Posted from
     /// whatever thread performed the unlock; observers must hop as needed.
     public static let storageKeyDidBecomeResident = Notification.Name(
         "OsaurusStorageKeyDidBecomeResident"
@@ -231,7 +231,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         }
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
+            kSecAttrService as String: SpaceKeychainScope.service(Self.service),
             kSecAttrAccount as String: Self.keyAccount,
             kSecReturnData as String: false,
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
@@ -323,12 +323,12 @@ public final class StorageKeyManager: @unchecked Sendable {
         let queries: [[String: Any]] = [
             [
                 kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: Self.service,
+                kSecAttrService as String: SpaceKeychainScope.service(Self.service),
                 kSecAttrAccount as String: Self.keyAccount,
             ],
             [
                 kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: Self.service,
+                kSecAttrService as String: SpaceKeychainScope.service(Self.service),
                 kSecAttrAccount as String: Self.saltAccount,
             ],
         ]
@@ -384,6 +384,8 @@ public final class StorageKeyManager: @unchecked Sendable {
             OsaurusPaths.methodsDatabaseFile(),
             OsaurusPaths.toolIndexDatabaseFile(),
             OsaurusPaths.workDatabaseFile(),
+            OsaurusPaths.tasksDatabaseFile(),
+            OsaurusPaths.eventRunsDatabaseFile(),
         ]
         for url in encryptedArtifacts {
             if let size = try? fm.attributesOfItem(atPath: url.path)[.size] as? Int, size > 0 {
@@ -501,7 +503,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     private func persistItem(account: String, data: Data, label: String) throws {
         let baseQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
+            kSecAttrService as String: SpaceKeychainScope.service(Self.service),
             kSecAttrAccount as String: account,
         ]
         let attributes: [String: Any] = [
@@ -527,7 +529,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     private func readItem(account: String) throws -> Data? {
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
+            kSecAttrService as String: SpaceKeychainScope.service(Self.service),
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,

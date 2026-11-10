@@ -7,10 +7,9 @@ import Testing
 struct ResponsiveChatTypographyTests {
     @Test @MainActor func chatBodyTypographyMatchesInputSize() throws {
         let blocks: [SelectableTextBlock] = [.paragraph("Hello")]
-        let theme = CustomizableTheme(
-            config: CustomTheme(typography: ThemeTypography(bodySize: 13)),
-            fontScale: 1
-        )
+        var config = CustomTheme.lightDefault
+        config.typography.styles.body.size = 13
+        let theme = CustomizableTheme(resolved: config, fontScale: 1)
 
         let userText = SelectableTextView.attributedString(
             for: blocks,
@@ -27,7 +26,8 @@ struct ResponsiveChatTypographyTests {
         let assistantFont = try #require(
             assistantText.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
         )
-        #expect(userFont.pointSize == CGFloat(theme.bodySize))
+        let bodyFont = RichTextInspectionStyle.scope(theme).nsFont(.body)
+        #expect(userFont.pointSize == bodyFont.pointSize)
         #expect(assistantFont.pointSize == userFont.pointSize)
     }
 }

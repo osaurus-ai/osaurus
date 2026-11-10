@@ -319,7 +319,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             modelOptions: modelOptions
         )
 
-        let params = GenerationParameters(
+        var params = GenerationParameters(
             temperature: temperature,
             maxTokens: maxTokens,
             maxTokensExplicit: request.generation.maxOutputTokens != nil,
@@ -356,6 +356,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             collectCompleteToolResponse: inferenceSource == .httpAPI && !request.context.isAgentRequest,
             responsesProviderOptions: request.providerOptions
         )
+        if request.context.runAsRemoteAgent { params.remoteAgentCallerId = request.context.remoteAgentCallerId }
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
         // never by the model string. A stale `selectedModel` left over from
@@ -903,7 +904,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 path: logPath ?? "/chat/completions",
                 agentId: attribution.agentId,
                 agentName: attribution.agentName,
-                sessionId: attribution.sessionId
+                sessionId: attribution.sessionId,
+                workflowRunId: attribution.workflowRunId,
+                workflowNodeId: attribution.workflowNodeId,
+                taskId: attribution.taskId
             )
         }
 
@@ -1671,6 +1675,25 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 finishReason = .toolCalls
                 continuation.finish(throwing: inv)
             } catch {
+                if let usage = ResponsesToolChoiceContract.rejectedCompletionUsage(in: error) {
+                    // Validation withheld the successful completion event, not
+                    // the work already measured by the runtime/provider. Keep
+                    // the error and account for those counts using the same
+                    // monotonic budget rule as an accepted terminal above.
+                    lifecycle.observeTerminalStats()
+                    if let count = usage.inputTokens { recordInputTokens(count) }
+                    if let count = usage.outputTokens {
+                        authoritativeOutputTokens = count
+                        outputTokenCount = count
+                        if let bgId, count > reportedOutputTokens {
+                            let delta = count - reportedOutputTokens
+                            reportedOutputTokens = count
+                            Task { @MainActor in
+                                BackgroundTaskManager.shared.recordUsage(backgroundId: bgId, tokensOutDelta: delta)
+                            }
+                        }
+                    }
+                }
                 // Check if this is a CancellationError (expected when consumer stops)
                 if Task.isCancelled || error is CancellationError {
                     print("[Osaurus][Stream] Stream cancelled after \(deltaCount) deltas")
@@ -1749,7 +1772,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     privacy: wireProbe?.privacyOutcome,
                     agentId: attribution.agentId,
                     agentName: attribution.agentName,
-                    sessionId: attribution.sessionId
+                    sessionId: attribution.sessionId,
+                    workflowRunId: attribution.workflowRunId,
+                    workflowNodeId: attribution.workflowNodeId,
+                    taskId: attribution.taskId
                 )
             }
         }
@@ -1987,7 +2013,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                             path: loggedPath,
                             agentId: attribution.agentId,
                             agentName: attribution.agentName,
-                            sessionId: attribution.sessionId
+                            sessionId: attribution.sessionId,
+                            workflowRunId: attribution.workflowRunId,
+                            workflowNodeId: attribution.workflowNodeId,
+                            taskId: attribution.taskId
                         )
                     }
 
@@ -2152,7 +2181,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     path: loggedPath,
                     agentId: attribution.agentId,
                     agentName: attribution.agentName,
-                    sessionId: attribution.sessionId
+                    sessionId: attribution.sessionId,
+                    workflowRunId: attribution.workflowRunId,
+                    workflowNodeId: attribution.workflowNodeId,
+                    taskId: attribution.taskId
                 )
             }
 

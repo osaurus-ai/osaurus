@@ -77,49 +77,30 @@ struct OrchestratorModelReadinessRow: View {
 
     var body: some View {
         let verdict = verdict
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Image(systemName: icon(for: verdict.tools))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(color(for: verdict.tools))
-                VStack(alignment: .leading, spacing: 2) {
+        return SettingsRow(
+            title: "Model Readiness",
+            anchorId: "settings.orchestrator.modelReadiness"
+        ) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
                     Text(verdict.modelName ?? L("No model selected"))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .accessibilityIdentifier("orchestrator.readiness.model")
-                    HStack(spacing: 6) {
-                        if let ctx = verdict.contextLength {
-                            Text(verbatim: L("Context: \(Self.formatTokens(ctx))"))
-                        } else {
-                            Text("Context: unknown", bundle: .module)
-                        }
-                        Text(verbatim: "·")
-                        Text(verbatim: toolsLabel(for: verdict.tools))
+                    Text(verbatim: "·")
+                    if let ctx = verdict.contextLength {
+                        Text(verbatim: L("Context: \(Self.formatTokens(ctx))"))
+                    } else {
+                        Text("Context: unknown", bundle: .module)
                     }
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.secondaryText)
                 }
-                Spacer()
+                if let hint = verdict.hint {
+                    Text(verbatim: hint)
+                }
             }
-            if let hint = verdict.hint {
-                Text(verbatim: hint)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        } trailing: {
+            StatusChip(toolsLabel(for: verdict.tools), tone: tone(for: verdict.tools), icon: icon(for: verdict.tools))
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.tertiaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
-        .settingsLandingAnchor("settings.orchestrator.modelReadiness")
     }
 
     static func formatTokens(_ value: Int) -> String {
@@ -144,11 +125,11 @@ struct OrchestratorModelReadinessRow: View {
         }
     }
 
-    private func color(for tools: Verdict.Tools) -> Color {
+    private func tone(for tools: Verdict.Tools) -> StatusChip.Tone {
         switch tools {
-        case .ok: return theme.successColor
-        case .limited: return theme.warningColor
-        case .off: return theme.errorColor
+        case .ok: return .success
+        case .limited: return .warning
+        case .off: return .error
         }
     }
 }
@@ -165,71 +146,39 @@ struct OrchestratorWorkingFolderSection: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        SettingsSection(title: "Working Folder", icon: "folder") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(
-                    "The Orchestrator reads this folder to brief subagents and to read what they produce. Subagents without a folder of their own work here with full read/write access, so deliverables land where you can find them.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 12) {
-                    Text(folderPath ?? L("No folder selected"))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(folderPath == nil ? theme.tertiaryText : theme.primaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityIdentifier("orchestrator.workingFolderPath")
-                    Spacer()
-                    Button {
-                        chooseFolder()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text(folderPath == nil ? L("Choose…") : L("Change…"))
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.accentColor.opacity(0.08))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("orchestrator.chooseWorkingFolder")
-                    if folderPath != nil {
-                        Button {
-                            agentManager.clearWorkingFolder(for: Agent.defaultId)
-                            folderPath = nil
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(6)
-                        }
-                        .buttonStyle(.plain)
-                        .help(L("Clear working folder"))
-                        .accessibilityIdentifier("orchestrator.clearWorkingFolder")
-                    }
+        SettingsSection(
+            title: "Working Folder",
+            subtitle:
+                "The Orchestrator reads this folder to brief subagents and to read what they produce. Subagents without a folder of their own work here with full read/write access, so deliverables land where you can find them."
+        ) {
+            HStack(spacing: theme.space.s12) {
+                Text(folderPath ?? L("No folder selected"))
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(folderPath == nil ? theme.text.tertiary : theme.text.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .accessibilityIdentifier("orchestrator.workingFolderPath")
+                Spacer()
+                SettingsButton(.secondary, folderPath == nil ? "Choose…" : "Change…", icon: "folder", size: .compact) {
+                    chooseFolder()
                 }
-                .settingsLandingAnchor("settings.orchestrator.workingFolder")
-
-                if !recentFolders.entries.isEmpty {
-                    RecentFoldersList(activePath: folderPath, showsPath: true, horizontalInset: 0) { entry in
-                        applyRecent(entry)
+                .accessibilityIdentifier("orchestrator.chooseWorkingFolder")
+                if folderPath != nil {
+                    SettingsIconButton("xmark", help: "Clear working folder", size: .compact) {
+                        agentManager.clearWorkingFolder(for: Agent.defaultId)
+                        folderPath = nil
                     }
-                    .environment(\.theme, theme)
-                    .padding(.top, 4)
+                    .accessibilityIdentifier("orchestrator.clearWorkingFolder")
                 }
+            }
+            .settingsRowChrome()
+            .settingsLandingAnchor("settings.orchestrator.workingFolder")
+
+            if !recentFolders.entries.isEmpty {
+                RecentFoldersList(activePath: folderPath, showsPath: true, horizontalInset: 0) { entry in
+                    applyRecent(entry)
+                }
+                .environment(\.theme, theme)
             }
         }
         .onAppear { reload() }
@@ -300,48 +249,35 @@ struct OrchestratorDelegationsSection: View {
     private var rows: [DelegationRecord] { direction == .sent ? sent : received }
 
     var body: some View {
-        SettingsSection(title: "Delegations", icon: "list.bullet.rectangle") {
-            VStack(alignment: .leading, spacing: 10) {
+        SettingsSection(
+            title: "Delegations",
+            subtitle: direction == .sent
+                ? "Every task the Orchestrator (or a custom agent) handed to a subagent. Open a chat to read the full worker transcript."
+                : "Runs of your shared agents that teammates' Osaurus instances dispatched to this Mac over a workspace relay."
+        ) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 HStack {
-                    Picker("", selection: $direction) {
-                        Text("Sent", bundle: .module).tag(DelegationRecord.Direction.sent)
-                        Text("Received", bundle: .module).tag(DelegationRecord.Direction.received)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 180)
+                    AssignedBaseSegmentedPicker(
+                        selection: $direction,
+                        options: [
+                            .init(DelegationRecord.Direction.sent, L("Sent"), verbatim: true),
+                            .init(DelegationRecord.Direction.received, L("Received"), verbatim: true),
+                        ]
+                    )
+                    .accessibilityLabel(Text("Delegations", bundle: .module))
                     .accessibilityIdentifier("orchestrator.delegations.direction")
                     Spacer()
-                    Button {
+                    SettingsIconButton("arrow.clockwise", help: "Refresh", size: .compact) {
                         reload()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
                     }
-                    .buttonStyle(.plain)
-                    .help(L("Refresh"))
                 }
                 .settingsLandingAnchor("settings.orchestrator.delegations")
 
-                Text(
-                    direction == .sent
-                        ? "Every task the Orchestrator (or a custom agent) handed to a subagent. Open a chat to read the full worker transcript."
-                        : "Runs of your shared agents that teammates' Osaurus instances dispatched to this Mac over a workspace relay.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
                 if rows.isEmpty {
-                    Text(
-                        direction == .sent ? "No delegations yet." : "No received runs yet.",
-                        bundle: .module
+                    SettingsEmptyState(
+                        inline: "arrow.triangle.branch",
+                        title: direction == .sent ? "No delegations yet" : "No received runs yet"
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.vertical, 8)
                 } else {
                     VStack(spacing: 6) {
                         ForEach(rows) { row in
@@ -374,64 +310,47 @@ struct OrchestratorDelegationsSection: View {
     private func delegationRow(_ row: DelegationRecord) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: statusIcon(row.status))
-                .font(.system(size: 11, weight: .semibold))
+                .glyphSize(11, weight: .semibold)
                 .foregroundColor(statusColor(row.status))
                 .frame(width: 14)
-                .padding(.top, 2)
+                .padding(.top, theme.space.s2)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(verbatim: row.agentName)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                     if let workspace = row.workspaceName {
                         Text(verbatim: "@\(workspace)")
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.secondary)
                     }
                     if let caller = row.callerLabel {
                         Text(verbatim: L("from \(caller)"))
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.secondary)
                     }
                     if row.needsInput {
-                        Text("Needs input", bundle: .module)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(theme.warningColor)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(theme.warningColor.opacity(0.12)))
+                        StatusChip(L("Needs input"), tone: .warning)
                     }
                 }
                 Text(verbatim: row.task)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Text(verbatim: metrics(row))
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
             Spacer(minLength: 8)
-            Button {
+            SettingsButton(.tertiary, "Open Chat", size: .compact) {
                 openChat(row)
-            } label: {
-                Text("Open Chat", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
             }
-            .buttonStyle(.plain)
             .accessibilityIdentifier("orchestrator.delegations.openChat")
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.subtle)
     }
 
     /// Compact "status · 1m 12s · 42.5 tok/s · 2 files" line. Pure, for tests.
@@ -485,11 +404,11 @@ struct OrchestratorDelegationsSection: View {
 
     private func statusColor(_ status: DelegationRecord.Status) -> Color {
         switch status {
-        case .queued, .running: return theme.accentColor
-        case .waitingForInput: return theme.warningColor
-        case .completed: return theme.successColor
-        case .failed: return theme.errorColor
-        case .cancelled: return theme.tertiaryText
+        case .queued, .running: return theme.status.info.foreground
+        case .waitingForInput: return theme.status.warning.foreground
+        case .completed: return theme.status.success.foreground
+        case .failed: return theme.status.error.foreground
+        case .cancelled: return theme.text.tertiary
         }
     }
 
@@ -498,8 +417,8 @@ struct OrchestratorDelegationsSection: View {
             BackgroundTaskManager.shared.openTaskWindow(row.id)
             return
         }
-        let db = ChatHistoryDatabase.shared
-        if !db.isOpen { try? db.open() }
+        let db = ConversationStores.current
+        if !db.isOpenNonBlocking { try? db.open() }
         guard let session = db.loadSession(id: row.id) else {
             ToastManager.shared.error(L("This delegation's chat is no longer available."))
             return

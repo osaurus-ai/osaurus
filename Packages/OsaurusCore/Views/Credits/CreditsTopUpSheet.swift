@@ -23,128 +23,70 @@ struct CreditsTopUpSheet: View {
     /// write into this; a preset highlights only when the field equals it.
     @State private var amount: String = "20"
     @FocusState private var amountFocused: Bool
-    @State private var hoveredButton: String?
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            content
-            footer
-        }
-        .frame(width: 420)
-        .background(theme.secondaryBackground)
-    }
+            SettingsSheetHeader(
+                icon: "creditcard.fill",
+                title: "Add Credits",
+                subtitle: "Choose how much to add. You'll finish payment in your browser.",
+                onClose: { dismiss() }
+            )
 
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(theme.accentColor.opacity(0.14))
-                Image(systemName: "creditcard.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-            }
-            .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Add credits", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    "Choose how much to add. You'll finish payment in your browser.",
-                    bundle: .module
+            VStack(alignment: .leading, spacing: theme.space.s16) {
+                AssignedBaseSegmentedPicker(
+                    selection: presetSelection,
+                    options: Self.presetsMicro.map { .init(Optional($0), "$\($0 / 1_000_000)", verbatim: true) }
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 16)
-    }
+                .accessibilityLabel(Text("Amount", bundle: .module))
 
-    // MARK: - Content
+                SettingsTextField(
+                    placeholder: "0",
+                    text: $amount,
+                    icon: "dollarsign",
+                    isInvalid: validationMessage != nil,
+                    focus: $amountFocused,
+                    onSubmit: { if isValid { Task { await performCheckout() } } }
+                )
 
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                ForEach(Self.presetsMicro, id: \.self) { micro in
-                    presetButton(micro)
+                validationRow
+
+                if let error = accountService.lastError, !error.isEmpty {
+                    Text(error)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.status.error.foreground)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+
+                legalNotice
             }
+            .padding(theme.settingsSheetInset)
 
-            amountField
-
-            validationRow
-
-            if let error = accountService.lastError, !error.isEmpty {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.errorColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            SettingsSheetFooter(
+                primary: .init(
+                    label: "Continue to Checkout",
+                    isEnabled: isValid,
+                    isLoading: accountService.isCreatingCheckout
+                ) {
+                    Task { await performCheckout() }
+                },
+                secondary: .init(label: "Cancel") { dismiss() }
+            )
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 18)
+        .frame(width: SettingsSheetWidth.compact)
+        .settingsSheetSurface()
     }
 
-    /// Segmented preset chip. Tapping writes the value into the amount field so
-    /// the field stays the single source of truth; the chip is filled (accent)
-    /// only while the field equals it.
-    private func presetButton(_ micro: Int) -> some View {
-        let isSelected = currentMicro == micro
-        return Button {
-            amount = String(micro / 1_000_000)
-            amountFocused = false
-        } label: {
-            Text(verbatim: "$\(micro / 1_000_000)")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundColor(
-                    isSelected ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 11)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(
-                            isSelected ? theme.accentColor : theme.tertiaryBackground.opacity(0.5)
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(isSelected ? Color.clear : theme.cardBorder, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var amountField: some View {
-        HStack(spacing: 8) {
-            Text(verbatim: "$")
-                .font(.system(size: 22, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.secondaryText)
-            TextField("0", text: $amount)
-                .textFieldStyle(.plain)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundColor(theme.primaryText)
-                .focused($amountFocused)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.primaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(
-                            amountFocused ? theme.accentColor.opacity(0.6) : theme.cardBorder,
-                            lineWidth: 1
-                        )
-                )
+    /// Presets write into the amount field so the field stays the single
+    /// source of truth; a segment is selected only while the field equals it.
+    private var presetSelection: Binding<Int?> {
+        Binding(
+            get: { currentMicro.flatMap { Self.presetsMicro.contains($0) ? $0 : nil } },
+            set: { micro in
+                guard let micro else { return }
+                amount = String(micro / 1_000_000)
+                amountFocused = false
+            }
         )
     }
 
@@ -152,8 +94,8 @@ struct CreditsTopUpSheet: View {
     private var validationRow: some View {
         if let validationMessage {
             Label(validationMessage, systemImage: "exclamationmark.circle")
-                .font(.system(size: 12))
-                .foregroundColor(theme.warningColor)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.status.warning.foreground)
                 .fixedSize(horizontal: false, vertical: true)
         } else if isValid, let micro = currentMicro {
             Label {
@@ -163,45 +105,17 @@ struct CreditsTopUpSheet: View {
                     "You'll add \(OsaurusRouter.formatMicroAsCredits(String(micro))) (\(OsaurusRouter.formatMicroUSD(String(micro))))",
                     bundle: .module
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
             } icon: {
                 Image(systemName: "checkmark.circle")
-                    .foregroundColor(theme.successColor)
+                    .foregroundColor(theme.status.success.foreground)
             }
         } else {
             Label(localized: "Minimum top-up is $5.00", systemImage: "info.circle")
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
         }
-    }
-
-    // MARK: - Footer
-
-    private var footer: some View {
-        VStack(spacing: 12) {
-            legalNotice
-
-            HStack(spacing: 12) {
-                footerButton(title: L("Cancel"), isPrimary: false) {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                footerButton(
-                    title: L("Continue to checkout"),
-                    isPrimary: true,
-                    isEnabled: isValid && !accountService.isCreatingCheckout,
-                    isLoading: accountService.isCreatingCheckout
-                ) {
-                    Task { await performCheckout() }
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 18)
-        .padding(.top, 2)
     }
 
     /// Purchasing credits forms a payment agreement, so the credit-specific
@@ -210,62 +124,13 @@ struct CreditsTopUpSheet: View {
     private var legalNotice: some View {
         MarkdownLinkText(
             markdown: OsaurusWebLinks.acceptanceMarkdown,
-            font: .system(size: 11),
-            textColor: theme.tertiaryText,
-            linkColor: theme.accentColor,
+            style: .caption,
+            textColor: theme.text.tertiary,
+            linkColor: theme.text.link,
             alignment: .center
         )
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity)
-    }
-
-    /// Footer button styled to match the themed dialog: primary is an accent
-    /// fill, secondary is a subtle tertiary surface.
-    private func footerButton(
-        title: String,
-        isPrimary: Bool,
-        isEnabled: Bool = true,
-        isLoading: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        let isHovered = hoveredButton == title && isEnabled
-        let foreground: Color =
-            isPrimary ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText
-        return Button(action: action) {
-            // Keep the label in the layout (just hidden) while loading so the
-            // spinner overlays in place instead of resizing the button.
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(foreground)
-                .opacity(isLoading ? 0 : 1)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(
-                            isPrimary
-                                ? theme.accentColor.opacity(isHovered ? 0.9 : 1.0)
-                                : theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0.5)
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(isPrimary ? Color.clear : theme.cardBorder, lineWidth: 1)
-                )
-                .overlay {
-                    if isLoading {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(foreground)
-                    }
-                }
-                .opacity(isEnabled ? 1.0 : 0.5)
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-        .onHover { hovering in
-            hoveredButton = (hovering && isEnabled) ? title : nil
-        }
     }
 
     // MARK: - Amount resolution

@@ -164,7 +164,7 @@ connections may declare provider-side idempotency in their action config;
 Discord/Slack/Telegram bot sends have no server-side dedupe key, which is
 exactly why the ambiguous class exists.
 
-The prompt payload is redacted by design: the dynamic "Channel Destinations"
+The prompt payload is redacted by design: the dynamic "Where It Can Post"
 section lists only the current agent's usable bindings for the current run
 source — stable binding ids, labels, connection/room display ids, modes, and
 operator guidance. It never includes secrets, sender identities, other agents'

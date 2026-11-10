@@ -77,20 +77,19 @@ struct AgentTemplateOrchestratorHintTests {
         #expect(ConfigurationReadNextStep.agentTemplateCapabilityLine(templateNames: ["A"]) != nil)
     }
 
-    // MARK: - Delegation rubric
+    // MARK: - Agent rubric (Configurator)
 
     @MainActor
     @Test
-    func delegationChecksTemplatesBeforeHandWritingAnAgent() {
+    func agentCreationChecksTemplatesBeforeHandWritingAnAgent() {
         for compact in [true, false] {
-            let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+            let rendered = ConfiguratorSystemPromptBuilder._renderForTests(
                 domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])],
                 compact: compact
             )
             #expect(rendered.contains("action: 'templates'"), "compact: \(compact)")
             #expect(rendered.contains("no template fits"), "compact: \(compact)")
-            // Creating an agent is still a same-turn action, not an offer.
-            #expect(rendered.contains("spawn_agent"), "compact: \(compact)")
+            #expect(rendered.contains("orchestrator_spawnable: true"), "compact: \(compact)")
         }
     }
 
@@ -100,8 +99,8 @@ struct AgentTemplateOrchestratorHintTests {
     /// result instead, which is not part of the cached prefix.
     @MainActor
     @Test
-    func delegationRubricCarriesNoTemplateNames() {
-        let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+    func agentRubricCarriesNoTemplateNames() {
+        let rendered = ConfiguratorSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]
         )
         #expect(!rendered.contains("Local Agent"))
@@ -122,7 +121,7 @@ struct AgentTemplateOrchestratorHintTests {
             "overrides": ["name": "zz-template-plan-probe-\(UUID().uuidString.prefix(8))"],
         ]
         let data = try JSONSerialization.data(withJSONObject: args)
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await OsaurusConfigTool().execute(argumentsJSON: String(decoding: data, as: UTF8.self))
         }
         #expect(result.contains("dry_run_not_applied"), "plan did not run: \(result)")
@@ -142,7 +141,7 @@ struct AgentTemplateOrchestratorHintTests {
                 "overrides": ["name": "zz-empty-yaml-probe-\(UUID().uuidString.prefix(8))"],
             ]
             let data = try JSONSerialization.data(withJSONObject: args)
-            let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
                 try await OsaurusConfigTool().execute(argumentsJSON: String(decoding: data, as: UTF8.self))
             }
             #expect(result.contains("dry_run_not_applied"), "yaml \(empty): \(result)")
@@ -164,7 +163,7 @@ struct AgentTemplateOrchestratorHintTests {
         var args = args
         args["action"] = "plan"
         let data = try JSONSerialization.data(withJSONObject: args)
-        return try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        return try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await OsaurusConfigTool().execute(argumentsJSON: String(decoding: data, as: UTF8.self))
         }
     }
@@ -241,7 +240,7 @@ struct AgentTemplateOrchestratorHintTests {
             "overrides": ["name": "Researcher"],
         ]
         let data = try JSONSerialization.data(withJSONObject: args)
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await OsaurusConfigTool().execute(argumentsJSON: String(decoding: data, as: UTF8.self))
         }
         #expect(result.contains("No agent template named"), "message: \(result)")
@@ -258,7 +257,7 @@ struct AgentTemplateOrchestratorHintTests {
             "overrides": ["name": "Researcher"],
         ]
         let data = try JSONSerialization.data(withJSONObject: args)
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await OsaurusConfigTool().execute(argumentsJSON: String(decoding: data, as: UTF8.self))
         }
         #expect(result.contains("is a starter prompt, not an agent template"), "message: \(result)")

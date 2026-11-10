@@ -197,6 +197,10 @@ final class MobilePairingService: ObservableObject {
         guard !isGeneratingCode else { return }
         cancelCode()
         lastError = nil
+        guard !MobileConnectMigration.isRetired(defaults: defaults) else {
+            lastError = L("Your iPhone uses Sync now. Add it in Sharing → Devices.")
+            return
+        }
         guard OsaurusIdentity.exists() else {
             lastError = L("Set up your Osaurus identity first (Settings → Identity).")
             return
@@ -533,6 +537,15 @@ final class MobilePairingService: ObservableObject {
         setPairedDevice(nil)
     }
 
+    /// The iPhone joined Sync (`MobileConnectMigration`), which revoked the
+    /// pairing keys and cleared the pairing defaults: drop what this service
+    /// still holds, a showing code and the paired phone with its keep-awake.
+    func retire() {
+        cancelCode()
+        guard pairedDevice != nil else { return }
+        setPairedDevice(nil)
+    }
+
     private func setPairedDevice(_ device: PairedMobileDevice?) {
         pairedDevice = device
         if let device, let data = try? JSONEncoder().encode(device) {
@@ -580,7 +593,7 @@ final class MobilePairingService: ObservableObject {
         if shouldHold, keepAwakeToken == nil {
             keepAwakeToken = ProcessInfo.processInfo.beginActivity(
                 options: [.idleSystemSleepDisabled],
-                reason: "Osaurus Mobile: keep this Mac reachable from the paired phone"
+                reason: "Osaurus Mobile: keep this Mac reachable from your iPhone"
             )
         } else if !shouldHold, let token = keepAwakeToken {
             ProcessInfo.processInfo.endActivity(token)

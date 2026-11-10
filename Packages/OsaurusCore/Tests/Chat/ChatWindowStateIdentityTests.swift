@@ -50,28 +50,23 @@ struct ChatWindowStateIdentityTests {
 
     // MARK: - Remote (Mode 2)
 
-    @Test("discovered agent selected → identity uses remote name + pinned mascot, isRemote true")
-    func remoteIdentity_usesDiscoveredAgent() async throws {
+    @Test("relay agent selected → identity uses remote name + pinned mascot, isRemote true")
+    func remoteIdentity_usesRelayAgent() async throws {
         try await ChatHistoryTestStorage.run {
             // Window opens on the local Default agent...
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             #expect(window.effectiveChatIdentity.isRemote == false)
 
-            // ...then a discovered remote agent is selected and its mascot pinned
-            // from live metadata (Mode 2). The thread identity must follow it.
-            let discovered = DiscoveredAgent(
+            // ...then a relay agent is selected and its mascot pinned from
+            // live metadata (Mode 2). The thread identity must follow it.
+            let relay = PairedRelayAgent(
                 id: UUID(),
                 name: "Coco",
-                agentDescription: "A friendly remote helper",
-                address: "remote-addr",
-                host: "127.0.0.1",
-                resolvedIP: nil,
-                port: 1234,
-                supportsSecureChannel: true,
-                serviceName: "coco._osaurus._tcp."
+                remoteAgentAddress: "remote-addr",
+                providerId: UUID()
             )
-            window.selectedDiscoveredAgent = discovered
-            window.selectedDiscoveredAgentProviderId = UUID()
+            window.selectedRelayAgent = relay
+            window.selectedRemoteAgentProviderId = relay.providerId
             window.pinnedRemoteAgentAvatar = "green"
 
             let identity = window.effectiveChatIdentity
@@ -89,10 +84,9 @@ struct ChatWindowStateIdentityTests {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             let localName = window.effectiveChatIdentity.name
 
-            // Provider id set but no discovered/relay agent resolved yet (pure
-            // ephemeral selection mid-connect): the identity must still report
+            // Provider id set but no relay agent resolved yet (mid-connect): the identity must still report
             // remote — not silently fall through to the local "Osaurus" label.
-            window.selectedDiscoveredAgentProviderId = UUID()
+            window.selectedRemoteAgentProviderId = UUID()
             window.pinnedRemoteAgentAvatar = nil
 
             let identity = window.effectiveChatIdentity

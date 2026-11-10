@@ -27,7 +27,12 @@ public struct RemoteProviderOAuthTokens: Codable, Sendable, Equatable {
 
 /// Keychain wrapper for secure remote provider credential storage
 public enum RemoteProviderKeychain {
-    private static let service = "ai.osaurus.remote"
+    private static var service: String {
+        KeychainQueryHelpers.usesConnectedDesignProviders
+            ? KeychainQueryHelpers.designProviderService : "ai.osaurus.remote"
+    }
+
+    static var isStorageDisabled: Bool { KeychainQueryHelpers.disablesKeychain(for: service) }
 
     public static func runOffCooperativeExecutor<T: Sendable>(
         _ operation: @escaping @Sendable () -> T
@@ -45,20 +50,20 @@ public enum RemoteProviderKeychain {
     @discardableResult
     public static func saveAPIKey(_ apiKey: String, for providerId: UUID) -> Bool {
         guard let keyData = apiKey.data(using: .utf8) else { return false }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return false }
         return setData(keyData, account: apiKeyAccount(for: providerId))
     }
 
     /// Retrieve an API key for a provider ID
     public static func getAPIKey(for providerId: UUID) -> String? {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return nil }
         return getData(account: apiKeyAccount(for: providerId)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Delete an API key for a provider ID
     @discardableResult
     public static func deleteAPIKey(for providerId: UUID) -> Bool {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return true }
         return deleteItem(account: apiKeyAccount(for: providerId))
     }
 
@@ -70,7 +75,7 @@ public enum RemoteProviderKeychain {
     /// Typed availability of the API key, distinguishing a definitively
     /// missing key from a keychain that can't answer right now.
     public static func apiKeyAvailability(for providerId: UUID) -> SecretAvailability {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return .absent }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return .absent }
         return availability(account: apiKeyAccount(for: providerId)) {
             String(data: $0, encoding: .utf8) != nil
         }
@@ -81,7 +86,7 @@ public enum RemoteProviderKeychain {
     @discardableResult
     public static func saveOAuthTokens(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID) -> Bool {
         guard let tokenData = try? JSONEncoder().encode(tokens) else { return false }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return false }
         return setData(tokenData, account: oauthAccount(for: providerId))
     }
 
@@ -95,7 +100,7 @@ public enum RemoteProviderKeychain {
     }
 
     public static func getOAuthTokens(for providerId: UUID) -> RemoteProviderOAuthTokens? {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return nil }
         guard let data = getData(account: oauthAccount(for: providerId)) else { return nil }
         do {
             return try JSONDecoder().decode(RemoteProviderOAuthTokens.self, from: data)
@@ -111,7 +116,7 @@ public enum RemoteProviderKeychain {
     /// Typed availability of the OAuth token blob, distinguishing corrupt
     /// stored data and a transiently unavailable keychain from absence.
     public static func oauthTokensAvailability(for providerId: UUID) -> SecretAvailability {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return .absent }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return .absent }
         return availability(account: oauthAccount(for: providerId)) {
             (try? JSONDecoder().decode(RemoteProviderOAuthTokens.self, from: $0)) != nil
         }
@@ -119,12 +124,49 @@ public enum RemoteProviderKeychain {
 
     @discardableResult
     public static func deleteOAuthTokens(for providerId: UUID) -> Bool {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return true }
         return deleteItem(account: oauthAccount(for: providerId))
     }
 
     public static func hasOAuthTokens(for providerId: UUID) -> Bool {
         getOAuthTokens(for: providerId) != nil
+    }
+
+    // MARK: - Session OAuth tokens
+    //
+    // A nil session is the primary one, in the account above. Other
+    // sessions keep theirs in `<providerUUID>.session.<sessionUUID>.oauth.tokens`.
+
+    @discardableResult
+    public static func saveOAuthTokens(_ tokens: RemoteProviderOAuthTokens, for providerId: UUID, session: UUID?)
+        -> Bool
+    {
+        guard let session else { return saveOAuthTokens(tokens, for: providerId) }
+        guard let data = try? JSONEncoder().encode(tokens) else { return false }
+        return SessionKeychainItems.write(
+            service: service, account: SessionKeychainItems.account(providerId, session: session, suffix: "oauth.tokens"),
+            data: data)
+    }
+
+    public static func getOAuthTokens(for providerId: UUID, session: UUID?) -> RemoteProviderOAuthTokens? {
+        guard let session else { return getOAuthTokens(for: providerId) }
+        let account = SessionKeychainItems.account(providerId, session: session, suffix: "oauth.tokens")
+        return SessionKeychainItems.read(service: service, account: account)
+            .flatMap { try? JSONDecoder().decode(RemoteProviderOAuthTokens.self, from: $0) }
+    }
+
+    public static func oauthTokensAvailability(for providerId: UUID, session: UUID?) -> SecretAvailability {
+        guard let session else { return oauthTokensAvailability(for: providerId) }
+        return SessionKeychainItems.availability(
+            service: service, account: SessionKeychainItems.account(providerId, session: session, suffix: "oauth.tokens")
+        ) { (try? JSONDecoder().decode(RemoteProviderOAuthTokens.self, from: $0)) != nil }
+    }
+
+    @discardableResult
+    public static func deleteOAuthTokens(for providerId: UUID, session: UUID?) -> Bool {
+        guard let session else { return deleteOAuthTokens(for: providerId) }
+        return SessionKeychainItems.delete(
+            service: service, account: SessionKeychainItems.account(providerId, session: session, suffix: "oauth.tokens"))
     }
 
     // MARK: - Header Secret Management
@@ -133,26 +175,26 @@ public enum RemoteProviderKeychain {
     @discardableResult
     public static func saveHeaderSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
         guard let valueData = value.data(using: .utf8) else { return false }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return false }
         return setData(valueData, account: headerAccount(key: key, for: providerId))
     }
 
     /// Retrieve a secret header value for a provider
     public static func getHeaderSecret(key: String, for providerId: UUID) -> String? {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return nil }
         return getData(account: headerAccount(key: key, for: providerId)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Delete a secret header value for a provider
     @discardableResult
     public static func deleteHeaderSecret(key: String, for providerId: UUID) -> Bool {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return true }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return true }
         return deleteItem(account: headerAccount(key: key, for: providerId))
     }
 
     /// Delete all secrets for a provider (API key + all header secrets)
     public static func deleteAllSecrets(for providerId: UUID) {
-        if KeychainQueryHelpers.disablesKeychainForProcess { return }
+        if KeychainQueryHelpers.disablesKeychain(for: service) { return }
         deleteAPIKey(for: providerId)
         deleteOAuthTokens(for: providerId)
 
