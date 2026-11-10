@@ -172,7 +172,12 @@ final class SyncWorkflowRunsFeed {
 
     func start() {
         guard cancellable == nil else { return }
-        cancellable = WorkflowRunStore.shared.$live
+        // The saved history too: it's read from disk only when something asks, and after a launch
+        // `live` holds nothing until a run starts.
+        cancellable = WorkflowRunStore.shared.$live.map { _ in () }
+            .merge(with: WorkflowRunStore.shared.$recentPersisted.map { _ in () })
+            // And once a phone is known: before then nothing is written.
+            .merge(with: SyncPhoneDevices.shared.$hasPhone.removeDuplicates().map { _ in () })
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncWorkflowRunsFeed.shared.schedule() } }
         schedule()
@@ -189,6 +194,12 @@ final class SyncWorkflowRunsFeed {
 
     private func publishNow() {
         guard SyncService.shared.core != nil, SyncPhoneDevices.shared.hasPhone else { return }
+        let store = WorkflowRunStore.shared
+        guard store.recentPersisted != nil else {
+            // Loaded first, then written (its arrival schedules this again).
+            Task { @MainActor in await store.loadRecentRunsIfNeeded() }
+            return
+        }
         let state = SyncWorkflowLibrary.runs(nowMs: SyncHostedRunContract.nowMs())
         // Streamed step text isn't on the card: most store changes write nothing.
         guard state.runs != written else { return }
@@ -199,7 +210,11 @@ final class SyncWorkflowRunsFeed {
                     guard
                         let conversation = try SyncDeviceFeedContract.conversation(
                             kind: SyncDeviceFeedContract.manageKind, device: core.deviceKey(), core: core)
-                    else { return }
+                    else {
+                        // The manage state hasn't made the conversation yet: sent again on the next change.
+                        Task { @MainActor in SyncWorkflowRunsFeed.shared.written = nil }
+                        return
+                    }
                     try core.setConversationAppData(
                         scope: conversation.scope,
                         namespace: SyncDeviceFeedContract.workflowRunsNamespace,
