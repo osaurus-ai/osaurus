@@ -16,7 +16,7 @@ The exact old model-free XCTest baseline completed55tests with52pass,3failing pa
 
 ## Bounded correction
 
-Only `ImageSubagentKind.swift` changes in product code. Local generate/edit share their existing policy decision and denial messages. Ask uses caller-owned approval; Always Allow updates only the launching owner's image policy. Allow Once and Deny do not persist a grant. A queued approval rereads the current owner policy before presentation. Cancellation while an approval is unanswered cannot save a grant. If a custom launcher disappears, its current explicit approval is not redirected into global defaults.
+Product changes are confined to `ImageSubagentKind.swift` and an additive full-outcome caller-owned approval entry point in `ToolPermissionPromptService.swift`. Existing generic approval behavior and narrow spawn-policy outcomes remain unchanged. Local generate/edit share their existing policy decision and denial messages. Ask uses caller-owned approval; Always Allow updates only the launching owner's image policy. Allow Once and Deny do not persist a grant. A queued approval rereads the current owner policy before presentation. Cancellation while an approval is unanswered cannot save a grant. If a custom launcher disappears, its current explicit approval is not redirected into global defaults.
 
 Default-policy writes use the existing atomic mutate API. Custom-policy writes fetch the current agent on MainActor and use the existing AgentManager update API, matching the established spawn approval path. Its normal persistence/notifications remain in use rather than writing files behind the manager.
 
@@ -39,3 +39,23 @@ SOURCE EVIDENCE: `ImageSubagentKind.swift` permission path; existing `SpawnPermi
 LIVE EVIDENCE: original native failure and old XCTest artifacts named above. Candidate runtime/UI/matrix results are pending and must be added before any qualified or merge-ready claim.
 
 Candidate1 completed:90/90tests in11suites,0fail/0skip; all five actual xctest PID flags verified and source bytes unchanged. Component2 adds the explicit legacy generic-Auto cross-product and resolves any unexpected queued card so a regression fails with a concrete result; product source is unchanged. Candidate2 and native Release qualification remain pending.
+
+## Run approval and prompt-choice parity
+
+Pre-merge review found that the first candidate used the narrow spawn-style approval API, which omits Allow for This Task. It was not merged or claimed native-qualified. Its two90/90component runs and successful unlaunched Release build at0e7ab802a4919db2b2e56a701f23ff9feb17c1c8 remain retained, including frozen compiled outputs. The build completed before the attempted cancellation preflight, so no process was signaled.
+
+An unchanged-production control then measured the related existing run-approval defect: generate/edit both advertised the task-wide choice, but no ToolPermissionRunScope grant was recorded, so two calls in the same task prompted twice and another task prompted again. The stable-install control preserves full configuration equality and captures the actual test PID and five whitelisted runtime flags. The first cold-install attempt's unrelated spawnPoolSeeded migration and missed short-lived external PID sample remain explicitly documented; neither is hidden nor attributed to image permission. Source/commands/raw observations/xcresults: `image-permission-owner-20261109/run-approval-baseline1/` and `run-approval-baseline2/QUALIFICATION.json`.
+
+The final candidate keeps all existing approval choices in a real agent task. The full-outcome caller-owned API reports Allow for This Task without writing ToolRegistry. The image gate records it in the actual task lease already created by AgentToolLoop, checks Deny first, and rereads owner/run approval for queued calls. A new task receives a fresh lease; no grant is saved for run approval. Always Allow remains the launching owner's persistent policy. Callers without a real task lease do not advertise that unsupported choice. Existing spawn callers retain the same narrow outcome mapping and no run button.
+
+Pending final candidate component, concurrent sibling approvals, fresh native Release, actual images/parent continuation, run/default/custom persistence and relaunch, full applicable evals and exact-head CI. No model/runtime readiness claim.
+
+## Queued approval publication ordering
+
+Candidate3 passed91/92test declarations in12suites,0skip. The one failing parameterized declaration failed for both default and custom launchers: a blocker held two sibling image requests in the approval queue; after the first Always Allow, both image cards were still presented (three total prompts including the blocker). The task-wide lease regression passed. Full failed sources, actual PID flags, observations, log, xcresult and compiled-output snapshot are retained in `image-permission-owner-20261109/component3/`.
+
+The exact cause is `ToolPermissionPromptService.resolve`: it resumes the first caller and immediately pumps the next request before that caller can publish its policy/lease grant. Candidate4 supplies a synchronous MainActor commit callback for the caller-owned image request, executed after its continuation is claimed but before resume and queue advancement. Denials/cancellation and unknown/already-resolved IDs do not commit. The existing generic approval entrypoints and original narrow spawn-policy function remain byte-identical, with a nil callback; no additional async forwarding hop is introduced for spawn.
+
+Candidate4 strengthens complete default-config/custom-agent equality checks, verifies image approval does not advance default/shared spawn authority revisions, exercises Deny despite a preexisting run lease, and covers both Always Allow and task-wide grants for queued default/custom siblings. A headless full-outcome request must not commit anything. Current component/native/eval/CI qualification remains pending.
+
+Candidate4 complete:94/94test declarations in12suites,0fail/0skip. Default/custom queued sibling Always Allow and run-grant cross-products now present exactly two cards total (blocker plus one image approval); original C3presented three. Existing owner, task-expiration, Deny, cancelled/headless, exactly-once, full-store/other-agent equality and spawn authority checks pass. Raw metrics/child flags/source unchanged binding are in component4/. Fresh final native Release, GUI and broader eval/CI proof remain pending.

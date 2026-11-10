@@ -57,7 +57,11 @@ struct ImagePermissionOwnershipRegressionTests {
         ToolRegistry.shared.setPolicy(registryPolicy, for: "image")
         var permissions = SubagentPermissionDefaults()
         permissions.setPolicy(.ask, for: SubagentCapabilityRegistry.image.id)
-        SubagentConfigurationStore.save(.init(permissionDefaults: permissions))
+        var configuration = SubagentConfiguration(permissionDefaults: permissions)
+        configuration.spawnPoolSeeded = true
+        SubagentConfigurationStore.save(configuration)
+        configuration = SubagentConfigurationStore.snapshot()
+        let authorityBefore = SubagentConfigurationStore.snapshotWithSpawnAuthorityRevisions()
         let before = try json(SubagentConfigurationStore.snapshot())
         let probe = ImagePermissionPresenter()
         let operation = kind(edit: edit)
@@ -83,6 +87,11 @@ struct ImagePermissionOwnershipRegressionTests {
         #expect(policy == .alwaysAllow)
         #expect(registry == registryPolicy)
         #expect(probe.count == 1)
+        configuration.permissionDefaults.setPolicy(.alwaysAllow, for: SubagentCapabilityRegistry.image.id)
+        #expect(SubagentConfigurationStore.snapshot() == configuration)
+        let authorityAfter = SubagentConfigurationStore.snapshotWithSpawnAuthorityRevisions()
+        #expect(authorityAfter.spawnSharedRevision == authorityBefore.spawnSharedRevision)
+        #expect(authorityAfter.spawnDefaultRevision == authorityBefore.spawnDefaultRevision)
     }
 
     @Test("Custom-agent Always Allow stays in that agent only", arguments: [false, true])
@@ -152,6 +161,10 @@ struct ImagePermissionOwnershipRegressionTests {
         #expect(NSDictionary(dictionary: beforeSettings).isEqual(to: afterSettings))
         #expect(beforeB == afterB)
         #expect(try json(SubagentConfigurationStore.snapshot()) == globalBefore)
+        var expectedA = beforeA
+        expectedA.settings.subagentPermissions.setPolicy(.alwaysAllow, for: SubagentCapabilityRegistry.image.id)
+        expectedA.updatedAt = afterA.updatedAt
+        #expect(try json(expectedA) == json(afterA))
     }
 
     @Test("Registry auto never overrides an explicit image Deny", arguments: [false, true])
@@ -167,8 +180,12 @@ struct ImagePermissionOwnershipRegressionTests {
         let probe = ImagePermissionPresenter()
         let operation = kind(edit: edit)
         let scope = SubagentScope(sessionId: "image-owner-deny", toolCallId: "denied", agentId: Agent.defaultId)
+        let runScope = ToolPermissionRunScope()
+        runScope.allow("image")
         let decision = await ToolPermissionPromptService.$presentationOverrideForTests.withValue(probe.presenter) {
-            await operation.permission(scope, ResolvedModel(name: "fixture/no-load", isLocal: true))
+            await ChatExecutionContext.$toolPermissionRunScope.withValue(runScope) {
+                await operation.permission(scope, ResolvedModel(name: "fixture/no-load", isLocal: true))
+            }
         }
         try retainImagePermissionObservation(
             "image-deny-owner",
@@ -300,6 +317,92 @@ struct ImagePermissionOwnershipRegressionTests {
         #expect(decision == .allow)
         #expect(probe.count == 1)
         #expect(try json(SubagentConfigurationStore.snapshot()) == before)
+        #expect(ToolRegistry.shared.configuredPolicy(for: "image") == registryBefore)
+    }
+
+    @Test("Queued sibling image calls reuse the same grant", arguments: [false, true], [false, true])
+    func queuedSiblingsReuseApproval(customAgent: Bool, forRun: Bool) async throws {
+        let lease = await acquireSubagentStoreSandbox("image-owner-siblings")
+        defer { lease.release() }
+        var configuration = SubagentConfiguration()
+        configuration.spawnPoolSeeded = true
+        SubagentConfigurationStore.save(configuration)
+        configuration = SubagentConfigurationStore.snapshot()
+        var agentId = Agent.defaultId
+        if customAgent {
+            let agent = Agent(
+                name: "Image sibling owner \(UUID())",
+                description: "Permission fixture",
+                defaultModel: "fixture/no-load",
+                autonomousExec: .init(enabled: false),
+                memoryEnabled: false
+            )
+            AgentStore.save(agent)
+            AgentManager.shared.refresh()
+            agentId = agent.id
+        }
+        let launchingAgentId = agentId
+        defer {
+            if customAgent {
+                AgentStore.delete(id: launchingAgentId)
+                AgentManager.shared.refresh()
+            }
+        }
+        let registryBefore = ToolRegistry.shared.configuredPolicy(for: "image")
+        let probe = ImagePermissionPresenter()
+        probe.outcome = nil
+        let presenter = probe.presenter
+        let blocker = Task {
+            await ToolPermissionPromptService.$presentationOverrideForTests.withValue(presenter) {
+                await ToolPermissionPromptService.requestPolicyApproval(
+                    toolName: "image-sibling-blocker",
+                    description: "Hold approval queue",
+                    argumentsJSON: "{}"
+                )
+            }
+        }
+        defer { blocker.cancel() }
+        try await waitUntil { probe.count == 1 }
+        let operation = kind(edit: false)
+        let runScope = ToolPermissionRunScope()
+        let siblings = Task {
+            await ChatExecutionContext.$toolPermissionRunScope.withValue(runScope) {
+                await ToolPermissionPromptService.$presentationOverrideForTests.withValue(presenter) {
+                    await withTaskGroup(of: SubagentDecision.self) { group in
+                        for index in 0 ..< 2 {
+                            group.addTask {
+                                let scope = SubagentScope(
+                                    sessionId: "image-owner-siblings",
+                                    toolCallId: "sibling-\(index)",
+                                    agentId: launchingAgentId
+                                )
+                                return await operation.permission(
+                                    scope,
+                                    ResolvedModel(name: "fixture/no-load", isLocal: true)
+                                )
+                            }
+                        }
+                        var decisions: [SubagentDecision] = []
+                        for await decision in group { decisions.append(decision) }
+                        return decisions
+                    }
+                }
+            }
+        }
+        defer { siblings.cancel() }
+        try await waitUntil { ToolPermissionPromptService.queuedPromptCountForTesting >= 2 }
+        probe.outcome = forRun ? .allowForRun : .alwaysAllow
+        ToolPermissionPromptService.resolveForTesting(id: probe.ids[0], outcome: .allowOnce)
+        _ = await blocker.value
+        let decisions = await siblings.value
+        try retainImagePermissionObservation(
+            "queued-sibling-owner",
+            ["customAgent": customAgent, "forRun": forRun, "promptsIncludingBlocker": probe.count]
+        )
+        #expect(decisions.count == 2 && decisions.allSatisfy { $0 == .allow })
+        #expect(probe.count == 2)
+        #expect(runScope.allows("image") == forRun)
+        if forRun { #expect(SubagentConfigurationStore.snapshot() == configuration) }
         #expect(ToolRegistry.shared.configuredPolicy(for: "image") == registryBefore)
     }
 }

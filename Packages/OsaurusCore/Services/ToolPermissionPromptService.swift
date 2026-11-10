@@ -61,8 +61,8 @@ enum ToolPermissionPromptService {
         let argumentsJSON: String
         let knowledgeWritePreview: KnowledgeWritePreview?
         let perCallApprovalOnly: Bool
-        /// Whether the card offers "Allow for This Task". Only the generic
-        /// registry prompt has a run lease to grant into.
+        /// Whether the caller has a task lease to grant "Allow for This Task"
+        /// into. Policy callers without that owner leave this false.
         let offersRunLease: Bool
         /// Where the approved call will run (VM / this Mac / remote MCP
         /// server), shown on the card so consent is informed
@@ -73,6 +73,9 @@ enum ToolPermissionPromptService {
         /// `GET /approvals`, as in the computer-use and config queues: a card
         /// from a Mac chat is answered on the Mac.
         let fromPairedPhone: Bool
+        /// A caller-owned approval must publish its new authority before the
+        /// next queued request revalidates. Nil preserves generic callers.
+        var commitApproval: (@MainActor @Sendable (ApprovalOutcome) -> Void)? = nil
     }
 
     private struct PendingPrompt {
@@ -352,6 +355,50 @@ enum ToolPermissionPromptService {
         }
     }
 
+    /// Full outcomes for a caller-owned policy that also owns a task lease.
+    /// The caller records run approval in that lease and persistent approval
+    /// in its policy store. This entry point never writes ToolRegistry.
+    /// Existing spawn callers keep the narrower entry point and no run button.
+    static func requestPolicyApprovalOutcome(
+        toolName: String,
+        description: String,
+        argumentsJSON: String,
+        offersRunLease: Bool = false,
+        commitApproval: (@MainActor @Sendable (ApprovalOutcome) -> Void)? = nil,
+        revalidate: (@Sendable () async -> PolicyApprovalOutcome?)? = nil
+    ) async -> ApprovalOutcome {
+        if isHeadlessTestProcess { return .denied }
+        if Task.isCancelled { return .denied }
+
+        var mappedRevalidate: Revalidation?
+        if let hook = revalidate {
+            mappedRevalidate = { () async -> PromptResolution? in
+                guard let outcome = await hook() else { return nil }
+                return Self.resolution(for: outcome)
+            }
+        }
+        let resolution = await enqueue(
+            PromptRequest(
+                toolName: toolName,
+                description: description,
+                argumentsJSON: argumentsJSON,
+                knowledgeWritePreview: nil,
+                perCallApprovalOnly: false,
+                offersRunLease: offersRunLease,
+                executionSurface: nil,
+                fromPairedPhone: ChatExecutionContext.hasRemoteReviewer,
+                commitApproval: commitApproval
+            ),
+            revalidate: mappedRevalidate
+        )
+        switch resolution {
+        case .denied: return .denied
+        case .allowOnce: return .allowOnce
+        case .allowForRun: return .allowForRun
+        case .alwaysAllow: return .alwaysAllow
+        }
+    }
+
     nonisolated private static func resolution(
         for outcome: PolicyApprovalOutcome
     ) -> PromptResolution {
@@ -429,6 +476,7 @@ enum ToolPermissionPromptService {
     }
 
     private static func resolve(id: UUID, outcome: PromptResolution) {
+        let commitApproval = pendingRequest(id: id)?.commitApproval
         queue.removeAll { $0.id == id }
         if let current = slot, current.id == id {
             tearDown(current)
@@ -436,6 +484,14 @@ enum ToolPermissionPromptService {
             presentedRequest = nil
         }
         if let continuation = continuations.removeValue(forKey: id) {
+            // Publish the caller-owned grant while this resolution still owns
+            // the queue. Resuming first lets the next card read stale Ask.
+            switch outcome {
+            case .denied: break
+            case .allowOnce: commitApproval?(.allowOnce)
+            case .allowForRun: commitApproval?(.allowForRun)
+            case .alwaysAllow: commitApproval?(.alwaysAllow)
+            }
             continuation.resume(returning: outcome)
         }
         pump()

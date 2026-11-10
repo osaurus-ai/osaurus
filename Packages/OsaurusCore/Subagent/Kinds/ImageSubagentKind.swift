@@ -281,10 +281,23 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             return .allow
         case .ask:
             if ChatExecutionContext.autoApproveToolPrompts { return .allow }
-            let outcome = await ToolPermissionPromptService.requestPolicyApproval(
+            let runScope = ChatExecutionContext.toolPermissionRunScope
+            if runScope?.allows("image") == true { return .allow }
+            let outcome = await ToolPermissionPromptService.requestPolicyApprovalOutcome(
                 toolName: "image",
                 description: ImageTool.toolDescription,
                 argumentsJSON: argumentsJSON,
+                offersRunLease: runScope != nil,
+                commitApproval: { outcome in
+                    switch outcome {
+                    case .alwaysAllow:
+                        self.persistAlwaysAllow(launchingAgentId: scope.agentId)
+                    case .allowForRun:
+                        runScope?.allow("image")
+                    case .denied, .allowOnce:
+                        break
+                    }
+                },
                 revalidate: {
                     let config = SubagentConfigurationStore.snapshot()
                     let settings = await MainActor.run {
@@ -298,7 +311,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                     ) {
                     case .deny: return .denied
                     case .alwaysAllow: return .allowOnce
-                    case .ask: return nil
+                    case .ask: return runScope?.allows("image") == true ? .allowOnce : nil
                     }
                 }
             )
@@ -306,37 +319,29 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             switch outcome {
             case .denied:
                 return denied
-            case .allowOnce:
-                return .allow
-            case .alwaysAllow:
-                // The image gate owns the image capability's policy, rather
-                // than ToolRegistry's unrelated generic tool permission.
-                await persistAlwaysAllow(launchingAgentId: scope.agentId)
+            case .allowOnce, .allowForRun, .alwaysAllow:
                 return .allow
             }
         }
     }
 
-    private func persistAlwaysAllow(launchingAgentId: UUID) async {
+    @MainActor
+    private func persistAlwaysAllow(launchingAgentId: UUID) {
         if launchingAgentId == Agent.defaultId {
             SubagentConfigurationStore.mutate { config in
                 config.permissionDefaults.setPolicy(.alwaysAllow, for: capability.id)
             }
             return
         }
-        let persisted = await MainActor.run {
-            guard var agent = AgentManager.shared.agent(for: launchingAgentId), !agent.isBuiltIn else {
-                return false
-            }
-            agent.settings.subagentPermissions.setPolicy(.alwaysAllow, for: capability.id)
-            AgentManager.shared.update(agent)
-            return true
-        }
-        if !persisted {
+        guard var agent = AgentManager.shared.agent(for: launchingAgentId), !agent.isBuiltIn else {
             // This click still approves the current call; a missing launcher
             // must never redirect persistence into the global/default policy.
             print("[Osaurus] Could not persist image Always Allow for agent \(launchingAgentId)")
+            return
         }
+        guard agent.settings.subagentPermissions.policy(for: capability.id) != .alwaysAllow else { return }
+        agent.settings.subagentPermissions.setPolicy(.alwaysAllow, for: capability.id)
+        AgentManager.shared.update(agent)
     }
 
     private static func backendDescription(_ model: MediaModelInfo) -> String {
