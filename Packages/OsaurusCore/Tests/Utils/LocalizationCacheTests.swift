@@ -67,6 +67,7 @@ struct LocalizationCacheTests {
         "Persona",
         "Working Directory",
         "Agent Loop",
+        "Where It Can Post",
         "Host Workspace",
         "Host Workspace (read-only)",
     ]
