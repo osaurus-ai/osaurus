@@ -25,7 +25,9 @@ import SwiftUI
 /// Namespace for the shared spring + transition. Exposed so callers can
 /// compose with other animations or override per-call site if needed.
 enum GridDiff {
-    static let spring: Animation = .spring(response: 0.42, dampingFraction: 0.82)
+    static var spring: Animation {
+        .spring(response: 0.42, dampingFraction: 0.82)
+    }
 
     /// Built once and shared. `gridDiffCell()` reads this for every cell in
     /// every `ForEach` pass, so a computed property re-allocated five nested

@@ -774,28 +774,30 @@ struct ModelDownloadView: View {
                 ModelMetadataParser.familyKey(from: model.id)
             ]?.count ?? 1)
             : 1
-        let check = modelManager.manifestChecks[model.id.lowercased()]
-        // Only cheap dictionary lookups happen here. Building the card
-        // content (gradients, compatibility, disk-backed format checks) and
-        // the card body is deferred to `ModelGridCell`, which is `Equatable`
-        // so SwiftUI skips every card whose inputs didn't change. Without
-        // this, each `ModelManager` publish (one per download-progress chunk)
-        // rebuilt every card in the grid on the main thread — the app hang.
-        return ModelGridCell(
-            model: model,
-            totalMemoryGB: systemMonitor.totalMemoryGB,
-            variantCount: variantCount,
+        return ModelRowView(
+            content: ModelCardContent(
+                model: model,
+                totalMemoryGB: systemMonitor.totalMemoryGB,
+                variantCount: variantCount
+            ),
             downloadState: modelManager.effectiveDownloadState(for: model),
             metrics: modelManager.downloadMetrics[model.id],
-            updateAvailable: check?.updateAvailable ?? false,
-            verificationRequired: check?.verificationRequired ?? false,
             onViewDetails: { modelToShowDetails = model },
             onUnsupportedTap: { unsupportedModelName = model.name },
             onCancel: { modelManager.cancelDownload(model.id) },
             onPause: { modelManager.pauseDownload(model.id) },
             onResume: { modelManager.resumeDownload(model.id) }
         )
-        .equatable()
+        .overlay(alignment: .topTrailing) {
+            if let check = modelManager.manifestChecks[model.id.lowercased()], check.updateAvailable || check.verificationRequired {
+                Text(check.updateAvailable ? "Update available" : "Verification needed", bundle: .module)
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(6)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(8)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     /// Grid of ModelRowView cards. Surviving cells (same `id` before and
@@ -2454,68 +2456,3 @@ struct HuggingFaceImportSheet: View {
         ModelDownloadView()
     }
 #endif
-
-// MARK: - Grid Cell
-
-/// One catalog / On Device card. `Equatable` on its display inputs only
-/// (callbacks are excluded — they capture stable state and singletons), so
-/// `.equatable()` lets SwiftUI skip re-evaluating cards whose model,
-/// download state, metrics, or update badge are unchanged when the parent
-/// re-renders on a high-frequency `ModelManager` publish.
-private struct ModelGridCell: View, Equatable {
-    let model: MLXModel
-    let totalMemoryGB: Double
-    let variantCount: Int
-    let downloadState: DownloadState
-    let metrics: ModelDownloadService.DownloadMetrics?
-    let updateAvailable: Bool
-    let verificationRequired: Bool
-    let onViewDetails: () -> Void
-    let onUnsupportedTap: () -> Void
-    let onCancel: () -> Void
-    let onPause: () -> Void
-    let onResume: () -> Void
-
-    nonisolated static func == (lhs: ModelGridCell, rhs: ModelGridCell) -> Bool {
-        lhs.model.id == rhs.model.id
-            && lhs.model.name == rhs.model.name
-            && lhs.model.description == rhs.model.description
-            && lhs.model.downloadSizeBytes == rhs.model.downloadSizeBytes
-            && lhs.model.downloads == rhs.model.downloads
-            && lhs.model.releasedAt == rhs.model.releasedAt
-            && lhs.model.isTopSuggestion == rhs.model.isTopSuggestion
-            && lhs.totalMemoryGB == rhs.totalMemoryGB
-            && lhs.variantCount == rhs.variantCount
-            && lhs.downloadState == rhs.downloadState
-            && lhs.metrics == rhs.metrics
-            && lhs.updateAvailable == rhs.updateAvailable
-            && lhs.verificationRequired == rhs.verificationRequired
-    }
-
-    var body: some View {
-        ModelRowView(
-            content: ModelCardContent(
-                model: model,
-                totalMemoryGB: totalMemoryGB,
-                variantCount: variantCount
-            ),
-            downloadState: downloadState,
-            metrics: metrics,
-            onViewDetails: onViewDetails,
-            onUnsupportedTap: onUnsupportedTap,
-            onCancel: onCancel,
-            onPause: onPause,
-            onResume: onResume
-        )
-        .overlay(alignment: .topTrailing) {
-            if updateAvailable || verificationRequired {
-                Text(updateAvailable ? "Update available" : "Verification needed", bundle: .module)
-                    .font(.system(size: 10, weight: .semibold))
-                    .padding(6)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(8)
-                    .allowsHitTesting(false)
-            }
-        }
-    }
-}
