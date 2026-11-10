@@ -62,8 +62,12 @@ public enum SlashCommandStore {
 
     // MARK: - Private
 
+    /// Resolved so a symlinked `~/.osaurus/slash-commands` (dotfiles setups,
+    /// #1996) can be listed; `contentsOfDirectory(at:)` fails on the link itself.
     private nonisolated static func commandsDirectory() -> URL {
-        OsaurusPaths.root().appendingPathComponent("slash-commands", isDirectory: true)
+        OsaurusPaths.resolvingSymlinks(
+            OsaurusPaths.root().appendingPathComponent("slash-commands", isDirectory: true)
+        )
     }
 
     private nonisolated static func commandFileURL(for id: UUID) -> URL {

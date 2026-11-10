@@ -11,8 +11,12 @@ import Foundation
 public enum ScheduleStore {
     // MARK: - Directory Management
 
+    /// Resolved so a symlinked `~/.osaurus/schedules` (dotfiles setups,
+    /// #1996) can be listed; `contentsOfDirectory(at:)` fails on the link itself.
     private static var schedulesDirectory: URL {
-        let dir = OsaurusPaths.resolvePath(new: OsaurusPaths.schedules(), legacy: "Schedules")
+        let dir = OsaurusPaths.resolvingSymlinks(
+            OsaurusPaths.resolvePath(new: OsaurusPaths.schedules(), legacy: "Schedules")
+        )
         OsaurusPaths.ensureExistsSilent(dir)
         return dir
     }

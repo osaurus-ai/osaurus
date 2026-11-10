@@ -321,6 +321,21 @@ public enum OsaurusPaths {
         root().appendingPathComponent("skills", isDirectory: true)
     }
 
+    /// A user folder with any symbolic link in its path resolved, for stores
+    /// that list the folder's contents.
+    ///
+    /// Users keep `skills/` or `slash-commands/` in a dotfiles repository and
+    /// symlink them into the root (`ln -sfh "$PWD/skills" ~/.osaurus/skills`,
+    /// #1996). Foundation's URL-based listing,
+    /// `FileManager.contentsOfDirectory(at:includingPropertiesForKeys:options:)`,
+    /// fails on a symlink to a directory with "The file couldn't be opened",
+    /// while `fileExists` and writes through the link succeed. Listing the
+    /// resolved URL instead makes the linked folder behave like a real one.
+    /// A dangling link resolves to itself and keeps failing as before.
+    public static func resolvingSymlinks(_ folder: URL) -> URL {
+        folder.resolvingSymlinksInPath()
+    }
+
     /// Declarative configuration templates directory
     /// (`~/.osaurus/templates/`). The only place `osaurus_config` reads
     /// or writes YAML documents by name — never arbitrary paths.

@@ -13,7 +13,7 @@ import Foundation
 public enum RemoteAgentStore {
 
     public static func loadAll() -> [RemoteAgent] {
-        let directory = OsaurusPaths.remoteAgents()
+        let directory = remoteAgentsDirectory()
         OsaurusPaths.ensureExistsSilent(directory)
         guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         else { return [] }
@@ -62,7 +62,13 @@ public enum RemoteAgentStore {
         FileManager.default.fileExists(atPath: fileURL(for: id).path)
     }
 
+    /// Resolved so a symlinked `~/.osaurus/remote-agents` (dotfiles setups,
+    /// #1996) can be listed; `contentsOfDirectory(at:)` fails on the link itself.
+    private static func remoteAgentsDirectory() -> URL {
+        OsaurusPaths.resolvingSymlinks(OsaurusPaths.remoteAgents())
+    }
+
     private static func fileURL(for id: UUID) -> URL {
-        OsaurusPaths.remoteAgents().appendingPathComponent("\(id.uuidString).json")
+        remoteAgentsDirectory().appendingPathComponent("\(id.uuidString).json")
     }
 }
