@@ -55,6 +55,7 @@ enum SyncDeviceFeedContract {
         "artifact_blobs",
         "history_filters",
         "continue_own_chats",
+        "workflow_forms",
     ]
 
     /// Each device's record under `prefix`, keyed by device key.
@@ -85,22 +86,32 @@ enum SyncDeviceFeedContract {
     // MARK: - Attention
 
     /// `action` is one the item offers: `approve`, `deny`,
-    /// `allow_for_conversation`, `reply` (with `text`) or `dismiss`.
+    /// `allow_for_conversation`, `reply` (with `text`) or `dismiss`; or
+    /// `submit` (with `values`) for a `workflow_dialog` that carries its form.
     struct AttentionAnswer: Codable, Equatable, Sendable {
         var action: String
         var text: String?
         /// `privacy_review` with `approve`: the detections to replace with
         /// their placeholders. Missing redacts every detection.
         var redact: [String]?
+        /// `submit`: the form's answers by field key.
+        var values: [String: JSONValue]?
         var answeredMs: Int64
 
-        init(action: String, text: String? = nil, redact: [String]? = nil, answeredMs: Int64) {
+        init(
+            action: String, text: String? = nil, redact: [String]? = nil, values: [String: JSONValue]? = nil,
+            answeredMs: Int64
+        ) {
             self.action = action
             self.text = text
             self.redact = redact
+            self.values = values
             self.answeredMs = answeredMs
         }
     }
+
+    /// The answer that fills in a workflow form from the iPhone.
+    static let submitAction = "submit"
 
     struct AttentionAnswers: Codable, Equatable, Sendable {
         var v: Int = 1

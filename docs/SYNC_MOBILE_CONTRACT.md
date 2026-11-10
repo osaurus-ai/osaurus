@@ -40,6 +40,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `warm` | the `warm` op (§5.1) |
 | `history_filters` | `projects`, `plugins` and `workspaces` in the manage state (§5) |
 | `continue_own_chats` | Answering `hostRun` turns in the Mac's own chats, which carry no `hostDevice` (§3.10) |
+| `workflow_forms` | `detail` on `workflow_dialog` items (the form's fields) and the `submit` answer (§4) |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
   NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without
@@ -436,6 +437,18 @@ While an iPhone is in the account, each Mac keeps one conversation tagged
     high_risk?}`, plus `prune`.
   - `privacy_review`: `{items: [{id, category, original, placeholder}]}`, the detections the
     Privacy Filter found in a hosted run's message, before it goes to the provider.
+  - `workflow_dialog` (`workflow_forms`): a form a workflow run waits on.
+    `{workflow, run_id, node_id, title, message, message_truncated?, fields: [{key, label, type,
+    required, options?, help?, default?}], prefill?, phone_answerable}`.
+    - `type` is `text | long_text | number | bool | choice | date | file | folder | secret`;
+      `options` lists a `choice`'s values. An unknown type is answered on the Mac.
+    - `prefill` holds the answers the form starts with (remembered or passed in), by key.
+    - `phone_answerable` is false when a required field is a `file`, `folder` or `secret`: those
+      are answered on the Mac (a path there, and a secret never goes into synced data). The iPhone
+      shows the form read-only with `open`. Optional fields of those types are left out.
+    - The item's `session_id` is the chat whose run started the workflow, when one did, so the
+      iPhone can show the form in that chat.
+    - Forms of one workflow are answered in order: answer the oldest first.
 
   Detail size limits:
   - one item's `detail` is at most 8 KiB, and the feed's is at most 32 KiB, oldest item first;
@@ -460,7 +473,14 @@ Each iPhone answers in its own namespace, `ai.osaurus.attention-answer/1/<its de
   - `approve`, `deny` or `allow_for_conversation`;
   - `approve_rest` (Computer Use: approve this step and the rest of the task in that app);
   - `reply`, with non-empty `text`, at most 16,384 characters;
-  - `dismiss`.
+  - `dismiss`;
+  - `submit`, with `values` (`workflow_forms`): a `workflow_dialog` whose `detail` carries its
+    form and `phone_answerable: true`. `values` maps field keys to answers: a string for `text`,
+    `long_text`, `choice` (one of `options`) and `date` (`YYYY-MM-DD`), a number for `number`, a
+    boolean for `bool`. Leave out an optional field with no answer. The Mac checks the values
+    against the form as its own form does; an answer it can't accept is ignored until the iPhone
+    writes a corrected one under the same id. Once the form takes it, the item is retracted.
+    `submit` isn't listed in `actions`.
 
   `open` is local: open the chat (`session_id`) or the Mac.
 - `redact` is only for `privacy_review` with `approve`. It lists the detections to replace with

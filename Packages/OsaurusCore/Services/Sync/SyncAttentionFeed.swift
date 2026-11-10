@@ -237,12 +237,38 @@ final class SyncAttentionFeed {
         _ entries: [LabeledAnswer],
         applied: inout Set<String>,
         center: AttentionCenter = .shared,
-        nowMs: Int64 = SyncHostedRunContract.nowMs()
+        nowMs: Int64 = SyncHostedRunContract.nowMs(),
+        answerForm: (UUID, [String: JSONValue]) -> Result<Void, DialogAnswerError> = {
+            DialogCoordinator.shared.answer($0, values: $1)
+        }
     ) {
         for entry in entries where !applied.contains(entry.id) {
             let id = entry.id
             let answer = entry.answer
             let deviceLabel = entry.deviceLabel
+            // A workflow form filled in on the iPhone: its values go to the form as the Mac's own
+            // form sends them, and the run carries on. Answered, the form's item is retracted.
+            if answer.action == SyncDeviceFeedContract.submitAction {
+                guard let uuid = UUID(uuidString: id),
+                    nowMs - answer.answeredMs < SyncDeviceFeedContract.requestTTLMs
+                else { continue }
+                guard let item = center.item(id: uuid), item.isPending, item.kind == .workflowDialog else {
+                    applied.insert(id)
+                    continue
+                }
+                switch answerForm(uuid, answer.values ?? [:]) {
+                case .success, .failure(.notFound):
+                    applied.insert(id)
+                case .failure(.notCurrent):
+                    // Another form of the workflow comes first: this one is applied once it's shown.
+                    break
+                case .failure(.invalid(let issues)):
+                    // Left unapplied, so a corrected answer from the iPhone (same id) still lands.
+                    let reasons = issues.joined(separator: "; ")
+                    log.notice("workflow form \(id, privacy: .public) not accepted: \(reasons, privacy: .public)")
+                }
+                continue
+            }
             guard let uuid = UUID(uuidString: id), nowMs - answer.answeredMs < SyncDeviceFeedContract.requestTTLMs,
                 let outcome = SyncDeviceFeedContract.outcome(for: answer.action)
             else { continue }

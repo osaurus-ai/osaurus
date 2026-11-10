@@ -203,16 +203,20 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// A background run parked on a form. Tapping opens the run's tab,
     /// where the form can be answered.
     func postWorkflowNeedsInput(_ dialog: PendingDialog) {
-        AttentionCenter.shared.raise(
-            AttentionItem(
-                id: dialog.id,
-                kind: .workflowDialog,
-                title: L("\(dialog.workflowName) needs your input"),
-                body: dialog.title,
-                hasInlineCard: false,
-                link: .workflowRun(dialog.runID)
-            )
-        ) { resolution in
+        var item = AttentionItem(
+            id: dialog.id,
+            kind: .workflowDialog,
+            // The chat that started the run (one the iPhone hosts, say), so
+            // the form shows in that chat.
+            sessionId: dialog.caller.sessionID.flatMap(UUID.init(uuidString:)),
+            title: L("\(dialog.workflowName) needs your input"),
+            body: dialog.title,
+            hasInlineCard: false,
+            link: .workflowRun(dialog.runID)
+        )
+        // The form's fields, for the iPhone to show and answer it (`submit`).
+        item.detail = WorkflowDialogAttention.detail(for: dialog)
+        AttentionCenter.shared.raise(item) { resolution in
             // A dismiss from the phone or notification ends the form the
             // same way the form's own Dismiss does, instead of leaving the
             // run parked.

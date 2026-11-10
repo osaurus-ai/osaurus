@@ -44,7 +44,8 @@
           "workspace_agents",
           "artifact_blobs",
           "history_filters",
-          "continue_own_chats"
+          "continue_own_chats",
+          "workflow_forms"
         ],
         "build": "0.25.31 (1234)",
         "presence": {

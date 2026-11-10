@@ -407,6 +407,84 @@ struct SyncAppDataFixtureTests {
     }
 
     @Test
+    func mobileWorkflowFormFixtureCarriesTheFormAndTheIPhonesSubmit() async throws {
+        try await ChatHistoryTestStorage.run {
+            let core = try SyncService.shared.open()
+            let scope = try importFixture("mobile-workflow-form", into: core)
+            let conversation = try #require(try core.conversation(scope: scope))
+
+            // The iPhone's answer: `submit` with the form's values.
+            let answers = SyncAttentionFeed.answers(
+                in: conversation, deviceNames: [phone: "Sam's iPhone"], legacyLabel: "Your iPhone")
+            let submit = try #require(answers.first)
+            #expect(submit.answer.action == SyncDeviceFeedContract.submitAction)
+            #expect(submit.answer.values?["name"] == .string("Acme Corp"))
+            #expect(submit.answer.values?["rush"] == .bool(true))
+            #expect(submit.answer.values?["budget"] == nil, "an optional field left empty is left out")
+
+            // The detail this Mac writes for the same form has the fixture's shape.
+            let feed = try object(conversation.appData(SyncDeviceFeedContract.attentionNamespace))
+            let items = try #require(feed["items"] as? [[String: Any]])
+            let fields = [
+                DialogField(key: "name", label: "Client name"),
+                DialogField(
+                    key: "budget", label: "Budget (USD)", type: .number, required: false,
+                    help: "Leave empty if unknown."),
+                DialogField(
+                    key: "tier", label: "Tier", type: .choice, defaultValue: .string("Basic"),
+                    options: ["Basic", "Pro"]),
+                DialogField(key: "rush", label: "Rush job", type: .bool),
+                DialogField(key: "start", label: "Start date", type: .date),
+            ]
+            let dialog = PendingDialog(
+                id: UUID(), runID: UUID(), workflowID: UUID(), workflowName: "Client Intake", nodeID: "ask_client",
+                title: "About the client", message: "Tell me who this is for.", fields: fields,
+                prefill: ["name": .string("Acme")], caller: WorkflowCaller(kind: .agent), createdAt: Date())
+            let written = try object(try #require(WorkflowDialogAttention.detail(for: dialog)))
+            let fixtureDetail = try #require(items[0]["detail"] as? [String: Any])
+            #expect(keys(written) == keys(fixtureDetail), "the form detail the Mac writes")
+            let writtenFields = try #require(written["fields"] as? [[String: Any]])
+            let fixtureFields = try #require(fixtureDetail["fields"] as? [[String: Any]])
+            #expect(writtenFields.map { keys($0) } == fixtureFields.map { keys($0) })
+            #expect(written["phone_answerable"] as? Bool == true)
+
+            // A form that needs a file is answered on the Mac.
+            let fileForm = PendingDialog(
+                id: UUID(), runID: UUID(), workflowID: UUID(), workflowName: "Invoice Filer", nodeID: "pick_invoice",
+                title: "Which invoice?", message: "",
+                fields: [DialogField(key: "invoice", label: "Invoice PDF", type: .file)],
+                prefill: [:], caller: WorkflowCaller(kind: .agent), createdAt: Date())
+            #expect(!WorkflowDialogAttention.phoneAnswerable(fileForm))
+            let fileDetail = try #require(items[1]["detail"] as? [String: Any])
+            #expect(fileDetail["phone_answerable"] as? Bool == false)
+
+            // `submit` goes to the form; an answer the form refuses waits for a corrected one.
+            let center = AttentionCenter(channels: [])
+            let form = AttentionItem(kind: .workflowDialog, title: "Client Intake needs your input")
+            let id = center.raise(form) { _ in }
+            let entry = SyncAttentionFeed.LabeledAnswer(
+                id: id.uuidString, answer: submit.answer, deviceLabel: submit.deviceLabel)
+            let now = submit.answer.answeredMs + 1_000
+            var refused: Set<String> = []
+            SyncAttentionFeed.apply(
+                [entry], applied: &refused, center: center, nowMs: now,
+                answerForm: { _, _ in .failure(.invalid(["x"])) })
+            #expect(refused.isEmpty, "a refused answer stays unapplied")
+            var sent: [String: JSONValue]?
+            var applied: Set<String> = []
+            SyncAttentionFeed.apply(
+                [entry], applied: &applied, center: center, nowMs: now,
+                answerForm: { formId, values in
+                    #expect(formId == id)
+                    sent = values
+                    return .success(())
+                })
+            #expect(sent == submit.answer.values)
+            #expect(applied == [id.uuidString])
+        }
+    }
+
+    @Test
     func mobileManageFixtureReadsTheNewOpsResultsAndDetailMessages() async throws {
         try await ChatHistoryTestStorage.run {
             let core = try SyncService.shared.open()
