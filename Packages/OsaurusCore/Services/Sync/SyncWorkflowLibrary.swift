@@ -193,9 +193,13 @@ final class SyncWorkflowRunsFeed {
     }
 
     private func publishNow() {
-        guard SyncService.shared.core != nil, SyncPhoneDevices.shared.hasPhone else { return }
+        guard SyncService.shared.core != nil, SyncPhoneDevices.shared.hasPhone else {
+            Self.trace("not written: core \(SyncService.shared.core != nil), phone \(SyncPhoneDevices.shared.hasPhone)")
+            return
+        }
         let store = WorkflowRunStore.shared
         guard store.recentPersisted != nil else {
+            Self.trace("loading the saved run history first")
             // Loaded first, then written (its arrival schedules this again).
             Task { @MainActor in await store.loadRecentRunsIfNeeded() }
             return
@@ -203,6 +207,8 @@ final class SyncWorkflowRunsFeed {
         let state = SyncWorkflowLibrary.runs(nowMs: SyncHostedRunContract.nowMs())
         // Streamed step text isn't on the card: most store changes write nothing.
         guard state.runs != written else { return }
+        let (live, saved) = (store.live.count, store.recentPersisted?.count ?? 0)
+        Self.trace("writing \(state.runs.count) runs (\(live) live, \(saved) saved)")
         written = state.runs
         Task.detached(priority: .utility) {
             do {
@@ -212,6 +218,7 @@ final class SyncWorkflowRunsFeed {
                             kind: SyncDeviceFeedContract.manageKind, device: core.deviceKey(), core: core)
                     else {
                         // The manage state hasn't made the conversation yet: sent again on the next change.
+                        Self.trace("no manage conversation yet")
                         Task { @MainActor in SyncWorkflowRunsFeed.shared.written = nil }
                         return
                     }
@@ -220,12 +227,22 @@ final class SyncWorkflowRunsFeed {
                         namespace: SyncDeviceFeedContract.workflowRunsNamespace,
                         bytes: try SyncHostedRunContract.encode(state))
                     core.syncNow()
+                    Self.trace("wrote \(state.runs.count) runs to \(conversation.scope.prefix(8))")
                 }
             } catch SyncConversationStoreError.notOpen {
+                Self.trace("not written: the store isn't open")
             } catch {
                 Self.log.error("workflow runs write failed: \(error.syncLogDetail, privacy: .public)")
+                Self.trace("write failed: \(error.syncLogDetail)")
             }
         }
+    }
+
+    /// Debug builds: to the console, so `tmp/osaurus.log` has it.
+    nonisolated private static func trace(_ line: @autoclosure () -> String) {
+        #if DEBUG
+            print("[SyncWorkflowRuns] \(line())")
+        #endif
     }
 
     /// Forgets what was written, so the next change writes again (a new core).
