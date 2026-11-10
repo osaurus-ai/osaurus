@@ -82,6 +82,8 @@ enum SyncRunProgressContract {
         var durationMs: Int?
         /// Bytes of arguments written so far, while `preparing`.
         var argumentBytes: Int?
+        /// The workflow run the call started (`workflow_runs`).
+        var workflow: SyncWorkflowCard?
     }
 
     struct ImageStep: Codable, Equatable, Sendable {
@@ -121,7 +123,9 @@ enum SyncRunProgressContract {
                             failed: failed),
                         icon: icon,
                         state: result == nil ? .running : (failed ? .failed : .done),
-                        durationMs: turn.toolCallDurations[call.id].map { Int(($0 * 1000).rounded()) }
+                        durationMs: turn.toolCallDurations[call.id].map { Int(($0 * 1000).rounded()) },
+                        workflow: SyncWorkflowCards.card(
+                            forCall: call.id, name: call.function.name, result: result)?.settled(by: result)
                     ))
             }
             for artifact in turn.sharedArtifacts where !progress.artifacts.contains(where: { $0.id == artifact.id }) {

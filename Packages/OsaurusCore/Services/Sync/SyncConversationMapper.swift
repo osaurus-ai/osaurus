@@ -570,6 +570,10 @@ enum SyncConversationMapper {
                 "icon": icon,
             ]
             if failed { entry["failed"] = true }
+            // The run the call started, as its card last showed it (`workflow_runs`).
+            if let card = SyncWorkflowCards.remembered(forCall: call.id)?.settled(by: result).jsonObject {
+                entry["workflow"] = card
+            }
             display[call.id] = entry
         }
         return display

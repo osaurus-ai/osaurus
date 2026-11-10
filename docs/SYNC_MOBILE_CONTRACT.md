@@ -41,6 +41,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `history_filters` | `projects`, `plugins` and `workspaces` in the manage state (§5) |
 | `continue_own_chats` | Answering `hostRun` turns in the Mac's own chats, which carry no `hostDevice` (§3.10) |
 | `workflow_forms` | `detail` on `workflow_dialog` items (the form's fields) and the `submit` answer (§4) |
+| `workflow_runs` | `workflow` on a `run_progress` tool and in `toolCallDisplay`: the run the call started, its steps and how it ended (§3.2, §3.3) |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
   NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without
@@ -202,6 +203,20 @@ The device running a synced turn writes `ai.osaurus.run-progress/1` on the conve
   - a new shape (phase, tool, step, file) is written at most every 500 ms;
   - a change only to counters (`thinkingChars`, prefill `done`, `argumentBytes`) is written at
     most every 2 seconds.
+- `tools[].workflow` (`workflow_runs`): when the call started a workflow run, the run as the Mac
+  chat's card shows it:
+
+```json
+{ "runId": "…", "name": "Weekly report", "status": "running",
+  "steps": [ { "id": "fetch", "name": "Fetch the numbers", "status": "done" },
+             { "id": "write", "name": "Write the report", "status": "running" } ] }
+```
+
+  - `status`: `running`, `awaiting_user` (a form waits, §4), `completed`, `failed`, `cancelled`
+    or `needs_setup`. Step `status`: `pending`, `running`, `awaiting_user`, `done`, `skipped`,
+    `failed` or `pinned`. Both are kept open.
+  - At most 40 steps. `error` (at most 300 characters) names the failed step when one did.
+  - A change to a step's status is a new shape.
 - At the end the Mac writes `phase: done` with `prefill` and `image` removed and the finished tool
   list kept. The committed messages are then the source of truth.
 - The reply's text streams through the core's stream as before. Its reasoning text does not
@@ -232,6 +247,8 @@ its own `tool_result` message.
 
 - `toolCallDisplay` gives each call's label, category and icon, plus `failed: true` when it
   failed, so the iPhone needs none of the Mac's tables.
+- `toolCallDisplay[id].workflow` (`workflow_runs`): the card the run ended with, as in §3.2. It is
+  there only when the Mac followed the run in this launch.
 - `files` are the generated images, shared artifacts and images in tool results that the turn
   made on the Mac:
   - `blob` is the index into the namespace's blobs;
