@@ -470,6 +470,12 @@ struct ChatSessionSidebar: View {
         return mergedHistory(saved: saved, live: live)
     }
 
+    static func isUntouchedChat(_ tab: ChatTab) -> Bool {
+        let session = tab.session
+        return tab.kind == .chat && !tab.isHibernated && session.sessionId == nil && session.turns.isEmpty
+            && !session.isStreaming && session.awaitingClarify == nil
+    }
+
     private func mergedHistory(saved: [ChatSessionData], live: [ChatTab]) -> [HistoryItem] {
         let activeIds = Set(activityMonitor.statuses.keys)
         var items = saved.map { data in
@@ -480,6 +486,9 @@ struct ChatSessionSidebar: View {
         }
         let savedIds = Set(saved.map(\.id))
         for tab in live where tab.session.sessionId.map({ !savedIds.contains($0) }) ?? true {
+            // A New Chat nothing happened in is listed only while it is the
+            // chat on screen.
+            if Self.isUntouchedChat(tab), tab.id != activeOpenTabId { continue }
             // Archived sessions stay out of the recent list even if still
             // alive in memory, unless the Show Archived filter is on or a
             // run is live on them.
@@ -489,7 +498,7 @@ struct ChatSessionSidebar: View {
                 })
             { continue }
             items.append(HistoryItem(id: tab.session.sessionId ?? tab.id, title: tab.session.title,
-                updatedAt: tab.lastActivatedAt, saved: nil, openTabId: tab.id,
+                updatedAt: tab.session.updatedAt, saved: nil, openTabId: tab.id,
                 isSelected: tab.id == activeOpenTabId, agentId: tab.session.agentId ?? Agent.defaultId))
         }
         return items.sorted {
