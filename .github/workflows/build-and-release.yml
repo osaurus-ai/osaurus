@@ -121,6 +121,12 @@ jobs:
         id: lane
         run: python3 scripts/release/release_lane.py export --version "$VERSION"
 
+      # A 0.x tag on 1.x code would ship 1.0 to every Classic user as a normal
+      # update; a 1.x tag on Classic code would ship Classic as Latest.
+      - name: Require the tagged commit to match its lane
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 scripts/release/release_lane.py check-source --version "$VERSION" --commit "$GITHUB_SHA"
+
       - name: Install certificates
         env:
           MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}

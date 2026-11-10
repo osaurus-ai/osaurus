@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 from typing import Iterable, Optional
 import xml.etree.ElementTree as ElementTree
@@ -23,6 +24,10 @@ UPGRADE_CHANNEL = "beta"
 UPGRADE_MINIMUM_AUTOUPDATE_VERSION = "1.0.0"
 _ITEM = re.compile(r"[ \t]*<item>.*?</item>[ \t]*\n?", re.DOTALL)
 _ITEM_VERSION = re.compile(r"<sparkle:version>\s*([^<\s]+)\s*</sparkle:version>")
+# The Osaurus 1.0 commit on main. Every 1.x commit descends from it and no
+# Classic commit does, so it tells the two products apart on any branch,
+# hotfix branches included.
+MAIN_LANE_ROOT = "15d4089fe83f52610e5414bea7388c87c4927da5"
 CLASSIC_NOTICE = (
     "This is a maintenance release for Osaurus Classic. "
     "New users should download Osaurus 1.0 from https://osaurus.ai."
@@ -222,6 +227,19 @@ def _version_of(item_text):
     return match.group(1)
 
 
+def check_source(lane, commit, root=MAIN_LANE_ROOT):
+    """Refuse a tag whose commit is the other product: 1.x code tagged 0.x, or Classic code tagged 1.x."""
+    result = subprocess.run(["git", "merge-base", "--is-ancestor", root, commit], capture_output=True, text=True)
+    if result.returncode not in (0, 1):
+        raise ValueError(f"cannot tell whether {commit} is Osaurus 1.x or Classic source "
+                         f"(compared with {root}): {result.stderr.strip()}")
+    source = "main" if result.returncode == 0 else "classic"
+    if source != lane.name:
+        product = "Osaurus 1.x" if source == "main" else "Osaurus Classic"
+        raise ValueError(f"{lane.version} is a {lane.name} release, but {commit} is {product} source. "
+                         "Tag 0.x only on classic or a branch from it, and 1.x only on main or a branch from it.")
+
+
 def github_env_lines(lane):
     flag = lambda value: "true" if value else "false"
     return [
@@ -246,6 +264,9 @@ def main(argv=None):
     check.add_argument("--version", required=True)
     check.add_argument("--feed-file", required=True)
     check.add_argument("--appcast", required=True, type=Path)
+    source = commands.add_parser("check-source", help="fail unless the commit is this lane's product")
+    source.add_argument("--version", required=True)
+    source.add_argument("--commit", required=True)
     offer = commands.add_parser("offer-upgrade", help="write appcast.xml with this release as the Classic beta upgrade")
     offer.add_argument("--version", required=True)
     offer.add_argument("--items", required=True, type=Path, help="this release's generated feed items")
@@ -268,6 +289,9 @@ def main(argv=None):
         elif arguments.command == "field":
             value = getattr(lane, arguments.name)
             print(str(value).lower() if isinstance(value, bool) else value)
+        elif arguments.command == "check-source":
+            check_source(lane, arguments.commit)
+            print(f"{arguments.commit} is {lane.name} source, matching {lane.version}")
         elif arguments.command == "offer-upgrade":
             updated = with_classic_upgrade(lane, arguments.appcast.read_text(encoding="utf-8"),
                                            arguments.items.read_text(encoding="utf-8"))
