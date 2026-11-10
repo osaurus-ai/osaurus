@@ -116,6 +116,15 @@ final class SyncManageFeed {
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
             .store(in: &cancellables)
+        // The Default agent's, the Architect's and the Configurator's models live on their own
+        // configuration stores, not in `agents`: a model picked for them (in a chat, in
+        // Settings) changed nothing the feed watched, and the iPhone kept the old one. Their
+        // saves post these. `publish` writes only a changed state, so extra triggers are cheap.
+        NotificationCenter.default.publisher(for: .agentUpdated)
+            .merge(with: NotificationCenter.default.publisher(for: .appConfigurationChanged))
+            .receive(on: DispatchQueue.main)
+            .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
+            .store(in: &cancellables)
         // Loading or removing a plugin changes the tool list.
         NotificationCenter.default.publisher(for: .toolsListChanged)
             .receive(on: DispatchQueue.main)
