@@ -22,7 +22,7 @@ Analytics are on by default and opt-out, with one switch to turn them off.
 - **Nothing leaves before you confirm.** The handful of events from launch up
   to the welcome step are held in memory (bounded), never on disk. Continuing
   with the box checked sends them; unchecking drops them.
-- **Off anytime** in **Settings → Privacy → Share Anonymous Usage Data**.
+- **Off anytime** in **Settings → Privacy & Security → Data Collection → Share Anonymous Usage Data**.
   Sending stops immediately.
 - **Silent in source builds.** With no Aptabase key (the contributor default),
   the SDK never initializes and every event is a no-op.
@@ -410,5 +410,5 @@ curated catalog and are sent verbatim.
 - DEBUG builds report to Aptabase's **Debug** bucket (filtered out of
   production dashboards), so local testing never pollutes real metrics.
 - The Aptabase key is injected at build time; without it the SDK stays
-  uninitialized. See the [README](../README.md#local-development) for local
-  setup.
+  uninitialized. See [Telemetry in local builds](CONTRIBUTING.md#telemetry-in-local-builds)
+  for local setup.
