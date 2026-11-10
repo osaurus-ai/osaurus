@@ -171,11 +171,30 @@ python3 "$RELEASE_LANE_PY" check-feed --version "$VERSION" --feed-file "$APPCAST
   --appcast "updates/${APPCAST_FILE}"
 
 cp "updates/${APPCAST_FILE}" public-repo/docs/
+FEEDS=("docs/${APPCAST_FILE}")
+COMMIT_MESSAGE="Update ${APPCAST_FILE} for ${VERSION} (${SPARKLE_CHANNEL})"
+
+# A stable 1.x release is also offered in Classic's appcast.xml on the beta
+# channel, so only Classic users with Beta Updates on see it.
+if [ "$(python3 "$RELEASE_LANE_PY" field --version "$VERSION" offers_classic_upgrade)" = "true" ]; then
+  printf '%s\n' "$NEW_ITEMS" > updates/release-items.xml
+  python3 "$RELEASE_LANE_PY" offer-upgrade --version "$VERSION" --items updates/release-items.xml \
+    --appcast public-repo/docs/appcast.xml --output updates/appcast.xml
+  if command -v xmllint >/dev/null 2>&1; then
+    xmllint --noout updates/appcast.xml || { echo "❌ Malformed appcast.xml"; exit 1; }
+  fi
+  python3 "$RELEASE_LANE_PY" check-feed --version "$VERSION" --feed-file appcast.xml \
+    --appcast updates/appcast.xml
+  cp updates/appcast.xml public-repo/docs/
+  FEEDS+=("docs/appcast.xml")
+  COMMIT_MESSAGE="${COMMIT_MESSAGE}; offer it to Classic beta users in appcast.xml"
+fi
+
 cd public-repo
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
-git add "docs/${APPCAST_FILE}"
-git commit -m "Update ${APPCAST_FILE} for ${VERSION} (${SPARKLE_CHANNEL})" || echo "No changes to commit"
+git add "${FEEDS[@]}"
+git commit -m "$COMMIT_MESSAGE" || echo "No changes to commit"
 git push origin main
 
-echo "✅ ${APPCAST_FILE} deployed to public repository (channel: ${SPARKLE_CHANNEL})"
+echo "✅ ${FEEDS[*]} deployed to public repository (channel: ${SPARKLE_CHANNEL})"

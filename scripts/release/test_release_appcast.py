@@ -87,14 +87,26 @@ exit 0
         self.assertIn("<sparkle:version>0.25.33</sparkle:version>", classic)
         self.assertEqual((pushed / "appcast-next.xml").read_text(), feed())
 
-    def test_main_release_writes_only_appcast_next_xml(self):
+    def test_main_release_offers_itself_to_classic_beta_users(self):
         result, pushed, calls = self.deploy("1.0.1", feed("0.25.33"), feed("1.0.0"))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("add docs/appcast-next.xml", calls)
-        self.assertNotIn("add docs/appcast.xml", calls)
+        self.assertIn("add docs/appcast-next.xml docs/appcast.xml", calls)
         main = (pushed / "appcast-next.xml").read_text()
         self.assertIn("<sparkle:version>1.0.1</sparkle:version>", main)
         self.assertIn("<sparkle:version>1.0.0</sparkle:version>", main)
+        self.assertNotIn("<sparkle:channel>", main)
+        classic = (pushed / "appcast.xml").read_text()
+        self.assertIn("<sparkle:version>0.25.33</sparkle:version>", classic)
+        offer = classic[classic.index("<item>"):classic.index("</item>")]
+        self.assertIn("<sparkle:version>1.0.1</sparkle:version>", offer)
+        self.assertIn("<sparkle:channel>beta</sparkle:channel>", offer)
+        self.assertIn("<sparkle:minimumAutoupdateVersion>1.0.0</sparkle:minimumAutoupdateVersion>", offer)
+
+    def test_main_beta_writes_only_appcast_next_xml(self):
+        result, pushed, calls = self.deploy("1.0.1-beta.1", feed("0.25.33"), feed("1.0.0"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("add docs/appcast-next.xml", calls)
+        self.assertNotIn("appcast.xml", calls.replace("appcast-next.xml", ""))
         self.assertEqual((pushed / "appcast.xml").read_text(), feed("0.25.33"))
 
     def test_a_feed_holding_the_other_lanes_items_is_not_published(self):
