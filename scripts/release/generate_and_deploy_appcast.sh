@@ -11,6 +11,12 @@ PUBLIC_REPO="${PUBLIC_REPO:-$GITHUB_REPOSITORY}"
 SPARKLE_CHANNEL="${SPARKLE_CHANNEL:-release}"
 echo "Building appcast for channel: ${SPARKLE_CHANNEL}"
 
+# The version picks the feed: 0.x (Classic) writes appcast.xml, 1.x and later
+# write appcast-next.xml. Neither lane may touch the other's feed.
+RELEASE_LANE_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/release_lane.py"
+APPCAST_FILE="$(python3 "$RELEASE_LANE_PY" field --version "$VERSION" appcast_file)"
+echo "Release lane feed: ${APPCAST_FILE}"
+
 mkdir -p sparkle_tools updates
 cd sparkle_tools
 curl -L -o sparkle.tar.xz "https://github.com/sparkle-project/Sparkle/releases/download/2.9.0/Sparkle-2.9.0.tar.xz"
@@ -128,10 +134,12 @@ NEW_ITEMS=$(sed -n '/<item>/,/<\/item>/p' updates/appcast-arm64.xml)
 git clone "https://x-access-token:${GH_TOKEN}@github.com/${PUBLIC_REPO}.git" public-repo
 mkdir -p public-repo/docs
 
-# Merge new items into the existing appcast (preserving items from other channels)
+# Merge new items into this lane's existing appcast (preserving items from other channels)
 EXISTING_ITEMS=""
-if [ -f "public-repo/docs/appcast.xml" ]; then
-  EXISTING_ITEMS=$(sed -n '/<item>/,/<\/item>/p' public-repo/docs/appcast.xml | \
+if [ -f "public-repo/docs/${APPCAST_FILE}" ]; then
+  python3 "$RELEASE_LANE_PY" check-feed --version "$VERSION" --feed-file "$APPCAST_FILE" \
+    --appcast "public-repo/docs/${APPCAST_FILE}"
+  EXISTING_ITEMS=$(sed -n '/<item>/,/<\/item>/p' "public-repo/docs/${APPCAST_FILE}" | \
     sed 's/<\/channel>//g; s/<\/rss>//g' | \
     awk -v ver="${VERSION}" '
       /<item>/    { buf=""; inside=1 }
@@ -153,19 +161,21 @@ fi
   [ -n "$EXISTING_ITEMS" ] && printf '%s\n' "$EXISTING_ITEMS"
   echo '  </channel>'
   echo '</rss>'
-} > updates/appcast.xml
+} > "updates/${APPCAST_FILE}"
 
 # Validate XML (fail fast if malformed)
 if command -v xmllint >/dev/null 2>&1; then
-  xmllint --noout updates/appcast.xml || { echo "❌ Malformed appcast.xml"; exit 1; }
+  xmllint --noout "updates/${APPCAST_FILE}" || { echo "❌ Malformed ${APPCAST_FILE}"; exit 1; }
 fi
+python3 "$RELEASE_LANE_PY" check-feed --version "$VERSION" --feed-file "$APPCAST_FILE" \
+  --appcast "updates/${APPCAST_FILE}"
 
-cp updates/appcast.xml public-repo/docs/
+cp "updates/${APPCAST_FILE}" public-repo/docs/
 cd public-repo
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
-git add docs/appcast.xml
-git commit -m "Update appcast for ${VERSION} (${SPARKLE_CHANNEL})" || echo "No changes to commit"
+git add "docs/${APPCAST_FILE}"
+git commit -m "Update ${APPCAST_FILE} for ${VERSION} (${SPARKLE_CHANNEL})" || echo "No changes to commit"
 git push origin main
 
-echo "✅ Appcast deployed to public repository (channel: ${SPARKLE_CHANNEL})"
+echo "✅ ${APPCAST_FILE} deployed to public repository (channel: ${SPARKLE_CHANNEL})"
