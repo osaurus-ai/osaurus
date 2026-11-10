@@ -410,5 +410,5 @@ curated catalog and are sent verbatim.
 - DEBUG builds report to Aptabase's **Debug** bucket (filtered out of
   production dashboards), so local testing never pollutes real metrics.
 - The Aptabase key is injected at build time; without it the SDK stays
-  uninitialized. See the [README](../README.md#local-development) for local
-  setup.
+  uninitialized. See [Telemetry in local builds](CONTRIBUTING.md#telemetry-in-local-builds)
+  for local setup.

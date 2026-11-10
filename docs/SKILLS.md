@@ -282,7 +282,7 @@ No per-agent skill configuration is needed — agent configuration only scopes *
 ## Related Documentation
 
 - [Claude Plugins](CLAUDE_PLUGINS.md) — Full plugin imports (skills + schedules + commands + MCP + `CLAUDE.md`)
-- [Agents](../README.md#agents) — Custom AI assistants
+- [Agents](../Packages/OsaurusCore/Resources/Guide/guide-agents.md) — Custom AI assistants
 - [Tools & Plugins](plugins/README.md) — Extend with custom tools
 - [Agent Skills Specification](https://agentskills.io/) — Open format documentation
 - [Features: Methods](FEATURES.md#methods) — Reusable learned workflows
