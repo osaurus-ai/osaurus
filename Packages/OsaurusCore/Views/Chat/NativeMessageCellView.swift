@@ -330,9 +330,6 @@ final class NativeHeaderView: NSView {
     /// when the view moves to a display with a different backing scale.
     private var avatarSource: AvatarSource?
     private var avatarRenderScale: CGFloat = 0
-    /// Bumped on every resolve so a background render that finishes after
-    /// the header was reconfigured (cell reuse, scale change) is dropped.
-    private var avatarRenderGeneration = 0
 
     private var backingScale: CGFloat {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
@@ -340,29 +337,24 @@ final class NativeHeaderView: NSView {
 
     /// Custom > mascot > monogram, rendered at `currentAvatarSize` for the
     /// current backing scale. Nil when the row shows no avatar.
-    ///
-    /// Only cached bitmaps are used synchronously; on a miss the monogram is
-    /// shown and the bitmap is resampled off the main thread, then swapped
-    /// in. Resampling inline here stalled the main thread (APPLE-MACOS-34G).
     private func resolveAvatarImage() -> NSImage? {
-        avatarRenderGeneration &+= 1
         guard let source = avatarSource else { return nil }
         let scale = backingScale
         avatarRenderScale = scale
-        let size = currentAvatarSize
         let renderer = AvatarBitmapRenderer.shared
-        let customURL = source.customAvatarPath.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
-        let mascot = source.avatar.flatMap(AgentMascot.init(rawValue:))
-        if let customURL {
-            if let img = renderer.cachedImage(customURL: customURL, pointSize: size, scale: scale) {
-                return img
-            }
-            scheduleAvatarRender(customURL: customURL, mascot: mascot, size: size, scale: scale)
-        } else if let mascot {
-            if let img = renderer.cachedImage(mascot: mascot, pointSize: size, scale: scale) {
-                return img
-            }
-            scheduleAvatarRender(customURL: nil, mascot: mascot, size: size, scale: scale)
+        if let path = source.customAvatarPath, !path.isEmpty,
+            let img = renderer.image(
+                customURL: URL(fileURLWithPath: path),
+                pointSize: currentAvatarSize,
+                scale: scale
+            )
+        {
+            return img
+        }
+        if let mascot = source.avatar.flatMap(AgentMascot.init(rawValue:)),
+            let img = renderer.image(mascot: mascot, pointSize: currentAvatarSize, scale: scale)
+        {
+            return img
         }
         return Self.monogramImage(
             name: source.name,
@@ -385,25 +377,6 @@ final class NativeHeaderView: NSView {
     private func refreshAvatarForBackingScale() {
         guard avatarSource != nil, window != nil, backingScale != avatarRenderScale else { return }
         avatarImageView.image = resolveAvatarImage()
-    }
-
-    /// Renders the custom avatar (falling back to the mascot) in the
-    /// background and applies it if this header still shows the same avatar.
-    private func scheduleAvatarRender(customURL: URL?, mascot: AgentMascot?, size: CGFloat, scale: CGFloat) {
-        let generation = avatarRenderGeneration
-        Task { @MainActor [weak self] in
-            let renderer = AvatarBitmapRenderer.shared
-            var image: NSImage?
-            if let customURL {
-                image = await renderer.renderImage(customURL: customURL, pointSize: size, scale: scale)
-            }
-            if image == nil, let mascot {
-                image = await renderer.renderImage(mascot: mascot, pointSize: size, scale: scale)
-            }
-            guard let self, let image, self.avatarRenderGeneration == generation, self.avatarSource != nil
-            else { return }
-            self.avatarImageView.image = image
-        }
     }
 
     /// Renders a monogram avatar (initial-on-tinted-circle) into a cached
