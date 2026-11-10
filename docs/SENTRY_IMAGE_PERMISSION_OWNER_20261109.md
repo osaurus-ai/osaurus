@@ -168,3 +168,21 @@ LIVE EVIDENCE: original94/94image components, four actual native launches and
 119-case matrix remain in their original paths. The independent correction's
 69/69local xcresult, actual three lifecycle receipts and full successful CI
 job/source archive remain separate. Integrated-head checks are pending.
+
+## Combined integrated components
+
+Integrated sourcea0a8e1763971cca7b52049b6a3d38373f30e93de passed163/163
+declarations across all16affected suites,0fail/0skip; expanded device/argument
+count195passed. Actual XCTestPID18182 verified all six private flags,
+including empty text/image roots, disabled Keychain and both evidence/prefill
+capture. Sources were unchanged through the run. The three sandbox lifecycle
+rows still recorded the poll in the original runner, zero document-runner
+commands, no leftover and the unrelated entry preserved. All94image-policy,
+queue/spawn/cancellation declarations ran in the same selection.
+
+`integrated-components1/QUALIFICATION1.json`, actual observations, log and
+xcresult retain the exact source hashes, command, flags, counts and test binary
+SHA25663c8d935e8ead7f5f65fc967236b527048e654b473b37e82ce1dc467c5a688e4.
+Only this documentation update follows the qualified integration source;
+the new-head binding verifies both the tested unit sources and original3c1
+product projection before push. Full refreshed PR CI remains required.
