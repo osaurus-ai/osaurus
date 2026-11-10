@@ -42,6 +42,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `continue_own_chats` | Answering `hostRun` turns in the Mac's own chats, which carry no `hostDevice` (§3.10) |
 | `workflow_forms` | `detail` on `workflow_dialog` items (the form's fields) and the `submit` answer (§4) |
 | `workflow_runs` | `workflow` on a `run_progress` tool and in `toolCallDisplay`: the run the call started, its steps and how it ended (§3.2, §3.3) |
+| `workflow_library` | `workflows` in the manage state, the `runWorkflow` op and `ai.osaurus.workflow-runs/1` (§5.4) |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
   NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without
@@ -679,6 +680,46 @@ One `system` message per agent the iPhone can manage, with content `agent` and a
   - `built_in` tools follow the agent's own switches.
 - A deleted agent's message is removed. As with the models message, `digest` says when it
   changed.
+
+### 5.4 Workflows (`workflow_library`)
+
+The manage state lists the Mac's installed workflows, sorted by name (at most 100):
+
+```json
+"workflows": [ { "id": "…", "name": "Weekly Report", "summary": "Sums up the week's notes.",
+                 "fields": [ { "key": "topic", "label": "Topic", "type": "text", "required": true },
+                             { "key": "depth", "label": "Depth", "type": "choice", "required": false,
+                               "options": ["short", "long"], "default": "short" } ],
+                 "prefill": { "topic": "Q3" }, "phoneStartable": true } ]
+```
+
+- `fields` is the input form the Mac's Run page shows, built from the input schema. Field
+  `type`s are the dialog field types of §4 (`text`, `long_text`, `number`, `bool`, `choice`,
+  `date`, `file`, `folder`).
+- `prefill` is the last run's input.
+- `phoneStartable` is false when a required field is a `file` or `folder`. Those workflows are
+  started on the Mac.
+- `blocked`, when present, says what has to be set up on the Mac first.
+
+`runWorkflow` (`workflowId`, `input`) starts one as the Mac's Run button does, as a background
+run. Fields left out keep their defaults, and the input is checked against the schema.
+- The result's `data` is `{ "runId": "…" }`.
+- Errors: `workflow_not_found`, `needs_setup` and `invalid_input`, each with a message to show.
+- The run's forms come through the attention feed (§4) with no `session_id`.
+
+The Mac also writes `ai.osaurus.workflow-runs/1` on the manage conversation: its 20 most recent
+runs, newest first, whatever started them. A new list is written at most every 500 ms, and only
+when a card changed.
+
+```json
+{ "v": 1, "runs": [ { "workflowId": "…", "caller": "user", "startedMs": 1767571260000,
+                      "card": { "runId": "…", "name": "Weekly Report", "status": "running", "steps": [] } } ],
+  "updatedMs": 1767571262500 }
+```
+
+- `card` is the card of §3.2.
+- `finishedMs` is set once the run ends.
+- `caller` is `user`, `agent`, `orchestrator`, `workflow` or `event`. It is kept open.
 
 ## 6. HTTP routes and their Sync replacements
 

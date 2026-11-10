@@ -57,6 +57,7 @@ enum SyncDeviceFeedContract {
         "continue_own_chats",
         "workflow_forms",
         "workflow_runs",
+        "workflow_library",
     ]
 
     /// Each device's record under `prefix`, keyed by device key.
@@ -193,6 +194,8 @@ enum SyncDeviceFeedContract {
         var projects: [HistoryFilter]?
         var plugins: [HistoryFilter]?
         var workspaces: [HistoryFilter]?
+        /// Installed workflows and their input forms (`workflow_library`).
+        var workflows: [ManagedWorkflow]?
         var updatedMs: Int64
     }
 
@@ -228,6 +231,8 @@ enum SyncDeviceFeedContract {
             /// `scope` (the chat), `agentId`, optional `model`: writes the chat's
             /// `ai.osaurus.context-usage/1` and answers with it.
             case contextUsage
+            /// `workflowId`, `input` (the form's values): starts the workflow and answers with its `runId`.
+            case runWorkflow
             /// An op this Mac's build doesn't know.
             case unsupported
 
@@ -268,6 +273,9 @@ enum SyncDeviceFeedContract {
         var policy: String?
         /// `contextUsage`: the chat's conversation scope.
         var scope: String?
+        /// `runWorkflow`
+        var workflowId: String?
+        var input: JSONValue?
         var requestedMs: Int64
 
         init(

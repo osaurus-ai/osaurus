@@ -125,6 +125,12 @@ final class SyncManageFeed {
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
             .store(in: &cancellables)
+        // The workflow list and each one's form and setup (`workflow_library`).
+        InstalledWorkflowStore.shared.$workflows
+            .receive(on: DispatchQueue.main)
+            .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
+            .store(in: &cancellables)
+        SyncWorkflowRunsFeed.shared.start()
         // Loading or removing a plugin changes the tool list.
         NotificationCenter.default.publisher(for: .toolsListChanged)
             .receive(on: DispatchQueue.main)
@@ -135,6 +141,7 @@ final class SyncManageFeed {
                 let feed = SyncManageFeed.shared
                 feed.subscribe(core)
                 feed.schedulePublish()
+                SyncWorkflowRunsFeed.shared.reset()
             },
             detach: { SyncManageFeed.shared.detach() })
     }
@@ -167,7 +174,8 @@ final class SyncManageFeed {
         agents: [Agent],
         models: [ModelPickerItem],
         workspaceAgents: [SyncDeviceFeedContract.WorkspaceAgent] = [],
-        filters: HistoryFilters = HistoryFilters()
+        filters: HistoryFilters = HistoryFilters(),
+        workflows: [SyncDeviceFeedContract.ManagedWorkflow]? = nil
     ) -> SyncDeviceFeedContract.ManageState {
         let manager = AgentManager.shared
         let listed = agents.filter(SyncHostRunner.canHost).map { agent -> SyncDeviceFeedContract.ManagedAgent in
@@ -194,6 +202,7 @@ final class SyncManageFeed {
             projects: filters.projects,
             plugins: filters.plugins,
             workspaces: filters.workspaces,
+            workflows: workflows,
             updatedMs: SyncHostedRunContract.nowMs()
         )
     }
@@ -266,7 +275,8 @@ final class SyncManageFeed {
                 rosters: WorkspaceRosterStore.shared.rosters,
                 localAddresses: Set(agents.compactMap { $0.agentAddress?.lowercased() })
             ),
-            filters: Self.historyFilters()
+            filters: Self.historyFilters(),
+            workflows: SyncWorkflowLibrary.managed(InstalledWorkflowStore.shared.workflows)
         )
         Task.detached(priority: .utility) {
             do {
@@ -613,6 +623,17 @@ final class SyncManageFeed {
             }
         case .contextUsage:
             return await contextUsage(request)
+        case .runWorkflow:
+            switch SyncWorkflowLibrary.start(workflowId: request.workflowId, values: request.input) {
+            case .success(let runId):
+                return answered(["runId": runId.uuidString.lowercased()])
+            case .failure(.notFound):
+                return failed("workflow_not_found", "That workflow isn't on this Mac.")
+            case .failure(.blocked(let reason)):
+                return failed("needs_setup", "Finish setting it up on your Mac first. \(reason)")
+            case .failure(.invalidInput(let reason)):
+                return failed("invalid_input", reason)
+            }
         default:
             break
         }
@@ -690,7 +711,7 @@ final class SyncManageFeed {
                 } catch {
                     return failed("load_failed", "The model couldn't be loaded on this Mac.")
                 }
-            case .setFavorite, .getModelOptions, .setModelOption, .contextUsage, .unsupported:
+            case .setFavorite, .getModelOptions, .setModelOption, .contextUsage, .runWorkflow, .unsupported:
                 return done()
             }
             return done(agentId: agentId)

@@ -80,4 +80,17 @@ struct SyncWorkflowCardTests {
 
         #expect(card.settled(by: nil) == card)
     }
+
+    @Test func aPhoneRunOfAWorkflowThatIsNotInstalledIsRefused() {
+        #expect(SyncWorkflowLibrary.start(workflowId: nil, values: nil) == .failure(.notFound))
+        #expect(SyncWorkflowLibrary.start(workflowId: UUID().uuidString, values: nil) == .failure(.notFound))
+    }
+
+    @Test func runWorkflowRequestsDecodeTheirInput() throws {
+        let json = #"{"id":"r1","op":"runWorkflow","workflowId":"abc","input":{"topic":"Q3"},"requestedMs":1}"#
+        let request = try JSONDecoder().decode(SyncDeviceFeedContract.ManageRequest.self, from: Data(json.utf8))
+        #expect(request.op == .runWorkflow)
+        #expect(request.workflowId == "abc")
+        #expect(request.input?.objectValue?["topic"]?.stringValue == "Q3")
+    }
 }
