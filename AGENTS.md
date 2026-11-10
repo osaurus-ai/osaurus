@@ -77,7 +77,8 @@ tagging, publishing, or editing release scripts or feeds.
 - `main` is Osaurus 1.x: tags `1.Y.Z` / `1.Y.Z-beta.N`, feed
   `docs/appcast-next.xml`, Latest on GitHub.
 - `classic` is Osaurus Classic: fixes only, tags `0.25.N`, feed
-  `docs/appcast.xml`, never Latest. Classic fixes go to `classic`, not `main`.
+  `docs/appcast.xml`, never Latest. Classic fixes go to `classic`, not `main`,
+  and every PR into `classic` starts its title with `Classic:`.
 - Never tag a 0.x version on 1.x code or a 1.x version on Classic code, and
   never edit either appcast by hand. The release pipeline writes both.
 - Tag only a commit whose CI is green, and only when the user asks for a

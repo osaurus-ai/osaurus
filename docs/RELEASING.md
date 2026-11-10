@@ -13,7 +13,11 @@ decision to every release step.
 | Model-bundled ("full") DMG | Yes | No |
 | Release notes | Release Drafter's draft from `main` | Written by hand |
 
-Classic gets fixes only. New features go to `main`.
+Classic gets fixes only. New features go to `main`. Every PR into `classic`
+starts its title with `Classic:`.
+
+Release Drafter rewrites the newest draft release on every push to `main`.
+Write or restore hand-written 1.x notes after the last merge before tagging.
 
 ## Releasing 1.x
 
@@ -31,8 +35,9 @@ does not.
 
 ## Releasing a Classic patch
 
-1. Branch from `classic`, fix, and merge the PR into `classic`. A hotfix
-   branch cut from `classic` can be tagged directly.
+1. Branch from `classic`, fix, and merge the PR into `classic`. Start the PR
+   title with `Classic:` so it is never confused with a `main` PR of the
+   same name. A hotfix branch cut from `classic` can be tagged directly.
 2. Wait for green CI on the commit you will tag.
 3. Create a draft release for the tag with hand-written notes. The pipeline
    publishes the draft and starts the notes with a fixed line saying this is a
