@@ -52,26 +52,28 @@ struct DatabaseToolsTests {
 
     @Test
     func pathResolverReadsFromSandboxAgentDir() async throws {
-        let agentName = "test-agent-\(UUID().uuidString.prefix(8))"
-        let agentDir = OsaurusPaths.containerAgentDir(agentName)
-        try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: agentDir) }
+        try await StoragePathsTestLock.shared.run {
+            let agentName = "test-agent-\(UUID().uuidString.prefix(8))"
+            let agentDir = OsaurusPaths.containerAgentDir(agentName)
+            try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: agentDir) }
 
-        let file = agentDir.appendingPathComponent("output.csv")
-        try "x\n1\n".write(to: file, atomically: true, encoding: .utf8)
+            let file = agentDir.appendingPathComponent("output.csv")
+            try "x\n1\n".write(to: file, atomically: true, encoding: .utf8)
 
-        let agentId = UUID()
-        let result = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
-            await ChatExecutionContext.$currentAgentId.withValue(agentId) {
-                await DatabaseFilePathResolver.resolveForRead(path: "output.csv", tool: "db_import")
+            let agentId = UUID()
+            let result = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
+                await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    await DatabaseFilePathResolver.resolveForRead(path: "output.csv", tool: "db_import")
+                }
             }
+            guard case .resolved(let resolved) = result else {
+                Issue.record("expected success, got \(result)")
+                return
+            }
+            #expect(resolved.scope == .sandbox)
+            #expect(resolved.url.path == file.path)
         }
-        guard case .resolved(let resolved) = result else {
-            Issue.record("expected success, got \(result)")
-            return
-        }
-        #expect(resolved.scope == .sandbox)
-        #expect(resolved.url.path == file.path)
     }
 
     @Test
@@ -394,43 +396,45 @@ struct DatabaseToolsTests {
 
     @Test
     func exportOverwriteGuard() async throws {
-        // Pin the resolver to a sandbox root via the TaskLocal (checked
-        // before any process-global state), so parallel sibling suites
-        // can't redirect the write candidate mid-test.
-        let agentName = "test-agent-\(UUID().uuidString.prefix(8))"
-        let agentDir = OsaurusPaths.containerAgentDir(agentName)
-        try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: agentDir) }
+        try await StoragePathsTestLock.shared.run {
+            // The agent dir comes from the process-global root, so hold the
+            // storage-paths lock: a sibling suite swapping the root mid-test
+            // would otherwise redirect the write candidate.
+            let agentName = "test-agent-\(UUID().uuidString.prefix(8))"
+            let agentDir = OsaurusPaths.containerAgentDir(agentName)
+            try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: agentDir) }
 
-        let dest = agentDir.appendingPathComponent("out.csv")
-        try "old\n".write(to: dest, atomically: true, encoding: .utf8)
+            let dest = agentDir.appendingPathComponent("out.csv")
+            try "old\n".write(to: dest, atomically: true, encoding: .utf8)
 
-        let result = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
-            await DatabaseFilePathResolver.resolveForWrite(
-                path: "out.csv",
-                tool: "db_export",
-                overwrite: false
-            )
-        }
-        guard case .failed(let envelope) = result else {
-            Issue.record("expected overwrite failure")
-            return
-        }
-        #expect(envelope.contains("overwrite"))
+            let result = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
+                await DatabaseFilePathResolver.resolveForWrite(
+                    path: "out.csv",
+                    tool: "db_export",
+                    overwrite: false
+                )
+            }
+            guard case .failed(let envelope) = result else {
+                Issue.record("expected overwrite failure")
+                return
+            }
+            #expect(envelope.contains("overwrite"))
 
-        // Same path with overwrite: true must resolve to the sandbox file.
-        let allowed = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
-            await DatabaseFilePathResolver.resolveForWrite(
-                path: "out.csv",
-                tool: "db_export",
-                overwrite: true
-            )
+            // Same path with overwrite: true must resolve to the sandbox file.
+            let allowed = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
+                await DatabaseFilePathResolver.resolveForWrite(
+                    path: "out.csv",
+                    tool: "db_export",
+                    overwrite: true
+                )
+            }
+            guard case .resolved(let resolved) = allowed else {
+                Issue.record("expected overwrite:true to resolve")
+                return
+            }
+            #expect(resolved.scope == .sandbox)
+            #expect(resolved.url.path == dest.path)
         }
-        guard case .resolved(let resolved) = allowed else {
-            Issue.record("expected overwrite:true to resolve")
-            return
-        }
-        #expect(resolved.scope == .sandbox)
-        #expect(resolved.url.path == dest.path)
     }
 }

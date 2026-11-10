@@ -4,7 +4,9 @@
 //
 //  One card in the Templates tab. Mirrors `AgentCard` so the two grids
 //  read as siblings: avatar circle, name + summary, prompt preview, a stat
-//  row, and an overflow menu with the library actions.
+//  row, and an overflow menu with the library actions. A template in the
+//  user's library can be published to the registry like a workflow; the
+//  card then shows its Live badge and the publish actions.
 //
 
 import SwiftUI
@@ -14,6 +16,8 @@ struct AgentTemplateCard: View {
 
     let template: AgentTemplate
     let isBuiltIn: Bool
+    /// What the registry last said about it, when this Mac published it.
+    var published: WorkflowRegistryRecord? = nil
     /// False when the template pins a model this Mac does not have; the
     /// model chip turns warning-coloured so the gap shows before Use.
     var modelAvailable: Bool = true
@@ -21,108 +25,62 @@ struct AgentTemplateCard: View {
     let hasAppeared: Bool
     let onUse: () -> Void
     let onExportFile: () -> Void
+    /// The footer Share button: file or page before publishing, the
+    /// dashboard after.
+    var onShare: () -> Void = {}
+    /// Search landing id for the footer button (set on one card only).
+    var shareAnchor: String? = nil
+    var onPublish: () -> Void = {}
+    var onManage: () -> Void = {}
+    var onTakeDown: () -> Void = {}
+    var onVersionHistory: () -> Void = {}
     let onToggleOrchestrator: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
     /// Built-ins only: copy into the user library so it can be edited.
     var onSaveToLibrary: (() -> Void)? = nil
 
-    @State private var isHovered = false
     @State private var showDeleteConfirm = false
+    @State private var confirmTakeDown = false
 
     private var accent: Color { agentColorFor(template.name) }
 
     var body: some View {
-        Button(action: onUse) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
-                    avatar
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(template.name)
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                                .lineLimit(1)
-                                .layoutPriority(1)
-                            if isBuiltIn {
-                                badge(L("Built-in"), color: theme.infoColor)
-                            }
-                            badge("v\(template.version)", color: theme.tertiaryText)
-                            if template.availableToOrchestrator {
-                                // Icon-only so the name keeps its room; the
-                                // menu spells out the state.
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(theme.accentColor)
-                                    .help(L("Visible to the Orchestrator"))
-                            }
-                        }
-                        Text(
-                            (template.summary?.isEmpty ?? true) ? L("No description") : (template.summary ?? "")
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(
-                            (template.summary?.isEmpty ?? true) ? theme.tertiaryText : theme.secondaryText
-                        )
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    }
-                    Spacer(minLength: 8)
-                    menu
-                }
-
-                if let prompt = template.agent.systemPrompt, !prompt.isEmpty {
-                    Text(prompt)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                        .lineSpacing(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Text("No system prompt", bundle: .module)
-                        .font(.system(size: 12).italic())
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                Spacer(minLength: 0)
-                stats
+        LibraryCard(
+            title: template.name,
+            subtitle: (template.summary?.isEmpty ?? true) ? L("No description") : (template.summary ?? ""),
+            subtitleIsPlaceholder: template.summary?.isEmpty ?? true,
+            help: L("Create an agent from this template"),
+            animationDelay: animationDelay,
+            hasAppeared: hasAppeared,
+            action: onUse
+        ) {
+            LibraryIcon(symbol: "square.on.square.dashed", tint: accent)
+        } badges: {
+            if isBuiltIn {
+                StatusChip(L("Built-in"), tint: theme.status.info.foreground)
             }
-            .frame(maxWidth: .infinity, minHeight: 140, alignment: .top)
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isHovered ? theme.cardBackground.opacity(0.9) : theme.cardBackground)
-            )
-            .overlay(alignment: .bottomTrailing) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                    .padding(12)
-                    .opacity(isHovered ? 1 : 0)
+            StatusChip("v\(template.version)", tint: theme.text.tertiary)
+            if let published { LiveBadge(record: published, action: onManage) }
+            if template.availableToOrchestrator {
+                // Icon-only so the name keeps its room; the
+                // menu spells out the state.
+                Image(systemName: "sparkles")
+                    .font(SettingsFont.glyphSmall)
+                    .foregroundColor(theme.text.link)
+                    .help(L("Visible to the Orchestrator"))
             }
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isHovered ? theme.accentColor.opacity(0.35) : theme.cardBorder, lineWidth: 1)
-            )
-            .shadow(
-                color: Color.black.opacity(isHovered ? 0.08 : 0.04),
-                radius: isHovered ? 10 : 5, x: 0, y: isHovered ? 3 : 2
-            )
-            .contentShape(Rectangle())
+        } content: {
+            LibraryCardPreview(text: template.agent.systemPrompt ?? "", placeholder: "No system prompt")
+        } footer: {
+            HStack(spacing: theme.space.s8) {
+                LibraryStatRow(stats: statChips)
+                shareButton
+                    .settingsLandingAnchor(shareAnchor)
+            }
+        } menu: {
+            menuItems
         }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(isHovered ? 1.01 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 20)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
-        }
-        .help(L("Create an agent from this template"))
         .themedAlert(
             L("Delete Template"),
             isPresented: $showDeleteConfirm,
@@ -130,40 +88,46 @@ struct AgentTemplateCard: View {
             primaryButton: .destructive(L("Delete"), action: onDelete),
             secondaryButton: .cancel(L("Cancel"))
         )
+        .themedAlert(
+            WorkflowShareCopy.takeDownTitle(.agent),
+            isPresented: $confirmTakeDown,
+            message: WorkflowShareCopy.unpublishMessage(template.name),
+            primaryButton: .destructive(L("Take Down"), action: onTakeDown),
+            secondaryButton: .cancel(L("Cancel"))
+        )
     }
 
-    private var avatar: some View {
-        ZStack {
-            Circle()
-                .fill(accent.opacity(0.15))
-                .frame(width: 40, height: 40)
-            Circle()
-                .stroke(accent.opacity(0.35), lineWidth: 1)
-                .frame(width: 40, height: 40)
-            Image(systemName: "square.on.square.dashed")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(accent)
+    /// Built-ins aren't the user's to sign, so they only export a file.
+    @ViewBuilder
+    private var shareButton: some View {
+        if isBuiltIn {
+            SettingsButton(.secondary, "Export", icon: "square.and.arrow.up", size: .compact, action: onExportFile)
+                .help(L("Save a copy as a file to send"))
+        } else {
+            ShareFooterButton(record: published, onShare: onShare, onManage: onManage)
         }
     }
 
-    private func badge(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(color)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
-    }
-
-    private var menu: some View {
-        Menu {
+    @ViewBuilder
+    private var menuItems: some View {
+        Group {
             Button(action: onUse) {
                 Label { Text("Use Template", bundle: .module) } icon: { Image(systemName: "plus.circle") }
             }
-            Button(action: onExportFile) {
-                Label { Text("Export File…", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
+            if isBuiltIn {
+                Button(action: onExportFile) {
+                    Label { Text("Export File…", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
+                }
+            } else {
+                Button(action: onExportFile) {
+                    Label { Text("Save as File…", bundle: .module) } icon: { Image(systemName: "doc.badge.arrow.up") }
+                }
+                PublishMenuItems(
+                    record: published, version: template.version, onPublish: onPublish, onManage: onManage,
+                    onTakeDown: { confirmTakeDown = true })
+            }
+            Button(action: onVersionHistory) {
+                Label { Text("Version History", bundle: .module) } icon: { Image(systemName: "clock.arrow.circlepath") }
             }
             if isBuiltIn, let onSaveToLibrary {
                 Divider()
@@ -193,65 +157,20 @@ struct AgentTemplateCard: View {
                     Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
                 }
             }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(theme.tertiaryBackground))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .frame(width: 24)
     }
 
     // MARK: - Stats
 
-    /// Same rhythm as `AgentCard`: model, tool count, then icon-only
-    /// markers for sandbox / subagents so the row never truncates at the
-    /// default window width. The setup count keeps its text because it is
-    /// the one thing a user must act on.
-    private var stats: some View {
-        HStack(spacing: 0) {
-            let chips = statChips
-            ForEach(Array(chips.enumerated()), id: \.offset) { index, chip in
-                if index > 0 {
-                    Circle().fill(theme.tertiaryText.opacity(0.4)).frame(width: 3, height: 3)
-                        .padding(.horizontal, 8)
-                }
-                HStack(spacing: 4) {
-                    Image(systemName: chip.icon)
-                        .font(.system(size: 9, weight: .medium))
-                    if let text = chip.text {
-                        Text(text)
-                            .font(.system(size: 10, weight: .medium))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                .layoutPriority(chip.priority)
-                .foregroundColor(chip.isWarning ? theme.warningColor : theme.tertiaryText)
-                .help(chip.help)
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    private struct StatChip {
-        let icon: String
-        let text: String?
-        let help: String
-        /// Higher wins when the row is tight; the model name gives way first.
-        var priority: Double = 1
-        var isWarning: Bool = false
-    }
-
-    private var statChips: [StatChip] {
-        var chips: [StatChip] = []
+    /// Model, tool count, then icon-only markers for sandbox / subagents
+    /// so the row never truncates at the default window width. The setup
+    /// count keeps its text because it is the one thing a user must act on.
+    private var statChips: [LibraryStat] {
+        var chips: [LibraryStat] = []
         let model = template.agent.model.valueOrNil ?? L("Default")
         let modelMissing = template.agent.model.valueOrNil != nil && !modelAvailable
         chips.append(
-            StatChip(
+            LibraryStat(
                 icon: modelMissing ? "cube.transparent" : "cube",
                 text: formatTemplateModelName(model),
                 help: modelMissing
@@ -267,19 +186,19 @@ struct AgentTemplateCard: View {
         let groupCount = (template.agent.mcpServers?.enabled?.count ?? 0) + (template.agent.plugins?.enabled?.count ?? 0)
         if template.agent.tools?.mode == "manual" || toolCount + groupCount > 0 {
             chips.append(
-                StatChip(
+                LibraryStat(
                     icon: "wrench.and.screwdriver", text: "\(toolCount + groupCount)",
                     help: L("Custom Tools")))
         }
         if template.agent.sandbox?.enabled == true {
-            chips.append(StatChip(icon: "shippingbox", text: nil, help: L("Sandbox")))
+            chips.append(LibraryStat(icon: "shippingbox", text: nil, help: L("Sandbox")))
         }
         if template.agent.subagents?.enabled == true {
-            chips.append(StatChip(icon: "person.2", text: nil, help: L("Subagents")))
+            chips.append(LibraryStat(icon: "person.2", text: nil, help: L("Subagents")))
         }
         if !template.requires.isEmpty {
             let text = L("\(template.requires.count) to set up")
-            chips.append(StatChip(icon: "checklist", text: text, help: text, priority: 2))
+            chips.append(LibraryStat(icon: "checklist", text: text, help: text, priority: 2))
         }
         return chips
     }

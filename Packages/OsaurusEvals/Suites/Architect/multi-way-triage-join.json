@@ -1,0 +1,46 @@
+{
+  "id": "architect.multi-way-triage-join",
+  "domain": "architect",
+  "label": "architect \u2022 five-way triage with a branch per kind and one merge step",
+  "query": "Build a workflow that takes an incoming email (inputs `sender` and `body`) and sorts it into exactly one of: sales_lead, support, billing, job_application, or spam. Each kind gets its own handling: a sales lead gets a short friendly reply draft, a support request gets a priority (low, medium, or high) and a summary, a billing email gets the amount and due date pulled out, a job application gets the role they're applying for, and spam gets nothing. Whatever the branch, finish with one step that merges what happened into a single line for my log. The workflow's output has `category` (one of the five) and `log_line`. Add one example email per kind, test every example, then offer to save it.",
+  "notes": "Hard case. A decision with five outcomes, conditional edges into separate branches, and one merge step that runs whichever branch passed. Pins at least four conditional edges, five examples all tested, and the category the finished workflow picks for a fresh email of each kind.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 40,
+      "nodeKinds": ["inference"],
+      "inputKeys": ["sender", "body"],
+      "outputKeys": ["category", "log_line"],
+      "structure": {
+        "conditionalEdges": 4,
+        "minExamples": 5,
+        "examplesTested": true
+      },
+      "postRuns": [
+        {
+          "input": { "sender": "dana@northwind.example", "body": "Hi, we're a 200-person company looking at your enterprise plan. Could we set up a demo next week and get pricing?" },
+          "outputValues": { "category": ["sales_lead"] },
+          "outputKeys": ["log_line"]
+        },
+        {
+          "input": { "sender": "billing@acme.example", "body": "Invoice #4471 for $1,250.00 is due on March 3. Please arrange payment by then." },
+          "outputValues": { "category": ["billing"] },
+          "outputKeys": ["log_line"]
+        },
+        {
+          "input": { "sender": "sam.rivera@mail.example", "body": "Hello, I'd like to apply for the Senior iOS Engineer role posted on your careers page. My resume is attached." },
+          "outputValues": { "category": ["job_application"] },
+          "outputKeys": ["log_line"]
+        },
+        {
+          "input": { "sender": "winner@prize-claims.example", "body": "CONGRATULATIONS!!! You have won a $1000 gift card. Click here to claim now before it expires!!!" },
+          "outputValues": { "category": ["spam"] }
+        }
+      ],
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "maxToolCalls": 30,
+      "maxPromptTokens": 600000
+    }
+  }
+}

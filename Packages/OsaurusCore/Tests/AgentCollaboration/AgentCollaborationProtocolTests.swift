@@ -197,7 +197,6 @@ struct AgentCollaborationProtocolTests {
         #expect(defaultAgent.isBuiltIn)
         #expect(defaultAgent.toolsEnabled)
         #expect(defaultAgent.memoryEnabled)
-        #expect(defaultAgent.bonjourEnabled == false)
         #expect(!json.contains("agentCollaboration"))
         #expect(!json.contains("collaboration"))
 

@@ -47,11 +47,11 @@ public enum RemoteProviderError: LocalizedError {
 public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
     public static let osaurusRouterProviderId = UUID(uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840")!
-    /// Product-selected temporary model for the first-run local-download
-    /// experience: DeepSeek V4.1 Flash on Osaurus Cloud. Match by final path
-    /// component because Router ids are provider-prefixed (for example
+    /// Product-selected first-run model on Osaurus Cloud: the newest DeepSeek
+    /// Flash, never older than this one. Match by final path component
+    /// because Router ids are provider-prefixed (for example
     /// `osaurus/deepseek-v4-1-flash`).
-    static let firstRunOsaurusModelSlug = "deepseek-v4-1-flash"
+    nonisolated static let firstRunOsaurusModelSlug = "deepseek-v4-1-flash"
 
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration {
@@ -101,7 +101,7 @@ public final class RemoteProviderManager: ObservableObject {
     /// Active service instances keyed by provider ID
     private var services: [UUID: RemoteProviderService] = [:]
 
-    /// Provider IDs created from Bonjour discovery — not persisted to disk
+    /// Provider IDs held only in memory — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
 
     /// Per-model metadata for the managed Osaurus Router, keyed by unprefixed
@@ -198,13 +198,13 @@ public final class RemoteProviderManager: ObservableObject {
 
     // MARK: - Provider Management
 
-    /// Returns true if the provider was created ephemerally from Bonjour discovery
+    /// Returns true if the provider is held only in memory
     public func isEphemeral(id: UUID) -> Bool {
         ephemeralProviderIds.contains(id)
     }
 
-    /// Add a new provider. Pass `isEphemeral: true` for Bonjour-discovered providers so they
-    /// are held only in memory and removed when the agent is deselected or goes offline.
+    /// Add a new provider. Pass `isEphemeral: true` for runtime providers (the eval
+    /// harness's) so they are held only in memory and never persisted.
     public func addProvider(
         _ provider: RemoteProvider,
         apiKey: String?,
@@ -216,8 +216,8 @@ public final class RemoteProviderManager: ObservableObject {
             ephemeralProviderIds.insert(provider.id)
         } else {
             // KPI: a user-configured remote provider. Only the closed-enum
-            // type is captured. Ephemeral Bonjour-discovered providers are
-            // excluded — they aren't a deliberate configuration action.
+            // type is captured. Ephemeral providers are excluded — they
+            // aren't a deliberate configuration action.
             FeatureTelemetry.remoteProviderAdded(providerType: provider.providerType.rawValue)
         }
 
@@ -268,7 +268,7 @@ public final class RemoteProviderManager: ObservableObject {
         persistsToDisk: Bool,
         connect shouldConnect: Bool
     ) {
-        if !credentialsDurable, !KeychainQueryHelpers.disablesKeychainForProcess {
+        if !credentialsDurable, !RemoteProviderKeychain.isStorageDisabled {
             providerStates[providerId]?.lastError =
                 "Could not save credentials to the Keychain — they may not survive relaunch."
             notifyStatusChanged()
@@ -406,7 +406,7 @@ public final class RemoteProviderManager: ObservableObject {
                     let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
                     if !(await RemoteProviderKeychain.saveOAuthTokensOffMainActor(
                         refreshed, for: provider.id)),
-                        !KeychainQueryHelpers.disablesKeychainForProcess {
+                        !RemoteProviderKeychain.isStorageDisabled {
                         NSLog("RemoteProviderManager: failed to persist refreshed OAuth tokens")
                     }
                 }
@@ -415,7 +415,7 @@ public final class RemoteProviderManager: ObservableObject {
                     let refreshed = try await XAIOAuthService.refresh(tokens)
                     if !(await RemoteProviderKeychain.saveOAuthTokensOffMainActor(
                         refreshed, for: provider.id)),
-                        !KeychainQueryHelpers.disablesKeychainForProcess {
+                        !RemoteProviderKeychain.isStorageDisabled {
                         NSLog("RemoteProviderManager: failed to persist refreshed OAuth tokens")
                     }
                 }
@@ -890,6 +890,31 @@ public final class RemoteProviderManager: ObservableObject {
         providerStates[providerId] = state
         notifyStatusChanged()
         notifyModelsChanged()
+    }
+
+    /// Signs a sign-in session of an OAuth provider in. The primary session
+    /// is the provider's own sign-in; any other keeps its tokens in its own
+    /// Keychain account and is used by the agents assigned it.
+    public func oauthSignIn(providerId: UUID, session: SignInSession) async throws {
+        guard session.service == .modelProvider(providerId),
+            let provider = configuration.provider(id: providerId)
+        else { throw RemoteProviderServiceError.notConnected }
+        let tokens: RemoteProviderOAuthTokens
+        switch provider.authType {
+        case .openAICodexOAuth: tokens = try await OpenAICodexOAuthService.signIn()
+        case .xaiOAuth: tokens = try await XAIOAuthService.signIn()
+        default: throw RemoteProviderServiceError.requestFailed(L("This provider doesn't use a sign-in."))
+        }
+        if let sessionId = session.keychainSession {
+            RemoteProviderKeychain.saveOAuthTokens(tokens, for: providerId, session: sessionId)
+        } else {
+            let wasConnected = providerStates[providerId]?.isConnected ?? false
+            updateProvider(provider, apiKey: nil, oauthTokens: tokens)
+            if !wasConnected, provider.enabled {
+                Task { try? await connect(providerId: providerId) }
+            }
+        }
+        NotificationCenter.default.post(name: .signInSessionsDidChange, object: nil)
     }
 
     /// Observe identity creation/wipe, app re-activation, and wake-from-sleep
@@ -1488,21 +1513,57 @@ public final class RemoteProviderManager: ObservableObject {
             ?? entry.models.first
     }
 
-    /// DeepSeek V4.1 Flash for first-run Cloud, with the normal chat-capable
-    /// provider fallback if the Router temporarily omits that model.
+    /// The newest DeepSeek Flash for first-run Cloud, with the normal
+    /// chat-capable provider fallback if the Router temporarily offers none.
     public func firstRunOsaurusRouterModelId() -> String? {
         guard
             let entry = cachedAvailableModels().first(where: {
                 $0.providerId == Self.osaurusRouterProviderId
             })
         else { return nil }
-        return entry.models.first(where: Self.isFirstRunOsaurusModelId)
+        return Self.newestFirstRunOsaurusModelId(in: entry.models)
             ?? entry.models.first { !ModelPickerItem.isLikelyEmbeddingOrRerankerID($0) }
             ?? entry.models.first
     }
 
-    static func isFirstRunOsaurusModelId(_ id: String) -> Bool {
-        id.split(separator: "/").last?.lowercased() == firstRunOsaurusModelSlug
+    /// The highest-version `deepseek-v<major>[-<minor>]-flash` id at or above
+    /// `firstRunOsaurusModelSlug`; retired older Flash ids never qualify.
+    nonisolated static func newestFirstRunOsaurusModelId(in ids: [String]) -> String? {
+        ids.compactMap { id in firstRunOsaurusModelVersion(id).map { (id: id, version: $0) } }
+            .max { $0.version.lexicographicallyPrecedes($1.version) }?.id
+    }
+
+    nonisolated static func isFirstRunOsaurusModelId(_ id: String) -> Bool {
+        firstRunOsaurusModelVersion(id) != nil
+    }
+
+    /// "DeepSeek V4.2 Flash" for `…/deepseek-v4-2-flash`.
+    nonisolated static func firstRunOsaurusModelDisplayName(_ id: String) -> String? {
+        guard let parts = deepSeekFlashVersionParts(id) else { return nil }
+        return "DeepSeek V\(parts.map(String.init).joined(separator: ".")) Flash"
+    }
+
+    /// `[major, minor]` of a DeepSeek Flash id at or above the first-run floor.
+    private nonisolated static func firstRunOsaurusModelVersion(_ id: String) -> [Int]? {
+        guard let parts = deepSeekFlashVersionParts(id), let floor = deepSeekFlashVersionParts(firstRunOsaurusModelSlug)
+        else { return nil }
+        let version = parts.count == 1 ? parts + [0] : parts
+        let minimum = floor.count == 1 ? floor + [0] : floor
+        return minimum.lexicographicallyPrecedes(version) || version == minimum ? version : nil
+    }
+
+    private nonisolated static func deepSeekFlashVersionParts(_ id: String) -> [Int]? {
+        let slug = (id.split(separator: "/").last.map(String.init) ?? id).lowercased()
+        let prefix = "deepseek-v"
+        let suffix = "-flash"
+        guard slug.hasPrefix(prefix), slug.hasSuffix(suffix), slug.count > prefix.count + suffix.count else {
+            return nil
+        }
+        let core = slug.dropFirst(prefix.count).dropLast(suffix.count)
+        let pieces = core.split(separator: "-", omittingEmptySubsequences: false)
+        guard (1 ... 2).contains(pieces.count) else { return nil }
+        let numbers = pieces.compactMap { Int($0) }
+        return numbers.count == pieces.count ? numbers : nil
     }
 
     /// Metadata for an Osaurus Router model by its unprefixed id (the id as it

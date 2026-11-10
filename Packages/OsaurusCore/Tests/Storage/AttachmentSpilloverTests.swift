@@ -165,8 +165,9 @@ struct AttachmentSpilloverTests {
             try db.openInMemory()
             defer { db.close() }
 
+            // Older builds stored the spilled ref, not the inline bytes.
             let bytes = Data(repeating: 0xEE, count: 24 * 1024)
-            let attachment = Attachment(kind: .image(bytes))
+            let attachment = try #require(AttachmentBlobStore.spillIfNeeded([Attachment(kind: .image(bytes))]).first)
             let session = ChatSessionData(
                 id: UUID(),
                 title: "Spill",
@@ -182,7 +183,7 @@ struct AttachmentSpilloverTests {
                 externalSessionKey: nil,
                 dispatchTaskId: nil
             )
-            try db.saveSession(session)
+            try db.seedForTesting(session)
 
             // Find the hash that ended up persisted.
             let loaded = db.loadSession(id: session.id)

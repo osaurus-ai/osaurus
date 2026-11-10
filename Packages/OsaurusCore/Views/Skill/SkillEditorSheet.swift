@@ -11,6 +11,7 @@ import SwiftUI
 // MARK: - Skill Editor Sheet
 
 struct SkillEditorSheet: View {
+    private var theme: ThemeProtocol { themeManager.currentTheme }
     enum Mode {
         case create
         case edit(Skill)
@@ -131,21 +132,11 @@ struct SkillEditorSheet: View {
             idealHeight: 700,
             maxHeight: maxSheetHeight
         )
-        .background(themeManager.currentTheme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(themeManager.currentTheme.primaryBorder.opacity(0.5), lineWidth: 1)
-        )
-        .opacity(hasAppeared ? 1 : 0)
-        .scaleEffect(hasAppeared ? 1 : 0.95)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
+        .settingsSheetSurface()
+        .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             if case .edit(let skill) = mode {
                 loadSkill(skill)
-            }
-            withAnimation {
-                hasAppeared = true
             }
         }
     }
@@ -153,79 +144,22 @@ struct SkillEditorSheet: View {
     // MARK: - Header View
 
     private var headerView: some View {
-        HStack(spacing: 12) {
-            // Icon with gradient background
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                themeManager.currentTheme.accentColor.opacity(0.2),
-                                themeManager.currentTheme.accentColor.opacity(0.05),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: isEditing ? "pencil.circle.fill" : "sparkles")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                themeManager.currentTheme.accentColor,
-                                themeManager.currentTheme.accentColor.opacity(0.7),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(isEditing ? (isBuiltIn ? L("View Skill") : L("Edit Skill")) : (L("Create Skill")))
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-
-                Text(
-                    isEditing
-                        ? (isBuiltIn ? L("Preview built-in skill instructions") : L("Modify your skill's instructions"))
-                        : L("Define specialized guidance for the AI")
-                )
-                .font(.system(size: 12))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-            }
-
-            Spacer()
-
-            Button(action: onCancel) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(
-                        Circle()
-                            .fill(themeManager.currentTheme.tertiaryBackground)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(
-            themeManager.currentTheme.secondaryBackground
-                .overlay(
-                    LinearGradient(
-                        colors: [
-                            themeManager.currentTheme.accentColor.opacity(0.03),
-                            Color.clear,
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+        SettingsSheetHeader(
+            icon: isEditing ? "pencil.circle.fill" : "sparkles",
+            title: headerTitle,
+            subtitle: headerSubtitle,
+            onClose: onCancel
         )
+    }
+
+    private var headerTitle: LocalizedStringKey {
+        guard isEditing else { return "Create Skill" }
+        return isBuiltIn ? "View Skill" : "Edit Skill"
+    }
+
+    private var headerSubtitle: LocalizedStringKey {
+        guard isEditing else { return "Define specialized guidance for the AI" }
+        return isBuiltIn ? "Preview built-in skill instructions" : "Modify your skill's instructions"
     }
 
     // MARK: - Form View
@@ -239,8 +173,8 @@ struct SkillEditorSheet: View {
                         // Name
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Name", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(themeManager.currentTheme.secondaryText)
+                                .font(SettingsFont.smallLabel)
+                                .foregroundColor(themeManager.currentTheme.text.secondary)
 
                             SkillStyledTextField(
                                 placeholder: L("e.g., Web Researcher"),
@@ -253,8 +187,8 @@ struct SkillEditorSheet: View {
                         // Description
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Description", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(themeManager.currentTheme.secondaryText)
+                                .font(SettingsFont.smallLabel)
+                                .foregroundColor(themeManager.currentTheme.text.secondary)
 
                             SkillStyledTextField(
                                 placeholder: L("Brief description (optional)"),
@@ -273,8 +207,8 @@ struct SkillEditorSheet: View {
                             // Category
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Category", bundle: .module)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                                    .font(SettingsFont.smallLabel)
+                                    .foregroundColor(themeManager.currentTheme.text.secondary)
 
                                 SkillStyledTextField(
                                     placeholder: L("e.g., productivity"),
@@ -287,8 +221,8 @@ struct SkillEditorSheet: View {
                             // Version
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Version", bundle: .module)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                                    .font(SettingsFont.smallLabel)
+                                    .foregroundColor(themeManager.currentTheme.text.secondary)
 
                                 SkillStyledTextField(
                                     placeholder: "1.0.0",
@@ -303,8 +237,8 @@ struct SkillEditorSheet: View {
                         // Author
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Author", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(themeManager.currentTheme.secondaryText)
+                                .font(SettingsFont.smallLabel)
+                                .foregroundColor(themeManager.currentTheme.text.secondary)
 
                             SkillStyledTextField(
                                 placeholder: L("Your name (optional)"),
@@ -320,8 +254,8 @@ struct SkillEditorSheet: View {
                         // description.
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Keywords", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(themeManager.currentTheme.secondaryText)
+                                .font(SettingsFont.smallLabel)
+                                .foregroundColor(themeManager.currentTheme.text.secondary)
 
                             SkillStyledTextField(
                                 placeholder: L("Comma-separated, e.g. research, web, citations"),
@@ -334,16 +268,16 @@ struct SkillEditorSheet: View {
                                 "Help the AI find this skill: add words users would say when they need it.",
                                 bundle: .module
                             )
-                            .font(.system(size: 10))
-                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(themeManager.currentTheme.text.tertiary)
                         }
                     }
                 }
 
             }
-            .padding(20)
+            .padding(theme.space.s16)
         }
-        .background(themeManager.currentTheme.primaryBackground)
+        .background(themeManager.currentTheme.surface.overlay)
     }
 
     // MARK: - Instructions Editor
@@ -353,23 +287,22 @@ struct SkillEditorSheet: View {
             // Editor header
             HStack {
                 Image(systemName: "doc.text")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundColor(themeManager.currentTheme.text.link)
 
-                Text("INSTRUCTIONS", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-                    .tracking(0.5)
+                Text("Instructions", bundle: .module)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(themeManager.currentTheme.text.secondary)
 
                 Spacer()
 
                 Text(instructions.count == 1 ? L("1 character") : L("\(instructions.count) characters"))
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(themeManager.currentTheme.text.tertiary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(themeManager.currentTheme.secondaryBackground)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s12)
+            .background(themeManager.currentTheme.surface.subtle)
 
             // Editor area
             ZStack(alignment: .topLeading) {
@@ -378,9 +311,9 @@ struct SkillEditorSheet: View {
                         "Write guidance for the AI...\n\nExample:\n## When to use this skill\n- Describe scenarios\n\n## Guidelines\n- Add specific guidance",
                         bundle: .module
                     )
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.placeholderText)
-                    .padding(16)
+                    .font(SettingsFont.mono)
+                    .foregroundColor(themeManager.currentTheme.text.placeholder)
+                    .padding(theme.space.s16)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .allowsHitTesting(false)
                 }
@@ -389,30 +322,30 @@ struct SkillEditorSheet: View {
                     // Read-only view for built-in skills
                     ScrollView {
                         Text(instructions)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(themeManager.currentTheme.primaryText)
+                            .font(SettingsFont.mono)
+                            .foregroundColor(themeManager.currentTheme.text.primary)
                             .lineSpacing(4)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16)
+                            .padding(theme.space.s16)
                             .textSelection(.enabled)
                     }
                 } else {
                     ThemedNSTextView(
                         text: $instructions,
-                        textColor: themeManager.currentTheme.primaryText,
-                        fontSize: 13,
+                        textColor: themeManager.currentTheme.text.primary,
+                        font: themeManager.currentTheme.nsFont(.code),
                         textInset: 16
                     )
                 }
             }
-            .background(themeManager.currentTheme.inputBackground)
+            .background(themeManager.currentTheme.surface.raised)
         }
         .background(
             Rectangle()
-                .fill(themeManager.currentTheme.inputBackground)
+                .fill(themeManager.currentTheme.surface.raised)
                 .overlay(
                     Rectangle()
-                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                        .stroke(themeManager.currentTheme.border.strong, lineWidth: theme.stroke.default)
                 )
         )
     }
@@ -420,58 +353,14 @@ struct SkillEditorSheet: View {
     // MARK: - Footer View
 
     private var footerView: some View {
-        HStack(spacing: 12) {
-            // Keyboard hint
-            if !isBuiltIn {
-                HStack(spacing: 4) {
-                    Text("⌘")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(themeManager.currentTheme.tertiaryBackground)
-                        )
-                    Text("+ Enter to save", bundle: .module)
-                        .font(.system(size: 11))
-                }
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
-            }
-
-            if isBuiltIn {
-                HStack(spacing: 6) {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 11))
-                    Text("Built-in skills are read-only", bundle: .module)
-                        .font(.system(size: 12))
-                }
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
-            }
-
-            Spacer()
-
-            Button(isBuiltIn ? L("Close") : L("Cancel"), action: onCancel)
-                .buttonStyle(SkillSecondaryButtonStyle())
-
-            if !isBuiltIn {
-                Button(isEditing ? L("Save Changes") : L("Create Skill")) {
+        SettingsSheetFooter(
+            primary: isBuiltIn
+                ? nil
+                : .init(label: isEditing ? "Save Changes" : "Create Skill", isEnabled: canSave && hasChanges) {
                     saveSkill()
-                }
-                .buttonStyle(SkillPrimaryButtonStyle())
-                .disabled(!canSave || !hasChanges)
-                .keyboardShortcut(.return, modifiers: .command)
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(
-            themeManager.currentTheme.secondaryBackground
-                .overlay(
-                    Rectangle()
-                        .fill(themeManager.currentTheme.primaryBorder)
-                        .frame(height: 1),
-                    alignment: .top
-                )
+                },
+            secondary: .init(label: isBuiltIn ? "Close" : "Cancel", handler: onCancel),
+            hint: isBuiltIn ? nil : "+ Enter to save"
         )
     }
 
@@ -521,6 +410,7 @@ struct SkillEditorSheet: View {
 // MARK: - Editor Section
 
 private struct SkillEditorSection<Content: View>: View {
+    @Environment(\.theme) private var theme
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let title: String
@@ -532,32 +422,25 @@ private struct SkillEditorSection<Content: View>: View {
             // Section header
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundColor(themeManager.currentTheme.text.link)
 
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-                    .tracking(0.5)
+                Text(title)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(themeManager.currentTheme.text.secondary)
             }
 
             content()
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(themeManager.currentTheme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.card)
     }
 }
 
 // MARK: - Styled Text Field
 
 private struct SkillStyledTextField: View {
+    private var theme: ThemeProtocol { themeManager.currentTheme }
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let placeholder: String
@@ -570,9 +453,11 @@ private struct SkillStyledTextField: View {
         HStack(spacing: 10) {
             if let icon = icon {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .medium))
+                    .glyphSize(12, weight: .medium)
                     .foregroundColor(
-                        isFocused ? themeManager.currentTheme.accentColor : themeManager.currentTheme.tertiaryText
+                        isFocused
+                            ? themeManager.currentTheme.action.primary.default.background
+                            : themeManager.currentTheme.text.tertiary
                     )
                     .frame(width: 16)
             }
@@ -580,79 +465,25 @@ private struct SkillStyledTextField: View {
             ThemedNSTextField(
                 placeholder: placeholder,
                 text: $text,
-                textColor: themeManager.currentTheme.primaryText,
-                placeholderColor: themeManager.currentTheme.placeholderText,
-                fontSize: 13,
+                textColor: themeManager.currentTheme.text.primary,
+                placeholderColor: themeManager.currentTheme.text.placeholder,
+                font: themeManager.currentTheme.nsFont(.label, weight: .regular),
                 onFocusChange: { editing in
-                    withAnimation(.easeOut(duration: 0.15)) {
+                    withAnimation(theme.motion.quick) {
                         isFocused = editing
                     }
                 }
             )
             .frame(height: 18)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(
-                            isFocused
-                                ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                : themeManager.currentTheme.inputBorder,
-                            lineWidth: isFocused ? 1.5 : 1
-                        )
-                )
-        )
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.control)
+        .settingsFocusRing(isFocused, radius: theme.radius.medium)
     }
 }
 
 // MARK: - Button Styles
-
-private struct SkillPrimaryButtonStyle: ButtonStyle {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(isEnabled ? .white : themeManager.currentTheme.tertiaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        isEnabled
-                            ? themeManager.currentTheme.accentColor
-                            : themeManager.currentTheme.tertiaryBackground
-                    )
-            )
-            .opacity(configuration.isPressed ? 0.8 : 1.0)
-    }
-}
-
-private struct SkillSecondaryButtonStyle: ButtonStyle {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(themeManager.currentTheme.primaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .opacity(configuration.isPressed ? 0.8 : 1.0)
-    }
-}
 
 // MARK: - AppKit-Backed Text Field
 //
@@ -671,7 +502,7 @@ private struct ThemedNSTextField: NSViewRepresentable {
     @Binding var text: String
     let textColor: Color
     let placeholderColor: Color
-    let fontSize: CGFloat
+    let font: NSFont
     let onFocusChange: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -688,13 +519,13 @@ private struct ThemedNSTextField: NSViewRepresentable {
         field.cell?.wraps = false
         field.cell?.isScrollable = true
         field.lineBreakMode = .byTruncatingTail
-        field.font = .systemFont(ofSize: fontSize)
+        field.font = font
         field.delegate = context.coordinator
         field.stringValue = text
         field.placeholderAttributedString = Self.attributedPlaceholder(
             placeholder,
             color: placeholderColor,
-            fontSize: fontSize
+            font: font
         )
         field.textColor = NSColor(textColor)
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -710,20 +541,20 @@ private struct ThemedNSTextField: NSViewRepresentable {
         field.placeholderAttributedString = Self.attributedPlaceholder(
             placeholder,
             color: placeholderColor,
-            fontSize: fontSize
+            font: font
         )
     }
 
     private static func attributedPlaceholder(
         _ string: String,
         color: Color,
-        fontSize: CGFloat
+        font: NSFont
     ) -> NSAttributedString {
         NSAttributedString(
             string: string,
             attributes: [
                 .foregroundColor: NSColor(color),
-                .font: NSFont.systemFont(ofSize: fontSize),
+                .font: font,
             ]
         )
     }
@@ -759,7 +590,7 @@ private struct ThemedNSTextField: NSViewRepresentable {
 private struct ThemedNSTextView: NSViewRepresentable {
     @Binding var text: String
     let textColor: Color
-    let fontSize: CGFloat
+    let font: NSFont
     let textInset: CGFloat
 
     func makeCoordinator() -> Coordinator {
@@ -782,7 +613,7 @@ private struct ThemedNSTextView: NSViewRepresentable {
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.backgroundColor = .clear
-        textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        textView.font = font
         textView.textColor = NSColor(textColor)
         textView.insertionPointColor = NSColor(textColor)
         textView.isAutomaticQuoteSubstitutionEnabled = false

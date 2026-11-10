@@ -327,6 +327,73 @@ struct ResponsesCancellationInsightsTests {
         }
     }
 
+    @Test func rejectedToolChoicePreservesMeasuredWorkAndOwnedDrain() async throws {
+        let model = "rejected-completion-drain-\(UUID())"
+        let releaseDrain = Gate()
+        let drainEntered = Gate()
+        let drainCompleted = Gate()
+        let drainProbe = DrainProbe()
+        defer { Task { await releaseDrain.signal() } }
+        let source = AsyncStream<Generation> { continuation in
+            continuation.yield(.chunk("answer without the required call"))
+            continuation.yield(.info(GenerateCompletionInfo(
+                promptTokenCount: 73, generationTokenCount: 17,
+                promptTime: 0.25, generationTime: 1, stopReason: .stop)))
+            continuation.finish()
+        }
+        let service = Service(model: model, events: ResponsesGenerationStream.native(
+            GenerationEventMapper.map(events: source, promptTokenCount: 73, suppressProgressUI: true),
+            waitForProducerDrain: {
+                await withTaskCancellationHandler {
+                    drainProbe.enter(cancelled: Task.isCancelled)
+                    await drainEntered.signal()
+                    await releaseDrain.wait()
+                    drainProbe.complete(cancelled: Task.isCancelled)
+                    await drainCompleted.signal()
+                } onCancel: { drainProbe.cancel() }
+            }
+        ))
+        let engine = ChatEngine(services: [service], installedModelsProvider: { [] }, source: .chatUI)
+        var required = request(model)
+        required.tools = [OsaurusCore.Tool(type: "function", function: .init(
+            name: "required_fixture", description: nil,
+            parameters: .object(["type": .string("object")])))]
+        required.toolChoice = .required
+        try await withTaskCancellationHandler {
+            do {
+                for try await event in try await engine.streamResponses(request: required) {
+                    if case .responseCompleted = event { Issue.record("Rejected response became successful") }
+                }
+                Issue.record("Missing required call must fail")
+            } catch {
+                #expect((error as NSError).domain == "OsaurusToolChoice")
+                #expect((error as NSError).code == 422)
+            }
+            // A validation error can be reported while the runtime still owns
+            // cleanup. The rejected logical completion must not cancel that drain.
+            await drainEntered.wait()
+            let pending = drainProbe.snapshot()
+            #expect(pending.entered && !pending.completed)
+            #expect(!pending.cancellationRequested && !pending.taskWasCancelled)
+            await releaseDrain.signal()
+            await drainCompleted.wait()
+            let drained = drainProbe.snapshot()
+            #expect(drained.completed && !drained.cancellationRequested && !drained.taskWasCancelled)
+            let log = try await row(model)
+            print("[rejected-usage-drain] model=\(model) completed=\(drained.completed) cancellationRequested=\(drained.cancellationRequested) taskWasCancelled=\(drained.taskWasCancelled) loggedStatus=\(log.statusCode) loggedInput=\(String(describing: log.inputTokens)) loggedOutput=\(String(describing: log.outputTokens))")
+            #expect(log.statusCode == 500 && log.finishReason == .error && log.isError)
+            #expect(log.inputTokens == 73 && log.outputTokens == 17)
+            #expect(log.inputTokenSource == .reported && log.outputTokenSource == .reported)
+            #expect(service.counts().typed == 1 && service.counts().legacy == 0)
+        } onCancel: {
+            Task {
+                await releaseDrain.signal()
+                await drainEntered.signal()
+                await drainCompleted.signal()
+            }
+        }
+    }
+
     @Test func canonicalCancelledStatusOverridesStopLabelWithoutInventingUsage() async throws {
         let model = "provider-cancel-status-\(UUID())"
         let service = Service(model: model, events: AsyncThrowingStream { continuation in

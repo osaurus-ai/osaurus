@@ -41,20 +41,12 @@ struct ClaudePluginUserConfigSheet: View {
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 10)
                 }
-                .padding(20)
+                .padding(theme.settingsSheetInset)
             }
             footer
         }
-        .frame(width: 520, height: min(420 + CGFloat(fields.count) * 80, 640))
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
-        )
-        .opacity(hasAppeared ? 1 : 0)
-        .scaleEffect(hasAppeared ? 1 : 0.95)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
+        .frame(width: SettingsSheetWidth.regular, height: min(420 + CGFloat(fields.count) * 80, 640))
+        .settingsSheetSurface()
         .onAppear {
             loadExistingValues()
             withAnimation { hasAppeared = true }
@@ -64,105 +56,30 @@ struct ClaudePluginUserConfigSheet: View {
     // MARK: - Sections
 
     private var header: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.2),
-                                theme.accentColor.opacity(0.05),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor,
-                                theme.accentColor.opacity(0.7),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Configure Plugin", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                HStack(spacing: 6) {
-                    Text(pluginName)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                    if let version = pluginVersion {
-                        Text("v\(version)", bundle: .module)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-                    }
-                }
-            }
-
-            Spacer()
-
-            Button(action: { dismiss() }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    LinearGradient(
-                        colors: [
-                            theme.accentColor.opacity(0.03),
-                            Color.clear,
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+        SettingsSheetHeader(
+            icon: "slider.horizontal.3",
+            title: "Configure Plugin",
+            subtitleText: pluginVersion.map { "\(pluginName) · v\($0)" } ?? pluginName,
+            onClose: { dismiss() }
         )
     }
 
     private var infoCard: some View {
         HStack(spacing: 12) {
             Image(systemName: "info.circle.fill")
-                .font(.system(size: 16))
-                .foregroundColor(theme.infoColor)
+                .glyphSize(16)
+                .foregroundColor(theme.status.info.foreground)
             Text(
                 "This plugin declared configuration options. Non-sensitive values are stored locally; sensitive ones are kept in the system Keychain.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(14)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.infoColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.infoColor.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .settingsChrome(.status(.info))
     }
 
     private var fieldsForm: some View {
@@ -170,9 +87,9 @@ struct ClaudePluginUserConfigSheet: View {
             ForEach(Array(fields.enumerated()), id: \.element.key) { index, field in
                 if index > 0 {
                     Rectangle()
-                        .fill(theme.cardBorder)
+                        .fill(theme.border.default)
                         .frame(height: 1)
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, theme.space.s16)
                 }
                 UserConfigFieldRow(
                     field: field,
@@ -188,70 +105,14 @@ struct ClaudePluginUserConfigSheet: View {
                 )
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.card)
     }
 
     private var footer: some View {
-        HStack(spacing: 12) {
-            if !validationErrors.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.errorColor)
-                    Text("Please fill in all required fields", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
-                }
-            }
-            Spacer()
-            Button(action: { dismiss() }) {
-                Text("Cancel", bundle: .module)
-            }
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .buttonStyle(PlainButtonStyle())
-
-            Button(action: save) {
-                Text("Save", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.return, modifiers: .command)
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1),
-                    alignment: .top
-                )
+        SettingsSheetFooter(
+            primary: .init(label: "Save", handler: save),
+            secondary: .init(label: "Cancel") { dismiss() },
+            warning: validationErrors.isEmpty ? nil : L("Please fill in all required fields")
         )
     }
 
@@ -284,7 +145,7 @@ struct ClaudePluginUserConfigSheet: View {
             }
         }
         if !errors.isEmpty {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            withAnimation(theme.motion.springAnimation) {
                 validationErrors = errors
             }
             return
@@ -327,18 +188,17 @@ private struct UserConfigFieldRow: View {
     let theme: ThemeProtocol
 
     @State private var isFocused = false
-    @State private var showValue = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Text(field.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                 if field.required {
                     Text("*")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(theme.errorColor)
+                        .font(SettingsFont.sectionTitle)
+                        .foregroundColor(theme.status.error.foreground)
                 }
                 Spacer()
                 fieldKindBadge
@@ -346,31 +206,14 @@ private struct UserConfigFieldRow: View {
 
             if !field.description.isEmpty {
                 Text(field.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             inputField
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(
-                                    hasError
-                                        ? theme.errorColor
-                                        : (isFocused
-                                            ? theme.accentColor.opacity(0.6)
-                                            : theme.inputBorder),
-                                    lineWidth: 1
-                                )
-                        )
-                )
         }
-        .padding(16)
+        .padding(theme.space.s16)
     }
 
     @ViewBuilder
@@ -384,12 +227,7 @@ private struct UserConfigFieldRow: View {
             case .file: return "File"
             }
         }()
-        Text(badge)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(theme.tertiaryBackground))
+        StatusChip(badge, tone: .neutral)
     }
 
     @ViewBuilder
@@ -404,72 +242,41 @@ private struct UserConfigFieldRow: View {
                     )
                 ) {
                     Text(value.lowercased() == "true" ? "Enabled" : "Disabled", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                 }
-                .toggleStyle(.switch)
+                .settingsSwitch(showsLabel: true)
                 Spacer()
             }
         case .directory, .file:
             HStack(spacing: 8) {
                 placeholderTextField
                 Button(action: pickPath) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.accentColor)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.accentColor.opacity(0.12)))
+                    Label(L("Choose…"), systemImage: "folder")
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
             }
         case .string where field.sensitive:
-            HStack(spacing: 8) {
-                ZStack(alignment: .leading) {
-                    if value.isEmpty {
-                        Text("Enter \(field.title.lowercased())…", bundle: .module)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(theme.placeholderText)
-                            .allowsHitTesting(false)
-                    }
-                    if showValue {
-                        TextField("", text: $value)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                    } else {
-                        SecureField("", text: $value)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                    }
-                }
-                Button(action: { showValue.toggle() }) {
-                    Image(systemName: showValue ? "eye.slash.fill" : "eye.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.tertiaryBackground))
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
+            SettingsTextField(
+                placeholder: L("Enter \(field.title.lowercased())…"),
+                text: $value,
+                monospaced: true,
+                isSecure: true,
+                revealable: true,
+                isInvalid: hasError
+            )
         case .string, .number:
             placeholderTextField
         }
     }
 
     private var placeholderTextField: some View {
-        ZStack(alignment: .leading) {
-            if value.isEmpty {
-                Text("Enter \(field.title.lowercased())…", bundle: .module)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(theme.placeholderText)
-                    .allowsHitTesting(false)
-            }
-            TextField("", text: $value)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-        }
+        SettingsTextField(
+            placeholder: L("Enter \(field.title.lowercased())…"),
+            text: $value,
+            monospaced: true,
+            isInvalid: hasError
+        )
     }
 
     private func pickPath() {

@@ -1,0 +1,15 @@
+{
+  "id": "agent_creation.import-agent-file",
+  "domain": "agent_creation",
+  "label": "agent creation • a pasted agent file fills the draft through agent_draft import",
+  "query": "Make this into my agent:\n\n---\nname: changelog-writer\ndescription: Writes changelog entries from merged pull requests.\n---\nYou write concise changelog entries. Group changes under Added, Changed, and Fixed. Never invent pull request numbers.",
+  "notes": "Universal chat import inside the New Agent chat. The agent file becomes the draft itself (name, description, instructions), so nothing is queued to install on Create. The harness requires exactly one successful agent_draft import call and checks that nothing was installed during the turn.",
+  "fixtures": {},
+  "expect": {
+    "agentCreation": {
+      "maxIterations": 6,
+      "importKinds": [],
+      "maxClarifications": 0
+    }
+  }
+}

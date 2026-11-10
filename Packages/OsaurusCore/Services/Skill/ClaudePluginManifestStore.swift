@@ -7,7 +7,7 @@
 //  without re-fetching from GitHub on every launch. The store is the
 //  single source of truth for "what was installed under this pluginId",
 //  separate from the live artifact records owned by `SkillManager`,
-//  `ScheduleManager`, `SlashCommandRegistry`, and `MCPProviderManager`.
+//  `EventManager`, `SlashCommandRegistry`, and `MCPProviderManager`.
 //
 
 import Foundation

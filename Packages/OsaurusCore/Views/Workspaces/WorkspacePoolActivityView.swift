@@ -15,9 +15,12 @@ import SwiftUI
 struct WorkspacePoolActivityView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let workspace: OsaurusRouterWorkspaceSummary
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
 
     @State private var balance: OsaurusRouterWorkspacePoolBalance?
     @State private var usageItems: [OsaurusRouterUsageItem] = []
@@ -36,15 +39,15 @@ struct WorkspacePoolActivityView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AgentSheetHeader(
+            SettingsSheetHeader(
                 icon: "creditcard.fill",
-                title: "Pool activity",
+                title: "Credit Activity",
                 subtitleText: workspace.name,
                 onClose: { dismiss() }
             )
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     if let errorMessage {
                         InlineBanner(
                             kind: .error,
@@ -60,18 +63,18 @@ struct WorkspacePoolActivityView: View {
                     usageSection
                     transactionsSection
                 }
-                .padding(20)
+                .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
 
-            AgentSheetFooter(
+            SettingsSheetFooter(
                 primary: .init(label: "Done", handler: { dismiss() }),
                 secondary: nil,
                 hint: nil
             )
         }
         .fittedSheetFrame(width: 560, height: 620)
-        .background(theme.primaryBackground)
+        .settingsSheetSurface()
         .task { await load() }
     }
 
@@ -79,39 +82,39 @@ struct WorkspacePoolActivityView: View {
 
     @ViewBuilder
     private var balanceRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             WorkspaceAvatar(name: workspace.name, size: 32)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(workspace.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
-                Text("Shared credit pool", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                Text("Workspace credits", bundle: .module)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
             Spacer()
             if let balance {
-                VStack(alignment: .trailing, spacing: 1) {
+                VStack(alignment: .trailing, spacing: theme.space.s2) {
                     Text(verbatim: OsaurusRouter.formatMicroAsCreditsValue(balance.balanceMicro))
-                        .font(.system(size: 18, weight: .semibold, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.mono)
+                        .foregroundColor(theme.text.primary)
                     Text(breakdownCaption(balance))
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
             }
             Button {
                 Task { await load() }
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .glyphSize(10.5, weight: .semibold)
                     Text("Refresh", bundle: .module)
                 }
             }
-            .buttonStyle(SecondaryButtonStyle(isLoading: isLoading, size: .compact))
+            .assignedSettingsButtonStyle(.secondary, isLoading: isLoading, size: .compact)
             .disabled(isLoading)
         }
     }
@@ -132,14 +135,14 @@ struct WorkspacePoolActivityView: View {
     // MARK: - Usage
 
     private var usageSection: some View {
-        AgentDetailSection(title: L("Usage"), icon: "clock.arrow.circlepath") {
+        SettingsSection(title: "Usage") {
             if activityRows.isEmpty {
                 if isLoading {
-                    AgentSectionEmptyState(loading: "Loading usage…")
+                    SettingsEmptyState(loading: "Loading usage…")
                 } else {
-                    AgentSectionEmptyState(
-                        icon: "clock.arrow.circlepath",
-                        title: "No pool spending yet",
+                    SettingsEmptyState(
+                        inline: "clock.arrow.circlepath",
+                        title: "No spending yet",
                         hint: "Workspace-billed requests appear here."
                     )
                 }
@@ -159,7 +162,7 @@ struct WorkspacePoolActivityView: View {
                     } label: {
                         Text("Load more", bundle: .module)
                     }
-                    .buttonStyle(SecondaryButtonStyle(isLoading: isLoadingMore, size: .compact))
+                    .assignedSettingsButtonStyle(.secondary, isLoading: isLoadingMore, size: .compact)
                     .disabled(isLoadingMore)
                 }
             }
@@ -167,54 +170,49 @@ struct WorkspacePoolActivityView: View {
     }
 
     private func usageRow(_ row: CreditsActivityRow) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             Circle()
                 .fill(stateColor(row.stateKind))
                 .frame(width: 8, height: 8)
-                .padding(.top, 5)
+                .padding(.top, theme.space.s6)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s8) {
                     Text(verbatim: row.modelDisplay ?? L("Unknown model"))
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text(LocalizedStringKey(row.stateLabel), bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(stateColor(row.stateKind))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1.5)
-                        .background(Capsule().fill(stateColor(row.stateKind).opacity(0.12)))
+                    StatusChip(LCached(row.stateLabel), tint: stateColor(row.stateKind))
                 }
 
                 Text(verbatim: row.metadataLine)
-                    .font(.system(size: 10.5))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(1)
 
                 if let attribution = attributionLine(for: row) {
                     // actor = whose instance billed · caller = who asked.
                     Text(verbatim: attribution)
-                        .font(.system(size: 10.5))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
 
                 Text(verbatim: row.tokensLine)
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             Spacer(minLength: 12)
 
             Text(verbatim: OsaurusRouter.formatMicroAsCredits(row.costMicro))
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                .foregroundColor(theme.text.primary)
                 .monospacedDigit()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
     }
 
     /// "billed by dino-a · asked by dino-b" — omitted entirely when the row
@@ -246,13 +244,13 @@ struct WorkspacePoolActivityView: View {
     // MARK: - Transactions
 
     private var transactionsSection: some View {
-        AgentDetailSection(title: L("Ledger"), icon: "list.bullet.rectangle") {
+        SettingsSection(title: "Ledger") {
             if transactions.isEmpty {
                 if isLoading {
-                    AgentSectionEmptyState(loading: "Loading ledger…")
+                    SettingsEmptyState(loading: "Loading ledger…")
                 } else {
-                    AgentSectionEmptyState(
-                        icon: "list.bullet.rectangle",
+                    SettingsEmptyState(
+                        inline: "list.bullet.rectangle",
                         title: "No ledger entries yet",
                         hint: "Monthly grants, expirations, and top-ups appear here."
                     )
@@ -272,32 +270,32 @@ struct WorkspacePoolActivityView: View {
 
     private func transactionRow(_ item: OsaurusRouterTransactionItem) -> some View {
         let isCredit = !item.amountMicro.hasPrefix("-")
-        return HStack(spacing: 12) {
+        return HStack(spacing: theme.space.s12) {
             Image(systemName: entryTypeIcon(item.entryType))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isCredit ? theme.successColor : theme.secondaryText)
+                .glyphSize(12, weight: .medium)
+                .foregroundColor(isCredit ? theme.status.success.foreground : theme.text.secondary)
                 .frame(width: 22)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(verbatim: entryTypeLabel(item.entryType))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 if let date = WorkspacesFormatting.date(item.createdAt) {
                     Text(verbatim: date)
-                        .font(.system(size: 10.5))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
 
             Spacer(minLength: 12)
 
             Text(verbatim: OsaurusRouter.formatMicroAsCredits(item.amountMicro))
-                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                .foregroundColor(isCredit ? theme.successColor : theme.primaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(isCredit ? theme.status.success.foreground : theme.text.primary)
                 .monospacedDigit()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
     }
 
     private func entryTypeLabel(_ entryType: String) -> String {
@@ -307,7 +305,7 @@ struct WorkspacePoolActivityView: View {
         case "usage": return L("Usage")
         case "refund": return L("Refund")
         case "topup", "top_up": return L("Top-up")
-        case "workspace_topup": return L("Pool top-up")
+        case "workspace_topup": return L("Top-up")
         default:
             return entryType.replacingOccurrences(of: "_", with: " ").capitalized
         }
@@ -327,6 +325,9 @@ struct WorkspacePoolActivityView: View {
     // MARK: - Loading
 
     private func load() async {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
@@ -353,6 +354,9 @@ struct WorkspacePoolActivityView: View {
     }
 
     private func loadMoreUsage() async {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
         guard let cursor = usageCursor, !isLoadingMore else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
@@ -367,10 +371,23 @@ struct WorkspacePoolActivityView: View {
 
     private func stateColor(_ kind: CreditsActivityStateKind) -> Color {
         switch kind {
-        case .success: return theme.successColor
-        case .warning: return theme.warningColor
-        case .error: return theme.errorColor
-        case .secondary: return theme.secondaryText
+        case .success: return theme.status.success.foreground
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
+        case .secondary: return theme.text.secondary
         }
     }
 }
+
+#if OSAURUS_DESIGN_SYSTEM
+extension WorkspacePoolActivityView {
+    static func inspectionSample() -> Self {
+        var view = Self(workspace: .init(id: "local-display", name: "Local workspace", role: "owner"))
+        view._balance = State(initialValue: .init(balanceMicro: "750000", expiringMicro: "250000", purchasedMicro: "500000"))
+        view._usageItems = State(initialValue: [.init(id: "local-pool-usage", requestId: nil, model: "Local display model", provider: "Local sample", inputTokens: 1234, outputTokens: 56, costMicro: "1234", status: "completed", tokenSource: "provider", createdAt: "2026-10-22T12:00:00Z")])
+        let data = Data(#"{"id":"local-grant","amount_micro":"250000","entry_type":"workspace_grant","created_at":"2026-10-22T12:00:00Z"}"#.utf8)
+        if let value = try? JSONDecoder().decode(OsaurusRouterTransactionItem.self, from: data) { view._transactions = State(initialValue: [value]) }
+        return view
+    }
+}
+#endif

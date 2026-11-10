@@ -145,7 +145,7 @@ struct SpawnPoolAutoAddTests {
             !SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(created.id),
             "an opted-out agent must not join the Default spawn pool")
         let createResult = results.first { $0.section == "agents" && $0.target == name }
-        #expect(createResult?.message?.contains("Settings → Subagents") == true, "\(String(describing: createResult))")
+        #expect(createResult?.message?.contains("Settings → Agents → Delegation") == true, "\(String(describing: createResult))")
 
         // The user adds it by hand; a bundle update carrying the same flag
         // patches the agent and must leave that choice alone.
@@ -244,25 +244,13 @@ struct SpawnPoolAutoAddTests {
 @MainActor
 struct SameTurnSpawnStagingTests {
 
-    private static func agentEnum(of tool: Tool) -> [String] {
-        guard case .object(let root)? = tool.function.parameters,
-            case .object(let properties)? = root["properties"],
-            case .object(let agent)? = properties["agent"],
-            case .array(let values)? = agent["enum"]
-        else { return [] }
-        return values.compactMap {
-            if case .string(let value) = $0 { return value }
-            return nil
-        }
-    }
-
     @Test("osaurus_config is an activation trigger for the buffer-drain growth path")
     func osaurusConfigTriggersActivation() {
         #expect(CapabilityLoadBuffer.shouldActivate(after: "osaurus_config"))
     }
 
-    @Test("a chat-turn apply that creates an agent stages constrained spawn specs")
-    func chatApply_stagesSpawnSpecs_sameTurn() async throws {
+    @Test("a chat-turn apply creates the agent on the chat's model and stages no spawn tools")
+    func chatApply_createsOnTheChatModel_stagesNoSpawn() async throws {
         try await ChatHistoryTestStorage.run {
             // Canonical lock order: Storage → Sandbox (via
             // `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking
@@ -280,6 +268,9 @@ struct SameTurnSpawnStagingTests {
 
             let session = ChatSession()
             session.agentId = Agent.defaultId
+            // The fixture model is never in the picker list, so the session's
+            // first picker load would reset a selection made before it lands.
+            await session.refreshPickerItems()
             session.selectedModel = "local/chat-selected-worker-model"
 
             // Bind the task locals exactly like a live orchestrator turn:
@@ -303,42 +294,42 @@ struct SameTurnSpawnStagingTests {
             #expect(created.defaultModel == "local/chat-selected-worker-model")
             #expect(AgentManager.shared.effectiveModel(for: created.id) == session.selectedModel)
 
-            let staged = await buffer.drain()
-            let names = staged.map { $0.function.name }
-            #expect(
-                names.contains(SubagentCapabilityRegistry.spawnAgentToolName),
-                "spawn_agent must be staged for the same turn, got \(names)")
-            #expect(
-                !names.contains("spawn_batch"),
-                "spawn_batch was removed; only spawn_agent is staged, got \(names)")
-
-            // The staged schema must already advertise the just-created
-            // agent (UUID + display name) — execution validates against the
-            // live pool, but a strict enum-enforcing provider needs the
-            // identity in the schema.
-            if let spawnAgent = staged.first(
-                where: { $0.function.name == SubagentCapabilityRegistry.spawnAgentToolName })
-            {
-                let enumValues = Self.agentEnum(of: spawnAgent)
-                #expect(enumValues.contains(created.id.uuidString), "\(enumValues)")
-                #expect(enumValues.contains(name), "\(enumValues)")
-            }
-
-            // Mirror of the loop's growth path (`toolScope.activate(newTools)`
-            // after an activation-trigger tool): the staged specs both
-            // authorize and publish for the next iteration.
-            let scope = ToolExecutionScope(exposed: [])
-            #expect(!scope.permits(SubagentCapabilityRegistry.spawnAgentToolName))
-            scope.activate(staged)
-            #expect(scope.permits(SubagentCapabilityRegistry.spawnAgentToolName))
-            #expect(
-                scope.modelVisibleSpecs.map { $0.function.name }
-                    .contains(SubagentCapabilityRegistry.spawnAgentToolName))
+            let names = await buffer.drain().map { $0.function.name }
+            #expect(!names.contains(SubagentCapabilityRegistry.spawnAgentToolName), "\(names)")
         }
     }
 
-    @Test("an owner .http dispatch turn (phone / App Intent) stages spawn specs too")
-    func ownerHTTPApply_stagesSpawnSpecs_sameTurn() async throws {
+    @Test("an Orchestrator turn's apply stages no spawn tools")
+    func orchestratorApply_stagesNothing() async throws {
+        try await ChatHistoryTestStorage.run {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+
+            let buffer = CapabilityLoadBuffer()
+            let name = "Routing Spawn \(UUID().uuidString.prefix(6))"
+            var document = OsaurusConfigDocument()
+            var entry = AgentEntry(name: name)
+            entry.description = "Handles independent tasks for this isolated delegation test."
+            document.agents = [entry]
+
+            let session = ChatSession()
+            session.agentId = Agent.defaultId
+            let results = await CapabilityLoadBuffer.$overrideForTests.withValue(buffer) {
+                await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(session)) {
+                    await ConfigApplier.apply(document: document, prune: false)
+                }
+            }
+            #expect(results.allSatisfy { $0.status != .failed }, "\(results)")
+            let created = AgentManager.shared.agents.first(where: { $0.name == name })
+            #expect(created != nil, "agent `\(name)` was not created")
+            defer { if let created { Task { _ = await AgentManager.shared.delete(id: created.id) } } }
+            let names = await buffer.drain().map { $0.function.name }
+            #expect(!names.contains(SubagentCapabilityRegistry.spawnAgentToolName), "\(names)")
+        }
+    }
+
+    @Test("an owner .http dispatch turn (phone / App Intent) stages no spawn tools either")
+    func ownerHTTPApply_stagesNoSpawn() async throws {
         try await ChatHistoryTestStorage.run {
             // Canonical lock order: Storage → Sandbox (via
             // `ChatHistoryTestStorage.run`) → SubagentStore innermost. Taking
@@ -356,8 +347,7 @@ struct SameTurnSpawnStagingTests {
 
             // A dispatched "Ask Osaurus" run is a real `ChatSession.send`
             // turn (`source == .http`): its loop drains the buffer after
-            // `osaurus_config` exactly like the in-app chat, so the addendum's
-            // "create, then spawn in this turn" must hold here as well.
+            // `osaurus_config` exactly like the in-app chat.
             let session = ChatSession()
             session.agentId = Agent.defaultId
             session.source = .http
@@ -376,8 +366,8 @@ struct SameTurnSpawnStagingTests {
 
             let staged = await buffer.drain()
             #expect(
-                staged.map { $0.function.name }.contains(SubagentCapabilityRegistry.spawnAgentToolName),
-                "owner .http applies must stage spawn_agent for the same turn: \(staged)")
+                !staged.map { $0.function.name }.contains(SubagentCapabilityRegistry.spawnAgentToolName),
+                "\(staged)")
         }
     }
 

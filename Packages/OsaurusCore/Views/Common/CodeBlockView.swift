@@ -93,9 +93,20 @@ func ensureHighlightrTheme(for theme: any ThemeProtocol) {
 /// Results are cached per (theme, language, code): highlighting runs through
 /// JavaScriptCore and is expensive enough that re-highlighting unchanged code
 /// blocks — e.g. every cell reconfigure when a tool-call row expands or
-/// collapses — can stall the main thread on large outputs. NSCache evicts
-/// under memory pressure; entries are cheap relative to re-running the JS.
-nonisolated(unsafe) private let highlightCache = NSCache<NSString, NSAttributedString>()
+/// collapses — can stall the main thread on large outputs. Bounded by count
+/// and by total code length (the cost), since NSCache without limits only
+/// evicts once the system is already under memory pressure.
+nonisolated(unsafe) private let highlightCache: NSCache<NSString, NSAttributedString> = {
+    let cache = NSCache<NSString, NSAttributedString>()
+    cache.countLimit = 400
+    cache.totalCostLimit = 4_000_000
+    return cache
+}()
+
+/// Memory-pressure hook; entries re-highlight on next render.
+func clearCodeHighlightCache() {
+    highlightCache.removeAllObjects()
+}
 
 /// Above this many UTF-16 units, skip syntax highlighting and render plain
 /// monospaced text. Highlightr runs a JavaScriptCore tokenizer whose cost grows
@@ -153,31 +164,13 @@ func highlightrThemeBackgroundColor(for theme: any ThemeProtocol) -> Color {
     }
     let previous = currentHighlightrTheme
     switchHighlightrThemeLocked(for: theme)
-    let bg = sharedHighlightr?.theme.themeBackgroundColor ?? NSColor(white: 0.1, alpha: 1)
+    let bg = sharedHighlightr?.theme.themeBackgroundColor ?? NSColor(theme.surface.code)
     highlightrBackgroundColorCache[resolved] = bg
     if previous != currentHighlightrTheme {
         sharedHighlightr?.setTheme(to: previous)
         currentHighlightrTheme = previous
     }
     return Color(bg)
-}
-
-/// Returns the background color from the current Highlightr theme as a SwiftUI Color.
-/// Falls back to a sensible default if unavailable.
-func highlightrThemeBackgroundColor() -> Color {
-    highlightrLock.lock()
-    defer { highlightrLock.unlock() }
-    if let bg = sharedHighlightr?.theme.themeBackgroundColor {
-        return Color(bg)
-    }
-    return Color(white: 0.1)
-}
-
-/// Returns the background color from the current Highlightr theme as an NSColor.
-func highlightrThemeBackgroundNSColor() -> NSColor {
-    highlightrLock.lock()
-    defer { highlightrLock.unlock() }
-    return sharedHighlightr?.theme.themeBackgroundColor ?? NSColor(white: 0.1, alpha: 1)
 }
 
 // MARK: - CodeBlockView
@@ -187,39 +180,37 @@ struct CodeBlockView: View {
     let language: String?
     let baseWidth: CGFloat
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    private var theme: any ThemeProtocol { CodeBlockInspectionStyle.scope(baseTheme) }
+    @Environment(\.isEnabled) private var isEnabled
     @State private var copied = false
     @State private var isHovered = false
 
     var body: some View {
         let _ = ensureHighlightrTheme(for: theme)
-        let bgColor = highlightrThemeBackgroundColor()
 
         VStack(alignment: .leading, spacing: 0) {
-            headerBar(bgColor: bgColor)
+            headerBar
             CodeContentView(
                 code: code,
                 language: language,
                 baseWidth: baseWidth,
                 theme: theme
             )
-            .padding(.bottom, 8)
+            .padding(.bottom, CodeBlockInspectionStyle.metric("padding", theme.space.s8, theme))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(bgColor)
-        )
+        .codeBlockSurface(theme)
         .onHover { isHovered = $0 }
     }
 
     // MARK: - Header Bar
 
-    private func headerBar(bgColor: Color) -> some View {
-        HStack {
+    private var headerBar: some View {
+        HStack(spacing: CodeBlockInspectionStyle.metric("gap", 8, theme)) {
             Text(language?.lowercased() ?? "code")
-                .font(theme.monoFont(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .codeBlockCaption()
+                .foregroundColor(theme.text.tertiary)
 
             Spacer(minLength: 0)
 
@@ -233,15 +224,15 @@ struct CodeBlockView: View {
                 }
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                    .foregroundColor(copied ? theme.successColor : theme.tertiaryText)
+                    .glyphSize(10, weight: .medium)
+                    .foregroundColor(!isEnabled ? theme.text.disabled : (copied ? theme.assignedColor(CodeBlockInspectionStyle.key + "accent", fallback: theme.status.success.foreground) : theme.text.tertiary))
             }
-            .buttonStyle(.plain)
+            .codeCopyStyle(theme)
             .opacity(isHovered || copied ? 1 : 0)
-            .animation(theme.animationQuick(), value: isHovered)
+            .animation(theme.motion.quick, value: isHovered)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 28)
+        .padding(.horizontal, CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme))
+        .frame(minHeight: CodeBlockInspectionStyle.headerHeight(theme, fallback: theme.controlSize.compactHeight))
     }
 }
 
@@ -254,13 +245,17 @@ struct CodeContentView: NSViewRepresentable {
     let code: String
     let language: String?
     let baseWidth: CGFloat
-    let theme: ThemeProtocol
+    private let sourceTheme: any ThemeProtocol
+    var theme: any ThemeProtocol { CodeBlockInspectionStyle.scope(sourceTheme) }
+    init(code: String, language: String?, baseWidth: CGFloat, theme: any ThemeProtocol) {
+        self.code = code; self.language = language; self.baseWidth = baseWidth; self.sourceTheme = theme
+    }
 
     final class Coordinator {
         var lastCode: String = ""
         var lastLanguage: String?
         var lastWidth: CGFloat = 0
-        var lastThemeId: String = ""
+        var lastThemeFingerprint: Int?
         var lastMeasuredHeight: CGFloat = 0
     }
 
@@ -282,23 +277,20 @@ struct CodeContentView: NSViewRepresentable {
         textView.textContainer?.lineFragmentPadding = 0
 
         textView.selectedTextAttributes = [
-            .backgroundColor: NSColor(theme.selectionColor)
+            .backgroundColor: NSColor(theme.selection.background)
         ]
-        textView.insertionPointColor = NSColor(theme.cursorColor)
-        textView.lineNumberColor = NSColor(theme.tertiaryText.opacity(0.4))
+        textView.insertionPointColor = NSColor(theme.cursor)
+        textView.lineNumberColor = NSColor(theme.assignedColor(CodeBlockInspectionStyle.key + "secondary", fallback: theme.text.disabled))
 
         return textView
     }
 
     func updateNSView(_ textView: CodeNSTextView, context: Context) {
         let coord = context.coordinator
-        let resolvedHL = theme.codeHighlightTheme ?? (theme.isDark ? "auto-dark" : "auto-light")
-        let themeId = "\(theme.monoFontName)|\(theme.bodySize)|\(resolvedHL)"
-
         let codeChanged = coord.lastCode != code
         let langChanged = coord.lastLanguage != language
         let widthChanged = abs(coord.lastWidth - baseWidth) > 0.1
-        let themeChanged = coord.lastThemeId != themeId
+        let themeChanged = coord.lastThemeFingerprint != theme.renderFingerprint
 
         // guard containerSize — setting it always invalidates NSLayoutManager even when unchanged
         if widthChanged {
@@ -307,20 +299,22 @@ struct CodeContentView: NSViewRepresentable {
 
         // selectedTextAttributes triggers needsDisplay; only push on theme changes
         if themeChanged {
-            textView.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
-            textView.lineNumberColor = NSColor(theme.tertiaryText.opacity(0.4))
+            textView.selectedTextAttributes = [.backgroundColor: NSColor(theme.selection.background)]
+            textView.insertionPointColor = NSColor(theme.cursor)
+            textView.lineNumberColor = NSColor(theme.assignedColor(CodeBlockInspectionStyle.key + "secondary", fallback: theme.text.disabled))
         }
 
         if codeChanged || langChanged || widthChanged || themeChanged {
             let attrStr = buildAttributedString()
             textView.textStorage?.setAttributedString(attrStr)
             textView.lineCount = code.components(separatedBy: "\n").count
-            textView.codeFontSize = codeFontSize
+            textView.codeFont = theme.nsFont(.code)
+            textView.gutterInset = CodeBlockInspectionStyle.metric("gap", theme.space.s12, theme)
 
             coord.lastCode = code
             coord.lastLanguage = language
             coord.lastWidth = baseWidth
-            coord.lastThemeId = themeId
+            coord.lastThemeFingerprint = theme.renderFingerprint
             coord.lastMeasuredHeight = 0
             textView.needsDisplay = true
         }
@@ -351,44 +345,40 @@ struct CodeContentView: NSViewRepresentable {
     /// `highlight: false` skips the Highlightr/JavaScriptCore pass and returns
     /// plain monospaced text — used while a code block is still streaming,
     /// where a full-document highlight per delta would stall the main thread.
+    /// `gutterLineCount` sizes the line-number gutter indent; pass the whole
+    /// block's line count when `code` is a slice spliced into a larger block.
     static func attributedString(
         code: String,
         language: String?,
         baseWidth: CGFloat,
         theme: any ThemeProtocol,
         highlight: Bool = true,
-        cacheHighlight: Bool = true
+        cacheHighlight: Bool = true,
+        gutterLineCount: Int? = nil
     ) -> NSMutableAttributedString {
         let view = CodeContentView(code: code, language: language, baseWidth: baseWidth, theme: theme)
-        return view.buildAttributedString(highlight: highlight, cacheHighlight: cacheHighlight)
+        return view.buildAttributedString(
+            highlight: highlight, cacheHighlight: cacheHighlight, gutterLineCount: gutterLineCount)
+    }
+
+    /// Number of lines in `code` (newlines + 1), without splitting it.
+    static func lineCount(of code: String) -> Int {
+        code.utf8.reduce(1) { $1 == UInt8(ascii: "\n") ? $0 + 1 : $0 }
     }
 
     // MARK: - Attributed String
 
-    private var scale: CGFloat { Typography.scale(for: baseWidth) }
-    private var bodyFontSize: CGFloat { CGFloat(theme.bodySize) * scale }
-    private var codeFontSize: CGFloat { bodyFontSize * 0.85 }
-
-    private func monoFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
-        let fontName = theme.monoFontName
-        if fontName.lowercased().contains("sf mono") || fontName.isEmpty {
-            return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
-        }
-        if let custom = NSFont(name: fontName, size: size) { return custom }
-        return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
-    }
-
     func buildAttributedString(
         highlight: Bool = true,
-        cacheHighlight: Bool = true
+        cacheHighlight: Bool = true,
+        gutterLineCount: Int? = nil
     ) -> NSMutableAttributedString {
-        let fontSize = codeFontSize
-        let font = monoFont(size: fontSize, weight: .regular)
-        let lines = code.components(separatedBy: "\n")
+        let font = theme.nsFont(.code)
+        let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
 
-        let gutterDigits = "\(lines.count)".count
-        let gutterWidth = CGFloat(gutterDigits + 2) * fontSize * 0.62
-        let indent: CGFloat = 12 + gutterWidth
+        let gutterDigits = "\(gutterLineCount ?? Self.lineCount(of: code))".count
+        let gutterWidth = CGFloat(gutterDigits + 2) * font.maximumAdvancement.width
+        let indent = CodeBlockInspectionStyle.metric("gap", theme.space.s12, theme) + gutterWidth
 
         // Switch theme (if needed) + highlight atomically under the Highlightr
         // lock; fall back to plain text if it returns nil.
@@ -407,24 +397,26 @@ struct CodeContentView: NSViewRepresentable {
                 let isBold = (value as? NSFont)?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
                 result.addAttribute(
                     .font,
-                    value: monoFont(size: fontSize, weight: isBold ? .semibold : .regular),
+                    value: isBold ? boldFont : font,
                     range: range
                 )
             }
         } else {
             result = NSMutableAttributedString(
                 string: code,
-                attributes: [.font: font, .foregroundColor: NSColor(theme.primaryText.opacity(0.95))]
+                attributes: [.font: font, .foregroundColor: NSColor(theme.text.primary)]
             )
         }
 
-        let style = NSMutableParagraphStyle()
-        style.lineSpacing = 2
+        let style = theme.paragraphStyle(.code)
         style.firstLineHeadIndent = indent
         style.headIndent = indent
-        style.tailIndent = -12
+        style.tailIndent = -CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme)
 
-        result.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: result.length))
+        let fullRange = NSRange(location: 0, length: result.length)
+        result.addAttribute(.paragraphStyle, value: style, range: fullRange)
+        let tracking = theme.scaledTextStyle(.code).tracking
+        if tracking != 0 { result.addAttribute(.kern, value: tracking, range: fullRange) }
 
         return result
     }
@@ -445,7 +437,10 @@ final class CodeNSTextView: NSTextView, CrossSelectableTextView {
 
     var lineNumberColor: NSColor = .tertiaryLabelColor
     var lineCount: Int = 0
-    var codeFontSize: CGFloat = 12
+    /// The code text style's font; the gutter numbers share its metrics.
+    var codeFont: NSFont?
+    /// Leading inset of the gutter; matches the paragraph indent origin.
+    var gutterInset: CGFloat = 12
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -526,18 +521,18 @@ final class CodeNSTextView: NSTextView, CrossSelectableTextView {
         guard let layoutManager = layoutManager,
             textContainer != nil,
             let textStorage = textStorage,
-            lineCount > 0
+            lineCount > 0,
+            let font = codeFont
         else {
             super.draw(dirtyRect)
             return
         }
 
-        let font = NSFont.monospacedSystemFont(ofSize: codeFontSize, weight: .regular)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: lineNumberColor]
         let digits = "\(lineCount)".count
-        let charWidth = codeFontSize * 0.62
-        let leftPad: CGFloat = 12
-        let gutterPointWidth = CGFloat(digits + 2) * codeFontSize * 0.62
+        let charWidth = font.maximumAdvancement.width
+        let leftPad = gutterInset
+        let gutterPointWidth = CGFloat(digits + 2) * charWidth
         // Monospaced font: every padded line number has the same width (digits x
         // the fixed advance), so compute it arithmetically once instead of
         // measuring each line through CoreText inside draw. The measurement
@@ -562,7 +557,10 @@ final class CodeNSTextView: NSTextView, CrossSelectableTextView {
             }
 
             let numStr = String(lineNum).padding(toLength: digits, withPad: " ", startingAt: 0) as NSString
-            numStr.draw(at: NSPoint(x: x, y: fragRect.origin.y), withAttributes: attrs)
+            // Sit on the code line's baseline; the line box puts its extra
+            // leading above the glyphs.
+            let baseline = fragRect.minY + layoutManager.location(forGlyphAt: glyphIndex).y
+            numStr.draw(at: NSPoint(x: x, y: baseline - font.ascender), withAttributes: attrs)
 
             let lineRange = nsString.lineRange(for: NSRange(location: charIndex, length: 0))
             charIndex = NSMaxRange(lineRange)

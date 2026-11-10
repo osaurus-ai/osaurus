@@ -98,7 +98,7 @@ public enum ChatSessionImporter {
 
         let result: ParseResult
         if let array = root as? [[String: Any]] {
-            onProgress?(L("Processing \(array.count) conversations…"))
+            onProgress?(array.count == 1 ? L("Processing 1 conversation…") : L("Processing \(array.count) conversations…"))
             if array.contains(where: { $0["mapping"] is [String: Any] }) {
                 result = collect(array, parseChatGPT, chatGPTHasUserContent)
             } else if array.contains(where: { $0["chat_messages"] is [Any] }) {

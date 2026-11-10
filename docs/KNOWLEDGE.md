@@ -165,7 +165,7 @@ The corpus only changes through a human-governed flag → ticket → proposal �
 
 `KnowledgeCurationService.approve()` is the **only** code path that writes into a collection folder. It re-validates the proposal is `pending`, re-checks path confinement, writes atomically, flips the proposal to `approved`, resolves any linked ticket to `resolved`, posts `.knowledgeCurationChanged` (so the UI drops the card immediately), and then re-indexes. A reviewer's edited version (`overrideContent`) wins over the curator's draft. Dismissing a proposal that was the sole answer to a `proposed` ticket reopens that ticket to `open`.
 
-Put the curator on a Schedule (see [SCHEDULES.md](SCHEDULES.md)) and the loop runs in the background — approvals still wait for you. The Knowledge sidebar item highlights while proposals are pending.
+Put the curator on a schedule automation (see [AUTOMATIONS.md](AUTOMATIONS.md)) and the loop runs in the background — approvals still wait for you. The Knowledge sidebar item highlights while proposals are pending.
 
 ---
 

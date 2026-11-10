@@ -41,6 +41,10 @@ struct SidebarSectionData: Identifiable {
     /// hide their items until switched on (Developer Tools). The expansion
     /// choice persists per section id across sessions.
     var isCollapsible: Bool = false
+    /// Prominent sections (the pinned Agents / Workflows / Automations block)
+    /// render their rows taller, with tinted icon tiles, so the window's
+    /// primary destinations stand apart from the settings groups.
+    var isProminent: Bool = false
 }
 
 /// Persistence for collapsible-section expansion (kept outside the generic
@@ -91,8 +95,16 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
     let sections: [SidebarSectionData]
     let content: (String) -> Content
     let footer: () -> Footer
+    /// A page that wants the whole window (the New Agent creator) collapses
+    /// the sidebar while it shows; the person's own choice returns after.
+    var focusCollapsed = false
 
-    @State private var isCollapsed = false
+    @State private var isCollapsed: Bool
+    @State private var collapsedBeforeFocus: Bool?
+    /// Off until the window's first layout settles. A width spring while a
+    /// still-sparse window lays out moves every hosted view each frame until
+    /// AppKit runs out of Update Constraints passes and raises.
+    @State private var animatesCollapse = false
     @State private var canScrollDown = true
     @Namespace private var sidebarNamespace
 
@@ -102,8 +114,10 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
         UserDefaults.standard.stringArray(forKey: SidebarSectionExpansion.defaultsKey) ?? []
     )
 
+    /// Widens with a larger Text Size so the labels, which scale too, keep
+    /// fitting on one line.
     private var sidebarWidth: CGFloat {
-        isCollapsed ? SidebarLayout.collapsedWidth : SidebarLayout.expandedWidth
+        isCollapsed ? SidebarLayout.collapsedWidth : SidebarLayout.expandedWidth * max(1, CGFloat(theme.fontScale))
     }
 
     // MARK: Initialization
@@ -112,12 +126,17 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
         selection: Binding<String>,
         searchText: Binding<String>,
         sections: [SidebarSectionData],
+        focusCollapsed: Bool = false,
         @ViewBuilder content: @escaping (String) -> Content,
         @ViewBuilder footer: @escaping () -> Footer
     ) {
         self._selection = selection
         self._searchText = searchText
         self.sections = sections
+        self.focusCollapsed = focusCollapsed
+        // A window opening straight onto a focused page starts collapsed.
+        self._isCollapsed = State(initialValue: focusCollapsed)
+        self._collapsedBeforeFocus = State(initialValue: focusCollapsed ? false : nil)
         self.content = content
         self.footer = footer
     }
@@ -148,6 +167,18 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
             contentArea
         }
         .ignoresSafeArea(edges: .top)
+        .onAppear { DispatchQueue.main.async { animatesCollapse = true } }
+        .onChange(of: focusCollapsed) { _, focused in
+            withAnimation(animatesCollapse ? theme.motion.springAnimation : nil) {
+                if focused {
+                    collapsedBeforeFocus = isCollapsed
+                    isCollapsed = true
+                } else if let before = collapsedBeforeFocus {
+                    isCollapsed = before
+                    collapsedBeforeFocus = nil
+                }
+            }
+        }
     }
 }
 
@@ -173,24 +204,21 @@ private extension SidebarNavigation {
             isCollapsed ? SidebarLayout.collapsedHorizontalPadding : SidebarLayout.expandedHorizontalPadding
         )
         .frame(width: sidebarWidth)
-        .background(theme.sidebarBackground)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isCollapsed)
+        .background(theme.surface.sidebar)
+        .animation(animatesCollapse ? theme.motion.springAnimation : nil, value: isCollapsed)
     }
 
     var collapseToggle: some View {
         Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            withAnimation(theme.motion.springAnimation) {
                 isCollapsed.toggle()
             }
         } label: {
             Image(systemName: "sidebar.left")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(14, weight: .medium)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: isCollapsed ? 44 : 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.tertiaryBackground.opacity(0.5))
-                )
+                .settingsChrome(.inset)
         }
         .buttonStyle(.plain)
         .help(isCollapsed ? Text(localized: "Expand Sidebar") : Text(localized: "Collapse Sidebar"))
@@ -225,9 +253,10 @@ private extension SidebarNavigation {
                                     item: item,
                                     isSelected: selection == item.id,
                                     isCollapsed: isCollapsed,
+                                    isProminent: section.isProminent,
                                     namespace: sidebarNamespace
                                 ) {
-                                    withAnimation(.easeOut(duration: 0.2)) {
+                                    withAnimation(theme.motion.quick) {
                                         selection = item.id
                                     }
                                 }
@@ -245,8 +274,10 @@ private extension SidebarNavigation {
             }
             .scrollIndicators(.hidden)
             .onChange(of: selection) { _, newValue in
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    proxy.scrollTo(newValue, anchor: .center)
+                // No anchor: scroll only as far as it takes to show the row,
+                // so a click on a visible row leaves the list where it is.
+                withAnimation(theme.motion.springAnimation) {
+                    proxy.scrollTo(newValue)
                 }
             }
             .onChange(of: expandedCollapsibleSections) { oldValue, newValue in
@@ -264,7 +295,7 @@ private extension SidebarNavigation {
                 // instead of the scroll fighting the toggle mid-flight.
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 250_000_000)
-                    withAnimation(.easeInOut(duration: 0.35)) {
+                    withAnimation(theme.motion.slow) {
                         proxy.scrollTo(lastItem.id, anchor: .bottom)
                     }
                 }
@@ -287,7 +318,7 @@ private extension SidebarNavigation {
     }
 
     func toggleSectionExpansion(_ section: SidebarSectionData) {
-        withAnimation(.easeOut(duration: 0.2)) {
+        withAnimation(theme.motion.quick) {
             if expandedCollapsibleSections.contains(section.id) {
                 expandedCollapsibleSections.remove(section.id)
             } else {
@@ -308,7 +339,7 @@ private extension SidebarNavigation {
             if isCollapsed {
                 if !isFirst {
                     Rectangle()
-                        .fill(theme.primaryBorder.opacity(0.6))
+                        .fill(theme.border.subtle)
                         .frame(width: 24, height: 1)
                         .padding(.vertical, 4)
                 }
@@ -329,23 +360,22 @@ private extension SidebarNavigation {
     var footerScrollShadow: some View {
         LinearGradient(
             stops: [
-                .init(color: Color.black.opacity(0.18), location: 0),
-                .init(color: Color.black.opacity(0.06), location: 0.5),
-                .init(color: Color.black.opacity(0), location: 1),
+                .init(color: theme.shadow, location: 0),
+                .init(color: .clear, location: 1),
             ],
             startPoint: .bottom,
             endPoint: .top
         )
         .frame(height: 24)
         .offset(y: -24)
-        .opacity(canScrollDown ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: canScrollDown)
+        .opacity(canScrollDown ? theme.elevation.raised.opacity : 0)
+        .animation(theme.motion.quick, value: canScrollDown)
         .allowsHitTesting(false)
     }
 
     var divider: some View {
         Rectangle()
-            .fill(theme.primaryBorder)
+            .fill(theme.border.subtle)
             .frame(width: 1)
             .ignoresSafeArea(edges: .top)
     }
@@ -354,10 +384,10 @@ private extension SidebarNavigation {
         ZStack {
             content(selection)
                 .id(selection)
-                .transition(.opacity.animation(.easeOut(duration: 0.2)))
+                .transition(.opacity.animation(theme.motion.quick))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.easeOut(duration: 0.2), value: selection)
+        .animation(theme.motion.quick, value: selection)
     }
 }
 
@@ -390,6 +420,7 @@ private struct SidebarItemView: View {
     let item: SidebarItemData
     let isSelected: Bool
     let isCollapsed: Bool
+    var isProminent: Bool = false
     let namespace: Namespace.ID
     let action: () -> Void
 
@@ -405,7 +436,7 @@ private struct SidebarItemView: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovering = hovering
             }
         }
@@ -416,8 +447,8 @@ private struct SidebarItemView: View {
     private var collapsedContent: some View {
         ZStack {
             Image(systemName: item.icon)
-                .font(.system(size: 18, weight: .medium))
-                .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                .glyphSize(18, weight: .medium)
+                .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
                 .symbolRenderingMode(.hierarchical)
 
             if item.badge != nil {
@@ -427,17 +458,17 @@ private struct SidebarItemView: View {
         .frame(width: 44, height: 40)
         .background(collapsedBackground)
         .overlay(collapsedBorder)
-        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
         .help(item.label)
     }
 
     private var collapsedBadge: some View {
         Circle()
-            .fill(item.badgeHighlight ? theme.accentColor : theme.tertiaryBackground)
+            .fill(item.badgeHighlight ? theme.status.info.foreground : theme.surface.pressed)
             .overlay(
                 Circle().stroke(
-                    item.badgeHighlight ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.5),
-                    lineWidth: 0.5
+                    item.badgeHighlight ? theme.status.info.border : theme.border.default,
+                    lineWidth: theme.hairline
                 )
             )
             .frame(width: 8, height: 8)
@@ -445,51 +476,69 @@ private struct SidebarItemView: View {
     }
 
     private var collapsedBackground: some View {
-        RoundedRectangle(cornerRadius: 10)
+        RoundedRectangle(cornerRadius: theme.radius.medium)
             .fill(
                 isSelected
-                    ? theme.sidebarSelectedBackground
-                    : (isHovering ? theme.tertiaryBackground.opacity(0.6) : Color.clear)
+                    ? theme.surface.selected
+                    : (isHovering ? theme.surface.hover : Color.clear)
             )
     }
 
     private var collapsedBorder: some View {
-        RoundedRectangle(cornerRadius: 10)
-            .stroke(isSelected ? theme.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+        RoundedRectangle(cornerRadius: theme.radius.medium)
+            .stroke(isSelected ? theme.border.default : Color.clear, lineWidth: theme.stroke.default)
     }
 
     // MARK: Expanded State
 
     private var expandedContent: some View {
         HStack(spacing: 10) {
-            Image(systemName: item.icon)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                .frame(width: 24)
+            if isProminent {
+                SettingsIconTile(icon: item.icon, size: 26)
+            } else {
+                Image(systemName: item.icon)
+                    .glyphSize(16, weight: .medium)
+                    .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
+                    .frame(width: 24)
+            }
 
             Text(item.label)
-                .font(.system(size: 13, weight: isSelected ? .semibold : .regular, design: .rounded))
-                .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
+                .font(
+                    .system(
+                        size: (isProminent ? 14 : 13) * CGFloat(theme.fontScale),
+                        weight: isSelected || isProminent ? .semibold : .regular,
+                        design: .rounded
+                    )
+                )
+                .foregroundColor(isSelected || isProminent ? theme.text.primary : theme.text.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+                .truncationMode(.tail)
+                .help(item.label)
 
-            Spacer()
+            Spacer(minLength: 4)
 
             if let badge = item.badge, badge > 0 {
                 expandedBadge(count: badge)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, isProminent ? 10 : 12)
+        .padding(.vertical, isProminent ? 8 : 10)
         .background(expandedBackground)
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
     }
 
     private func expandedBadge(count: Int) -> some View {
         Text("\(count)", bundle: .module)
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundColor(item.badgeHighlight ? .white : theme.secondaryText)
+            .font(SettingsFont.chip)
+            .foregroundColor(
+                item.badgeHighlight ? theme.action.primary.default.foreground : theme.text.secondary
+            )
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
-            .background(Capsule().fill(item.badgeHighlight ? theme.accentColor : theme.tertiaryBackground))
+            .background(
+                Capsule().fill(
+                    item.badgeHighlight ? theme.action.primary.default.background : theme.surface.pressed))
     }
 
     private var expandedBackground: some View {
@@ -507,14 +556,14 @@ private struct SidebarItemView: View {
         // selected-highlight visual (cross-fade between selected / hover / none)
         // without the single-source invariant. We lose the cross-row pill slide,
         // which was subtle enough that it's not worth the crash surface.
-        RoundedRectangle(cornerRadius: 8)
+        RoundedRectangle(cornerRadius: theme.radius.medium)
             .fill(
                 isSelected
-                    ? theme.sidebarSelectedBackground
-                    : (isHovering ? theme.tertiaryBackground.opacity(0.5) : Color.clear)
+                    ? theme.surface.selected
+                    : (isHovering ? theme.surface.hover : Color.clear)
             )
-            .animation(.easeOut(duration: 0.2), value: isSelected)
-            .animation(.easeOut(duration: 0.15), value: isHovering)
+            .animation(theme.motion.standard, value: isSelected)
+            .animation(theme.motion.quick, value: isHovering)
     }
 }
 
@@ -528,8 +577,8 @@ struct SidebarSectionHeader: View {
 
     var body: some View {
         Text(title.uppercased())
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.count)
+            .foregroundColor(theme.text.tertiary)
             .padding(.horizontal, 12)
             .padding(.top, topPadding)
             .padding(.bottom, 4)
@@ -549,8 +598,8 @@ struct SidebarCollapsibleSectionHeader: View {
     var body: some View {
         HStack(spacing: 4) {
             Text(title.uppercased())
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.count)
+                .foregroundColor(theme.text.tertiary)
             Spacer(minLength: 0)
             Toggle(
                 "",
@@ -559,9 +608,7 @@ struct SidebarCollapsibleSectionHeader: View {
                     set: { _ in action() }
                 )
             )
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .labelsHidden()
+            .settingsMiniSwitch()
             .localizedHelp("Show Developer Tools in the sidebar")
         }
         .padding(.horizontal, 12)
@@ -593,27 +640,27 @@ private struct SettingsSidebarSearchField: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(fieldBackground)
-        .animation(.easeOut(duration: 0.15), value: isFocused)
+        .animation(theme.motion.quick, value: isFocused)
     }
 
     private var searchIcon: some View {
         Image(systemName: "magnifyingglass")
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(isFocused ? theme.accentColor : theme.tertiaryText)
+            .glyphSize(12, weight: .medium)
+            .foregroundColor(isFocused ? theme.text.primary : theme.text.tertiary)
     }
 
     private var textField: some View {
         ZStack(alignment: .leading) {
             if text.isEmpty {
                 Text("Search Settings", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                     .allowsHitTesting(false)
             }
             TextField("", text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
+                .textStyle(.caption)
+                .foregroundColor(theme.text.primary)
                 .focused($isFocused)
         }
     }
@@ -623,21 +670,21 @@ private struct SettingsSidebarSearchField: View {
             text = ""
         } label: {
             Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 11))
-                .foregroundColor(isClearHovering ? theme.secondaryText : theme.tertiaryText)
+                .glyphSize(11)
+                .foregroundColor(isClearHovering ? theme.text.secondary : theme.text.tertiary)
         }
         .buttonStyle(.plain)
         .onHover { isClearHovering = $0 }
     }
 
     private var fieldBackground: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(theme.tertiaryBackground)
+        RoundedRectangle(cornerRadius: theme.radius.medium)
+            .fill(theme.surface.raised)
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: theme.radius.medium)
                     .stroke(
-                        isFocused ? theme.accentColor.opacity(0.6) : theme.primaryBorder.opacity(0.5),
-                        lineWidth: 1
+                        isFocused ? theme.border.focus : theme.border.strong,
+                        lineWidth: isFocused ? theme.stroke.focus : theme.stroke.default
                     )
             )
     }
@@ -665,59 +712,58 @@ struct SidebarUpdateButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovering = hovering
             }
         }
         .help(updateAvailable ? Text(localized: "Install the latest update") : Text(localized: "Check for app updates"))
-        .animation(.easeOut(duration: 0.2), value: updateAvailable)
+        .animation(theme.motion.quick, value: updateAvailable)
     }
 
     private var updateAvailableContent: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.up.circle.fill")
-                .font(.system(size: 16, weight: .medium))
+                .glyphSize(16, weight: .medium)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Update Available", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(SettingsFont.compactLabel)
                 if let version = availableVersion {
                     Text("v\(version)", bundle: .module)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(SettingsFont.monoSmall)
                         .opacity(0.8)
                 }
             }
 
             Spacer()
         }
-        .foregroundColor(.white)
+        .foregroundColor(
+            isHovering ? theme.action.primary.hover.foreground : theme.action.primary.default.foreground
+        )
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isHovering ? theme.accentColor.opacity(0.9) : theme.accentColor)
+            RoundedRectangle(cornerRadius: theme.radius.medium)
+                .fill(isHovering ? theme.action.primary.hover.background : theme.action.primary.default.background)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
     }
 
     private var checkForUpdatesContent: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.up.circle")
-                .font(.system(size: 14, weight: .medium))
+                .glyphSize(14, weight: .medium)
 
             Text("Check for Updates", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
+                .font(SettingsFont.compactLabel)
 
             Spacer()
         }
-        .foregroundColor(theme.secondaryText)
+        .foregroundColor(theme.text.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isHovering ? theme.tertiaryBackground : Color.clear)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .settingsChrome(isHovering ? .hover : nil)
+        .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
     }
 }
 

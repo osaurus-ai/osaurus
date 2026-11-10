@@ -1,1 +1,2 @@
 images/init.ext4 filter=lfs diff=lfs merge=lfs -text
+Packages/Vendor/OsaurusSync/OsaurusSyncFFI.xcframework/**/*.a filter=lfs diff=lfs merge=lfs -text

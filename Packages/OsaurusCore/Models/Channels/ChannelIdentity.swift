@@ -13,6 +13,7 @@ enum ChannelKind: String, Codable, CaseIterable, Sendable {
     case telegram
     case imessage
     case whatsapp
+    case email
     case n8n
     case jsonAgent = "json_agent"
 }

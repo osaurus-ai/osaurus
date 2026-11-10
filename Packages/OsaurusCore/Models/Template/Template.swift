@@ -2,10 +2,10 @@
 //  Template.swift
 //  osaurus
 //
-//  One portable, versioned template format. The envelope (identity,
-//  version, changelog, author, requirements, content hash) is shared by
-//  every kind; kinds differ only in payload. Templates live on the Mac and
-//  travel as files; Osaurus hosts none of them.
+//  One portable, versioned template format for agents and workflows. Both
+//  kinds share this envelope (identity, version, changelog, author,
+//  requirements, content hash) and differ only in payload. Templates live
+//  on the Mac and travel as files; Osaurus hosts none of them.
 //
 //  Identity is `id` (stable across versions and machines) plus `version`
 //  (increments on every save). Versions are immutable once written; the
@@ -13,7 +13,7 @@
 //  the author signature, so two copies of the same id and version can be
 //  told apart on import.
 //
-//  Portability rules:
+//  Portability rules (both kinds):
 //   - References are names / stable string ids, never machine UUIDs.
 //   - Working folders are path hints; bookmarks never leave the Mac.
 //   - Secret values, saved dialog answers, install bindings, and run
@@ -26,6 +26,7 @@ import Yams
 
 public enum TemplateKind: String, Codable, Sendable, CaseIterable {
     case agent
+    case workflow
 }
 
 /// Optional authorship. `address` is the author agent's secp256k1 address;
@@ -50,27 +51,52 @@ public struct AgentTemplatePayload: Equatable, Sendable {
     public var agent: AgentEntry
     /// nil leaves the new agent on built-in quick actions; empty hides them.
     public var actions: [TemplateAction]?
+    /// Workflow templates the agent uses, by id with a minimum version.
+    public var workflows: [WorkflowReference]
 
-    public init(agent: AgentEntry, actions: [TemplateAction]? = nil) {
+    public init(agent: AgentEntry, actions: [TemplateAction]? = nil, workflows: [WorkflowReference] = []) {
         self.agent = agent
         self.actions = actions
+        self.workflows = workflows
+    }
+}
+
+public struct WorkflowReference: Codable, Equatable, Sendable, Hashable {
+    public var id: UUID
+    public var minVersion: Int
+
+    public init(id: UUID, minVersion: Int) {
+        self.id = id
+        self.minVersion = minVersion
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case minVersion = "min_version"
     }
 }
 
 public enum TemplatePayload: Equatable, Sendable {
     case agent(AgentTemplatePayload)
+    case workflow(WorkflowDefinition)
 
     public var kind: TemplateKind {
         switch self {
         case .agent: return .agent
+        case .workflow: return .workflow
         }
     }
 }
 
 public struct Template: Codable, Equatable, Sendable, Identifiable {
     public static let formatIdentifier = "osaurus.template"
-    /// The newest format this build reads.
-    public static let currentFormatVersion = 3
+    /// The newest format this build reads. Format 2 added the workflow
+    /// steps and edge features listed in
+    /// `WorkflowDefinition.usesPostV1Features`; format 3 added the `media`
+    /// step and bypassed steps (`WorkflowDefinition.usesFormat3Features`);
+    /// format 4 added the `agent` step; format 5 added tool steps that run
+    /// as a named agent (`tool.agent`).
+    public static let currentFormatVersion = 5
     /// The format every build understands.
     public static let baselineFormatVersion = 1
 
@@ -78,7 +104,9 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
     /// template. Keeping old-style templates at the lowest format lets
     /// older builds keep importing them.
     public static func requiredFormatVersion(payload: TemplatePayload, bundled: [Template]) -> Int {
-        max(baselineFormatVersion, bundled.map(\.formatVersion).max() ?? baselineFormatVersion)
+        var version = baselineFormatVersion
+        if case .workflow(let def) = payload { version = def.requiredFormatVersion }
+        return max(version, bundled.map(\.formatVersion).max() ?? baselineFormatVersion)
     }
 
     public var formatVersion: Int = Template.baselineFormatVersion
@@ -95,7 +123,7 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
     /// Derived from the payload; see `derivedRequirements()`.
     public var requirements: TemplateRequirements
     public var payload: TemplatePayload
-    /// Other templates this one carries with it.
+    /// Workflow templates an agent template carries with it.
     public var bundled: [Template]
     /// Setup for the MCP servers the payload names; see `MCPServerHint`.
     public var serverHints: [MCPServerHint]
@@ -143,7 +171,7 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
         case formatVersion = "format_version"
         case createdAt = "created_at"
         case availableToOrchestrator = "available_to_orchestrator"
-        case requirements, agent, actions, bundled
+        case requirements, agent, actions, workflows, workflow, bundled
         case contentHash = "content_hash"
         case serverHints = "mcp_server_hints"
     }
@@ -169,14 +197,17 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
         bundled = try c.decodeIfPresent([Template].self, forKey: .bundled) ?? []
         serverHints = try c.decodeIfPresent([MCPServerHint].self, forKey: .serverHints) ?? []
         contentHash = try c.decodeIfPresent(String.self, forKey: .contentHash) ?? ""
-        let rawKind = try c.decodeIfPresent(String.self, forKey: .kind) ?? TemplateKind.agent.rawValue
-        guard TemplateKind(rawValue: rawKind) == .agent else {
-            throw TemplateError.wrongKind(expected: .agent, got: rawKind)
+        let kind = try c.decodeIfPresent(TemplateKind.self, forKey: .kind) ?? .agent
+        switch kind {
+        case .agent:
+            payload = .agent(
+                AgentTemplatePayload(
+                    agent: try c.decode(AgentEntry.self, forKey: .agent),
+                    actions: try c.decodeIfPresent([TemplateAction].self, forKey: .actions),
+                    workflows: try c.decodeIfPresent([WorkflowReference].self, forKey: .workflows) ?? []))
+        case .workflow:
+            payload = .workflow(try c.decode(WorkflowDefinition.self, forKey: .workflow))
         }
-        payload = .agent(
-            AgentTemplatePayload(
-                agent: try c.decode(AgentEntry.self, forKey: .agent),
-                actions: try c.decodeIfPresent([TemplateAction].self, forKey: .actions)))
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -197,6 +228,9 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
         case .agent(let p):
             try c.encode(p.agent, forKey: .agent)
             try c.encodeIfPresent(p.actions, forKey: .actions)
+            if !p.workflows.isEmpty { try c.encode(p.workflows, forKey: .workflows) }
+        case .workflow(let def):
+            try c.encode(def, forKey: .workflow)
         }
         if !bundled.isEmpty { try c.encode(bundled, forKey: .bundled) }
         if !serverHints.isEmpty { try c.encode(serverHints, forKey: .serverHints) }
@@ -205,13 +239,19 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
 
     // MARK: Payload accessors
 
+    /// The workflow graph. Empty for agent templates.
+    public var workflow: WorkflowDefinition? {
+        if case .workflow(let def) = payload { return def }
+        return nil
+    }
+
     public var agentPayload: AgentTemplatePayload? {
         if case .agent(let p) = payload { return p }
         return nil
     }
 
-    /// Agent entry of an agent template. Setting it on any other kind is a
-    /// programming error and is ignored.
+    /// Agent entry of an agent template. Setting it on a workflow template
+    /// is a programming error and is ignored.
     public var agent: AgentEntry {
         get { agentPayload?.agent ?? AgentEntry(name: name) }
         set {
@@ -298,6 +338,8 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
     /// strictness) are preserved from the current set.
     public func derivedRequirements() -> TemplateRequirements {
         switch payload {
+        case .workflow(let def):
+            return WorkflowRequirementsDeriver.derive(def)
         case .agent(let p):
             return Self.agentRequirements(entry: p.agent, carried: requirements)
         }
@@ -420,7 +462,8 @@ public enum TemplateError: Error, LocalizedError, Equatable {
     case unsupportedVersion(Int)
     case invalidAgent([String])
     case wrongAgentCount(Int)
-    case wrongKind(expected: TemplateKind, got: String)
+    case invalidWorkflow([String])
+    case wrongKind(expected: TemplateKind, got: TemplateKind)
 
     public var errorDescription: String? {
         switch self {
@@ -438,13 +481,15 @@ public enum TemplateError: Error, LocalizedError, Equatable {
             return n == 0
                 ? L("The document declares no agents.")
                 : L("The document declares \(n) agents. A template holds exactly one.")
+        case .invalidWorkflow(let issues):
+            return L("The template's workflow is invalid:") + "\n" + issues.map { "• \($0)" }.joined(separator: "\n")
         case .wrongKind(let expected, let got):
-            return L("Expected a \(expected.rawValue) template, got a \(got) template.")
+            return L("Expected a \(expected.rawValue) template, got a \(got.rawValue) template.")
         }
     }
 }
 
-/// Agent-template call sites read naturally with this name.
+/// Kept so ported agent-template call sites read naturally.
 public typealias AgentTemplateError = TemplateError
 
 // MARK: - Parsing
@@ -484,7 +529,7 @@ extension Template {
             tree = json
         } else {
             do {
-                tree = try Yams.load(yaml: trimmed)
+                tree = try YAMLLoading.load(trimmed)
             } catch {
                 throw TemplateError.malformed(String(describing: error))
             }
@@ -525,19 +570,28 @@ extension Template {
             throw TemplateError.notATemplate("`format` is `\(root["format"] ?? "")`, expected `\(formatIdentifier)`.")
         }
         var envelope = root
-        let rawKind = (root["kind"] as? String) ?? TemplateKind.agent.rawValue
-        guard TemplateKind(rawValue: rawKind) == .agent else {
-            throw TemplateError.wrongKind(expected: .agent, got: rawKind)
+        let kind = (root["kind"] as? String).flatMap(TemplateKind.init(rawValue:)) ?? .agent
+        var strictEntry: AgentEntry?
+        if kind == .agent {
+            guard let agentNode = root["agent"] as? [String: Any] else {
+                throw TemplateError.malformed("Template is missing its `agent` object.")
+            }
+            let entry = try strictAgentEntry(from: agentNode)
+            strictEntry = entry
+            envelope["agent"] = ["name": entry.name]
+        } else if root["workflow"] as? [String: Any] == nil {
+            throw TemplateError.malformed("Template is missing its `workflow` object.")
         }
-        guard let agentNode = root["agent"] as? [String: Any] else {
-            throw TemplateError.malformed("Template is missing its `agent` object.")
+        var bundledTemplates: [Template] = []
+        if let list = envelope["bundled"] as? [Any] {
+            for item in list {
+                guard let node = item as? [String: Any] else {
+                    throw TemplateError.malformed("Every `bundled` entry must be a template object.")
+                }
+                bundledTemplates.append(try parseEnvelope(node))
+            }
+            envelope["bundled"] = nil
         }
-        let strictEntry = try strictAgentEntry(from: agentNode)
-        envelope["agent"] = ["name": strictEntry.name]
-        // This build does not install bundled templates; the agent itself
-        // still imports.
-        let bundledTemplates: [Template] = []
-        envelope["bundled"] = nil
         let data = try JSONSerialization.data(withJSONObject: envelope)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom(Self.lenientDate)
@@ -549,8 +603,13 @@ extension Template {
         } catch {
             throw TemplateError.malformed(String(describing: error))
         }
-        template.agent = strictEntry
+        if let strictEntry { template.agent = strictEntry }
         template.bundled = bundledTemplates
+        if case .workflow(let def) = template.payload {
+            let issues = WorkflowValidator.validate(def, allowPlaceholders: false, checkSandboxCommands: false)
+                .map(\.message)
+            if !issues.isEmpty { throw TemplateError.invalidWorkflow(issues) }
+        }
         // Requirements always follow the payload: a hand-edited file that
         // drops one gets it back.
         let carriedHash = template.contentHash

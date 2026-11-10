@@ -38,7 +38,7 @@ private struct ImportProgressContent: View {
 
             Text(state.message)
                 .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -107,6 +107,7 @@ enum ChatSessionImportCoordinator {
     enum EntryPoint: String {
         case sidebar
         case onboardingPrompt = "onboarding_prompt"
+        case discovery
     }
 
     /// Presents the open panel, parses the chosen export files and saves
@@ -276,7 +277,9 @@ enum ChatSessionImportCoordinator {
                 : L("\(summary.imported) conversations imported")
         ]
         if summary.skippedDuplicates > 0 {
-            parts.append(L("\(summary.skippedDuplicates) duplicates skipped"))
+            parts.append(
+                summary.skippedDuplicates == 1
+                    ? L("1 duplicate skipped") : L("\(summary.skippedDuplicates) duplicates skipped"))
         }
         if summary.unreadable > 0 {
             parts.append(

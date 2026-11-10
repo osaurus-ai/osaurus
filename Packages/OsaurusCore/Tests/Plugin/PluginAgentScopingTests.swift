@@ -345,7 +345,7 @@ struct ExternalPluginConfigDedupTests {
 /// returns an error envelope or a fully-built `DispatchRequest`. Pinning
 /// it here covers the security boundary end-to-end without spinning up
 /// `BackgroundTaskManager` or a real chat engine — the trampoline that
-/// wraps it adds only the rate-limit check and the TaskDispatcher hop.
+/// wraps it adds only the rate-limit check and the BackgroundTaskManager hop.
 struct PlanDispatchTests {
 
     private let pluginId = "com.test.dispatch.plan"
@@ -604,128 +604,64 @@ struct ToolSecretsKeychainAgentSweepTests {
     }
 }
 
-// MARK: - ToolSecretsKeychain.resolvedSecretsMerging
+// MARK: - PluginCredentials resolution
 
-/// Pins the Plugins-tab-default / Agents-tab-override merge that fixed the
-/// "Tavily key saved but agent silently routes to DDG" bug. Uses synthetic
-/// UUIDs (not `Agent.defaultId`) to avoid pre-populated production keychain
-/// entries on CI runners.
-struct ResolvedSecretsMergingTests {
+/// Pins the shared-value / agent-override rule that fixed the "Tavily key
+/// saved but agent silently routes to DDG" bug: a plugin's declared secret
+/// saved for all agents reaches every agent, and an agent's own value wins.
+struct PluginCredentialsResolutionTests {
+    private let specs = [
+        PluginManifest.SecretSpec(id: "TAVILY_API_KEY", label: "Tavily"),
+        PluginManifest.SecretSpec(id: "BRAVE_SEARCH_API_KEY", label: "Brave", required: false),
+    ]
 
-    @Test func defaultsFlowToPrimary() {
-        let pluginId = "com.test.merge.\(UUID().uuidString)"
-        let primary = UUID()
-        let defaults = UUID()
-        defer {
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: defaults)
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: primary)
+    @Test func sharedValueFlowsToAgents() {
+        CredentialStore._withIsolatedStoreForTesting {
+            let pluginId = "com.test.merge.\(UUID().uuidString)"
+            PluginCredentials.save("tav-shared", pluginId: pluginId, specId: "TAVILY_API_KEY", agentId: nil)
+
+            let resolved = PluginCredentials.resolvedSecrets(specs: specs, pluginId: pluginId, agentId: UUID())
+            #expect(resolved["TAVILY_API_KEY"] == "tav-shared")
         }
-
-        ToolSecretsKeychain.saveSecret(
-            "tav-default",
-            id: "TAVILY_API_KEY",
-            for: pluginId,
-            agentId: defaults
-        )
-
-        let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
-            pluginId: pluginId,
-            primary: primary,
-            defaults: defaults
-        )
-        #expect(resolved["TAVILY_API_KEY"] == "tav-default")
     }
 
-    @Test func primaryOverridesDefault() {
-        let pluginId = "com.test.merge.\(UUID().uuidString)"
-        let primary = UUID()
-        let defaults = UUID()
-        defer {
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: defaults)
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: primary)
+    @Test func agentValueOverridesShared() {
+        CredentialStore._withIsolatedStoreForTesting {
+            let pluginId = "com.test.merge.\(UUID().uuidString)"
+            let agent = UUID()
+            PluginCredentials.save("tav-shared", pluginId: pluginId, specId: "TAVILY_API_KEY", agentId: nil)
+            PluginCredentials.save("tav-agent", pluginId: pluginId, specId: "TAVILY_API_KEY", agentId: agent)
+
+            let resolved = PluginCredentials.resolvedSecrets(specs: specs, pluginId: pluginId, agentId: agent)
+            #expect(resolved["TAVILY_API_KEY"] == "tav-agent")
         }
-
-        ToolSecretsKeychain.saveSecret(
-            "tav-default",
-            id: "TAVILY_API_KEY",
-            for: pluginId,
-            agentId: defaults
-        )
-        ToolSecretsKeychain.saveSecret(
-            "tav-primary",
-            id: "TAVILY_API_KEY",
-            for: pluginId,
-            agentId: primary
-        )
-
-        let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
-            pluginId: pluginId,
-            primary: primary,
-            defaults: defaults
-        )
-        #expect(resolved["TAVILY_API_KEY"] == "tav-primary")
     }
 
     @Test func mergesDisjointKeys() {
-        let pluginId = "com.test.merge.\(UUID().uuidString)"
-        let primary = UUID()
-        let defaults = UUID()
-        defer {
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: defaults)
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: primary)
+        CredentialStore._withIsolatedStoreForTesting {
+            let pluginId = "com.test.merge.\(UUID().uuidString)"
+            let agent = UUID()
+            PluginCredentials.save("tav-shared", pluginId: pluginId, specId: "TAVILY_API_KEY", agentId: nil)
+            PluginCredentials.save(
+                "brave-agent", pluginId: pluginId, specId: "BRAVE_SEARCH_API_KEY", agentId: agent)
+
+            let resolved = PluginCredentials.resolvedSecrets(specs: specs, pluginId: pluginId, agentId: agent)
+            #expect(resolved["TAVILY_API_KEY"] == "tav-shared")
+            #expect(resolved["BRAVE_SEARCH_API_KEY"] == "brave-agent")
         }
-
-        ToolSecretsKeychain.saveSecret(
-            "tav-default",
-            id: "TAVILY_API_KEY",
-            for: pluginId,
-            agentId: defaults
-        )
-        ToolSecretsKeychain.saveSecret(
-            "brave-primary",
-            id: "BRAVE_SEARCH_API_KEY",
-            for: pluginId,
-            agentId: primary
-        )
-
-        let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
-            pluginId: pluginId,
-            primary: primary,
-            defaults: defaults
-        )
-        #expect(resolved["TAVILY_API_KEY"] == "tav-default")
-        #expect(resolved["BRAVE_SEARCH_API_KEY"] == "brave-primary")
     }
 
-    @Test func primaryEqualToDefaultsSkipsMerge() {
-        let pluginId = "com.test.merge.\(UUID().uuidString)"
-        let id = UUID()
-        let unrelated = UUID()
-        defer {
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: id)
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: unrelated)
+    @Test func otherAgentsValuesDoNotLeak() {
+        CredentialStore._withIsolatedStoreForTesting {
+            let pluginId = "com.test.merge.\(UUID().uuidString)"
+            let agent = UUID()
+            let bystander = UUID()
+            PluginCredentials.save("tav-shared", pluginId: pluginId, specId: "TAVILY_API_KEY", agentId: nil)
+            PluginCredentials.save("leak", pluginId: pluginId, specId: "BRAVE_SEARCH_API_KEY", agentId: bystander)
+
+            let resolved = PluginCredentials.resolvedSecrets(specs: specs, pluginId: pluginId, agentId: agent)
+            #expect(resolved["TAVILY_API_KEY"] == "tav-shared")
+            #expect(resolved["BRAVE_SEARCH_API_KEY"] == nil)
         }
-
-        ToolSecretsKeychain.saveSecret(
-            "tav-default",
-            id: "TAVILY_API_KEY",
-            for: pluginId,
-            agentId: id
-        )
-        // Bystander agent's value must not leak into the read.
-        ToolSecretsKeychain.saveSecret(
-            "leak",
-            id: "BRAVE_SEARCH_API_KEY",
-            for: pluginId,
-            agentId: unrelated
-        )
-
-        let resolved = ToolSecretsKeychain.resolvedSecretsMerging(
-            pluginId: pluginId,
-            primary: id,
-            defaults: id
-        )
-        #expect(resolved["TAVILY_API_KEY"] == "tav-default")
-        #expect(resolved["BRAVE_SEARCH_API_KEY"] == nil)
     }
 }

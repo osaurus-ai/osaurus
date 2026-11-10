@@ -11,6 +11,7 @@ import AppKit
 import SwiftUI
 
 struct MarkdownMessageView: View {
+    @Environment(\.theme) private var theme
     let text: String
     let baseWidth: CGFloat
     /// Optional cache key passed to SelectableTextView for width-aware height caching
@@ -21,6 +22,7 @@ struct MarkdownMessageView: View {
     var body: some View {
         // Use inner view with memoized parsing to avoid re-parsing on every render
         MemoizedMarkdownView(text: text, baseWidth: baseWidth, cacheKey: cacheKey, isStreaming: isStreaming)
+            .environment(\.theme, RichTextInspectionStyle.scope(theme))
     }
 }
 
@@ -89,8 +91,8 @@ private struct MemoizedMarkdownView: View {
         Group {
             if cachedSegments.isEmpty && !text.isEmpty {
                 Text(fallbackText)
-                    .font(Typography.body(baseWidth, theme: theme))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.body)
+                    .foregroundColor(theme.text.primary)
                     .textSelection(.enabled)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
@@ -191,7 +193,7 @@ private struct MemoizedMarkdownView: View {
             // Add spacing before non-first segments
             if !isFirst {
                 Spacer()
-                    .frame(height: segment.spacingBefore)
+                    .frame(height: RichTextInspectionStyle.metric("gap", segment.spacingBefore, theme))
             }
 
             let segmentCacheKey = cacheKey.map { "\($0)-\(segment.id)" }
@@ -208,6 +210,7 @@ private struct MemoizedMarkdownView: View {
 
             case .codeBlock(let code, let language):
                 CodeBlockView(code: code, language: language, baseWidth: baseWidth)
+                    .environment(\.theme, RichTextInspectionStyle.parent(theme))
 
             case .image(let url, let altText):
                 MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
@@ -492,7 +495,7 @@ private let imageSpacing: CGFloat = 16
                     .padding()
                     .frame(width: 600, alignment: .leading)
             }
-            .background(Color(hex: "0f0f10"))
+            .background(CustomizableTheme.dark().surface.canvas)
         }
     }
 #endif

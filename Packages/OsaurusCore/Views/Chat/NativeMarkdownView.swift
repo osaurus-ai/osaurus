@@ -27,6 +27,11 @@ final class MathFormulaImageView: NSImageView {
 }
 
 final class NativeMarkdownView: NSView {
+    /// Set before configuration when the enclosing bubble owns text padding.
+    /// Other message surfaces keep their existing renderer spacing.
+    var includesVerticalPadding = true
+    private var verticalContentInset: CGFloat { includesVerticalPadding ? 4 : 0 }
+
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -95,9 +100,11 @@ final class NativeMarkdownView: NSView {
     /// flash it during a steady reveal.
     private static let cursorPauseThreshold: TimeInterval = 0.15
     private var lastText: String = ""
+    private var streamingParser = StreamingMarkdownParser()
     private var lastBlocks: [SelectableTextBlock] = []
+    private var lastThemeForLayout: (any ThemeProtocol)?
     private var lastWidth: CGFloat = 0
-    private var lastThemeFingerprint: String = ""
+    private var lastThemeFingerprint: Int?
     private var lastIsStreaming: Bool = false
     private var lastReflowParagraphs: Bool = false
     private var parseTask: Task<Void, Never>?
@@ -371,11 +378,11 @@ final class NativeMarkdownView: NSView {
             tv.needsDisplay = true
             return
         }
-        let color = NSColor(theme.accentColor).withAlphaComponent(0.3)
+        let color = NSColor(theme.selection.background)
         // Current match: same treatment browsers use — clearly warmer and
         // more opaque than the surrounding matches, readable on both light
         // and dark themes.
-        let currentColor = NSColor.systemOrange.withAlphaComponent(0.55)
+        let currentColor = NSColor(theme.status.warning.border)
         let string = storage.string as NSString
         var searchRange = NSRange(location: 0, length: string.length)
         var occurrenceIndex = 0
@@ -419,6 +426,9 @@ final class NativeMarkdownView: NSView {
     /// Cross-painted state is detected by reading the existing
     /// `.redactionPlaceholder` attribute runs, so a partial scan
     /// can't double-paint a range.
+    #if OSAURUS_DESIGN_SYSTEM
+    private var redactionInspectionFingerprint: Int?
+    #endif
     private func applyRedactionHighlightsIfNeeded(theme: any ThemeProtocol) {
         guard let tv = textView, let storage = tv.textStorage else {
             appliedHighlightRanges = []
@@ -433,10 +443,18 @@ final class NativeMarkdownView: NSView {
             hoverController = nil
             return
         }
-        let accent = NSColor(theme.accentColor)
+        #if OSAURUS_DESIGN_SYSTEM
+        let highlightTheme = theme.catalogFamily(52, authoritative: true)
+        let styleChanged = redactionInspectionFingerprint != highlightTheme.renderFingerprint
+        redactionInspectionFingerprint = highlightTheme.renderFingerprint
+        #else
+        let highlightTheme = theme
+        let styleChanged = false
+        #endif
+        let accent = NSColor(highlightTheme.status.info.foreground)
         let dictHash = highlightsFingerprint(redactionHighlights)
         let canIncrement =
-            dictHash == lastRedactionHighlightsHash
+            !styleChanged && dictHash == lastRedactionHighlightsHash
             && redactionHighlightAppliedThrough > 0
             && redactionHighlightAppliedThrough <= storage.length
 
@@ -469,7 +487,7 @@ final class NativeMarkdownView: NSView {
         if hoverController == nil {
             hoverController = RedactionHoverController()
         }
-        hoverController?.attach(to: tv, theme: theme, ranges: applied)
+        hoverController?.attach(to: tv, theme: highlightTheme, ranges: applied)
     }
 
     /// Cheap hash so we can detect a change in the highlight dict
@@ -528,8 +546,10 @@ final class NativeMarkdownView: NSView {
         isStreaming: Bool,
         reflowParagraphs: Bool = false
     ) {
+        let theme = RichTextInspectionStyle.scope(theme)
+        lastThemeForLayout = theme
         ChatPerfTrace.shared.count("markdown.configure.called")
-        let themeFingerprint = makeThemeFingerprint(theme)
+        let themeFingerprint = theme.renderFingerprint
         let textChanged = text != lastText || reflowParagraphs != lastReflowParagraphs
         let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeFingerprint != lastThemeFingerprint
@@ -551,13 +571,33 @@ final class NativeMarkdownView: NSView {
         if themeChanged { lastBlocks = [] }
 
         invalidateHeightMemo()
-        // Content is changing — any width observed by a previous tenancy of
-        // this (possibly recycled) view no longer counts as "already measured".
-        lastLayoutWidthForHeight = -1
+        // A new width or theme reflows every line, so the width `layout()`
+        // last measured at no longer counts. A text-only change keeps it:
+        // `configure` measures the new text itself, and re-measuring from
+        // `layout()` on every streamed token doubles the TextKit work.
+        // Recycling resets it in `resetForReuse`.
+        if widthChanged || themeChanged { lastLayoutWidthForHeight = -1 }
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
         lastReflowParagraphs = reflowParagraphs
+
+        // Each streamed delta re-parses only the blocks after the last finished
+        // one, and skips the parse cache, whose key hashes the whole text.
+        guard !(isStreaming && textChanged && !reflowParagraphs) else {
+            applySegments(
+                groupBlocksIntoSegments(streamingParser.parse(text)),
+                cacheKey: cacheKey,
+                textChanged: true,
+                widthChanged: false,
+                width: width,
+                theme: theme,
+                isStreaming: isStreaming
+            )
+            lastText = text
+            return
+        }
+        if !isStreaming { streamingParser.reset() }
 
         // hide raw inline delimiters that haven't received their closer yet
         let parseInput = StreamingMarkdownBalancer.balance(text)
@@ -606,7 +646,9 @@ final class NativeMarkdownView: NSView {
         cacheKey: String?,
         isStreaming: Bool = false
     ) {
-        let themeFingerprint = makeThemeFingerprint(theme)
+        let theme = RichTextInspectionStyle.scope(theme)
+        lastThemeForLayout = theme
+        let themeFingerprint = theme.renderFingerprint
         let textChanged = blocks != lastBlocks
         let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeFingerprint != lastThemeFingerprint
@@ -624,7 +666,7 @@ final class NativeMarkdownView: NSView {
         if themeChanged { lastBlocks = [] }
 
         invalidateHeightMemo()
-        lastLayoutWidthForHeight = -1
+        if widthChanged || themeChanged { lastLayoutWidthForHeight = -1 }
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
         lastIsStreaming = isStreaming
@@ -724,13 +766,22 @@ final class NativeMarkdownView: NSView {
             // layoutSubtreeIfNeeded() — it can re-enter during subview enumeration (tool row tap).
             guard let lm = tv.layoutManager, let tc = tv.textContainer else { return 0 }
             let measureW = measurementContentWidth(fallbackWidth: width)
+            // Resizing the container invalidates layout for all of its text,
+            // so a streamed append would lay out the whole message again.
+            // Leave it alone when the size already matches; `ensureLayout`
+            // then only lays out the edited tail.
+            let target = NSSize(width: measureW, height: CGFloat.greatestFiniteMagnitude)
+            let resize = tc.containerSize != target
             let wasTracking = tc.widthTracksTextView
-            tc.widthTracksTextView = false
-            tc.containerSize = NSSize(width: measureW, height: CGFloat.greatestFiniteMagnitude)
-            defer { tc.widthTracksTextView = wasTracking }
+            if resize {
+                tc.widthTracksTextView = false
+                tc.containerSize = target
+            }
+            defer { if resize { tc.widthTracksTextView = wasTracking } }
             lm.ensureLayout(for: tc)
-            // +8: text view top/bottom inset (4+4) to superview; +4: slack for font leading / subpixel glyph bounds
-            let h = ceil(lm.usedRect(for: tc).height) + 8 + 4
+            // A padded bubble already provides glyph clearance; do not add
+            // another top/bottom inset or trailing height allowance inside it.
+            let h = ceil(lm.usedRect(for: tc).height) + (includesVerticalPadding ? 12 : 0)
             heightConstraint?.constant = max(h, 8)  // ensure minimum height
             invalidateIntrinsicContentSize()
             heightMemo = (paramWidth: width, contentWidth: contentWidth, height: max(h, 8))
@@ -738,13 +789,13 @@ final class NativeMarkdownView: NSView {
         }
 
         // multi segment: match applyMixedSegments — 4pt top, then each segment's spacingBefore + height.
-        var totalH: CGFloat = 4
-        for seg in lastMixedSegments {
+        var totalH: CGFloat = verticalContentInset
+        for (segmentIndex, seg) in lastMixedSegments.enumerated() {
             guard let entry = segmentViews.first(where: { $0.key == seg.id }) else { continue }
-            totalH += seg.spacingBefore
+            if segmentIndex > 0 { totalH += RichTextInspectionStyle.spacing(before: seg, theme: lastThemeForLayout ?? CustomizableTheme.light()) }
             totalH += measureMixedSegmentHeight(entry.view, key: entry.key, width: width)
         }
-        totalH += 4
+        totalH += verticalContentInset
         totalH = max(totalH, 20)
 
         heightConstraint?.constant = totalH
@@ -960,6 +1011,9 @@ final class NativeMarkdownView: NSView {
         invalidateHeightMemo()
         removeTextView()
         lastMixedSegments = segments
+        #if OSAURUS_DESIGN_SYSTEM
+        catalogAssignmentTarget(["textBlockGap", "codeBlockGap", "imageGap", "mathGap", "tableGap"].map { RichTextInspectionStyle.key + "elements.layout." + $0 }, name: "Rich text content blocks", theme: theme)
+        #endif
 
         let requiredKeys = segments.map { $0.id }
         // remove stale segment views
@@ -981,7 +1035,7 @@ final class NativeMarkdownView: NSView {
         // teardown/re-pin keeps streaming ticks from churning the window's layout
         // engine (the AutoLayout solve is the dominant main-thread cost while a
         // long code-heavy reply streams).
-        let layoutSignature = segments.map { "\($0.id)|\($0.spacingBefore)" }
+        let layoutSignature = segments.map { "\($0.id)|\(RichTextInspectionStyle.spacing(before: $0, theme: theme))" }
         let structureUnchanged =
             layoutSignature == installedSegmentLayoutSignature
             && segmentViews.map { $0.key } == requiredKeys
@@ -1004,7 +1058,7 @@ final class NativeMarkdownView: NSView {
         installedSegmentLayoutSignature = layoutSignature
 
         var prevAnchor: NSLayoutYAxisAnchor = topAnchor
-        var prevOffset: CGFloat = 4
+        var prevOffset: CGFloat = verticalContentInset
 
         // The streaming cursor is a text-view overlay, so it can only live on a
         // `.textGroup` segment — and only on the *trailing* one. If the document
@@ -1045,6 +1099,7 @@ final class NativeMarkdownView: NSView {
                     addSubview(mv)
                     register(mv)
                 }
+                mv.includesVerticalPadding = includesVerticalPadding
                 mv.onHeightChanged = { [weak self] in
                     self?.invalidateHeightMemo()
                     self?.onHeightChanged?()
@@ -1081,7 +1136,7 @@ final class NativeMarkdownView: NSView {
                     code: code,
                     language: language,
                     width: width,
-                    theme: theme,
+                    theme: RichTextInspectionStyle.parent(theme),
                     isStreaming: segIsStreamingCode
                 )
                 segView = cv
@@ -1098,7 +1153,6 @@ final class NativeMarkdownView: NSView {
                     iv.imageScaling = .scaleProportionallyUpOrDown
                     iv.imageAlignment = .alignLeft
                     iv.wantsLayer = true
-                    iv.layer?.cornerRadius = 6
                     iv.layer?.masksToBounds = true
                     // Don't let the image's intrinsic size fight the pinned
                     // width/height constraints (a 1500px banner must not blow
@@ -1115,6 +1169,10 @@ final class NativeMarkdownView: NSView {
                     addSubview(iv)
                     register(iv)
                 }
+                // A theme/assignment edit reuses the image segment. Refresh its
+                // corner treatment as well as newly created image views.
+                iv.layer?.cornerRadius = theme.radius.small
+                (iv as? MarkdownSegmentImageView)?.setImageCornerRadius(theme.radius.small)
                 applyImageHeight(segmentId: seg.id, width: width)
                 scheduleImageLoad(segmentId: seg.id, urlString: urlString, imageView: iv)
                 segView = iv
@@ -1133,8 +1191,8 @@ final class NativeMarkdownView: NSView {
                 }
                 let formulaImage = LaTeXRenderer.shared.renderToImage(
                     latex: latex,
-                    fontSize: CGFloat(theme.bodySize) * 1.15,
-                    textColor: NSColor(theme.primaryText),
+                    fontSize: theme.pointSize(.heading),
+                    textColor: NSColor(theme.text.primary),
                     labelMode: .display,
                     textAlignment: .center
                 )
@@ -1185,7 +1243,7 @@ final class NativeMarkdownView: NSView {
             }
             if !structureUnchanged {
                 NSLayoutConstraint.activate([
-                    segView.topAnchor.constraint(equalTo: prevAnchor, constant: prevOffset + seg.spacingBefore)
+                    segView.topAnchor.constraint(equalTo: prevAnchor, constant: prevOffset + RichTextInspectionStyle.spacing(before: seg, theme: theme))
                 ])
             }
 
@@ -1238,8 +1296,8 @@ final class NativeMarkdownView: NSView {
         NSLayoutConstraint.activate([
             tv.leadingAnchor.constraint(equalTo: leadingAnchor),
             tv.trailingAnchor.constraint(equalTo: trailingAnchor),
-            tv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            tv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            tv.topAnchor.constraint(equalTo: topAnchor, constant: verticalContentInset),
+            tv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -verticalContentInset),
         ])
 
         self.textView = tv
@@ -1252,11 +1310,20 @@ final class NativeMarkdownView: NSView {
         // only touch the properties when they actually differ.
         if tv.isEditable { tv.isEditable = false }
         if !tv.isSelectable { tv.isSelectable = true }
-        tv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
-        tv.insertionPointColor = NSColor(theme.cursorColor)
-        tv.accentColor = NSColor(theme.accentColor)
-        tv.blockquoteBarColor = NSColor(theme.accentColor).withAlphaComponent(0.6)
-        tv.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
+        tv.selectedTextAttributes = [
+            .backgroundColor: NSColor(theme.selection.background),
+            .foregroundColor: NSColor(theme.selection.foreground),
+        ]
+        tv.insertionPointColor = NSColor(theme.cursor)
+        tv.linkTextAttributes = [
+            .foregroundColor: NSColor(theme.text.link),
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .cursor: NSCursor.pointingHand,
+        ]
+        tv.accentColor = NSColor(theme.text.link)
+        tv.blockquoteBarColor = NSColor(theme.border.strong)
+        tv.secondaryBackgroundColor = NSColor(theme.surface.subtle)
+        RichTextInspectionStyle.prepare(tv, theme: theme)
     }
 
     private func scheduleBackgroundParse(text: String) {
@@ -1416,12 +1483,6 @@ final class NativeMarkdownView: NSView {
         }
     }
 
-    // MARK: - Theme Fingerprint
-
-    private func makeThemeFingerprint(_ theme: any ThemeProtocol) -> String {
-        "\(theme.primaryFontName)|\(theme.bodySize)|\(theme.codeSize)"
-    }
-
     // MARK: - Streaming Cursor (interpunct)
 
     /// Enter "streaming" lifecycle: start the idle-check timer that flips
@@ -1429,7 +1490,12 @@ final class NativeMarkdownView: NSView {
     /// Does **not** show the cursor itself — that's gated on the idle
     /// elapsed time, decided by `idleTick`.
     fileprivate func enterStreamingMode(theme: any ThemeProtocol) {
-        streamingCursorColor = NSColor(theme.primaryText)
+        streamingCursorColor = NSColor(theme.text.primary)
+        #if OSAURUS_DESIGN_SYSTEM
+        if let scoped = theme as? CatalogResolvedTheme, [28,29,31].contains(scoped.family) {
+            streamingCursorColor = NSColor(theme.cursor)
+        }
+        #endif
         guard idleTimer == nil else { return }
         idleTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -1446,6 +1512,22 @@ final class NativeMarkdownView: NSView {
         lastTextRevealAt = nil
         streamingCursor?.removeFromSuperview()
         streamingCursor = nil
+    }
+
+    /// The enclosing cell is being recycled, possibly for another message.
+    /// Stops this message's streaming timers and settles its fade so neither
+    /// carries over, and drops the block memo so the next text renders from
+    /// scratch instead of being diffed (and faded in) as an append.
+    func resetForReuse() {
+        exitStreamingMode()
+        fader.snap()
+        lastBlocks = []
+        lastIsStreaming = false
+        lastLayoutWidthForHeight = -1
+        streamingParser.reset()
+        for entry in segmentViews {
+            (entry.view as? NativeMarkdownView)?.resetForReuse()
+        }
     }
 
     /// Called from the text-update paths when text storage actually
@@ -1512,7 +1594,7 @@ final class NativeMarkdownView: NSView {
 
         let storageLength = tv.textStorage?.length ?? 0
         let origin = tv.textContainerOrigin
-        let font = tv.font ?? .systemFont(ofSize: 13)
+        let font = tv.font ?? ThemeManager.shared.chatTheme.nsFont(.bodySmall)
         let trailingPadding: CGFloat = 6
         let slotWidth: CGFloat = StreamingCursorOverlay.dotDiameter + 4
         let slotHeight: CGFloat = StreamingCursorOverlay.dotDiameter
@@ -1608,6 +1690,9 @@ final class StreamingCursorOverlay: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Decoration only: clicks and selection drags go to the text beneath.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
     override func layout() {
         super.layout()
         CATransaction.begin()
@@ -1639,11 +1724,14 @@ final class StreamingCursorOverlay: NSView {
         CATransaction.commit()
     }
 
+    /// Half of one caret blink; the animation autoreverses.
+    private static let blinkPeriod: CFTimeInterval = 0.65
+
     private func startBlinking() {
         let anim = CABasicAnimation(keyPath: "opacity")
         anim.fromValue = 1.0
         anim.toValue = 0.2
-        anim.duration = 0.65
+        anim.duration = Self.blinkPeriod
         anim.autoreverses = true
         anim.repeatCount = .infinity
         anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)

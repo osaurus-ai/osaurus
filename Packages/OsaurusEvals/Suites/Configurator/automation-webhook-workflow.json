@@ -1,0 +1,63 @@
+{
+  "id": "configurator.automation-webhook-workflow",
+  "domain": "configurator",
+  "label": "configurator • webhook automation that runs an installed workflow with body fields bound",
+  "query": "When GitHub sends a webhook for a new issue, run my Issue Triage workflow with the issue's title and body.",
+  "notes": "Webhook source (provider github, or a generic webhook) bound to the installed `Issue Triage` workflow. `title` is required; both inputs should map to webhook body fields ({{webhook.body.issue.title}}, {{webhook.body.issue.body}}). No agent.",
+  "fixtures": {
+    "seedInstalledWorkflows": [
+      {
+        "id": "6f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c42",
+        "name": "Issue Triage",
+        "summary": "Label and route a new GitHub issue.",
+        "inputs": [
+          "title",
+          "body"
+        ],
+        "required": [
+          "title"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "webhook"
+          }
+        }
+      ],
+      "argsMustNotContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "agents:"
+          }
+        }
+      ],
+      "expectAutomations": [
+        {
+          "sourceKind": "webhook",
+          "action": "workflow",
+          "workflow": "Issue Triage",
+          "inputKeys": [
+            "title"
+          ]
+        }
+      ],
+      "expectAutomationCount": 1,
+      "maxIterations": 8
+    }
+  }
+}

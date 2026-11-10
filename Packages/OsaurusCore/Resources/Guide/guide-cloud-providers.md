@@ -33,5 +33,5 @@ Osaurus can use cloud or peer inference providers alongside local models. Your c
 
 ## Osaurus Router and peers
 
-- Osaurus Router is a hosted routing service tied to your Osaurus identity (Credits tab shows usage); it auto-connects at startup when configured.
+- Osaurus Router is a hosted routing service tied to your Osaurus identity (Osaurus ID → Wallet & Credits shows usage); it auto-connects at startup when configured.
 - Paired Osaurus devices (peers) can share models, or expose whole remote agents that run with their own tools on the other machine.

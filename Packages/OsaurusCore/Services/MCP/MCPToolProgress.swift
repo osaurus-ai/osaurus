@@ -64,6 +64,16 @@ final class MCPToolProgressRegistry: @unchecked Sendable {
         if changed { post(toolCallId) }
     }
 
+    /// Progress from a built-in tool (e.g. the sandbox starting up).
+    func update(toolCallId: String, text: String) {
+        let changed = lock.withLock { () -> Bool in
+            guard messages[toolCallId] != text else { return false }
+            messages[toolCallId] = text
+            return true
+        }
+        if changed { post(toolCallId) }
+    }
+
     func clear(toolCallId: String) {
         let removed = lock.withLock { messages.removeValue(forKey: toolCallId) != nil }
         if removed { post(toolCallId) }

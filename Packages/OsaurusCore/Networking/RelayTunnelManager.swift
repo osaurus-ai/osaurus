@@ -376,7 +376,7 @@ public final class RelayTunnelManager: ObservableObject {
         supersededAddresses.removeAll()
         let enabled = configuration.enabledAgentIds
         guard !enabled.isEmpty else {
-            MobileConnectLog.write("relay: no agent has Reach From Anywhere on, not opening a tunnel")
+            MobileConnectLog.write("relay: no agent has remote access on, not opening a tunnel")
             return
         }
 
@@ -1272,7 +1272,7 @@ public final class RelayTunnelManager: ObservableObject {
             "address": address,
         ]
         sendJSON(frame)
-        MobileConnectLog.write("relay: Reach From Anywhere turned off for \(address.lowercased())")
+        MobileConnectLog.write("relay: remote access turned off for \(address.lowercased())")
         let lower = address.lowercased()
         authenticatedAgents.remove(lower)
         addressToAgentId.removeValue(forKey: lower)

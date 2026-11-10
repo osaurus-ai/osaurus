@@ -706,6 +706,7 @@ struct HTTPAuthGateTests {
         ("POST", "/mcp/call"),
         ("GET", "/admin/config/schema"),
         ("POST", "/admin/import/plan"),
+        ("GET", "/conversations/00000000-0000-0000-0000-000000000001/events"),
     ]
 
     /// Setting off (every existing install): a key-less loopback caller and a

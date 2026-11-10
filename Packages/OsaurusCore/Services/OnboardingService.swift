@@ -7,6 +7,7 @@
 
 import AppKit
 import Foundation
+import OsaurusRepository
 
 /// Ordered, observable progress of a factory reset, mirroring the sandbox
 /// provisioning journey: one row per wipe phase with a live status icon.
@@ -59,36 +60,45 @@ public final class OnboardingService: ObservableObject {
     @Published public private(set) var wipeFailureMessage: String?
     private var wipeFailureAcknowledgment: CheckedContinuation<Void, Never>?
 
-    private let hasCompletedOnboardingKey = "hasCompletedOnboarding"
-    private let onboardingVersionKey = "onboardingVersion"
+    nonisolated static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
+    nonisolated static let onboardingVersionKey = "onboardingVersion"
 
-    /// Current onboarding version - increment to force re-onboarding after major updates
-    private let currentOnboardingVersion = 3
+    /// Current onboarding version - increment to force re-onboarding after major updates.
+    /// 0.25.x writes 3; raising it re-shows onboarding to every existing user.
+    nonisolated static let currentOnboardingVersion = 3
 
     /// Whether onboarding should be shown (first launch or version mismatch)
     public var shouldShowOnboarding: Bool {
-        let completed = UserDefaults.standard.bool(forKey: hasCompletedOnboardingKey)
-        let version = UserDefaults.standard.integer(forKey: onboardingVersionKey)
-        return !completed || version < currentOnboardingVersion
+        Self.shouldShowOnboarding(in: .standard)
     }
 
     /// Whether this is a completely fresh install (never completed onboarding)
     public var isFreshInstall: Bool {
-        !UserDefaults.standard.bool(forKey: hasCompletedOnboardingKey)
+        Self.isFreshInstall(in: .standard)
+    }
+
+    nonisolated static func shouldShowOnboarding(in defaults: UserDefaults) -> Bool {
+        let completed = defaults.bool(forKey: hasCompletedOnboardingKey)
+        let version = defaults.integer(forKey: onboardingVersionKey)
+        return !completed || version < currentOnboardingVersion
+    }
+
+    nonisolated static func isFreshInstall(in defaults: UserDefaults) -> Bool {
+        !defaults.bool(forKey: hasCompletedOnboardingKey)
     }
 
     private init() {}
 
     /// Mark onboarding as completed
     public func completeOnboarding() {
-        UserDefaults.standard.set(true, forKey: hasCompletedOnboardingKey)
-        UserDefaults.standard.set(currentOnboardingVersion, forKey: onboardingVersionKey)
+        UserDefaults.standard.set(true, forKey: Self.hasCompletedOnboardingKey)
+        UserDefaults.standard.set(Self.currentOnboardingVersion, forKey: Self.onboardingVersionKey)
     }
 
     /// Reset onboarding state (for re-running via help button)
     public func resetOnboarding() {
-        UserDefaults.standard.set(false, forKey: hasCompletedOnboardingKey)
-        UserDefaults.standard.set(0, forKey: onboardingVersionKey)
+        UserDefaults.standard.set(false, forKey: Self.hasCompletedOnboardingKey)
+        UserDefaults.standard.set(0, forKey: Self.onboardingVersionKey)
     }
 
     /// Perform a full factory reset by deleting all data, preferences, and identity.
@@ -136,6 +146,7 @@ public final class OnboardingService: ObservableObject {
         let fm = FileManager.default
         let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let legacyRoot = supportDir.appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
+        let inDefaultSpace = SpaceRegistry.isDefaultActive
 
         let wipeFailures = await Task.detached(priority: .userInitiated) { () -> [WipeFailure] in
             // helper to delete a directory with robust logging and error handling.
@@ -179,7 +190,13 @@ public final class OnboardingService: ObservableObject {
                 }
             }
 
-            return [deleteDir(root, "root"), deleteDir(legacyRoot, "legacy")].compactMap { $0 }
+            // The legacy Application Support root only ever fed the Default
+            // Space; resetting another Space must leave it alone.
+            let targets: [WipeFailure?] =
+                inDefaultSpace
+                ? [deleteDir(root, "root"), deleteDir(legacyRoot, "legacy")]
+                : [deleteDir(root, "root")]
+            return targets.compactMap { $0 }
         }.value
 
         // Terminate even when a directory failed to delete — bailing out here
@@ -293,11 +310,11 @@ public final class OnboardingService: ObservableObject {
         for service in OsaurusKeychainServices.all {
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
+                kSecAttrService as String: SpaceKeychainScope.service(service),
                 kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             ]
 
-            let status = SecItemDelete(query as CFDictionary)
+            let status = SpaceKeychainScope.deleteAllItems(matching: query)
             if status == errSecSuccess {
                 print("[OnboardingService] Wiped Keychain service: \(service)")
             } else if status != errSecItemNotFound {

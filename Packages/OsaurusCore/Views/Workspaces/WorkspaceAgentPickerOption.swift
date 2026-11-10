@@ -86,9 +86,27 @@ extension WorkspaceRosterStore.Presence {
     /// amber when the relay could not be reached.
     func indicatorColor(theme: any ThemeProtocol) -> Color {
         switch self {
-        case .online: return theme.successColor
-        case .offline: return theme.tertiaryText
-        case .unknown: return theme.warningColor
+        case .online: return theme.status.success.foreground
+        case .offline: return theme.text.tertiary
+        case .unknown: return theme.status.warning.foreground
         }
+    }
+}
+
+// Appearance-only mapping for the existing agent picker. Presence remains advisory.
+extension WorkspaceRosterStore.Presence {
+    func agentPickerIndicatorColor(theme: any ThemeProtocol, enabled: Bool = true) -> Color {
+        #if OSAURUS_DESIGN_SYSTEM
+        if !enabled { return AgentPickerInspectionStyle.color("disabledForeground", theme.text.disabled, theme) }
+        let property: String
+        switch self {
+        case .online: property = "accent"
+        case .offline: property = "secondary"
+        case .unknown: property = "error"
+        }
+        return AgentPickerInspectionStyle.color(property, indicatorColor(theme: theme), theme)
+        #else
+        return indicatorColor(theme: theme)
+        #endif
     }
 }

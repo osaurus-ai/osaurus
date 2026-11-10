@@ -177,6 +177,8 @@ private struct SandboxInitPendingTool: OsaurusTool, @unchecked Sendable {
                 retryable: false
             )
         }
+        let progressTask = ChatExecutionContext.currentToolCallId.map(Self.publishStartupProgress)
+        defer { progressTask?.cancel() }
         do {
             try await SandboxToolRegistrar.shared.provisionOnDemand(for: requestAgentId)
             try Task.checkCancellation()
@@ -220,6 +222,27 @@ private struct SandboxInitPendingTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 retryable: true
             )
+        }
+    }
+}
+
+extension SandboxInitPendingTool {
+    /// Mirrors the sandbox's startup progress onto this call's chat row
+    /// until cancelled, then clears it.
+    static func publishStartupProgress(toolCallId: String) -> Task<Void, Never> {
+        Task { @MainActor in
+            defer { MCPToolProgressRegistry.shared.clear(toolCallId: toolCallId) }
+            while !Task.isCancelled {
+                let state = SandboxManager.State.shared
+                let text =
+                    state.currentActivity.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? state.journey?.inlineSummary(byteActivity: SandboxManager.formatByteActivity)
+                    ?? state.provisioningPhase
+                if let text, !text.isEmpty {
+                    MCPToolProgressRegistry.shared.update(toolCallId: toolCallId, text: text)
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
         }
     }
 }
@@ -1078,18 +1101,23 @@ private func agentNodeWorkdir(home: String) -> String {
     "\(home)/.osaurus/node_workspace"
 }
 
-/// The agent's raw secret env (key → value), for post-exec output
-/// scrubbing. Same source `agentShellEnvironment` injects, minus the
-/// non-secret additions (PATH / VIRTUAL_ENV).
+/// The agent's secret values (key → value), for post-exec output
+/// scrubbing. Same source `agentShellEnvironment` injects, minus variables
+/// and the non-secret additions (PATH / VIRTUAL_ENV).
 private func agentSecretValues(agentId: String) -> [String: String] {
-    guard let uuid = UUID(uuidString: agentId) else { return [:] }
-    return AgentSecretsKeychain.getFilteredSecrets(agentId: uuid)
+    let step = SandboxStepScope.secrets
+    guard let fallback = UUID(uuidString: agentId) else { return step }
+    let agent = CredentialResolver.credentialAgent(fallback: fallback)
+    return CredentialResolver.scrubValues(from: CredentialResolver.sandboxEnvironment(agentId: agent), agentId: agent)
+        .merging(step) { agentValue, _ in agentValue }
 }
 
 private func agentShellEnvironment(agentId: String, home: String, cwd: String? = nil) -> [String: String] {
-    var env: [String: String] = [:]
-    if let uuid = UUID(uuidString: agentId) {
-        env = AgentSecretsKeychain.getFilteredSecrets(agentId: uuid)
+    var env = SandboxStepScope.environment
+    if let fallback = UUID(uuidString: agentId) {
+        env.merge(CredentialResolver.sandboxEnvironment(agentId: CredentialResolver.credentialAgent(fallback: fallback))) {
+            step, _ in step
+        }
     }
     let venvPath = agentVenvPath(home: home)
     let nodeWorkdir = agentNodeWorkdir(home: home)
@@ -1149,6 +1177,7 @@ protocol SandboxToolCommandRunning: Sendable {
 
     func execAsRoot(
         command: String,
+        target: SandboxExecTarget,
         timeout: TimeInterval?,
         streamToLogs: Bool,
         logSource: String?,
@@ -1199,6 +1228,7 @@ private struct LiveSandboxToolCommandRunner: SandboxToolCommandRunning {
 
     func execAsRoot(
         command: String,
+        target: SandboxExecTarget,
         timeout: TimeInterval? = 60,
         streamToLogs: Bool = false,
         logSource: String? = nil,
@@ -1207,6 +1237,7 @@ private struct LiveSandboxToolCommandRunner: SandboxToolCommandRunning {
     ) async throws -> ContainerExecResult {
         try await SandboxManager.shared.execAsRoot(
             command: command,
+            target: target,
             timeout: timeout,
             streamToLogs: streamToLogs,
             logSource: logSource,
@@ -1283,6 +1314,7 @@ actor SandboxToolCommandRunnerRegistry {
 
     func execAsRoot(
         command: String,
+        target: SandboxExecTarget,
         timeout: TimeInterval? = 60,
         streamToLogs: Bool = false,
         logSource: String? = nil,
@@ -1291,6 +1323,7 @@ actor SandboxToolCommandRunnerRegistry {
     ) async throws -> ContainerExecResult {
         try await runner.execAsRoot(
             command: command,
+            target: target,
             timeout: timeout,
             streamToLogs: streamToLogs,
             logSource: logSource,
@@ -1625,6 +1658,7 @@ private enum InstallFailureClassifier {
 
 private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_read_file"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.readFile }
     let description =
         "Read a file's contents from the sandbox. **Use this instead of `cat`/`head`/`tail` in `sandbox_exec`.** "
         + "Text is returned raw; PDF, Word, and PowerPoint documents are extracted to text, XLSX returns a cell "
@@ -1805,6 +1839,7 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
 
 private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_search_files"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.searchFiles }
     let description =
         "Search file contents OR find files by name. **Use this instead of `grep`/`rg`/`find`/`ls` "
         + "in `sandbox_exec`.** Pass `target=\"content\"` (default) for a regex search inside file "
@@ -2018,6 +2053,7 @@ private func shellEscapeSingleQuoted(_ s: String) -> String {
 // this tool via `sandboxBridgeWrite`.
 internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_write_file"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.writeFile }
     let description =
         "Write a file, or edit it in place — always pass `path` (that exact key) as the FIRST argument. "
         + "Provide `content` to write/replace the whole file; use `mode: \"append\"` for additive changes. "
@@ -2488,7 +2524,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                 agentName,
                 command: command
             ),
-            result.succeeded,
+            result.succeeded, !result.outputTruncated,
             let newline = result.stdout.firstIndex(of: "\n")
         else { return nil }
         let existed = String(result.stdout[..<newline]) == "1"
@@ -2555,7 +2591,31 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 // picking between two near-identical tool names.
 
 internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
+    /// A background job's log stops growing here; the job keeps running and
+    /// its later output is drained and discarded, so a chatty server can't
+    /// fill the shared disk.
+    static let backgroundLogCapBytes = 64 << 20
+
+    /// The detached job's spawn command. The user's command is single-quoted
+    /// inside a nested `bash -c` with `pipefail`, so a real upstream failure
+    /// surfaces as the rightmost non-zero exit instead of being masked by the
+    /// log cap. The command sits on its own line inside the group so a
+    /// trailing `# comment` can't swallow the closing brace. `setsid` makes
+    /// the wrapper a process-group leader so `kill -- -<pid>` takes down the
+    /// whole job tree rather than orphaning the workload.
+    static func backgroundCommand(_ command: String, cwd: String, logFile: String) -> String {
+        let escaped = command.replacingOccurrences(of: "'", with: "'\\''")
+        let cap = backgroundLogCapBytes
+        let capFilter =
+            "{ head -c \(cap); if IFS= read -r -n 1 _; then "
+            + "printf \"\\n[osaurus: log capped at \(cap >> 20) MB; later output discarded]\\n\"; "
+            + "cat > /dev/null; fi; }"
+        return "cd '\(cwd)' && nohup setsid bash -c 'set -o pipefail; {\n\(escaped)\n} 2>&1 | \(capFilter)' "
+            + "> \(logFile) 2>&1 & echo $!"
+    }
+
     let name = "sandbox_exec"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.exec }
     let agentId: String
     let agentName: String
     let home: String
@@ -2663,6 +2723,26 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        // The process-wide instance was built for whichever agent registered
+        // last. A request for another agent runs as that agent (Linux user,
+        // home, keys and output scrubbing all follow the request).
+        let context = await SandboxToolRequestContext.resolve(fallbackAgentId: agentId, fallbackAgentName: agentName)
+        if context.isRequestBound, context.agentId != agentId {
+            if let rejection = context.rejection(for: .autonomous, tool: name) { return rejection }
+            return try await SandboxExecTool(
+                agentId: context.agentId,
+                agentName: context.agentName,
+                home: context.home,
+                maxCommandsPerTurn: context.config?.maxCommandsPerTurn ?? maxCommandsPerTurn,
+                backgroundEnabled: context.config?.backgroundProcessEnabled == true
+            ).execute(argumentsJSON: argumentsJSON)
+        }
+        return try await SandboxLogScrubbing.$secrets.withValue(agentSecretValues(agentId: agentId)) {
+            try await run(argumentsJSON: argumentsJSON)
+        }
+    }
+
+    private func run(argumentsJSON: String) async throws -> String {
         guard
             SandboxExecLimiter.shared.checkAndIncrement(
                 agentName: agentName,
@@ -2724,21 +2804,8 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
             // Detached job: start it, return pid + log path right away. The
             // 10s timeout here is just for the spawn shim — the spawned
             // process itself can run as long as it likes.
-            //
-            // `set -o pipefail` is wrapped around the user's command via a
-            // nested `bash -c` so a real upstream pipeline failure
-            // surfaces as the rightmost non-zero exit instead of being
-            // masked by `head` / `tee` / `cat`. The user's command is
-            // single-quoted; we escape any internal `'` per shell rules.
             let logFile = "\(home)/bg-\(UUID().uuidString.prefix(8)).log"
-            let escaped = command.replacingOccurrences(of: "'", with: "'\\''")
-            // `setsid` makes the wrapper a session/process-group leader so a
-            // later `kill -- -<pid>` can take down the whole job tree —
-            // signalling only the wrapper pid leaves its children (the actual
-            // workload) running as orphans.
-            let fullCmd =
-                "cd '\(cwd)' && nohup setsid bash -c 'set -o pipefail; \(escaped)' "
-                + "> \(logFile) 2>&1 & echo $!"
+            let fullCmd = Self.backgroundCommand(command, cwd: cwd, logFile: logFile)
 
             let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
                 user: "agent-\(agentName)",
@@ -2757,6 +2824,9 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                     logFile: logFile,
                     command: command
                 )
+                if SandboxBackend.current == .virtualMachine {
+                    await SandboxManager.shared.backgroundJobStarted(agentName: agentName)
+                }
                 // The job's file mutations land after this tool call
                 // returns, so the foreground capture can't see them.
                 // Open a write-ahead capture now; the journal finalizes
@@ -2942,10 +3012,10 @@ private func registerBackgroundLiveExec(
     let prefix = OsaurusPaths.inContainerAgentHome(agentName) + "/"
     guard inContainerLogPath.hasPrefix(prefix) else { return }
     let relative = String(inContainerLogPath.dropFirst(prefix.count))
-    let hostLogURL = OsaurusPaths.containerAgentDir(agentName)
-        .appendingPathComponent(relative)
+    let agentDir = OsaurusPaths.containerAgentDir(agentName)
+    let hostLogURL = agentDir.appendingPathComponent(relative)
 
-    let tailer = LogFileTailer(path: hostLogURL.path)
+    let tailer = LogFileTailer(path: hostLogURL.path, confinedTo: agentDir)
     tailer.start()
 
     let statusBox = StatusSubjectBox()
@@ -2982,11 +3052,11 @@ private func registerBackgroundLiveExec(
 
     let terminate: @Sendable (Int) async -> Void = { graceSeconds in
         await userTerminated.set(true)
-        await BackgroundExecLiveness.kill(pid: pid, signal: "TERM")
+        await BackgroundExecLiveness.kill(pid: pid, signal: "TERM", agentName: agentName)
         if graceSeconds > 0 {
             try? await Task.sleep(nanoseconds: UInt64(graceSeconds) * 1_000_000_000)
         }
-        await BackgroundExecLiveness.kill(pid: pid, signal: "KILL")
+        await BackgroundExecLiveness.kill(pid: pid, signal: "KILL", agentName: agentName)
     }
 
     await LiveExecRegistry.shared.register(
@@ -3068,9 +3138,12 @@ internal enum BackgroundExecLiveness {
     }
 
     /// Used to signal background jobs when the user presses [Terminate].
-    static func kill(pid: String, signal: String) async {
+    /// Runs in the job's own container: each agent has its own PID
+    /// namespace, so the pid means nothing anywhere else.
+    static func kill(pid: String, signal: String, agentName: String) async {
         _ = try? await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: killCommand(pid: pid, signal: signal),
+            target: .agent(agentName),
             timeout: 5
         )
     }
@@ -3085,6 +3158,7 @@ internal enum BackgroundExecLiveness {
 
 private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_process"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.process }
     let description =
         "Manage background jobs started by `shell_run(background:true)`. `action=\"poll\"` "
         + "returns whether the pid is still alive plus a tail of the log; `\"wait\"` blocks "
@@ -3337,6 +3411,12 @@ actor SandboxBackgroundJobs {
     func clear(agentName: String) {
         jobs.removeValue(forKey: agentName)
     }
+
+    /// Tracked pids per agent. Entries can outlive their process until
+    /// something polls them, so callers must check liveness.
+    func allJobs() -> [String: [String]] {
+        jobs.mapValues { Array($0.keys) }
+    }
 }
 
 /// Per-agent serialization for install operations (`sandbox_npm_install`,
@@ -3347,14 +3427,16 @@ actor SandboxBackgroundJobs {
 /// behind the previous one for the same `agentName`; calls on different
 /// agents still run concurrently.
 ///
-/// `apk` is global to the container, so all sandbox_install calls share
-/// the synthetic key `__sandbox_apk__`.
+/// Each agent's container has its own apk database, so `sandbox_install`
+/// calls serialize per agent on a synthetic key (`apkSerializationKey`).
 actor SandboxInstallLock {
     static let shared = SandboxInstallLock()
 
-    /// Synthetic agent key for `sandbox_install` (apk). All apk calls
-    /// across every agent serialize through this same slot.
-    static let apkSerializationKey = "__sandbox_apk__"
+    /// Synthetic key for one agent's `sandbox_install` (apk) calls, kept
+    /// apart from its pip/npm queue.
+    static func apkSerializationKey(agentName: String) -> String {
+        "__sandbox_apk__\(agentName)"
+    }
 
     /// The tail of each agent's queue. New callers chain themselves
     /// after this Task and replace it as the new tail before running.
@@ -3401,8 +3483,48 @@ actor SandboxInstallLock {
 /// command body, exec context (root for apk, agent for pip/npm), recovery
 /// signatures, and serialization key — the consolidation is purely at the
 /// dispatch layer.
-private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
+/// Package installs for a sandbox identity that is not a chat agent: the
+/// workflow setup wizard installs a workflow's declared dependencies into
+/// the workflow's own environment through the same apk/pip/npm bodies,
+/// lock, normalizer, and recovery harness as `sandbox_install`.
+enum SandboxPackageInstaller {
+    /// The `sandbox_install` result envelope for one manager.
+    static func install(
+        manager: WorkflowDependency.Manager, packages: [String], agentId: String, agentName: String, home: String
+    ) async throws -> String {
+        let tool = SandboxInstallTool(agentId: agentId, agentName: agentName, home: home)
+        let request: SandboxPackageRequest
+        do {
+            request = try SandboxPackageRequest.normalize(packages)
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs, message: error.localizedDescription, field: "packages", tool: tool.name,
+                retryable: false)
+        }
+        switch manager {
+        case .apk:
+            guard SandboxBackend.current == .virtualMachine else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`apk` is only available in the Linux VM sandbox (macOS 26+).",
+                    tool: tool.name, retryable: false)
+            }
+            return try await tool.installApk(request: request)
+        case .pip: return try await tool.installPip(request: request)
+        case .npm: return try await tool.installNpm(request: request)
+        }
+    }
+
+    /// The shell environment an identity's commands run with: its venv and
+    /// npm workspace on PATH, so installed CLIs resolve from any cwd.
+    static func shellEnvironment(agentId: String, home: String, cwd: String? = nil) -> [String: String] {
+        agentShellEnvironment(agentId: agentId, home: home, cwd: cwd)
+    }
+}
+
+struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_install"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.install }
     /// `apk` only exists in the Linux VM backend — on Seatbelt the schema
     /// and description omit it entirely so the model is never offered a
     /// manager that can only fail.
@@ -3624,7 +3746,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: apk (system, root-wide)
 
-    private func installApk(request: SandboxPackageRequest) async throws -> String {
+    fileprivate func installApk(request: SandboxPackageRequest) async throws -> String {
         let packages = request.packages
         let pkgList = request.shellArguments
         // `apk update` first refreshes the package index — cheap when the
@@ -3636,18 +3758,19 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
         let toolName = self.name
         let id = agentId
-        // apk is global to the container — every agent's install hits
-        // the same package database and apk's own lockfile. Serialize
-        // through a single synthetic key so cross-agent calls don't
-        // race each other.
+        let target = SandboxExecTarget.agent(agentName)
+        // apk runs as root in this agent's own container, against its own
+        // package database; serialize this agent's installs so two calls
+        // don't race apk's lockfile.
         return try await SandboxInstallLock.shared.serialize(
-            agentName: SandboxInstallLock.apkSerializationKey
+            agentName: SandboxInstallLock.apkSerializationKey(agentName: agentName)
         ) {
             @Sendable func runAsRoot(_ cmd: String, timeout: TimeInterval) async throws
                 -> ContainerExecResult
             {
                 try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
                     command: cmd,
+                    target: target,
                     timeout: timeout,
                     streamToLogs: true,
                     logSource: "apk"
@@ -3680,11 +3803,12 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: pip (Python venv)
 
-    private func installPip(request: SandboxPackageRequest) async throws -> String {
+    fileprivate func installPip(request: SandboxPackageRequest) async throws -> String {
         let packages = request.packages
         let venvPath = agentVenvPath(home: home)
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/python3",
+            target: .agent(agentName),
             timeout: 10
         )
         guard checkResult.succeeded else {
@@ -3718,14 +3842,16 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
             @Sendable func runAsAgent(_ cmd: String, timeout: TimeInterval) async throws
                 -> ContainerExecResult
             {
-                try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-                    agent,
-                    command: cmd,
-                    env: agentShellEnvironment(agentId: id, home: root),
-                    timeout: timeout,
-                    streamToLogs: true,
-                    logSource: "pip"
-                )
+                try await SandboxLogScrubbing.$secrets.withValue(agentSecretValues(agentId: id)) {
+                    try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                        agent,
+                        command: cmd,
+                        env: agentShellEnvironment(agentId: id, home: root),
+                        timeout: timeout,
+                        streamToLogs: true,
+                        logSource: "pip"
+                    )
+                }
             }
 
             return try await runInstallWithRecovery(
@@ -3763,10 +3889,11 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: npm (Node workspace)
 
-    private func installNpm(request: SandboxPackageRequest) async throws -> String {
+    fileprivate func installNpm(request: SandboxPackageRequest) async throws -> String {
         let packages = request.packages
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/node && test -x /usr/bin/npm",
+            target: .agent(agentName),
             timeout: 10
         )
         guard checkResult.succeeded else {
@@ -3815,15 +3942,17 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
             @Sendable func runAsAgent(_ cmd: String, timeout: TimeInterval) async throws
                 -> ContainerExecResult
             {
-                try await SandboxToolCommandRunnerRegistry.shared.exec(
-                    user: "agent-\(agent)",
-                    command: cmd,
-                    env: agentShellEnvironment(agentId: id, home: root, cwd: nodeWorkdir),
-                    cwd: nil,
-                    timeout: timeout,
-                    streamToLogs: true,
-                    logSource: "npm"
-                )
+                try await SandboxLogScrubbing.$secrets.withValue(agentSecretValues(agentId: id)) {
+                    try await SandboxToolCommandRunnerRegistry.shared.exec(
+                        user: "agent-\(agent)",
+                        command: cmd,
+                        env: agentShellEnvironment(agentId: id, home: root, cwd: nodeWorkdir),
+                        cwd: nil,
+                        timeout: timeout,
+                        streamToLogs: true,
+                        logSource: "npm"
+                    )
+                }
             }
 
             return try await runInstallWithRecovery(

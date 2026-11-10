@@ -298,8 +298,10 @@ enum DatabaseFilePathResolver {
         if relativePath.hasPrefix(containerHome + "/") {
             relativePath = String(relativePath.dropFirst(containerHome.count + 1))
         } else if relativePath.hasPrefix("/workspace/") {
-            let stripped = String(relativePath.dropFirst("/workspace/".count))
-            return resolveContainedPath(stripped, within: OsaurusPaths.containerWorkspace())
+            // Own home and `/workspace/shared` only — never another agent's home.
+            guard let (root, relative) = SandboxAgentPathScope(agentName: agentName).split(sandboxPath: relativePath)
+            else { return nil }
+            return resolveContainedPath(relative.isEmpty ? "." : relative, within: root)
         }
         if relativePath.hasPrefix("./") {
             relativePath = String(relativePath.dropFirst(2))

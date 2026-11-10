@@ -149,6 +149,8 @@ public enum ThemedAlertScope: Hashable, Sendable {
     case toastOverlay
     /// Alert scoped to a specific tool permission dialog
     case toolPermission(UUID)
+    /// Alert scoped to one presented sheet (see `themedAlertSheetHost()`)
+    case sheet(UUID)
     /// Fallback scope for unspecified contexts
     case unspecified
 }
@@ -183,11 +185,6 @@ public struct ThemedAlertRequest: Identifiable {
     /// corner instead of inline. Useful for chooser-style alerts where the
     /// inline row would just be padding.
     public let showsCloseButton: Bool
-    /// Optional title point size. Defaults to the standard 16pt, which is
-    /// tuned for compact confirmations; wide announcement dialogs (e.g. the
-    /// Workspaces intro) pass a larger value so the title holds its own
-    /// over a big custom-content area.
-    public let titleFontSize: CGFloat?
     /// When set, replaces the standard message + accessory + divider +
     /// button-row section with this view. The header (icon / title) and
     /// the close X (if `showsCloseButton`) still render. Use for multi-
@@ -208,6 +205,8 @@ public struct ThemedAlertRequest: Identifiable {
 
     /// Callback invoked when the alert is dismissed
     public let onDismiss: () -> Void
+    /// Inspector presentation metadata; never persisted or used by execution.
+    var inspectionFamily: Int? = nil
 
     public init(
         id: UUID = UUID(),
@@ -219,7 +218,6 @@ public struct ThemedAlertRequest: Identifiable {
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
         showsCloseButton: Bool = false,
-        titleFontSize: CGFloat? = nil,
         customContent: AnyView? = nil,
         width: CGFloat? = nil,
         hostsNestedAlerts: Bool = false,
@@ -234,7 +232,6 @@ public struct ThemedAlertRequest: Identifiable {
         self.accessory = accessory
         self.buttons = buttons
         self.showsCloseButton = showsCloseButton
-        self.titleFontSize = titleFontSize
         self.customContent = customContent
         self.width = width
         self.hostsNestedAlerts = hostsNestedAlerts
@@ -287,7 +284,13 @@ public struct AlertButtonConfig {
 
 /// A custom alert dialog with glass background and themed styling
 private struct ThemedAlertDialogContent: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var baseComponentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(inspectionFamily ?? 17, enabled: baseComponentEnabled, authoritative: inspectionFamily != nil) }
+    private func inspectionMetric(_ property: String, _ fallback: CGFloat) -> CGFloat {
+        guard let inspectionFamily else { return fallback }
+        return theme.assignedMetric("component.library.\(inspectionFamily)." + property, fallback: fallback)
+    }
 
     let title: String
     let message: String?
@@ -297,20 +300,20 @@ private struct ThemedAlertDialogContent: View {
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
     let showsCloseButton: Bool
-    var titleFontSize: CGFloat? = nil
     let customContent: AnyView?
     let width: CGFloat?
     let presentationStyle: ThemedAlertPresentationStyle
+    var inspectionFamily: Int? = nil
     let onDismiss: () -> Void
 
     @State private var isAppearing = false
-    @State private var hoveredButton: String?
 
     var body: some View {
         ZStack {
             // Dimmed overlay
-            overlayColor
-                .opacity(isAppearing ? overlayOpacity : 0)
+            // `color.scrim` carries its own alpha; only fade it in.
+            theme.scrim
+                .opacity(isAppearing ? 1 : 0)
                 .applyIf(presentationStyle == .window) { $0.ignoresSafeArea() }
                 .onTapGesture {
                     if let cancel = cancelButton {
@@ -326,8 +329,8 @@ private struct ThemedAlertDialogContent: View {
                             .padding(.horizontal, 10)
                             // With no artwork above the title, the X
                             // shares the title row: centre it on the
-                            // 16pt title (24pt top inset, ~19pt line).
-                            .padding(.top, titleLeadsHeader ? 22 + ((titleFontSize ?? 16) - 16) / 2 : 10)
+                            // heading line below the 24pt top inset.
+                            .padding(.top, titleLeadsHeader ? theme.space.s24 : theme.space.s8)
                     }
                 }
                 .scaleEffect(isAppearing ? 1 : 0.9)
@@ -335,20 +338,17 @@ private struct ThemedAlertDialogContent: View {
                 .offset(y: isAppearing ? 0 : 20)
         }
         .onAppear {
-            withAnimation(theme.springAnimation()) {
+            withAnimation(theme.motion.springAnimation) {
                 isAppearing = true
             }
         }
     }
 
-    // MARK: - Overlay Styling
-
-    private var overlayColor: Color {
-        theme.isDark ? .black : Color(white: 0.1)
+    private func dialogLayout(_ boundary: String, inheriting value: CGFloat) -> CGFloat {
+        theme.catalogLayoutMetric("component.library.\(inspectionFamily ?? 17).elements.layout.dialog." + boundary, inheriting: value)
     }
-
-    private var overlayOpacity: Double {
-        theme.isDark ? 0.5 : 0.35
+    private func dialogLayoutKey(_ boundary: String) -> String {
+        "component.library.\(inspectionFamily ?? 17).elements.layout.dialog." + boundary
     }
 
     // MARK: - Dialog Content
@@ -360,7 +360,7 @@ private struct ThemedAlertDialogContent: View {
 
             if let customContent {
                 customContent
-                    .padding(.top, 16)
+                    .padding(.top, dialogLayout("contentGap", inheriting: inspectionMetric("gap", 16))).catalogLayoutTarget(dialogLayoutKey("contentGap"))
             } else {
                 // Message
                 if let message = message {
@@ -376,7 +376,7 @@ private struct ThemedAlertDialogContent: View {
                 if !inlineButtons.isEmpty {
                     // Divider
                     Rectangle()
-                        .fill(theme.primaryBorder.opacity(0.3))
+                        .fill(theme.border.subtle)
                         .frame(height: 1)
                         .padding(.top, 16)
 
@@ -385,24 +385,13 @@ private struct ThemedAlertDialogContent: View {
                 }
             }
         }
-        .padding(.top, 24)
-        .padding(.horizontal, 24)
-        .padding(.bottom, 16)
+        .padding(.top, dialogLayout("paddingTop", inheriting: inspectionMetric("padding", 24))).catalogLayoutTarget(dialogLayoutKey("paddingTop"))
+        .padding(.horizontal, dialogLayout("paddingX", inheriting: inspectionMetric("padding", 24))).catalogLayoutTarget(dialogLayoutKey("paddingX"))
+        .padding(.bottom, dialogLayout("paddingBottom", inheriting: inspectionMetric("padding", 16))).catalogLayoutTarget(dialogLayoutKey("paddingBottom"))
         .frame(width: width ?? 340)
-        .background(dialogBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(
-            color: theme.shadowColor.opacity(theme.shadowOpacity * 2.4),
-            radius: 36,
-            x: 0,
-            y: 18
-        )
-        .shadow(
-            color: theme.shadowColor.opacity(theme.shadowOpacity * 1.2),
-            radius: 8,
-            x: 0,
-            y: 2
-        )
+        .frame(minHeight: inspectionMetric("height", 0))
+        .applyIf(inspectionFamily != nil) { $0.environment(\.theme, theme) }
+        .assignedBaseChrome(inspectionFamily ?? 17, fallback: .overlay)
     }
 
     // MARK: - Header Section
@@ -430,8 +419,8 @@ private struct ThemedAlertDialogContent: View {
 
             // Title
             Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: titleFontSize ?? 16, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .textStyle(.heading)
+                .foregroundColor(theme.text.primary)
                 .multilineTextAlignment(.center)
         }
     }
@@ -444,23 +433,16 @@ private struct ThemedAlertDialogContent: View {
     private var iconHeader: some View {
         ZStack {
             Circle()
-                .fill(iconBackgroundColor.opacity(0.15))
+                .fill(iconStatus.background)
                 .frame(width: 48, height: 48)
 
-            // Pulsing ring for attention
             Circle()
-                .stroke(iconBackgroundColor.opacity(0.3), lineWidth: 2)
+                .stroke(iconStatus.border, lineWidth: theme.stroke.default)
                 .frame(width: 48, height: 48)
-                .scaleEffect(isAppearing ? 1.2 : 1)
-                .opacity(isAppearing ? 0 : 0.8)
-                .animation(
-                    .easeOut(duration: 1.5).repeatForever(autoreverses: false),
-                    value: isAppearing
-                )
 
             Image(systemName: iconName)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(iconBackgroundColor)
+                .glyphSize(20, weight: .semibold)
+                .foregroundColor(iconStatus.foreground)
         }
     }
 
@@ -468,8 +450,8 @@ private struct ThemedAlertDialogContent: View {
 
     private func messageSection(_ message: String) -> some View {
         Text(message)
-            .font(.system(size: 13))
-            .foregroundColor(theme.secondaryText)
+            .textStyle(.bodySmall)
+            .foregroundColor(theme.text.secondary)
             .multilineTextAlignment(.center)
             .lineSpacing(2)
             .padding(.top, 8)
@@ -522,15 +504,11 @@ private struct ThemedAlertDialogContent: View {
             dismissWithAnimation { cancel.action() }
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(11, weight: .bold)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: 22, height: 22)
-                .background(
-                    Circle().fill(theme.tertiaryBackground.opacity(0.6))
-                )
-                .overlay(
-                    Circle().stroke(theme.cardBorder, lineWidth: 1)
-                )
+                .background(Circle().fill(theme.action.secondary.default.background))
+                .overlay(Circle().stroke(theme.action.border, lineWidth: theme.stroke.default))
         }
         .buttonStyle(PlainButtonStyle())
         // Cancel was promoted to the corner X, so it carries the Esc
@@ -540,7 +518,6 @@ private struct ThemedAlertDialogContent: View {
     }
 
     private func alertButton(_ config: AlertButtonConfig, isPrimary: Bool) -> some View {
-        let isHovered = hoveredButton == config.title
         let isDestructive = config.role == .destructive
         // Return activates the primary action; Esc activates cancel.
         // `keyboardShortcut(nil)` is a no-op for the remaining buttons.
@@ -549,56 +526,25 @@ private struct ThemedAlertDialogContent: View {
             ? .defaultAction
             : (config.role == .cancel ? .cancelAction : nil)
 
+        let role: SettingsButtonRole = isPrimary ? (isDestructive ? .destructive : .primary) : .secondary
         return Button {
             dismissWithAnimation { config.action() }
         } label: {
             Text(config.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(buttonTextColor(isPrimary: isPrimary))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(buttonBackground(isPrimary: isPrimary, isDestructive: isDestructive, isHovered: isHovered))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(buttonBorderColor(isPrimary: isPrimary, isHovered: isHovered), lineWidth: 1)
-                )
         }
-        .buttonStyle(PlainButtonStyle())
+        .assignedSettingsButtonStyle(role)
         .keyboardShortcut(shortcut)
-        .scaleEffect(isHovered ? 1.02 : 1.0)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
-        .onHover { hovering in
-            hoveredButton = hovering ? config.title : nil
-        }
     }
 
     // MARK: - Styling Helpers
-
-    private var dialogBackground: some View {
-        ZStack {
-            ThemedGlassSurface(cornerRadius: 16)
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(cardGradient)
-        }
-    }
-
-    private var cardGradient: LinearGradient {
-        let topOpacity = theme.isDark ? 0.85 : 0.9
-        let bottomOpacity = theme.isDark ? 0.8 : 0.85
-        return LinearGradient(
-            colors: [theme.cardBackground.opacity(topOpacity), theme.cardBackground.opacity(bottomOpacity)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
 
     private var iconName: String {
         hasDestructiveButton ? "exclamationmark.triangle.fill" : "questionmark.circle.fill"
     }
 
-    private var iconBackgroundColor: Color {
-        hasDestructiveButton ? theme.warningColor : theme.accentColor
+    private var iconStatus: ThemeStatusSet<Color> {
+        hasDestructiveButton ? theme.status.warning : theme.status.info
     }
 
     private var cancelButton: AlertButtonConfig? {
@@ -615,30 +561,13 @@ private struct ThemedAlertDialogContent: View {
         buttons.contains { $0.role == .destructive }
     }
 
-    private func buttonTextColor(isPrimary: Bool) -> Color {
-        isPrimary ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText
-    }
-
-    private func buttonBackground(isPrimary: Bool, isDestructive: Bool, isHovered: Bool) -> some ShapeStyle {
-        let hoverOpacity = isHovered ? 0.9 : 1.0
-        if isPrimary {
-            let color = isDestructive ? theme.errorColor : theme.accentColor
-            return AnyShapeStyle(color.opacity(hoverOpacity))
-        }
-        return AnyShapeStyle(theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0.5))
-    }
-
-    private func buttonBorderColor(isPrimary: Bool, isHovered: Bool) -> Color {
-        isPrimary ? .clear : (isHovered ? theme.primaryBorder : theme.cardBorder)
-    }
-
     // MARK: - Dismiss Animation
 
     private func dismissWithAnimation(completion: @escaping () -> Void) {
-        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+        withAnimation(theme.motion.springAnimation(responseMultiplier: 0.8)) {
             isAppearing = false
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + theme.animationDurationMedium) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + theme.motion.durationStandard) {
             completion()
             onDismiss()
         }
@@ -743,6 +672,7 @@ private struct ThemedAlertPresenterModifier: ViewModifier {
 /// Host view that renders the active alert as a global overlay.
 @MainActor
 public struct ThemedAlertHost: View {
+    @Environment(\.theme) private var theme
     @ObservedObject private var center = ThemedAlertCenter.shared
     let scope: ThemedAlertScope
 
@@ -768,10 +698,10 @@ public struct ThemedAlertHost: View {
                     accessory: request.accessory,
                     buttons: request.buttons,
                     showsCloseButton: request.showsCloseButton,
-                    titleFontSize: request.titleFontSize,
                     customContent: request.customContent,
                     width: request.width,
                     presentationStyle: .window,
+                    inspectionFamily: request.inspectionFamily,
                     onDismiss: { request.onDismiss() }
                 )
                 // Identity-key by request so a replacement alert gets a
@@ -798,15 +728,34 @@ public struct ThemedAlertHost: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(topId != nil)
         .animation(
-            .spring(response: 0.35, dampingFraction: 0.85),
+            theme.motion.springAnimation,
             value: topId
         )
+    }
+}
+
+/// Gives a sheet its own alert layer. A sheet inherits the window's scope,
+/// whose host draws on the window behind the sheet, so its alerts would be
+/// hidden.
+private struct ThemedAlertSheetHostModifier: ViewModifier {
+    @State private var id = UUID()
+
+    func body(content: Content) -> some View {
+        content
+            .themedAlertScope(.sheet(id))
+            .overlay(ThemedAlertHost(scope: .sheet(id)))
     }
 }
 
 // MARK: - View Extension
 
 extension View {
+    /// Attach at the root of a sheet so `.window` alerts raised inside it
+    /// show over the sheet.
+    func themedAlertSheetHost() -> some View {
+        modifier(ThemedAlertSheetHostModifier())
+    }
+
     /// Present a themed alert dialog with glass effects and spring animations.
     /// Supports 1–3 (or more) buttons; when 3+, buttons stack vertically for better ergonomics.
     /// `width` overrides the standard 340pt dialog width (honoured by the
@@ -902,7 +851,7 @@ private extension View {
     struct ThemedAlertDialog_Previews: PreviewProvider {
         static var previews: some View {
             ZStack {
-                Color.gray.opacity(0.3)
+                CustomizableTheme.dark().text.tertiary
                     .ignoresSafeArea()
 
                 ThemedAlertDialogContent(
