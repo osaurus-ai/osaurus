@@ -23,13 +23,15 @@ Packages/OsaurusEvals/
     AgentLoop/          — E2E agentic outcomes in a seeded workspace (LLM)
     AgentLoopFrontier/  — harder agent-loop tasks for the local-vs-frontier proof lane (LLM)
     AppleScript/        — AppleScript tool discipline: scripted CI lane + live lane (LLM or scripted)
+    ArchitectInline/    — architect_handoff: draft latency, run, keep offer and Save, hand back past the deadline (LLM; hand-back row no LLM)
     ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
     CapabilityClaims/   — agent-loop "do you have X" behaviour + LLM judge (LLM)
     CapabilitySearch/   — index-only recall measurements (no LLM)
     CacheProof/         — live prefix/KV/L2 cache behavior and telemetry (LLM)
     ComputerUse/        — single-action gate / effect classification (no LLM)
     ComputerUseLoop/    — E2E Computer Use over a scripted screen (LLM or scripted)
-    DefaultAgent/       — built-in "Configuring Osaurus" agent: read/write config tools + judge (LLM)
+    Orchestrator/       — Orchestrator routing: answer, status, state, configurator/architect handoffs + judge (LLM)
+    Configurator/       — hidden Configurator: read/write config tools, grounded Settings paths + judge (LLM)
     HTTPAPI/            — live HTTP chat/agent-run request behavior (LLM)
     JudgeCalibration/   — known-verdict fixtures that grade the JUDGE itself (judge LLM only)
     Memory/             — multi-turn memory injection and recall behavior (LLM)
@@ -628,13 +630,15 @@ Exit codes:
 
 ## Case schema
 
-Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Nineteen domains exist today:
+Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Twenty-one domains exist today:
 
 | Domain | Hits LLM? | Runner branch | Required expectation block |
 |---|---|---|---|
 | `agent_loop` | yes | `runAgentLoopCase` | `expect.agentLoop` |
 | `capability_claims` | yes | `runCapabilityClaimsCase` | `expect.capabilityClaims` |
-| `default_agent` | yes | `runDefaultAgentCase` | `expect.defaultAgent` |
+| `orchestrator` | yes | `runDefaultAgentCase` | `expect.defaultAgent` |
+| `configurator` | yes | `runDefaultAgentCase` (`ConfiguratorEvaluator`) | `expect.defaultAgent` |
+| `default_agent` | yes | `runDefaultAgentCase` (legacy alias of `orchestrator`) | `expect.defaultAgent` |
 | `judge_calibration` | yes⁵ | `runJudgeCalibrationCase` | `expect.judgeCalibration` |
 | `micro_perf` | yes⁶ | `runMicroPerfCase` | `expect.microPerf` |
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
@@ -649,6 +653,7 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `prefix_hash` | no | `runPrefixHashCase` | `expect.prefixHash` |
 | `argument_coercion` | no | `runArgumentCoercionCase` | `expect.argumentCoercion` |
 | `sandbox_diagnostics` | no | `runSandboxDiagnosticsCase` | `expect.sandboxDiagnostics` |
+| `architect_inline` | yes⁷ | `runArchitectInlineCase` | `expect.architectInline` |
 
 ¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
 
@@ -662,7 +667,9 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 
 ⁶ `micro_perf` is the dedicated perf lane: a FIXED prompt (`query` × `promptRepeat`) decoded to a FIXED length (`maxTokens`), `reps` times in one warm process after one unmeasured warm-up, reported as **median ± stdev** (decode tok/s, steady-state TTFT, warm-prefix prefill, wall/rep) — the stable row for `history.jsonl` trends that behaviour rows (varying prompt/decode sizes) can't provide. No tools, no system prompt, no judge, temperature 0; decode speed comes from the runtime's authoritative stats hint, with a clearly-labelled `~est` chars/4 fallback in notes (never in telemetry) for hint-less paths. Optional `minDecodeTokensPerSecond` / `maxTtftMs` floors exist but the recommended gate is the diff/history trend, since absolute numbers are machine-specific.
 
-The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. The LLM-driven domains (`agent_loop`, `capability_claims`, `default_agent`, `judge_calibration`, `micro_perf`, and the live lanes of the mixed domains) burn tokens; keep them off CI.
+⁷ `architect_inline` is mixed: rows that set `holdDraft` score the hand back with no model (CI-safe); the rest draft and run on the run model.
+
+The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. The LLM-driven domains (`agent_loop`, `capability_claims`, `orchestrator`, `configurator`, `judge_calibration`, `micro_perf`, and the live lanes of the mixed domains) burn tokens; keep them off CI.
 
 A case with empty `expect: {}` is a valid smoke test — it records what the runner observed without scoring. Useful while bootstrapping.
 
@@ -760,9 +767,11 @@ Every rubric-graded row persists a structured **judge audit** in its report JSON
 
 Latency semantics are uniform across judged domains: `latencyMs` is the case's own work (the agent loop / evaluator run), and judge-call time is reported separately as `judgeLatencyMs` (shown as `+judge …ms` in the human-readable output). Before this split, `capability_claims` rows silently included judge time in `latencyMs` while `agent_loop` rows didn't, so cross-domain latency comparisons were skewed by however slow the judge happened to be.
 
-### `default_agent` domain
+### `orchestrator` and `configurator` domains
 
-Behaviour evals for the built-in **"Configuring Osaurus"** agent — the one that ships on `Agent.defaultId`. The query asks the agent to inspect or change Osaurus's own configuration; it reads with `osaurus_inspect` (`status` / `list` / `describe` actions) and mutates through the single declarative write tool, `osaurus_config` (`schema` / `export` / `plan` / `apply` / `templates` — the nine legacy per-domain write tools such as `osaurus_agent` / `osaurus_provider` / `osaurus_schedule` were consolidated into it). Write cases probe the applied YAML document with `argsMustContain` (`action: apply` plus key/value substrings of the `yaml` argument); deletion/cancellation asks that the declarative model handles differently (prune semantics, no in-flight cancel) are graded as rubric-based honesty cases instead. It reuses `CapabilityClaimsEvaluator` with the Default agent id, a frozen tool schema, and **auto-approved** tool execution (a headless run has no approval card — high-risk applies are auto-denied on external surfaces), so the loop terminates the moment the model returns text with no tool call. Scoring mixes deterministic transcript checks (`mustCallTools` / `mustNotCallTools` / `argsMustContain`) with an optional LLM-judge `rubric`, and each case runs against an isolated config root so it never touches the user's real `~/.osaurus`.
+The built-in agent on `Agent.defaultId` is split in two. The **Orchestrator** lane (`Suites/Orchestrator`) runs `CapabilityClaimsEvaluator` with the Orchestrator's routing surface (`status`, `state`, `configurator_handoff`, `architect_handoff`, `run_workflow`, `clarify`) and scores which route it takes; a `configurator_handoff` runs the real Configurator underneath, so a settings change still lands in the isolated store. The **Configurator** lane (`Suites/Configurator`) drives one handoff directly through `ConfiguratorEvaluator`: the same seed (the user's words, the matching catalog rows and guide sections), persona, tools, and step budget the Orchestrator's handoff gets. Configurator cases may set `settingsPathsMustBeGrounded: true`, a deterministic check that every Settings breadcrumb in the answer appears in the seed or a tool result. The rest of this section describes the Configurator lane, which holds the cases written before the split; `default_agent` remains an alias so older case files still decode.
+
+Behaviour evals for Osaurus's own configuration. The query asks the agent to inspect or change Osaurus's own configuration; it reads with `osaurus_inspect` (`status` / `list` / `describe` actions) and mutates through the single declarative write tool, `osaurus_config` (`schema` / `export` / `plan` / `apply` / `templates` — the nine legacy per-domain write tools such as `osaurus_agent` / `osaurus_provider` / `osaurus_schedule` were consolidated into it). Write cases probe the applied YAML document with `argsMustContain` (`action: apply` plus key/value substrings of the `yaml` argument); deletion/cancellation asks that the declarative model handles differently (prune semantics, no in-flight cancel) are graded as rubric-based honesty cases instead. It reuses `CapabilityClaimsEvaluator` with the Default agent id, a frozen tool schema, and **auto-approved** tool execution (a headless run has no approval card — high-risk applies are auto-denied on external surfaces), so the loop terminates the moment the model returns text with no tool call. Scoring mixes deterministic transcript checks (`mustCallTools` / `mustNotCallTools` / `argsMustContain`) with an optional LLM-judge `rubric`, and each case runs against an isolated config root so it never touches the user's real `~/.osaurus`.
 
 Two harness/prompt root-causes were fixed here so the column measures the model, not test artifacts:
 
@@ -786,6 +795,12 @@ The prompt fix recovered **exactly** the 12 cases grok previously lost to confir
 - **`provider-rotate-key`** fails for both frontier models by design: its fixture seeds **no** provider, so a literal model truthfully answers "no provider with that ID exists" instead of explaining the `set_credentials` rotation mechanism the rubric wants. Pre-existing (failed before the fix too); a strict-rubric knowledge probe, not a fixture bug.
 - **`schedule-create-daily`** is a flaky `grok` case independent of the fix — an A/B against the old prompt also flapped (PASS then FAIL across two runs). grok intermittently maps "daily at 08:00" onto a cron-style frequency instead of the `daily` enum and loops to the iteration cap; the other three frequency modes (cron/interval/weekly) pass.
 - **¹`openai/gpt-5.5`** DefaultAgent errored as `HTTP 429 insufficient_quota` — the account's quota was exhausted by the earlier suites in the same run (AgentDB 12/12, AgentLoop 22/24, … ran first). The integration itself is proven (pre-quota smoke + early suites pass; `OpenAIReasoningProfile` strips `temperature`/`top_p` and uses `max_completion_tokens`), so this is a billing limit to refill, not a harness or model bug. `anthropic/claude-opus-4-8` needed `temperature`/`top_p` stripped too — the adaptive-thinking Claude generations 400 on sampler knobs — handled in `toAnthropicRequest()` ([`RemoteProviderService.swift`](../OsaurusCore/Services/Provider/RemoteProviderService.swift)).
+
+### `architect_inline` domain
+
+`Suites/ArchitectInline` scores `architect_inline`: the case `query` goes through `ArchitectInlineEvaluator`, which drafts a workflow with the run's model, runs it as an ephemeral run, and follows it. `expect.architectInline.result` is `completed`, `failed`, `needs_choice`, or `handed_back` (the request went back to the Orchestrator). Live rows check that the first step runs within `maxFirstStepSeconds` (default 10), that the draft has at most `maxNodes` steps (default 5), that the run is ephemeral, and that the keep offer appears only on a completed run. `keep: true` accepts the offer. The row then checks that the result raises the Save card and that saving installs a workflow that validates, and deletes that workflow afterwards. `failSteps` makes every step fail. Each row ends with an `INFO` note that records total seconds, step count, why a draft was abandoned, and the draft's tokens per second.
+
+Rows that set `holdDraft` are deterministic. The deadline is moved to a few milliseconds, the draft is held past it, and the model is set to one that cannot be resolved. These rows score the hand back only: a non-retryable timeout failure that tells the Orchestrator to use `run_workflow` with a worker or agent, or to ask the user, with no run started and nothing offered to keep. `OSAURUS_EVALS_SCRIPTED_ONLY=1` runs only these rows. The suite is floored at 1.0.
 
 ### `agent_loop` domain
 

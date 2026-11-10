@@ -1,0 +1,59 @@
+{
+  "description": "A Mac's agent directory with what its build supports, its version and whether it's awake (SYNC_MOBILE_CONTRACT.md v2 §2).",
+  "conversation": {
+    "title": "Agents on Studio Mac",
+    "created_ms": 1767571000000,
+    "pinned": false,
+    "archived": false,
+    "tags": {
+      "ai.osaurus.kind": "agent-directory",
+      "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+    },
+    "app_data": {
+      "ai.osaurus.directory/1": {
+        "v": 1,
+        "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+        "agents": [
+          {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "Osaurus",
+            "isDefault": true
+          },
+          {
+            "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "address": "0x5a8d3b0e6f4c2a1d9e7b8c6f4a2d0e1b3c5f7a9d",
+            "name": "Writer",
+            "description": "Drafts posts and notes.",
+            "avatar": "✍️"
+          }
+        ],
+        "updatedMs": 1767571000000,
+        "features": [
+          "per_device_answers",
+          "presence",
+          "host_run_options",
+          "run_progress",
+          "context_usage",
+          "manage_models",
+          "agent_detail",
+          "set_tool",
+          "warm",
+          "attention_detail",
+          "privacy_review",
+          "image_runs",
+          "workspace_agents",
+          "artifact_blobs",
+          "history_filters",
+          "continue_own_chats"
+        ],
+        "build": "0.25.31 (1234)",
+        "presence": {
+          "state": "sleeping",
+          "networkMode": "anywhere",
+          "updatedMs": 1767574600000
+        }
+      }
+    }
+  },
+  "messages": []
+}

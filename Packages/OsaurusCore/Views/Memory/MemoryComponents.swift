@@ -17,7 +17,8 @@ func pluralizedMemory(_ count: Int, _ singular: String, _ plural: String? = nil)
 // MARK: - Pinned Facts Panel
 
 struct PinnedFactsPanel: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let facts: [PinnedFact]
     let onDelete: (String) -> Void
@@ -32,27 +33,8 @@ struct PinnedFactsPanel: View {
     @State private var filteredFacts: [PinnedFact] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                TextField(text: $searchText, prompt: Text("Search pinned facts...", bundle: .module)) {
-                    Text("Search pinned facts...", bundle: .module)
-                }
-                .textFieldStyle(.plain)
-                .font(.system(size: 11))
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            SearchField(text: $searchText, placeholder: "Search pinned facts...", fillsAvailableWidth: true)
 
             HStack {
                 Text(
@@ -60,8 +42,8 @@ struct PinnedFactsPanel: View {
                         ? L("\(filteredFacts.count) of 1 fact")
                         : L("\(filteredFacts.count) of \(facts.count) facts")
                 )
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 Spacer()
             }
 
@@ -69,11 +51,11 @@ struct PinnedFactsPanel: View {
                 HStack {
                     Spacer()
                     Text("No matching facts", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                     Spacer()
                 }
-                .padding(.vertical, 16)
+                .padding(.vertical, theme.space.s16)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -88,15 +70,8 @@ struct PinnedFactsPanel: View {
                 .frame(maxHeight: 320)
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground.opacity(0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
+        .settingsChrome(.control)
         .onAppear { recomputeFilter() }
         .onChange(of: facts.count) { _, _ in recomputeFilter() }
         .task(id: searchText) {
@@ -125,7 +100,8 @@ struct PinnedFactsPanel: View {
 // MARK: - Pinned Fact Row
 
 struct PinnedFactRow: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let fact: PinnedFact
     let onDelete: () -> Void
@@ -133,85 +109,66 @@ struct PinnedFactRow: View {
     @State private var isHovering = false
 
     private var salienceColor: Color {
-        if fact.salience >= 0.7 { return .green }
-        if fact.salience >= 0.4 { return .blue }
-        return .orange
+        if fact.salience >= 0.7 { return theme.status.success.foreground }
+        if fact.salience >= 0.4 { return theme.status.info.foreground }
+        return theme.status.warning.foreground
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 // Salience bar
-                HStack(spacing: 2) {
+                HStack(spacing: theme.space.s2) {
                     ForEach(0 ..< 5, id: \.self) { idx in
-                        RoundedRectangle(cornerRadius: 1)
+                        RoundedRectangle(cornerRadius: theme.radius.small)
                             .fill(
                                 Double(idx) / 5.0 < fact.salience
-                                    ? salienceColor : theme.tertiaryBackground
+                                    ? salienceColor : theme.surface.hover
                             )
                             .frame(width: 4, height: 8)
                     }
                 }
 
                 Text(String(format: "%.0f%%", fact.salience * 100))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                    .foregroundColor(theme.text.tertiary)
 
                 if fact.useCount > 0 {
                     Text("· used \(fact.useCount)×", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
 
                 Spacer()
 
-                if isHovering {
-                    Button {
-                        onDelete()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.errorColor.opacity(0.7))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .transition(.opacity)
-                }
+                SettingsIconButton("trash", help: "Delete", size: .compact, isDestructive: true, action: onDelete)
+                    .opacity(isHovering ? 1 : 0)
+                    .accessibilityHidden(!isHovering)
             }
 
             Text(fact.content)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(3)
 
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 if !fact.tags.isEmpty {
                     ForEach(fact.tags.prefix(3), id: \.self) { tag in
-                        Text(tag)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                RoundedRectangle(cornerRadius: 3)
-                                    .fill(theme.tertiaryBackground)
-                            )
+                        StatusChip(tag, tone: .neutral)
                     }
                 }
                 Spacer()
                 Text(fact.createdAt)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isHovering ? theme.inputBackground : Color.clear)
-        )
+        .padding(.vertical, theme.space.s8)
+        .padding(.horizontal, theme.space.s8)
+        .settingsChrome(isHovering ? .hover : nil)
         .contentShape(Rectangle())
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovering = hovering
             }
         }
@@ -219,49 +176,50 @@ struct PinnedFactRow: View {
         .accessibilityLabel(
             "Pinned fact: \(fact.content). Salience \(Int(fact.salience * 100)) percent"
         )
-        .accessibilityHint("Hover to reveal delete option")
+        .accessibilityAction(named: Text("Delete", bundle: .module), onDelete)
     }
 }
 
 // MARK: - Episode Row
 
 struct EpisodeRow: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let episode: Episode
 
     var body: some View {
         let tokenLabel =
             episode.tokenCount == 1 ? L("1 token") : L("\(episode.tokenCount) tokens")
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            HStack(spacing: theme.space.s8) {
                 Text(tokenLabel)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                    .foregroundColor(theme.text.tertiary)
 
                 Text("· salience \(String(format: "%.0f%%", episode.salience * 100))", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
 
                 Spacer()
 
                 Text(episode.conversationAt)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             Text(episode.summary)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
 
             if !episode.topicsCSV.isEmpty {
                 Text("topics: \(episode.topicsCSV)")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, theme.space.s6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "Episode: \(episode.summary). \(tokenLabel), \(episode.conversationAt)"
@@ -269,255 +227,60 @@ struct EpisodeRow: View {
     }
 }
 
-// MARK: - Section Card
-
-struct MemorySectionCard<Trailing: View, Content: View>: View {
-    @Environment(\.theme) private var theme
-
-    let title: String
-    let icon: String
-    var count: Int? = nil
-    let trailing: Trailing
-    let content: Content
-
-    init(
-        title: String,
-        icon: String,
-        count: Int? = nil,
-        @ViewBuilder trailing: () -> Trailing,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.title = title
-        self.icon = icon
-        self.count = count
-        self.trailing = trailing()
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                    .frame(width: 20)
-
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.primaryText)
-                    .tracking(0.5)
-
-                if let count {
-                    Text("\(count)", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(theme.tertiaryBackground))
-                }
-
-                Spacer()
-
-                trailing
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-
-            VStack(alignment: .leading, spacing: 12) {
-                content
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-}
-
-extension MemorySectionCard where Trailing == EmptyView {
-    init(
-        title: String,
-        icon: String,
-        count: Int? = nil,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.title = title
-        self.icon = icon
-        self.count = count
-        self.trailing = EmptyView()
-        self.content = content()
-    }
-}
-
-// MARK: - Section Action Button
-
-struct MemorySectionActionButton: View {
-    @Environment(\.theme) private var theme
-
-    let title: String
-    let icon: String?
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    init(_ title: String, icon: String? = nil, action: @escaping () -> Void) {
-        self.title = title
-        self.icon = icon
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                if let icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundColor(isHovering ? theme.accentColor : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovering ? theme.accentColor.opacity(0.1) : Color.clear)
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
-    }
-}
-
 // MARK: - Override Row
 
 struct MemoryOverrideRow: View {
-    @Environment(\.theme) private var theme
-
     let content: String
     let onDelete: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(theme.accentColor)
-                .frame(width: 6, height: 6)
-
-            Text(content)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(2)
-
-            Spacer()
-
-            if isHovering {
-                Button(action: onDelete) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .transition(.opacity)
-            }
+        SettingsRow(title: content, description: "", verbatimTitle: true) {
+            SettingsIconButton("xmark", help: "Remove override", size: .compact, isDestructive: true, action: onDelete)
+                .opacity(isHovering ? 1 : 0)
+                .accessibilityHidden(!isHovering)
         }
-        .padding(.vertical, 8)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
+        .onHover { isHovering = $0 }
+    }
+}
+
+/// "12 memories" beside a memory row's actions.
+struct MemoryCountLabel: View {
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
+    let count: Int
+
+    var body: some View {
+        Text(pluralizedMemory(count, "memory", "memories"))
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
+            .lineLimit(1)
     }
 }
 
 // MARK: - Agent Memory Row
 
 struct MemoryAgentRow: View {
-    @Environment(\.theme) private var theme
-
     let agent: Agent
     let count: Int
     let onSelect: () -> Void
     let onPreviewContext: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
-        HStack(spacing: 10) {
-            Button(action: onSelect) {
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(agentColorFor(agent.name))
-                        .frame(width: 8, height: 8)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(agent.name)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-
-                        if !agent.displayDescription.isEmpty {
-                            Text(agent.displayDescription)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Spacer()
-
-                    Text(pluralizedMemory(count, "memory", "memories"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(theme.tertiaryBackground))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            Button(action: onPreviewContext) {
-                Image(systemName: "eye")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 26, height: 26)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .localizedHelp("Preview context for this agent")
-
-            Button(action: onSelect) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isHovering ? theme.accentColor.opacity(0.06) : Color.clear)
-        )
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovering = hovering
-            }
+        LibraryRow(
+            title: agent.name,
+            subtitle: agent.displayDescription,
+            showsChevron: true,
+            action: onSelect
+        ) {
+            Circle()
+                .fill(agentColorFor(agent.name))
+                .frame(width: 8, height: 8)
+        } trailing: {
+            MemoryCountLabel(count: count)
+            SettingsIconButton("eye", help: "Preview context for this agent", size: .compact, action: onPreviewContext)
         }
     }
 }
@@ -529,7 +292,7 @@ struct IdentityEditSheet: View {
     let onSave: (String) -> Void
 
     @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     @Environment(\.dismiss) private var dismiss
     @State private var editText: String = ""
@@ -537,82 +300,58 @@ struct IdentityEditSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Edit Identity", bundle: .module)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle)
+                        .foregroundColor(theme.text.primary)
                     Text("Manually edit the auto-derived identity narrative", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(12, weight: .semibold)
+                        .foregroundColor(theme.text.secondary)
                         .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground)
-                        )
+                        .settingsChrome(.inset)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(20)
+            .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
 
             Divider().opacity(0.5)
 
-            TextEditor(text: $editText)
-                .font(.system(size: 13))
-                .padding(12)
-                .scrollContentBackground(.hidden)
-                .background(theme.inputBackground)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+            SettingsTextEditor(text: $editText)
 
             Divider().opacity(0.5)
 
             HStack {
                 Text(pluralizedMemory(max(1, editText.count / MemoryConfiguration.charsPerToken), "token"))
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
 
                 Spacer()
 
                 Button(action: { dismiss() }) {
                     Text("Cancel", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
 
                 Button {
                     onSave(editText)
                     dismiss()
                 } label: {
                     Text("Save", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .opacity(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
+                .keyboardShortcut(.return, modifiers: .command)
             }
-            .padding(20)
+            .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
         }
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             editText = identity?.content ?? ""
@@ -626,7 +365,7 @@ struct AddOverrideSheet: View {
     let onAdd: (String) -> Void
 
     @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
@@ -639,50 +378,31 @@ struct AddOverrideSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Add Override", bundle: .module)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle)
+                        .foregroundColor(theme.text.primary)
                     Text("Enter an explicit fact that should always be in your identity", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(12, weight: .semibold)
+                        .foregroundColor(theme.text.secondary)
                         .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground)
-                        )
+                        .settingsChrome(.inset)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(20)
+            .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
 
             Divider().opacity(0.5)
 
-            TextField(text: $text, prompt: Text("e.g., My name is Terence", bundle: .module)) {
-                Text("e.g., My name is Terence", bundle: .module)
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
-            .focused($isFocused)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
-            )
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            SettingsTextField(placeholder: L("e.g., My name is Terence"), text: $text, focus: $isFocused)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s16)
 
             Divider().opacity(0.5)
 
@@ -691,20 +411,9 @@ struct AddOverrideSheet: View {
 
                 Button(action: { dismiss() }) {
                     Text("Cancel", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
 
                 Button {
                     guard !trimmedText.isEmpty else { return }
@@ -712,19 +421,14 @@ struct AddOverrideSheet: View {
                     dismiss()
                 } label: {
                     Text("Add", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(trimmedText.isEmpty)
-                .opacity(trimmedText.isEmpty ? 0.5 : 1)
+                .keyboardShortcut(.return, modifiers: .command)
             }
-            .padding(20)
+            .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
         }
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear { isFocused = true }
     }
@@ -741,58 +445,48 @@ struct ContextPreviewSheet: View {
     let context: String
 
     @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Memory Context Preview", bundle: .module)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle)
+                        .foregroundColor(theme.text.primary)
                     Text("This is injected before the system prompt on each message", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
 
-                Text(
-                    "~\(pluralizedMemory(max(1, context.count / MemoryConfiguration.charsPerToken), "token"))",
-                    bundle: .module
-                )
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(theme.tertiaryBackground))
+                StatusChip(L("~\(pluralizedMemory(max(1, context.count / MemoryConfiguration.charsPerToken), "token"))"))
 
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(12, weight: .semibold)
+                        .foregroundColor(theme.text.secondary)
                         .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground)
-                        )
+                        .settingsChrome(.inset)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            .padding(20)
+            .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
 
             Divider().opacity(0.5)
 
             ScrollView {
                 Text(context)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .componentInspectionText(53, role: .code, fallback: .footnote, family: .code, theme: theme)
+                    .foregroundColor(theme.text.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
+                    .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
             }
         }
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
     }
 }
@@ -803,69 +497,27 @@ struct ContextPreviewSheet: View {
 /// tab. `name` nil means the project record is gone (orphaned namespace) —
 /// the row says so and Forget doubles as cleanup.
 struct MemoryProjectRow: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let name: String?
     let count: Int
     let onPreviewContext: () -> Void
     let onForget: () -> Void
 
-    @State private var isForgetHovered = false
-
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "folder")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 16)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: name ?? L("Deleted project"))
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(name == nil ? theme.secondaryText : theme.primaryText)
-                Text("Shared by every chat in this project", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Text(pluralizedMemory(count, "memory", "memories"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(theme.tertiaryBackground))
-
-            Button(action: onPreviewContext) {
-                Image(systemName: "eye")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 26, height: 26)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .localizedHelp("Preview context for this project")
-
-            Button(action: onForget) {
-                Image(systemName: "trash")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isForgetHovered ? .red : theme.tertiaryText)
-                    .frame(width: 26, height: 26)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .onHover { isForgetHovered = $0 }
-            .localizedHelp("Forget this project's shared memory")
+        LibraryRow(
+            title: name ?? L("Deleted project"),
+            subtitle: L("Shared by every chat in this project")
+        ) {
+            SettingsIconTile(icon: "folder", tint: name == nil ? theme.text.tertiary : theme.text.secondary)
+        } trailing: {
+            MemoryCountLabel(count: count)
+            SettingsIconButton(
+                "eye", help: "Preview context for this project", size: .compact, action: onPreviewContext)
+            SettingsIconButton(
+                "trash", help: "Forget this project's shared memory", size: .compact, isDestructive: true,
+                action: onForget)
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
     }
 }

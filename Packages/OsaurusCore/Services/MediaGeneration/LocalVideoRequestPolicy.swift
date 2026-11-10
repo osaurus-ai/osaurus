@@ -10,6 +10,8 @@ struct LocalVideoRequestPolicy: Sendable {
     let steps: Int
     let guidance: Float
 
+    static let defaultFPS = 16
+
     init(_ request: MediaVideoGenerationRequest) throws {
         guard request.audio != true else {
             throw MediaGenerationError.invalidRequest("Wan 2.1 does not generate audio.")
@@ -23,7 +25,7 @@ struct LocalVideoRequestPolicy: Sendable {
         case ("720p", "1:1"): width = request.width ?? 720; height = request.height ?? 720
         default: throw MediaGenerationError.invalidRequest("Unsupported local video resolution or aspect ratio.")
         }
-        fps = request.fps ?? 16
+        fps = request.fps ?? Self.defaultFPS
         steps = request.steps ?? 50
         guidance = request.guidance ?? 5
         let durationText = request.duration.trimmingCharacters(in: .whitespacesAndNewlines)

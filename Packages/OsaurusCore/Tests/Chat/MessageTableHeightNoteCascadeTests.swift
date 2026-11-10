@@ -91,9 +91,11 @@ struct MessageTableHeightNoteCascadeTests {
             coordinator.lastSwiftUIWidth = 680
         }
 
+        var width: CGFloat = 680
+
         func context(isStreaming: Bool) -> CellRenderingContext {
             CellRenderingContext(
-                width: 680,
+                width: width,
                 agentName: "Osaurus",
                 agentAvatar: nil,
                 agentCustomAvatarPath: nil,
@@ -378,5 +380,243 @@ struct MessageTableHeightNoteCascadeTests {
             }
             #expect(h.tableView.numberOfRows == h.coordinator.blockIds.count)
         }
+    }
+
+    /// Narrowing the thread (a window or pane resize) re-heights the rows
+    /// that were off screen too: scrolled back into view, none keeps the
+    /// wider width's height while its text wraps at the new one.
+    @Test func narrowingReheightsRowsThatWereOffScreen() {
+        let h = Harness(viewportHeight: 300)
+        let paragraph =
+            "The failed run received an order record, not a GitHub repository URL. I'll make the workflow "
+            + "handle accidental or pasted mixed input gracefully: it will extract a repository URL when one "
+            + "is present, and otherwise explain what it needs."
+        for i in 1 ... 8 {
+            h.turns.append(ChatTurn(role: .user, content: "Question \(i)"))
+            h.turns.append(ChatTurn(role: .assistant, content: "\(paragraph) \(paragraph)"))
+        }
+        h.apply()
+        h.layout()
+        h.coordinator.scrollAnchor.scrollToBottom()
+        h.layout()
+
+        h.width = 300
+        h.tableView.tableColumns.first?.width = 300
+        h.apply()
+        h.layout()
+        h.tableView.scroll(.zero)
+        h.layout()
+
+        var checked = 0
+        for row in 0 ..< h.tableView.numberOfRows {
+            guard let cell = h.tableView.view(atColumn: 0, row: row, makeIfNecessary: false) else { continue }
+            let rowHeight = h.tableView.rect(ofRow: row).height
+            let fitted = cell.fittingSize.height
+            checked += 1
+            #expect(rowHeight + 0.5 >= fitted, "row \(row) is \(rowHeight)pt but its cell fits \(fitted)pt")
+        }
+        #expect(checked > 0)
+    }
+
+    /// The same through the app's own table and scroll view, narrowed the
+    /// way a window resize narrows the Architect's chat column: AppKit tiles
+    /// the new width first, then SwiftUI passes it in.
+    /// With always-visible scrollers the column narrows when the scroller
+    /// shows. A transcript whose height sits at the edge of the visible
+    /// area (a prompt card just opened above the input) must settle, not
+    /// show and hide the scroller, re-wrapping every row each time.
+    @Test func legacyScrollerAtTheOverflowEdgeSettles() {
+        let tableView = MessageTableRepresentable.makeTableView()
+        let scrollView = MessageTableRepresentable.makeScrollView(documentView: tableView)
+        scrollView.sideInset = 16
+        scrollView.contentInsets = NSEdgeInsetsZero
+        scrollView.scrollerStyle = .legacy
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 900), styleMask: [.titled], backing: .buffered,
+            defer: false)
+        window.isReleasedWhenClosed = false
+        scrollView.frame = window.contentView!.bounds
+        scrollView.autoresizingMask = [.width, .height]
+        window.contentView?.addSubview(scrollView)
+
+        let coordinator = MessageTableRepresentable.Coordinator()
+        coordinator.tableView = tableView
+        coordinator.scrollView = scrollView
+        coordinator.setupDataSource(for: tableView)
+        coordinator.setupScrollAnchor(
+            scrollView: scrollView, tableView: tableView, onScrolledToBottom: {}, onScrolledAwayFromBottom: {})
+        var widthChanges = 0
+        scrollView.onContentWidthChanged = { [weak coordinator] in
+            widthChanges += 1
+            coordinator?.tiledContentWidthDidChange($0)
+        }
+
+        let memoizer = BlockMemoizer()
+        let paragraph =
+            "The revised listing is now explicit: it creates an approved draft ready to send and does not claim "
+            + "to send the newsletter itself. The workflow still uses the selected model."
+        var turns: [ChatTurn] = []
+        for i in 1 ... 3 {
+            turns.append(ChatTurn(role: .user, content: "Question \(i)"))
+            turns.append(ChatTurn(role: .assistant, content: "\(paragraph)\n\n1. Rename it\n2. Rewrite it\n3. \(paragraph)"))
+        }
+        func settle(_ seconds: TimeInterval) {
+            window.contentView?.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        coordinator.lastSwiftUIWidth = 360
+        var context = CellRenderingContext(
+            width: coordinator.resolvedContentWidth(swiftUIWidth: 360),
+            agentName: "Architect", agentAvatar: nil, agentCustomAvatarPath: nil, isStreaming: false,
+            lastAssistantTurnId: turns.last?.id, theme: ThemeManager.shared.currentTheme,
+            expandedIds: coordinator.expandedIds, onToggleExpand: { _ in },
+            onHeightMeasured: { [weak coordinator] height, id in
+                coordinator?.reportMeasuredHeight(height, forBlockId: id)
+            })
+        context.fullWidthMessages = true
+        settle(0.2)
+        coordinator.applyBlocks(
+            memoizer.blocks(from: turns, streamingTurnId: nil, agentName: "Architect"),
+            groupHeaderMap: memoizer.groupHeaderMap, context: context,
+            isStreaming: false, lastAssistantTurnId: turns.last?.id, autoScrollEnabled: true)
+        settle(0.4)
+
+        let fullHeight = tableView.rect(ofRow: tableView.numberOfRows - 1).maxY
+        var unsettled: [String] = []
+        for height in stride(from: fullHeight + 40, through: fullHeight - 40, by: -4) {
+            window.setContentSize(NSSize(width: 360, height: height))
+            settle(0.4)
+            widthChanges = 0
+            settle(0.8)
+            if widthChanges > 1 { unsettled.append("\(Int(height))pt: \(widthChanges) width changes while idle") }
+        }
+        #expect(unsettled.isEmpty, "\(unsettled)")
+        window.close()
+    }
+
+    @Test func windowResizeReheightsTheArchitectChatColumn() {
+        let tableView = MessageTableRepresentable.makeTableView()
+        let scrollView = MessageTableRepresentable.makeScrollView(documentView: tableView)
+        scrollView.sideInset = 16
+        scrollView.configureWorkflowScrollbar(true)
+        scrollView.contentInsets = NSEdgeInsetsZero
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 488, height: 420), styleMask: [.titled], backing: .buffered,
+            defer: false)
+        scrollView.frame = window.contentView!.bounds
+        scrollView.autoresizingMask = [.width, .height]
+        window.contentView?.addSubview(scrollView)
+
+        let coordinator = MessageTableRepresentable.Coordinator()
+        coordinator.tableView = tableView
+        coordinator.scrollView = scrollView
+        coordinator.setupDataSource(for: tableView)
+        coordinator.setupScrollAnchor(
+            scrollView: scrollView, tableView: tableView, onScrolledToBottom: {}, onScrolledAwayFromBottom: {})
+        scrollView.onContentWidthChanged = { [weak coordinator] in coordinator?.tiledContentWidthDidChange($0) }
+
+        let memoizer = BlockMemoizer()
+        var turns: [ChatTurn] = []
+        let paragraph =
+            "The failed run received an order record, not a GitHub repository URL. I'll make the workflow "
+            + "handle accidental or pasted mixed input gracefully: it will extract a repository URL when one "
+            + "is present, and otherwise explain what it needs."
+        for i in 1 ... 8 {
+            turns.append(ChatTurn(role: .user, content: "Question \(i)"))
+            let answer = ChatTurn(role: .assistant, content: "")
+            let calls = (1 ... 3).map { n in
+                ToolCall(
+                    id: "call_\(i)_\(n)", type: "function",
+                    function: ToolCallFunction(name: "workflow_edit", arguments: "{\"step\": \(n)}"))
+            }
+            answer.toolCalls = calls
+            for call in calls { answer.setToolResult("ok", for: call.id) }
+            answer.appendContent(
+                "\(paragraph)\n\n**What changed:** \(paragraph)\n\n- A normal URL\n- A URL inside pasted text\n- Unrelated data")
+            turns.append(answer)
+        }
+        func settle(_ seconds: TimeInterval = 0.3) {
+            window.contentView?.layoutSubtreeIfNeeded()
+            tableView.layoutSubtreeIfNeeded()
+            tableView.displayIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+            window.contentView?.layoutSubtreeIfNeeded()
+            tableView.layoutSubtreeIfNeeded()
+            tableView.displayIfNeeded()
+        }
+        func apply(swiftUIWidth: CGFloat) {
+            coordinator.lastSwiftUIWidth = swiftUIWidth
+            var context = CellRenderingContext(
+                    width: coordinator.resolvedContentWidth(swiftUIWidth: swiftUIWidth),
+                    agentName: "Architect", agentAvatar: nil, agentCustomAvatarPath: nil, isStreaming: false,
+                    lastAssistantTurnId: turns.last?.id, theme: ThemeManager.shared.currentTheme,
+                    expandedIds: coordinator.expandedIds, onToggleExpand: { _ in },
+                    onHeightMeasured: { [weak coordinator] height, id in
+                        coordinator?.reportMeasuredHeight(height, forBlockId: id)
+                    })
+            context.fullWidthMessages = true
+            coordinator.applyBlocks(
+                memoizer.blocks(from: turns, streamingTurnId: nil, agentName: "Architect"),
+                groupHeaderMap: memoizer.groupHeaderMap, context: context,
+                isStreaming: false, lastAssistantTurnId: turns.last?.id, autoScrollEnabled: true)
+        }
+
+        settle()
+        apply(swiftUIWidth: 488)
+        settle()
+        coordinator.scrollAnchor.scrollToBottom()
+        settle()
+
+        for width in stride(from: 480, through: 308, by: -12).map(CGFloat.init) + [308] {
+            window.setContentSize(NSSize(width: width, height: 420))
+            settle(0.01)
+            apply(swiftUIWidth: width)
+        }
+        settle()
+        tableView.scroll(.zero)
+        settle()
+
+        var checked = 0
+        for row in 0 ..< tableView.numberOfRows {
+            guard let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) else { continue }
+            let rowRect = tableView.rect(ofRow: row)
+            checked += Self.textViews(in: cell)
+            for overflow in Self.clippedText(in: cell, rowRect: rowRect, tableView: tableView) {
+                Issue.record("row \(row): \(overflow)")
+            }
+        }
+        #expect(checked > 0)
+        #expect(abs((tableView.tableColumns.first?.width ?? 0) - (308 - 32)) <= 1)
+    }
+
+    static func textViews(in view: NSView) -> Int {
+        (view is NSTextView ? 1 : 0) + view.subviews.reduce(0) { $0 + textViews(in: $1) }
+    }
+
+    /// Every text view in `cell` whose laid-out text runs past its own frame
+    /// or past the row: text the reader can't see.
+    static func clippedText(in cell: NSView, rowRect: NSRect, tableView: NSTableView) -> [String] {
+        var out: [String] = []
+        func visit(_ view: NSView) {
+            if let text = view as? NSTextView, let manager = text.layoutManager, let container = text.textContainer,
+                !text.isHidden, !(text.string.isEmpty)
+            {
+                manager.ensureLayout(for: container)
+                let needed = manager.usedRect(for: container).height + 2 * text.textContainerInset.height
+                let inTable = text.convert(text.bounds, to: tableView)
+                if needed > text.bounds.height + 1 {
+                    out.append("text needs \(needed)pt, its frame is \(text.bounds.height)pt: \(text.string.prefix(40))")
+                } else if inTable.maxY > rowRect.maxY + 1 || inTable.minY < rowRect.minY - 1 {
+                    out.append("text spans \(inTable.minY)–\(inTable.maxY), row \(rowRect.minY)–\(rowRect.maxY)")
+                }
+                if container.size.width > text.bounds.width + 1 {
+                    out.append("text wraps at \(container.size.width)pt in a \(text.bounds.width)pt frame")
+                }
+            }
+            view.subviews.forEach(visit)
+        }
+        visit(cell)
+        return out
     }
 }

@@ -72,22 +72,25 @@ struct PromptWorkingFolderToolTests {
             gitStatus: nil,
             isGitRepo: false
         )
-        #expect(PromptWorkingFolderTool.shouldExpose(executionMode: .none, source: .chat))
-        #expect(PromptWorkingFolderTool.shouldExpose(executionMode: .none, source: .imported))
+        func expose(_ mode: ExecutionMode, _ source: SessionSource?, sandbox: Bool = false) -> Bool {
+            PromptWorkingFolderTool.shouldExpose(executionMode: mode, source: source, sandboxEnabled: sandbox)
+        }
+        #expect(expose(.none, .chat))
+        #expect(expose(.none, .imported))
         // A host folder makes the ask moot; VM mode already has file tools.
-        #expect(!PromptWorkingFolderTool.shouldExpose(executionMode: .hostFolder(folder), source: .chat))
-        #expect(!PromptWorkingFolderTool.shouldExpose(executionMode: .sandbox, source: .chat))
+        #expect(!expose(.hostFolder(folder), .chat))
+        #expect(!expose(.sandbox, .chat))
+        // A sandbox that is on but not running (starting, or held by another
+        // Osaurus app) must not be traded for a host folder by the model.
+        #expect(!expose(.none, .chat, sandbox: true))
         // No one to click on these surfaces.
         for source in [
             SessionSource.plugin, .http, .channel, .schedule, .watcher, .selfSchedule, .delegation, .workspace,
         ] {
-            #expect(
-                !PromptWorkingFolderTool.shouldExpose(executionMode: .none, source: source),
-                "\(source) must not see the picker tool"
-            )
+            #expect(!expose(.none, source), "\(source) must not see the picker tool")
         }
         // No published source is not "attended" either (HTTP / plugin compose).
-        #expect(!PromptWorkingFolderTool.shouldExpose(executionMode: .none, source: nil))
+        #expect(!expose(.none, nil))
     }
 
     @Test("resolveTools strips it unless the turn is a folder-less chat")
@@ -134,6 +137,32 @@ struct PromptWorkingFolderToolTests {
                 )
             }
             #expect(!withFolder.contains(PromptWorkingFolderTool.toolName))
+        }
+    }
+
+    @Test("resolveTools withholds it while the agent's sandbox is on but not running")
+    func composerStripsWhileSandboxIsOn() async {
+        await SandboxTestLock.runWithStoragePaths {
+            var agent = makeAgent()
+            agent.autonomousExec = AutonomousExecConfig(enabled: true)
+            AgentManager.shared.add(agent)
+            defer { Task { _ = await AgentManager.shared.delete(id: agent.id) } }
+            let previous = SandboxManager.State.shared.availability
+            defer { SandboxManager.State.shared.availability = previous }
+
+            @MainActor func names() -> Set<String> {
+                ChatExecutionContext.$currentSessionSource.withValue(.chat) {
+                    Set(
+                        SystemPromptComposer.resolveTools(agentId: agent.id, executionMode: .none)
+                            .map(\.function.name)
+                    )
+                }
+            }
+            SandboxManager.State.shared.availability = .available
+            #expect(!names().contains(PromptWorkingFolderTool.toolName))
+            // A host that can never run the VM keeps the picker.
+            SandboxManager.State.shared.availability = .unavailable(reason: "test")
+            #expect(names().contains(PromptWorkingFolderTool.toolName))
         }
     }
 

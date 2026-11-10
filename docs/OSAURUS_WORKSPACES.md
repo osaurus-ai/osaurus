@@ -443,6 +443,41 @@ pieces the client observes directly:
 - `WORKSPACES_ATTESTATION_KEY` is required for shared-agent access (unchanged
   by the single-plan cutover).
 
+## Release order for workspace workflow sharing
+
+Ship in this order: router, then workflows registry (API and store web app),
+then the app.
+
+1. **Router.** Membership attestations carry `workspace_status`;
+   `POST /id/lookup` resolves wallets to Osaurus IDs;
+   `GET /internal/workspaces/removals` lists member leaves, removals and
+   workspace deletions for the registry. The last two are gated by
+   `REGISTRY_INTERNAL_TOKEN`.
+2. **Registry.** Run `deno task db:migrate` for `0011_workspace_visibility.sql`
+   and `0012_workspace_removals.sql`. The runner tracks applied filenames, so
+   both apply even where `0013_featured.sql` already ran. This release also
+   adds format 4 (agent steps), `workspace` visibility,
+   `GET /workspaces/:id/workflows` and `DELETE /workspaces/:wid/workflows/:id`.
+   Set `ROUTER_URL` and `REGISTRY_INTERNAL_TOKEN` to turn on the removal
+   sweep. Without them, the sweep is off. Deploy the store web app with the
+   registry so workspace listing pages show the members-only page instead of
+   breaking.
+3. **App.**
+
+If a release lands out of order:
+
+| Mismatch | What happens |
+| --- | --- |
+| App ahead of registry | Sharing a workflow that has agent steps fails with "The store doesn't accept agent steps yet." A workspace share publishes the page unlisted, then reports "The store doesn't support workspace sharing yet." The Workspaces tab shows the same message. Other shares work. |
+| App or registry ahead of router | Attestations without `workspace_status` read as active. A failed `/id/lookup` shows the short wallet. The registry's removal sweep logs `workspace_removals.failed` on each tick and removes nothing until the router ships. |
+
+Client coverage is in `WorkflowShareServiceTests`
+(`anOlderRegistrysFormatRejectionSaysTheStoreIsBehind`,
+`aWorkspaceShareAgainstAnOlderRegistryLeavesThePageUnlistedAndSaysWhy`,
+`anOlderRegistryWithoutWorkspaceRoutesSaysTheStoreIsBehind`) and
+`WorkspaceAgentAccessTests` (`workspaceStatus_onlySuspendedReadsAsSuspended`,
+`aRouterWithoutIDLookupLeavesTheShortWallet`).
+
 ## Regression coverage
 
 `Packages/OsaurusCore/Tests/Router/OsaurusWorkspacesTests.swift`:

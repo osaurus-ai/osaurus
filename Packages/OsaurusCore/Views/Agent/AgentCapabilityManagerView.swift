@@ -414,7 +414,9 @@ struct AgentCapabilityManagerView: View {
         )
     }
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @ObservedObject private var agentManager = AgentManager.shared
     /// Live macOS permission states for the Apple app group badges.
     @ObservedObject private var permissionService = SystemPermissionService.shared
@@ -464,7 +466,6 @@ struct AgentCapabilityManagerView: View {
     // MARK: Local UI state
 
     @State private var searchText: String = ""
-    @State private var searchFocused: Bool = false
     @State private var filter: CapabilityFilter = .all
     @State private var expandedGroups: Set<String> = []
 
@@ -505,10 +506,10 @@ struct AgentCapabilityManagerView: View {
     var body: some View {
         VStack(spacing: 0) {
             stickyHeader
-                .background(theme.primaryBackground)
+                .background(theme.surface.canvas)
                 .overlay(
                     Rectangle()
-                        .fill(theme.primaryBorder)
+                        .fill(theme.border.subtle)
                         .frame(height: 1)
                         .opacity(compact ? 0 : 1),
                     alignment: .bottom
@@ -536,7 +537,7 @@ struct AgentCapabilityManagerView: View {
                     emptyState
                 }
             }
-            .background(theme.primaryBackground)
+            .background(theme.surface.canvas)
         }
         .onAppear {
             loadFromRegistries()
@@ -558,24 +559,24 @@ struct AgentCapabilityManagerView: View {
     // MARK: - Sticky header
 
     private var stickyHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             // Helper-text row (standalone mode only) — mirrors the info line
             // every other detail tab leads with; the tab strip already names
             // the tab, so repeating a "Tools" title here was noise. In
             // compact mode the host sheet's header supplies the context.
             if !compact {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s8) {
                     if onDismiss != nil { doneButton }
 
                     Image(systemName: "info.circle")
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(10)
+                        .foregroundColor(theme.text.tertiary)
                     Text(
                         "Pick which tools this agent can use. Skills come from the shared library; limit them below.",
                         bundle: .module
                     )
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
 
                     Spacer()
                     summaryPill
@@ -585,7 +586,7 @@ struct AgentCapabilityManagerView: View {
             // Compact mode places the Done affordance left of the search field
             // so it reads as a "back" arrow into the host form, not a trailing
             // accessory of the input.
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s8) {
                 if compact, onDismiss != nil { doneButton }
                 searchField
                 if compact { summaryPill }
@@ -599,20 +600,20 @@ struct AgentCapabilityManagerView: View {
             }
         }
         .padding(.horizontal, compact ? 20 : 24)
-        .padding(.vertical, 14)
+        .padding(.vertical, theme.space.s12)
     }
 
     @ViewBuilder
     private var doneButton: some View {
         if let onDismiss {
             Button(action: onDismiss) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .semibold))
+                        .glyphSize(11, weight: .semibold)
                     Text("Done", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
-                .foregroundColor(theme.accentColor)
+                .foregroundColor(theme.text.link)
             }
             .buttonStyle(.plain)
         }
@@ -639,103 +640,41 @@ struct AgentCapabilityManagerView: View {
     }
 
     private var summaryPill: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 9))
-            Text(
-                "\(assignedActionableCount) of \(actionableToolNames.count) assigned",
-                bundle: .module
-            )
-            .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(theme.accentColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule().fill(theme.accentColor.opacity(0.12))
-                .overlay(Capsule().strokeBorder(theme.accentColor.opacity(0.2), lineWidth: 1))
+        StatusChip(
+            L("\(assignedActionableCount) of \(actionableToolNames.count) assigned"),
+            tone: .accent,
+            icon: "checkmark.seal.fill"
         )
     }
 
     private var searchField: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(searchFocused ? theme.accentColor : theme.tertiaryText)
-                .frame(width: 16)
-
-            ZStack(alignment: .leading) {
-                if searchText.isEmpty {
-                    Text("Search by name or description...", bundle: .module)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-                TextField(
-                    "",
-                    text: $searchText,
-                    onEditingChanged: { editing in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            searchFocused = editing
-                        }
-                    }
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(theme.primaryText)
-            }
-
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
-                .localizedHelp("Clear search")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(
-                            searchFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                            lineWidth: searchFocused ? 1.5 : 1
-                        )
-                )
+        SearchField(
+            text: $searchText,
+            placeholder: "Search by name or description...",
+            fillsAvailableWidth: true
         )
     }
 
     private var autoDiscoverCard: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Image(systemName: toolMode == .auto ? "sparkles" : "list.bullet.rectangle")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(toolMode == .auto ? theme.accentColor : theme.secondaryText)
+                .glyphSize(13, weight: .semibold)
+                .foregroundColor(toolMode == .auto ? theme.text.link : theme.text.secondary)
                 .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(
-                        toolMode == .auto ? theme.accentColor.opacity(0.12) : theme.inputBackground
-                    )
-                )
+                .settingsChrome(toolMode == .auto ? .selected : .inset)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Auto-discover relevant tools", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     toolMode == .auto
                         ? "The model starts with a small set and loads more of your assigned tools on demand."
                         : "All assigned tools are sent to the model every turn.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .componentInspectionText(48, role: .caption, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -749,56 +688,20 @@ struct AgentCapabilityManagerView: View {
                     set: { newValue in commit(mode: newValue ? .auto : .manual) }
                 )
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
+            .settingsSwitch()
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+        .settingsChrome(.surface)
     }
 
     private var filterChips: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             ForEach(CapabilityFilter.allCases) { option in
                 let isSelected = option == filter
                 let count = option == .all ? actionableToolNames.count : assignedActionableCount
-                Button {
+                FilterChip(LCached(option.label), count: count, isSelected: isSelected) {
                     filter = option
-                } label: {
-                    HStack(spacing: 4) {
-                        // Constant weight so chips don't change width (and
-                        // shift their neighbor) when the selection moves.
-                        Text(LocalizedStringKey(option.label), bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                        Text("\(count)", bundle: .module)
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                            .opacity(0.85)
-                    }
-                    .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(isSelected ? theme.accentColor.opacity(0.14) : theme.inputBackground)
-                            .overlay(
-                                Capsule(style: .continuous).strokeBorder(
-                                    isSelected ? theme.accentColor.opacity(0.25) : theme.inputBorder,
-                                    lineWidth: 1
-                                )
-                            )
-                    )
-                    .contentShape(Capsule(style: .continuous))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(option.label)
-                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
             }
         }
     }
@@ -811,63 +714,27 @@ struct AgentCapabilityManagerView: View {
     /// empty tool registry.
     private var emptyState: some View {
         let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return VStack(spacing: 8) {
-            Image(systemName: trimmedSearch.isEmpty ? "wrench.and.screwdriver" : "magnifyingglass")
-                .font(.system(size: 24, weight: .regular))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.bottom, 4)
-
-            if !trimmedSearch.isEmpty {
-                Text("No tools match \u{201C}\(trimmedSearch)\u{201D}", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Try a different name or description.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                emptyStateAction(label: L("Clear Search")) {
-                    searchText = ""
-                }
-            } else if filter == .assigned {
-                Text("No tools assigned yet", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Switch to All and turn on the tools this agent should use.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                emptyStateAction(label: L("Show All Tools")) {
-                    filter = .all
-                }
-            } else {
-                Text("No tools available", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Install plugins or connect MCP servers to add tools.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
+        if !trimmedSearch.isEmpty {
+            return SettingsEmptyState(
+                inline: "magnifyingglass",
+                title: L("No tools match “\(trimmedSearch)”"),
+                hint: "Try a different name or description.",
+                secondaryAction: .init(title: L("Clear Search"), icon: "", handler: { searchText = "" })
+            )
         }
-        .multilineTextAlignment(.center)
-        .padding(24)
-    }
-
-    private func emptyStateAction(label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(theme.accentColor.opacity(0.12))
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1)
-                        )
-                )
+        if filter == .assigned {
+            return SettingsEmptyState(
+                inline: "wrench.and.screwdriver",
+                title: "No tools assigned yet",
+                hint: "Switch to All and turn on the tools this agent should use.",
+                secondaryAction: .init(title: L("Show All Tools"), icon: "", handler: { filter = .all })
+            )
         }
-        .buttonStyle(.plain)
-        .padding(.top, 6)
+        return SettingsEmptyState(
+            inline: "wrench.and.screwdriver",
+            title: "No tools available",
+            hint: "Install plugins or connect MCP servers to add tools."
+        )
     }
 
     // MARK: - Rows

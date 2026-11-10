@@ -40,5 +40,6 @@
     { "path": "agents/support-desk.json" },
     { "path": "agents/release-checker.json" },
     { "path": "agents/acme-coder.json" }
-  ]
+  ],
+  "onboarding": { "skip": false, "exclude_teammates": ["keeper"] }
 }

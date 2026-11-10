@@ -17,23 +17,18 @@ struct ManagementBadgeStoreTests {
     private func counts(
         customAgents: Int = 0,
         remoteAgents: Int = 0,
-        installedThemes: Int = 0,
         workspaces: Int = 0,
         observedChannelCount: Int? = nil
     ) -> [ManagementTab: Int] {
         ManagementBadgeStore.mainActorCounts(
             connectedInferenceProviders: 3,
-            sandboxPlugins: 1,
             tools: 12,
             skills: 4,
             customCommands: 2,
             customAgents: customAgents,
             remoteAgents: remoteAgents,
-            schedules: 5,
-            watchers: 6,
+            events: 5,
             knowledgeCollections: 7,
-            downloadedSpeechModels: 1,
-            installedThemes: installedThemes,
             workspaces: workspaces,
             observedChannelCount: observedChannelCount
         )
@@ -53,11 +48,6 @@ struct ManagementBadgeStoreTests {
         #expect(counts(customAgents: 0, remoteAgents: 1)[.agents] == 1)
     }
 
-    @Test("Themes badge matches the Themes page header: every installed theme")
-    func themesCount() {
-        #expect(counts(installedThemes: 5)[.themes] == 5)
-    }
-
     @Test("Channels badge is only present once the page has reported a count")
     func channelsCount() {
         #expect(counts(observedChannelCount: nil)[.agentChannels] == nil)
@@ -68,18 +58,18 @@ struct ManagementBadgeStoreTests {
     func passThrough() {
         let c = counts()
         #expect(c[.providers] == 3)
-        #expect(c[.sandbox] == 1)
         #expect(c[.tools] == 12)
         #expect(c[.skills] == 4)
         #expect(c[.commands] == 2)
-        #expect(c[.schedules] == 5)
-        #expect(c[.watchers] == 6)
+        #expect(c[.automations] == 5)
         #expect(c[.knowledge] == 7)
-        #expect(c[.voice] == 1)
         // Resolved off-main; never part of the synchronous map.
         #expect(c[.models] == nil)
-        #expect(c[.imageGeneration] == nil)
         #expect(c[.memory] == nil)
+        // Status pages list no items of the user's, so they carry no badge.
+        #expect(c[.voice] == nil)
+        #expect(c[.imageGeneration] == nil)
+        #expect(c[.sandbox] == nil)
         // Nothing ever computes an Identity count.
         #expect(c[.identity] == nil)
     }
@@ -87,7 +77,7 @@ struct ManagementBadgeStoreTests {
     @Test("background-resolved tabs are the ones carried between recomputes")
     func backgroundResolvedTabs() {
         #expect(
-            Set(ManagementBadgeStore.backgroundResolvedTabs) == [.models, .imageGeneration, .memory]
+            Set(ManagementBadgeStore.backgroundResolvedTabs) == [.models, .memory]
         )
     }
 

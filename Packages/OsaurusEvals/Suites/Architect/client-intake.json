@@ -1,0 +1,23 @@
+{
+  "id": "architect.client-intake",
+  "domain": "architect",
+  "label": "architect \u2022 client intake",
+  "query": "Build me a client intake workflow. Input is the client's company name. Ask me which plan they bought (Starter or Pro) and their contact's name, then write a short welcome email for them. Output the plan and the welcome email. Test it with Acme Robotics, then offer to save it.",
+  "notes": "The headline Architect flow: brief to a validated draft with a dialog and an inference node, a completed workflow_test, and a save proposal. The harness answers the test-run form as the user.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "answers": {
+        "plan": "Pro",
+        "contact": "Sam"
+      },
+      "maxIterations": 20,
+      "nodeKinds": [
+        "dialog",
+        "inference"
+      ],
+      "requireTestRun": true,
+      "requireProposeSave": true
+    }
+  }
+}

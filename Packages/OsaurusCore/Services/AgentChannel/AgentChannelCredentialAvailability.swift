@@ -85,6 +85,15 @@ final class AgentChannelCredentialAvailability: @unchecked Sendable {
         return refreshNow(provider)
     }
 
+    /// Credential for one channel account. An extra bot or workspace only
+    /// exists once its tokens were saved, so it counts as credentialed; a
+    /// send that later fails is reported by the provider.
+    func hasCredential(connectionId: String) -> Bool {
+        guard let account = ChannelAccounts.account(connectionId: connectionId) else { return false }
+        guard account.isPrimary else { return true }
+        return Provider(rawValue: account.kind.rawValue).map { hasCredential($0) } ?? false
+    }
+
     // MARK: - Maintenance
 
     /// Probe every provider off the main thread. Called once at launch so

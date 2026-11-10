@@ -34,8 +34,28 @@ enum MessageSection: Hashable {
 final class CenteredMessageScrollView: NSScrollView {
     /// Shared cap so overlays that should visually align with the thread
     /// (e.g. the floating Todo block) can match the table's content width.
-    static let defaultMaxContentWidth: CGFloat = 1100
+    static let defaultMaxContentWidth: CGFloat = ChatShellLayout.readableColumnWidth
+    /// Side gutter inside the centered column, the same inset the composer
+    /// card takes, so bubbles and the composer share their left and right
+    /// edges at every width.
+    static let minimumSideInset: CGFloat = ChatView.composerHorizontalInset
     var maxContentWidth: CGFloat = CenteredMessageScrollView.defaultMaxContentWidth
+    var sideInset: CGFloat = CenteredMessageScrollView.minimumSideInset
+
+    private var workflowScrollbarEnabled: Bool?
+
+    func configureWorkflowScrollbar(_ enabled: Bool) {
+        guard workflowScrollbarEnabled != enabled else { return }
+        workflowScrollbarEnabled = enabled
+        scrollerStyle = enabled ? .overlay : NSScroller.preferredScrollerStyle
+        verticalScroller?.controlSize = enabled ? .small : .regular
+        verticalScroller?.alphaValue = enabled ? 0.55 : 1
+    }
+
+    /// Column width the thread renders at inside `availableWidth`.
+    static func contentWidth(in availableWidth: CGFloat) -> CGFloat {
+        max(0, min(availableWidth, defaultMaxContentWidth) - 2 * minimumSideInset)
+    }
 
     /// Content width the last `sizeLastColumnToFit()` ran at. `tile()` fires
     /// on every scroll/layout pass, and `sizeLastColumnToFit()` makes
@@ -46,7 +66,7 @@ final class CenteredMessageScrollView: NSScrollView {
     private var lastFittedContentWidth: CGFloat = -1
 
     override func tile() {
-        let hInset = max(0, (bounds.width - maxContentWidth) / 2)
+        let hInset = max(0, (bounds.width - maxContentWidth) / 2) + sideInset
         if contentInsets.left != hInset || contentInsets.right != hInset {
             contentInsets = NSEdgeInsets(
                 top: contentInsets.top,
@@ -84,16 +104,32 @@ final class CenteredMessageScrollView: NSScrollView {
     /// Fired before a wheel / trackpad scroll is applied, so programmatic
     /// position holds (restore, bottom re-pin) can stand down for the user.
     var onUserScroll: (() -> Void)?
+    /// Fired before a wheel / trackpad scroll toward older content is applied.
+    var onUserScrolledUp: (() -> Void)?
 
     override func scrollWheel(with event: NSEvent) {
         onUserScroll?()
+        // Judge by direction, not by the origin: a mouse-wheel notch scrolls
+        // with an animation, so the origin hasn't moved when super returns.
+        if event.scrollingDeltaY > abs(event.scrollingDeltaX) {
+            onUserScrolledUp?()
+        }
         super.scrollWheel(with: event)
+    }
+
+    // Rows scrolled into the top / bottom content insets stay visible, but
+    // NSScrollView claims clicks there for itself. Hand them to the rows.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        guard hit === self, let documentView else { return hit }
+        return documentView.hitTest(contentView.convert(point, from: superview)) ?? hit
     }
 }
 
 // MARK: - MessageTableRepresentable
 
 struct MessageTableRepresentable: NSViewRepresentable {
+    @Environment(\.workflowThreadFullWidth) private var workflowFullWidth
 
     // Content
     let blocks: [ContentBlock]
@@ -167,6 +203,11 @@ struct MessageTableRepresentable: NSViewRepresentable {
         let coordinator = context.coordinator
         let tableView = Self.makeTableView()
         let scrollView = Self.makeScrollView(documentView: tableView)
+        scrollView.sideInset = workflowFullWidth ? theme.space.s16 : CenteredMessageScrollView.minimumSideInset
+        scrollView.configureWorkflowScrollbar(workflowFullWidth)
+        if workflowFullWidth {
+            scrollView.contentInsets = NSEdgeInsetsZero
+        }
 
         coordinator.tableView = tableView
         coordinator.scrollView = scrollView
@@ -179,6 +220,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         )
         coordinator.setupHoverTracking(on: tableView)
         scrollView.onUserScroll = { [weak coordinator] in coordinator?.userDidScroll() }
+        scrollView.onUserScrolledUp = { [weak coordinator] in coordinator?.userDidScrollUp() }
         scrollView.onContentWidthChanged = { [weak coordinator] width in
             coordinator?.tiledContentWidthDidChange(width)
         }
@@ -208,6 +250,18 @@ struct MessageTableRepresentable: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         ChatPerfTrace.shared.count("table.updateNSView")
         let coordinator = context.coordinator
+        if let centered = scrollView as? CenteredMessageScrollView {
+            centered.configureWorkflowScrollbar(workflowFullWidth)
+            let inset = workflowFullWidth ? theme.space.s16 : CenteredMessageScrollView.minimumSideInset
+            let top: CGFloat = workflowFullWidth ? 0 : 32
+            let bottom: CGFloat = workflowFullWidth ? 0 : 60
+            if centered.sideInset != inset || centered.contentInsets.top != top || centered.contentInsets.bottom != bottom {
+                centered.sideInset = inset
+                centered.contentInsets = NSEdgeInsets(top: top, left: centered.contentInsets.left,
+                                                      bottom: bottom, right: centered.contentInsets.right)
+                centered.tile()
+            }
+        }
         coordinator.scrollAnchor.onScrolledToBottom = onScrolledToBottom
         coordinator.scrollAnchor.onScrolledAwayFromBottom = onScrolledAwayFromBottom
         coordinator.sessionExpandedStore = expandedBlocksStore
@@ -345,7 +399,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
             },
             cacheToolGroupView: { [weak coordinator] id, view in
                 coordinator?.toolGroupViewCache[id] = view
-            }
+            },
+            fullWidthMessages: workflowFullWidth
         )
     }
 
@@ -377,11 +432,12 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onImagePreviewImage: onImagePreviewImage,
             onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
-            searchHighlightQuery: searchHighlightQuery
+            searchHighlightQuery: searchHighlightQuery,
+            fullWidthMessages: workflowFullWidth
         )
     }
 
-    private static func makeTableView() -> HoverTrackingTableView {
+    static func makeTableView() -> HoverTrackingTableView {
         let tv = HoverTrackingTableView()
         tv.style = .plain
         tv.headerView = nil
@@ -406,7 +462,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         return tv
     }
 
-    private static func makeScrollView(documentView: NSView) -> CenteredMessageScrollView {
+    static func makeScrollView(documentView: NSView) -> CenteredMessageScrollView {
         let sv = CenteredMessageScrollView()
         sv.documentView = documentView
         sv.hasVerticalScroller = true
@@ -414,7 +470,10 @@ struct MessageTableRepresentable: NSViewRepresentable {
         sv.autohidesScrollers = true
         sv.drawsBackground = false
         sv.contentView.drawsBackground = false
-        sv.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 60, right: 0)
+        // This thread sits below our own header. AppKit must not replace its
+        // explicit chat padding when the scroll view attaches to the window.
+        sv.automaticallyAdjustsContentInsets = false
+        sv.contentInsets = NSEdgeInsets(top: 32, left: 0, bottom: 60, right: 0)
         return sv
     }
 }
@@ -551,9 +610,17 @@ extension MessageTableRepresentable {
             }
         }
 
+        /// The user scrolled toward older content: stop following the bottom
+        /// until they return to it.
+        func userDidScrollUp() {
+            scrollAnchor.userScrolledUp()
+        }
+
         // MARK: Rendering Context
 
         private var responseStatsByTurn: [UUID: String] = [:]
+        /// The stats block each `responseStatsByTurn` entry was formatted from.
+        private var responseStatsSourceByTurn: [UUID: ContentBlockKind] = [:]
         private var ctx = CellRenderingContext(
             width: 400,
             agentName: "",
@@ -561,7 +628,7 @@ extension MessageTableRepresentable {
             agentCustomAvatarPath: nil,
             isStreaming: false,
             lastAssistantTurnId: nil,
-            theme: LightTheme(),
+            theme: CustomizableTheme.light(),
             expandedIds: [],
             onToggleExpand: { _ in },
             editingTurnId: nil,
@@ -871,7 +938,7 @@ extension MessageTableRepresentable {
                 if let col = tableView.tableColumns.first {
                     col.width = contentWidth
                 }
-                self.reconfigureAllCellsFromLookup(self.blockLookup)
+                self.reconfigureForNewWidth()
                 self.reapplyHeldRestore()
             }
             frameDebounceWork = work
@@ -939,15 +1006,15 @@ extension MessageTableRepresentable {
             noteRowHeightsChanged(rows)
         }
 
-        /// Re-measure specific rows. Non-animated by default; the streaming
-        /// row passes `animated: true` so line-by-line growth eases in instead
-        /// of snapping (height changes land a few times a second when a new
-        /// line wraps, so the short animation reads as smooth expansion).
-        private func noteRowHeightsChanged(_ rows: IndexSet, animated: Bool = false, bypassBatch: Bool = false) {
+        /// Re-measure specific rows. Never animated: the streaming row is
+        /// re-noted every `streamingHeightInterval`, far inside any animation
+        /// duration, so animated notes stacked and the thread wobbled while
+        /// the pinned scroll chased a moving target.
+        private func noteRowHeightsChanged(_ rows: IndexSet, bypassBatch: Bool = false) {
             guard let tableView else { return }
-            // Inside a batch, a plain (non-animated) note joins the pending
-            // set and lands with the batch's single `noteHeightOfRows`.
-            if heightNoteBatchDepth > 0, !animated, !bypassBatch {
+            // Inside a batch, a note joins the pending set and lands with the
+            // batch's single `noteHeightOfRows`.
+            if heightNoteBatchDepth > 0, !bypassBatch {
                 for row in rows where row < blockIds.count {
                     pendingHeightNoteIds.insert(blockIds[row])
                 }
@@ -959,15 +1026,12 @@ extension MessageTableRepresentable {
                 let bid = blockIds[row]
                 if let h = heightCache[bid] { lastNotedHeight[bid] = h }
             }
-            NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = animated ? 0.15 : 0
-            if animated {
-                NSAnimationContext.current.timingFunction =
-                    CAMediaTimingFunction(name: .easeOut)
-                NSAnimationContext.current.allowsImplicitAnimation = true
+            scrollAnchor.keepingVisibleContent(whileChanging: rows) {
+                NSAnimationContext.beginGrouping()
+                NSAnimationContext.current.duration = 0
+                tableView.noteHeightOfRows(withIndexesChanged: rows)
+                NSAnimationContext.endGrouping()
             }
-            tableView.noteHeightOfRows(withIndexesChanged: rows)
-            NSAnimationContext.endGrouping()
         }
 
         // MARK: - Apply Blocks (Main Entry Point)
@@ -1014,26 +1078,35 @@ extension MessageTableRepresentable {
             // Keep the measured values for Inspect response, including restored
             // chats whose request log has expired. Refresh before the no-change
             // path: final statistics can arrive without another text delta.
-            responseStatsByTurn.removeAll(keepingCapacity: true)
+            // Runs on every streamed delta, so only turns whose stats changed
+            // are formatted again.
+            var statsByTurn: [UUID: String] = [:]
+            var statsSources: [UUID: ContentBlockKind] = [:]
             for block in blocks {
                 if case let .generationStats(ttft, rate, count, unclosed, load, cached, total) = block.kind {
-                    responseStatsByTurn[block.turnId] = NativeStatsView.statsText(
+                    statsSources[block.turnId] = block.kind
+                    if responseStatsSourceByTurn[block.turnId] == block.kind,
+                        let text = responseStatsByTurn[block.turnId]
+                    {
+                        statsByTurn[block.turnId] = text
+                        continue
+                    }
+                    statsByTurn[block.turnId] = NativeStatsView.statsText(
                         ttft: ttft, tokensPerSecond: rate, tokenCount: count,
                         unclosedReasoning: unclosed, modelLoad: load,
                         cachedInputTokens: cached, totalDuration: total
                     )
                 }
             }
+            responseStatsByTurn = statsByTurn
+            responseStatsSourceByTurn = statsSources
             // Metrics are opt-in per agent; incomplete-response warnings remain visible.
             // The original blocks and persisted generation measurements remain
             // unchanged; this filters the table's presentation only.
-            let blocks = blocks.filter { block in
-                if case let .generationStats(_, _, _, unclosed, _, _, _) = block.kind {
-                    return context.showResponseMetrics || unclosed
-                }
-                return true
-            }
+            let blocks = ContentBlock.tablePresentationBlocks(
+                blocks, showResponseMetrics: context.showResponseMetrics)
             let widthChanged = abs(ctx.width - context.width) > 1.0
+                || ctx.fullWidthMessages != context.fullWidthMessages
             let expandedIdsChanged = context.expandedIds != ctx.expandedIds
             let metricsDisplayChanged = context.showResponseMetrics != ctx.showResponseMetrics
             let previousEditingTurnId = ctx.editingTurnId
@@ -1047,11 +1120,10 @@ extension MessageTableRepresentable {
             // mid-conversation, blocks/IDs don't change and Path 1 would
             // early return thus leaving on-screen cells with stale avatar size /
             // fonts. capture the previous theme so we can force a reconfigure
-            // (and height-cache flush) like the width change path does
-            let previousThemeConfig = ctx.theme.customThemeConfig
-            // The global font zoom lives on the theme instance, not in the
-            // config, so compare it separately or zoom-only changes are missed.
-            let previousFontScale = (ctx.theme as? CustomizableTheme)?.fontScale
+            // (and height-cache flush) like the width change path does.
+            // The fingerprint covers every rendered token and the font zoom.
+            let previousThemeFingerprint = ctx.theme.renderFingerprint
+            let previousInspectionRevision = ctx.theme.inspectionRevision
 
             // if width changed, invalidate the entire height cache
             if widthChanged { heightCache.removeAll() }
@@ -1059,9 +1131,8 @@ extension MessageTableRepresentable {
             ctx = context
             self.groupHeaderMap = groupHeaderMap
 
-            let themeChanged =
-                previousThemeConfig != context.theme.customThemeConfig
-                || previousFontScale != (context.theme as? CustomizableTheme)?.fontScale
+            let themeChanged = previousThemeFingerprint != context.theme.renderFingerprint
+                || previousInspectionRevision != context.theme.inspectionRevision
             if themeChanged || metricsDisplayChanged { heightCache.removeAll() }
 
             // Editing state lives in the context, not in the blocks themselves.
@@ -1362,6 +1433,7 @@ extension MessageTableRepresentable {
             // reported its measured height into the pending set; note them
             // all in one call before the document frame is read.
             flushPendingHeightNotes()
+            refreshVisibleBubbleJoins()
 
             // Unlike `reloadData`, the incremental apply defers the
             // document-frame recalculation; the scroll handlers below read
@@ -1495,8 +1567,40 @@ extension MessageTableRepresentable {
                     context.expandedIds = expandedIds
                     context.isTurnHovered = hoveredGroupId == groupId
                     context.responseStatsForTurn = { [weak self] in self?.responseStatsByTurn[$0] }
+                    if let row = rowIndexByBlockId[block.id] {
+                        (context.bubbleJoinsPrevious, context.bubbleJoinsNext) = bubbleJoins(atRow: row)
+                    }
                     cell.configure(block: block, context: context)
                 }
+            }
+        }
+
+        private func isAssistantParagraph(atRow row: Int) -> Bool {
+            guard row >= 0, row < blockIds.count, let block = blockLookup[blockIds[row]],
+                case let .paragraph(_, _, _, role) = block.kind
+            else { return false }
+            return role == .assistant
+        }
+
+        /// Whether the rows above and below `row` continue its assistant bubble.
+        private func bubbleJoins(atRow row: Int) -> (previous: Bool, next: Bool) {
+            guard isAssistantParagraph(atRow: row) else { return (false, false) }
+            return (isAssistantParagraph(atRow: row - 1), isAssistantParagraph(atRow: row + 1))
+        }
+
+        /// Row inserts and removals change which paragraphs touch without
+        /// reconfiguring the neighbours, so re-derive the joins on visible rows.
+        private func refreshVisibleBubbleJoins() {
+            guard let tableView else { return }
+            let visible = tableView.rows(in: tableView.visibleRect)
+            guard visible.length > 0 else { return }
+            for row in max(0, visible.location - 1) ..< min(blockIds.count, NSMaxRange(visible) + 1) {
+                guard
+                    let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+                        as? NativeMessageCellView
+                else { continue }
+                let joins = bubbleJoins(atRow: row)
+                cell.setBubbleJoins(previous: joins.previous, next: joins.next)
             }
         }
 
@@ -1523,6 +1627,17 @@ extension MessageTableRepresentable {
 
         /// Reconfigure every visible row when block data is unchanged but `CellRenderingContext` changed
         /// (e.g. `isStreaming`, `lastAssistantTurnId`).
+        /// A new width changes every row's height, including rows off screen
+        /// whose cells don't exist: those are noted too, so the table asks
+        /// again (the estimate at the new width) instead of keeping the old
+        /// width's height until something else notes them.
+        private func reconfigureForNewWidth() {
+            withHeightNoteBatch {
+                reconfigureAllCellsFromLookup(blockLookup)
+                if !blockIds.isEmpty { noteRowHeightsChanged(IndexSet(integersIn: 0 ..< blockIds.count)) }
+            }
+        }
+
         private func reconfigureAllCellsFromLookup(_ newLookup: [String: ContentBlock]) {
             guard let tableView else { return }
             withHeightNoteBatch {
@@ -1577,7 +1692,7 @@ extension MessageTableRepresentable {
                     }
                 }
 
-                self.noteRowHeightsChanged(IndexSet(integer: row), animated: true)
+                self.noteRowHeightsChanged(IndexSet(integer: row))
 
                 if self.scrollAnchor.isPinnedToBottom {
                     ChatPerfTrace.shared.count("scrollToBottom.streaming")
@@ -1694,6 +1809,24 @@ extension MessageTableRepresentable {
 
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
+        /// A row coming into view stands at the height held for its block.
+        /// NSTableView keeps its own height per row and asks again only for
+        /// noted rows, so an answer given before the block was known (the
+        /// 44pt fallback) or at an older width would stay, clipping the cell
+        /// once its measured height matches what is already held here.
+        func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
+            guard row >= 0, row < blockIds.count else { return }
+            let id = blockIds[row]
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let tableView = self.tableView, let row = self.rowIndexByBlockId[id],
+                    row < tableView.numberOfRows, let held = self.heightCache[id],
+                    abs(tableView.rect(ofRow: row).height - held) > 0.5
+                else { return }
+                ChatPerfTrace.shared.count("rowHeight.reconciled")
+                self.noteRowHeightsChanged(IndexSet(integer: row))
+            }
+        }
+
         /// Height delegate — avoids Auto Layout cascade on every scroll event.
         /// Returns cached heights where available, otherwise uses the estimator.
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
@@ -1713,7 +1846,8 @@ extension MessageTableRepresentable {
                 for: block,
                 width: ctx.width,
                 theme: ctx.theme,
-                isExpanded: isExpanded
+                isExpanded: isExpanded,
+                fullWidthMessages: ctx.fullWidthMessages
             )
             heightCache[block.id] = h
             return h
@@ -1744,10 +1878,12 @@ extension MessageTableRepresentable {
                 // Read before re-noting: the height change itself can move the
                 // bottom away and flip the pinned flag in the bounds callback.
                 let wasPinned = scrollAnchor.isPinnedToBottom
-                NSAnimationContext.beginGrouping()
-                NSAnimationContext.current.duration = 0
-                tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
-                NSAnimationContext.endGrouping()
+                scrollAnchor.keepingVisibleContent(whileChanging: IndexSet(integer: row)) {
+                    NSAnimationContext.beginGrouping()
+                    NSAnimationContext.current.duration = 0
+                    tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
+                    NSAnimationContext.endGrouping()
+                }
                 reapplyHeldRestore()
                 // Freshly shown rows usually measure taller than their
                 // estimate, growing the content below a reader who was just
@@ -1940,7 +2076,7 @@ extension MessageTableRepresentable {
                 // Land the match around the upper third of the viewport.
                 let targetY = min(maxY, max(0, rectInTable.midY - clipBounds.height * 0.35))
                 NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.22
+                    ctx.duration = ThemeManager.shared.currentTheme.motion.standardInterval
                     ctx.allowsImplicitAnimation = true
                     scrollView.contentView.setBoundsOrigin(
                         NSPoint(x: clipBounds.origin.x, y: targetY)
@@ -1979,7 +2115,7 @@ extension MessageTableRepresentable {
             let targetY = max(0, rowRect.origin.y - 12)
 
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.22
+                ctx.duration = ThemeManager.shared.currentTheme.motion.standardInterval
                 ctx.allowsImplicitAnimation = true
                 scrollView.contentView.setBoundsOrigin(
                     NSPoint(x: scrollView.contentView.bounds.origin.x, y: targetY)

@@ -170,6 +170,11 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
     /// subprocess inherits.
     public var workingDirectory: String?
 
+    /// Agent whose credentials fill this provider's secret slots. Transient
+    /// (never encoded): set on a copy when building a per-agent connection.
+    /// `nil` resolves the values saved for all agents.
+    public var credentialAgentId: UUID?
+
     private enum CodingKeys: String, CodingKey {
         case id, name, url, enabled, customHeaders
         case streamingEnabled, discoveryTimeout, toolCallTimeout, progressHardCap, autoConnect
@@ -263,46 +268,56 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
     public static let defaultProgressHardCap: TimeInterval = 600
     public static let progressHardCapRange: ClosedRange<TimeInterval> = 300 ... 14_400
 
-    /// Get all headers including secret headers from Keychain
+    /// All headers: plain `customHeaders` (or the variable bound to one),
+    /// plus each secret header resolved through the unified credentials
+    /// store for `credentialAgentId`.
     public func resolvedHeaders() -> [String: String] {
-        var headers = customHeaders
-
-        // Add secret headers from Keychain
+        var headers: [String: String] = [:]
+        for (key, value) in customHeaders where !secretHeaderKeys.contains(key) {
+            headers[key] =
+                MCPCredentials.plainOverride(MCPCredentials.plainHeaderSlot(self, header: key), agentId: credentialAgentId)
+                ?? value
+        }
         for key in secretHeaderKeys {
-            if let value = MCPProviderKeychain.getHeaderSecret(key: key, for: id) {
+            if let value = MCPCredentials.headerValue(self, header: key, agentId: credentialAgentId) {
                 headers[key] = value
             }
         }
-
         return headers
     }
 
-    /// Resolve the full environment for a stdio subprocess: plain `env`
-    /// merged with any Keychain-stored values for `secretEnvKeys`. Keys
-    /// whose Keychain entry is missing are dropped so we don't ship a
-    /// literal placeholder over the wire.
+    /// Full environment for a stdio subprocess: plain `env` (or the variable
+    /// bound to an entry) merged with each secret env var resolved through
+    /// the credentials store. A secret with no value is dropped so a literal
+    /// placeholder never ships to the subprocess.
     public func resolvedEnv() -> [String: String] {
-        var merged = env
+        var merged: [String: String] = [:]
+        for (key, value) in env where !secretEnvKeys.contains(key) {
+            merged[key] =
+                MCPCredentials.plainOverride(MCPCredentials.plainEnvSlot(self, name: key), agentId: credentialAgentId)
+                ?? value
+        }
         for key in secretEnvKeys {
-            if let value = MCPProviderKeychain.getEnvSecret(key: key, for: id) {
+            if let value = MCPCredentials.envValue(self, name: key, agentId: credentialAgentId) {
                 merged[key] = value
-            } else {
-                // No Keychain value yet — strip the placeholder rather than
-                // forwarding it as a literal.
-                merged.removeValue(forKey: key)
             }
         }
         return merged
     }
 
-    /// Check if provider has a token stored in Keychain
-    public var hasToken: Bool {
-        MCPProviderKeychain.hasToken(for: id)
+    /// Bearer token for `credentialAgentId` (agent, then all agents).
+    public func resolvedBearerToken() -> String? {
+        MCPCredentials.tokenValue(self, agentId: credentialAgentId)
     }
 
-    /// Get token from Keychain
+    /// Whether a bearer token is available for all agents.
+    public var hasToken: Bool {
+        MCPCredentials.tokenAvailability(self) == .present
+    }
+
+    /// Bearer token saved for all agents.
     public func getToken() -> String? {
-        MCPProviderKeychain.getToken(for: id)
+        MCPCredentials.tokenValue(self, agentId: nil)
     }
 
     /// True if OAuth is configured AND tokens are present in Keychain.
@@ -414,10 +429,12 @@ public struct MCPProviderConfiguration: Codable, Sendable {
         }
     }
 
-    /// Remove a provider by ID
+    /// Remove a provider by ID. Its OAuth session is signed out; credentials
+    /// in the Keys store are kept (other consumers may share them, and an
+    /// unused key is listed on the Keys page). Legacy items are never deleted.
     public mutating func remove(id: UUID) {
-        // Clean up Keychain secrets
-        MCPProviderKeychain.deleteAllSecrets(for: id)
+        MCPProviderKeychain.deleteOAuthTokens(for: id)
+        MCPProviderKeychain.deleteOAuthClientSecret(for: id)
         providers.removeAll { $0.id == id }
     }
 

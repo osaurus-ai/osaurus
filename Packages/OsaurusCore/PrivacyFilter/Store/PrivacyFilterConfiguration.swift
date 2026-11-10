@@ -147,7 +147,7 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     public var presetRules: [String: Bool]
 
     /// ISO 3166-1 alpha-2 region codes the user considers "home", in
-    /// the order they added them. Drives the "My regions" section of
+    /// the order they added them. Drives the "My Regions" section of
     /// the Rules tab and the suggestion banner. Seeded from the Mac
     /// locale on a fresh install (`freshInstall(locale:)`) and fully
     /// user-editable afterwards; `init()` leaves it empty so tests

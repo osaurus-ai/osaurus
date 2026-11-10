@@ -3,19 +3,17 @@
 //  osaurus
 //
 //  HPKE envelope for delivering freshly minted osk-v1 access keys through
-//  untrusted transports. LAN `/pair` runs over cleartext HTTP and the relay
-//  `/pair-invite` path terminates TLS at the relay operator, so without this
-//  the long-lived credential is readable by any passive observer. The
-//  connector generates an ephemeral X25519 key pair per pairing exchange,
-//  sends the public half with its request, and the server seals the minted
-//  key to it — only the connector can open the envelope.
+//  untrusted transports, and for sealing secrets another of the user's
+//  devices sends a Mac through Sync. The relay `/pair-invite` path terminates
+//  TLS at the relay operator, so without this the long-lived credential is
+//  readable by any passive observer. The connector generates an ephemeral
+//  X25519 key pair per pairing exchange, sends the public half with its
+//  request, and the server seals the minted key to it — only the connector
+//  can open the envelope.
 //
-//  On the LAN path the connector's public key is covered by its pairing
-//  signature, so an active MITM cannot substitute their own key without also
-//  changing the connector address shown in the approval prompt. On the invite
-//  path the receiver is unauthenticated, so the envelope defeats passive
-//  capture (relay logs, TLS termination) but not a fully active relay MITM;
-//  that residual risk is documented in docs/SECURITY.md.
+//  On the invite path the receiver is unauthenticated, so the envelope
+//  defeats passive capture (relay logs, TLS termination) but not a fully
+//  active relay MITM; that residual risk is documented in docs/SECURITY.md.
 //
 
 import CryptoKit

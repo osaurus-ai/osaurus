@@ -11,8 +11,8 @@ import Foundation
 enum ModelMetadataParser {
     // MARK: - Memoization
 
-    // `parameterCount` / `quantization` are read from `ModelRowView.metadataBadges`
-    // on every SwiftUI body evaluation, for every row. Both are pure functions of an
+    // `parameterCount` / `quantization` are read while building every
+    // Local Models table row and on detail body evaluations. Both are pure functions of an
     // immutable repo ID, so the regex work is cached the first time an ID is seen and
     // returned for free thereafter. Lock-guarded because the parser is nonisolated and
     // can be reached from background discovery tasks as well as the main actor.

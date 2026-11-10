@@ -100,12 +100,17 @@ struct StorageDatabaseCatalogTests {
                 labels == [
                     "activity log",
                     "agent channels",
+                    "automation runs",
                     "chat history",
+                    "configuration history",
+                    "file history",
                     "memory",
                     "methods",
                     "router billing",
                     "scheduler",
+                    "tasks",
                     "tool index",
+                    "workflow runs",
                 ]
             )
         }

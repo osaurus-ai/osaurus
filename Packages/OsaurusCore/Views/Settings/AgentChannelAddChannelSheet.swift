@@ -16,6 +16,9 @@ struct AgentChannelAddChannelSheet: View {
     /// Badges describing which native providers are already configured, so a
     /// re-pick reads as "edit the existing connection", not a second copy.
     let nativeBadges: [AgentChannelKind: AgentChannelStatusPresentation]
+    /// Whether picking the channel adds another account of it, because its
+    /// first one is already set up.
+    var opensNewAccount: (AgentChannelKind) -> Bool = { _ in false }
     /// Called after a custom connection is created so the channel list refreshes.
     let onDidChange: () -> Void
 
@@ -27,15 +30,17 @@ struct AgentChannelAddChannelSheet: View {
         Group {
             switch selectedKind {
             case .discord:
-                DiscordSettingsView(onBack: goBack)
+                DiscordSettingsView(onBack: goBack, newAccount: opensNewAccount(.discord))
             case .slack:
-                SlackSettingsView(onBack: goBack)
+                SlackSettingsView(onBack: goBack, newAccount: opensNewAccount(.slack))
             case .telegram:
-                TelegramSettingsView(onBack: goBack)
+                TelegramSettingsView(onBack: goBack, newAccount: opensNewAccount(.telegram))
             case .imessage:
                 IMessageSettingsView(onBack: goBack)
             case .whatsapp:
                 WhatsAppSettingsView(onBack: goBack)
+            case .email:
+                EmailSettingsView(onBack: goBack, newAccount: opensNewAccount(.email))
             case .n8n:
                 N8nSettingsView(
                     connection: nil,
@@ -59,7 +64,7 @@ struct AgentChannelAddChannelSheet: View {
     /// state change must happen inside `withAnimation`: the back chevron
     /// lives deep inside the setup scaffold, and a plain assignment from its
     /// action does not reliably animate the container swap on macOS.
-    private static let swapAnimation = Animation.spring(response: 0.3, dampingFraction: 0.85)
+    @MainActor private static var swapAnimation: Animation { ThemeManager.shared.currentTheme.motion.springAnimation }
 
     private func select(_ kind: AgentChannelKind) {
         withAnimation(Self.swapAnimation) {
@@ -77,7 +82,12 @@ struct AgentChannelAddChannelSheet: View {
 
     private var picker: some View {
         VStack(spacing: 0) {
-            header
+            SettingsSheetHeader(
+                icon: "plus.bubble.fill",
+                title: "Add Channel",
+                subtitle: "Let agents read and reply where your team already talks.",
+                onClose: { dismiss() }
+            )
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
@@ -89,85 +99,39 @@ struct AgentChannelAddChannelSheet: View {
                             icon: kind.icon,
                             gradient: kind.brandGradient,
                             title: kind.displayName,
-                            subtitle: AgentChannelAddCatalog.tagline(for: kind),
-                            badge: nativeBadges[kind]
+                            subtitle: opensNewAccount(kind)
+                                ? ChannelAccounts.addAnotherTagline(kind)
+                                : AgentChannelAddCatalog.tagline(for: kind),
+                            badge: opensNewAccount(kind) ? nil : nativeBadges[kind]
                         ) {
                             select(kind)
                         }
                     }
                 }
-                .padding(24)
+                .padding(theme.settingsSheetInset)
             }
         }
-        .fittedSheetFrame(width: 560, height: 520)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .fittedSheetFrame(width: SettingsSheetWidth.regular, height: 520)
+        .settingsSheetSurface()
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(theme.primaryBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge)
+                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
         )
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: "plus.bubble.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
-            }
-            .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Add Channel", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Let agents read and reply where your team already talks.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(theme.secondaryBackground)
     }
 
     private var advancedDivider: some View {
         HStack(spacing: 8) {
             Rectangle()
-                .fill(theme.cardBorder)
+                .fill(theme.border.default)
                 .frame(height: 1)
             Text("Advanced", bundle: .module)
-                .textCase(.uppercase)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.5)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize()
             Rectangle()
-                .fill(theme.cardBorder)
+                .fill(theme.border.default)
                 .frame(height: 1)
         }
-        .padding(.top, 8)
+        .padding(.top, theme.space.s8)
     }
 }

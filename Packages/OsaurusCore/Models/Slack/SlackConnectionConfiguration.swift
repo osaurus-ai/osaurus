@@ -51,8 +51,12 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
     var botUserId: String?
     var botId: String?
     var apiAppId: String?
-    var inboundDispatch: AgentChannelInboundDispatchConfiguration
+    /// Extra workspaces from before each workspace was its own connection.
+    /// Read only by `ChannelAccountMigration`, which moves each one to its
+    /// own `slack-<team>.json`.
     var workspaceAccounts: [SlackWorkspaceAccountConfiguration]
+    /// The workspace's name, for an extra workspace's own settings file.
+    var workspaceName: String?
     /// Accept messages an allowlisted person posted through a Slack app
     /// with their own user token. Slack stamps those with the app's bot_id.
     var acceptAppPostsFromAllowlistedSenders: Bool
@@ -68,8 +72,8 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         botUserId: String? = nil,
         botId: String? = nil,
         apiAppId: String? = nil,
-        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(),
         workspaceAccounts: [SlackWorkspaceAccountConfiguration] = [],
+        workspaceName: String? = nil,
         acceptAppPostsFromAllowlistedSenders: Bool = false
     ) {
         self.configuredTeamIds = Self.normalizedIds(configuredTeamIds)
@@ -82,11 +86,11 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         self.botUserId = Self.normalizedOptionalId(botUserId)
         self.botId = Self.normalizedOptionalId(botId)
         self.apiAppId = Self.normalizedOptionalId(apiAppId)
-        self.inboundDispatch = inboundDispatch
         var seenTeams = Set<String>()
         self.workspaceAccounts = workspaceAccounts.filter {
             !$0.teamId.isEmpty && seenTeams.insert($0.teamId).inserted
         }
+        self.workspaceName = Self.normalizedOptionalId(workspaceName)
         self.acceptAppPostsFromAllowlistedSenders = acceptAppPostsFromAllowlistedSenders
     }
 
@@ -102,30 +106,22 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             botUserId: botUserId,
             botId: botId,
             apiAppId: apiAppId,
-            inboundDispatch: inboundDispatch,
             workspaceAccounts: workspaceAccounts,
+            workspaceName: workspaceName,
             acceptAppPostsFromAllowlistedSenders: acceptAppPostsFromAllowlistedSenders
         )
     }
 
     func canRead(channelId: String) -> Bool {
-        let channelId = Self.normalizedId(channelId)
-        return readableChannelIds.contains(channelId)
-            || workspaceAccounts.contains { $0.readableChannelIds.contains(channelId) }
+        readableChannelIds.contains(Self.normalizedId(channelId))
     }
 
     func canWrite(channelId: String) -> Bool {
-        let channelId = Self.normalizedId(channelId)
-        return writeEnabled
-            && (writableChannelIds.contains(channelId)
-                || workspaceAccounts.contains { $0.writableChannelIds.contains(channelId) })
+        writeEnabled && writableChannelIds.contains(Self.normalizedId(channelId))
     }
 
     func canUseTeam(teamId: String) -> Bool {
-        let normalized = Self.normalizedId(teamId)
-        return configuredTeamIds.isEmpty
-            || configuredTeamIds.contains(normalized)
-            || workspaceAccounts.contains { $0.teamId == normalized }
+        configuredTeamIds.isEmpty || configuredTeamIds.contains(Self.normalizedId(teamId))
     }
 
     func canUseSender(senderId: String?) -> Bool {
@@ -133,7 +129,6 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             return false
         }
         return senderAllowlist.contains(normalized)
-            || workspaceAccounts.contains { $0.senderAllowlist.contains(normalized) }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -147,8 +142,8 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         case botUserId
         case botId
         case apiAppId
-        case inboundDispatch
         case workspaceAccounts
+        case workspaceName
         case acceptAppPostsFromAllowlistedSenders
     }
 
@@ -168,14 +163,11 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             botUserId: try container.decodeIfPresent(String.self, forKey: .botUserId),
             botId: try container.decodeIfPresent(String.self, forKey: .botId),
             apiAppId: try container.decodeIfPresent(String.self, forKey: .apiAppId),
-            inboundDispatch: try container.decodeIfPresent(
-                AgentChannelInboundDispatchConfiguration.self,
-                forKey: .inboundDispatch
-            ) ?? AgentChannelInboundDispatchConfiguration(),
             workspaceAccounts: try container.decodeIfPresent(
                 [SlackWorkspaceAccountConfiguration].self,
                 forKey: .workspaceAccounts
             ) ?? [],
+            workspaceName: try container.decodeIfPresent(String.self, forKey: .workspaceName),
             acceptAppPostsFromAllowlistedSenders: try container.decodeIfPresent(
                 Bool.self,
                 forKey: .acceptAppPostsFromAllowlistedSenders
@@ -223,19 +215,21 @@ enum SlackConnectionConfigurationStore {
         didSet { cache.reset() }
     }
 
-    private static let fileName = "slack.json"
-
-    /// In-memory copy of the last loaded/saved configuration. See
-    /// `ConnectionConfigurationCache` (Sentry APPLE-MACOS-3C5).
+    /// In-memory copy of each workspace's last loaded/saved configuration.
+    /// See `ConnectionConfigurationCache` (Sentry APPLE-MACOS-3C5).
     private static let cache = ConnectionConfigurationCache<SlackConnectionConfiguration>()
 
-    /// Drop the in-memory copy so the next `load()` reads from disk.
+    /// Drop the in-memory copies so the next `load()` reads from disk.
     static func resetCache() {
         cache.reset()
     }
 
-    static func load() -> SlackConnectionConfiguration {
-        let url = configurationFileURL()
+    /// Each workspace has its own file: `slack.json` for the primary one,
+    /// `slack-<team>.json` for the others.
+    static func load(
+        connectionId: String = AgentChannelConnection.nativeSlackConnectionId
+    ) -> SlackConnectionConfiguration {
+        let url = configurationFileURL(connectionId: connectionId)
         return cache.value(for: url) { loadFromDisk(at: url) }
     }
 
@@ -253,21 +247,44 @@ enum SlackConnectionConfigurationStore {
         }
     }
 
-    static func save(_ configuration: SlackConnectionConfiguration) throws {
-        let url = configurationFileURL()
+    static func save(
+        _ configuration: SlackConnectionConfiguration,
+        connectionId: String = AgentChannelConnection.nativeSlackConnectionId
+    ) throws {
+        let url = configurationFileURL(connectionId: connectionId)
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let normalized = configuration.normalized
-        try encoder.encode(normalized).write(to: url, options: [.atomic])
+        let data = try encoder.encode(normalized)
+        try LegacyInboundDispatchCarryOver.platformFile(data, replacing: url).write(to: url, options: [.atomic])
         cache.store(normalized, for: url)
+        NotificationCenter.default.post(name: .channelAccountSettingsChanged, object: connectionId)
     }
 
-    static func configurationFileURL() -> URL {
-        if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent(fileName, isDirectory: false)
-        }
-        return OsaurusPaths.config().appendingPathComponent(fileName, isDirectory: false)
+    static func delete(connectionId: String) {
+        guard connectionId != AgentChannelConnection.nativeSlackConnectionId else { return }
+        let url = configurationFileURL(connectionId: connectionId)
+        try? FileManager.default.removeItem(at: url)
+        cache.remove(for: url)
+        NotificationCenter.default.post(name: .channelAccountSettingsChanged, object: connectionId)
+    }
+
+    /// The extra workspaces' connection ids, from their settings files.
+    static func accountConnectionIds() -> [String] {
+        let directory = overrideDirectory ?? OsaurusPaths.config()
+        let prefix = ChannelAccounts.extraPrefix(.slack)
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return names.filter { $0.hasPrefix(prefix) && $0.hasSuffix(".json") }
+            .map { String($0.dropLast(".json".count)) }
+            .sorted()
+    }
+
+    static func configurationFileURL(
+        connectionId: String = AgentChannelConnection.nativeSlackConnectionId
+    ) -> URL {
+        (overrideDirectory ?? OsaurusPaths.config())
+            .appendingPathComponent("\(connectionId).json", isDirectory: false)
     }
 }
 
@@ -367,41 +384,38 @@ enum SlackCredentialStore {
         saveSecretOutcome(value, id: id).isSuccess
     }
 
-    static func saveSecretOutcome(_ value: String, id: String) -> SecretSaveOutcome {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .emptyValue }
-        let outcome = ToolSecretsKeychain.saveSecretOutcome(
-            trimmed,
-            id: id,
-            for: pluginId,
-            agentId: Agent.defaultId
-        )
-        return outcome == .success ? .success : .keychainFailure(outcome)
+    static func saveSecretOutcome(_ value: String, id: String) -> CredentialWriteOutcome {
+        ChannelCredentials.save(value, slot: slot(for: id))
+    }
+
+    /// Credential slot for a Slack secret id (`bot_token`,
+    /// `app_token.workspace.<team>`, ...).
+    static func slot(for id: String) -> CredentialSlot {
+        switch id {
+        case botTokenKey: return ChannelCredentialSlots.slackBotToken
+        case signingSecretKey: return ChannelCredentialSlots.slackSigningSecret
+        case appTokenKey: return ChannelCredentialSlots.slackAppToken
+        default:
+            let parts = id.components(separatedBy: ".workspace.")
+            guard parts.count == 2 else {
+                return CredentialSlot.channel(
+                    "slack", field: id, defaultKey: CredentialKeys.prefixed("SLACK", id), consumer: "Slack")
+            }
+            return ChannelCredentialSlots.slackWorkspace(parts[0], teamId: parts[1])
+        }
     }
 
     private static func secret(id: String) -> String? {
-        ToolSecretsKeychain.getSecret(
-            id: id,
-            for: pluginId,
-            agentId: Agent.defaultId
-        )
+        ChannelCredentials.value(slot(for: id), legacyPluginId: pluginId, legacyKey: id)
     }
 
     private static func hasSecret(id: String) -> Bool {
-        ToolSecretsKeychain.hasSecret(
-            id: id,
-            for: pluginId,
-            agentId: Agent.defaultId
-        )
+        ChannelCredentials.has(slot(for: id), legacyPluginId: pluginId, legacyKey: id)
     }
 
     @discardableResult
     private static func deleteSecret(id: String) -> Bool {
-        ToolSecretsKeychain.deleteSecret(
-            id: id,
-            for: pluginId,
-            agentId: Agent.defaultId
-        )
+        ChannelCredentials.delete(slot(for: id), legacyPluginId: pluginId, legacyKey: id)
     }
 }
 
@@ -425,24 +439,24 @@ protocol SlackCredentialStorage: Sendable {
     func saveAppToken(_ token: String, teamId: String) -> Bool
     func appToken(teamId: String) -> String?
     func deleteAppToken(teamId: String) -> Bool
-    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome
-    func saveSigningSecretOutcome(_ secret: String) -> SecretSaveOutcome
-    func saveAppTokenOutcome(_ token: String) -> SecretSaveOutcome
+    func saveBotTokenOutcome(_ token: String) -> CredentialWriteOutcome
+    func saveSigningSecretOutcome(_ secret: String) -> CredentialWriteOutcome
+    func saveAppTokenOutcome(_ token: String) -> CredentialWriteOutcome
 }
 
 extension SlackCredentialStorage {
-    // Bool-only stores (test doubles) fall back to an undetailed outcome; the
-    // Keychain-backed store overrides these with the real failure reason.
-    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
-        saveBotToken(token) ? .success : .unknownFailure
+    // Bool-only stores (test doubles) report an undetailed failure; the
+    // Keychain-backed store overrides these with the real reason.
+    func saveBotTokenOutcome(_ token: String) -> CredentialWriteOutcome {
+        saveBotToken(token) ? .success : .keychainFailure("the save failed")
     }
 
-    func saveSigningSecretOutcome(_ secret: String) -> SecretSaveOutcome {
-        saveSigningSecret(secret) ? .success : .unknownFailure
+    func saveSigningSecretOutcome(_ secret: String) -> CredentialWriteOutcome {
+        saveSigningSecret(secret) ? .success : .keychainFailure("the save failed")
     }
 
-    func saveAppTokenOutcome(_ token: String) -> SecretSaveOutcome {
-        saveAppToken(token) ? .success : .unknownFailure
+    func saveAppTokenOutcome(_ token: String) -> CredentialWriteOutcome {
+        saveAppToken(token) ? .success : .keychainFailure("the save failed")
     }
     func saveBotToken(_: String, teamId _: String) -> Bool { false }
     func botToken(teamId _: String) -> String? { nil }
@@ -458,15 +472,15 @@ struct KeychainSlackCredentialStorage: SlackCredentialStorage {
         SlackCredentialStore.saveBotToken(token)
     }
 
-    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+    func saveBotTokenOutcome(_ token: String) -> CredentialWriteOutcome {
         SlackCredentialStore.saveSecretOutcome(token, id: SlackCredentialStore.botTokenKey)
     }
 
-    func saveSigningSecretOutcome(_ secret: String) -> SecretSaveOutcome {
+    func saveSigningSecretOutcome(_ secret: String) -> CredentialWriteOutcome {
         SlackCredentialStore.saveSecretOutcome(secret, id: SlackCredentialStore.signingSecretKey)
     }
 
-    func saveAppTokenOutcome(_ token: String) -> SecretSaveOutcome {
+    func saveAppTokenOutcome(_ token: String) -> CredentialWriteOutcome {
         SlackCredentialStore.saveSecretOutcome(token, id: SlackCredentialStore.appTokenKey)
     }
 
@@ -544,6 +558,25 @@ struct KeychainSlackCredentialStorage: SlackCredentialStorage {
     func deleteAppToken(teamId: String) -> Bool {
         SlackCredentialStore.deleteAppToken(teamId: teamId)
     }
+}
+
+/// An extra workspace's tokens, kept under its team id
+/// (`bot_token.workspace.<team>`). It has no signing secret.
+struct WorkspaceSlackCredentialStorage: SlackCredentialStorage {
+    let teamId: String
+
+    func saveBotToken(_ token: String) -> Bool { SlackCredentialStore.saveBotToken(token, teamId: teamId) }
+    func botToken() -> String? { SlackCredentialStore.botToken(teamId: teamId) }
+    func hasBotToken() -> Bool { SlackCredentialStore.hasBotToken(teamId: teamId) }
+    func deleteBotToken() -> Bool { SlackCredentialStore.deleteBotToken(teamId: teamId) }
+    func saveSigningSecret(_: String) -> Bool { false }
+    func signingSecret() -> String? { nil }
+    func hasSigningSecret() -> Bool { false }
+    func deleteSigningSecret() -> Bool { false }
+    func saveAppToken(_ token: String) -> Bool { SlackCredentialStore.saveAppToken(token, teamId: teamId) }
+    func appToken() -> String? { SlackCredentialStore.appToken(teamId: teamId) }
+    func hasAppToken() -> Bool { appToken() != nil }
+    func deleteAppToken() -> Bool { SlackCredentialStore.deleteAppToken(teamId: teamId) }
 }
 
 enum SlackSecurity {

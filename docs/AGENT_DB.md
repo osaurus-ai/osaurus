@@ -151,7 +151,7 @@ Every mutation appends a row to a hidden `_changelog` table. Entries carry:
 - `op` — `insert`, `update`, `soft_delete`, `restore`, `execute`, … (`AgentDatabaseOp`).
 - `table`, `row_id`, `at`, plus tool-payload metadata so an audit can reconstruct what changed and why.
 
-The `Activity` tab in the detail view surfaces these alongside `agent_runs` (the scheduler's run history) in a split pane. When a self-scheduled run wakes, [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift) seeds `ChatExecutionContext.currentRunId` / `currentRunActor` on the chat session so any `db_*` writes inside that run get stamped against the correct run row.
+The `Activity` tab in the detail view surfaces these alongside the agent's tasks (its run history, see [TASK_QUEUE.md](TASK_QUEUE.md)) in a split pane. When a background run starts, [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift) seeds `ChatExecutionContext.currentRunId` (the task id) / `currentRunActor` on the chat session so any `db_*` writes inside that run get stamped against the correct task.
 
 ---
 
@@ -170,32 +170,34 @@ The Data tab also shows a small per-agent **in-flight mutation** badge driven by
 
 > **Opt-in per agent.** Self-scheduling is gated by `Agent.settings.selfSchedulingEnabled` (default **off**), surfaced as the **Self-scheduling** toggle under Configure → Features. When off, [`SystemPromptComposer`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the `schedule_next_run` / `cancel_next_run` / `notify` tools from the model's tool list, the Scheduling mode picker and the Next Run banner are hidden, and flipping the toggle off cancels any pending slot so an orphaned run can't fire after the user opted out. This flag is **independent of the schedule mode** — the mode only sets the bounds (below), while this flag decides whether the tools exist at all.
 
-Schedules in Osaurus follow a deliberately minimal contract: **one row per agent**, in the `agent_next_run` table of `~/.osaurus/scheduler.sqlite` ([`SchedulerDatabase.swift`](../Packages/OsaurusCore/Storage/SchedulerDatabase.swift)).
+Schedules in Osaurus follow a deliberately minimal contract: **one wake per agent**, stored as a one-shot schedule automation the agent owns ([`SelfScheduleAutomations.swift`](../Packages/OsaurusCore/Services/Event/SelfScheduleAutomations.swift); details in [TASK_QUEUE.md → Self-scheduled wake-ups](TASK_QUEUE.md#self-scheduled-wake-ups)).
 
 ```
 ┌─────────────────────────┐     ┌─────────────────────────┐     ┌────────────────────┐
-│ agent calls             │ ──▶ │ NextRunScheduler        │ ──▶ │ TaskDispatcher     │
-│ schedule_next_run(...)  │     │   - clears slot         │     │   .selfSchedule    │
-└─────────────────────────┘     │   - honors pause        │     └────────────────────┘
-        ▲                       │   - applies on_miss     │              │
-        │                       └─────────────────────────┘              ▼
-        │                                                       BackgroundTaskManager
-        └────────────────────── agent must re-call ◀─────── runs the chat, stamps
-                              schedule_next_run for                agent_runs
-                              another wake
+│ agent calls             │ ──▶ │ ScheduleEventSource     │ ──▶ │ TaskScheduler      │
+│ schedule_next_run(...)  │     │   - fires the wake once │     │   admits the task  │
+└─────────────────────────┘     │   - honors pause        │     │   on its queue     │
+        ▲                       │   - applies on_miss     │     └────────────────────┘
+        │                       └─────────────────────────┘              │
+        │                                                                ▼
+        └────────────────────── agent must re-call ◀─────── AgentTurnWorker runs the
+                              schedule_next_run for          chat; the task is the
+                              another wake                   run history
 ```
 
-Writes use SQLite `ON CONFLICT` upsert — **last write wins**. The runtime [`NextRunScheduler`](../Packages/OsaurusCore/Managers/NextRunScheduler.swift) polls the table and, when a slot is due:
+Each call re-arms the same automation — **last write wins**. When the wake is due, `ScheduleEventSource`:
 
-1. Clears the row **before** dispatch (so a slow chat run can't double-fire).
-2. Checks any active `agent_pause` record.
-3. Applies the slot's `on_miss` policy if the slot fell behind while the app was asleep.
+1. Fires it once and disables the automation (so a slow chat run can't double-fire).
+2. Moves it to the end of any active `agent_pause` instead of firing.
+3. Applies the wake's `on_miss` policy if it fell behind while the app was asleep (a wake less than 5 minutes late still runs).
 
-Because the slot is cleared on wake, **wakeups are single-shot**. If an agent wants to wake again it has to call `schedule_next_run` from inside the run. This is intentional — it's how the agent expresses "keep me alive" vs. "I'm done".
+Because firing disables the wake, **wakeups are single-shot**. If an agent wants to wake again it has to call `schedule_next_run` from inside the run. This is intentional — it's how the agent expresses "keep me alive" vs. "I'm done".
 
-**Every wake runs in a fresh chat session.** The dispatcher does not reattach to the chat from a previous self-scheduled run, so the context window never accretes across wakes. Continuity is the agent's job: carry state forward through the `instructions` on the next `schedule_next_run` call and through the agent DB. The dispatched prompt carries a host-composed preamble — who scheduled the wake, when, and a pointer to the previous run's completion time/status from `agent_runs` — followed by the stored instructions verbatim (see `NextRunScheduler.composeDispatchPrompt`).
+**Every wake runs in a fresh chat session.** A wake never reattaches to the chat from a previous self-scheduled run, so the context window never accretes across wakes. Continuity is the agent's job: carry state forward through the `instructions` on the next `schedule_next_run` call and through the agent DB. The dispatched prompt carries a host-composed preamble — who scheduled the wake, when, and the previous wake's finish time and status from its task — followed by the stored instructions verbatim (see `SelfScheduleAutomations.composeDispatchPrompt`).
 
-If dispatch fails after the slot is cleared (e.g. host concurrency is saturated), the scheduler records a `cancelled` row in `agent_runs` (`dispatch-failed`) so the miss is visible in the Activity tab instead of vanishing.
+A wake that could not run (skipped, or failed to start) finishes as a task with that state, so the miss is visible in the Activity tab and in **Tasks → History** instead of vanishing.
+
+Older builds kept the slot in `agent_next_run` and the history in `agent_runs` (`~/.osaurus/scheduler.sqlite`). On launch their rows are moved over and each table is renamed to `*_legacy`, then recreated empty so a downgraded build still opens the file.
 
 Every slot carries `NextRunScheduledBy` (`.agent` / `.user` / `.system`) so the audit trail and the Next Run banner can show "scheduled by you" vs. "scheduled by the agent".
 
@@ -258,7 +260,7 @@ The Next Run banner's pause menu maps to these presets:
 | `Custom…`        | Opens a sheet for an arbitrary date/time + reason.   |
 | `Indefinitely`   | `paused_until = .distantFuture`                      |
 
-All five go through [`LocalAgentBridge.pauseAgent(_:until:reason:)`](../Packages/OsaurusCore/Services/AgentBridge/LocalAgentBridge.swift); `Resume` calls `unpauseAgent`. While a pause is active, [`NextRunScheduler`](../Packages/OsaurusCore/Managers/NextRunScheduler.swift) refuses to dispatch even if a slot is due — the slot stays in the row and fires once the pause expires (subject to its own `on_miss`).
+All five go through [`LocalAgentBridge.pauseAgent(_:until:reason:)`](../Packages/OsaurusCore/Services/AgentBridge/LocalAgentBridge.swift); `Resume` calls `unpauseAgent`. While a pause is active, a due wake does not fire — `ScheduleEventSource` moves it to the end of the pause, and it fires then.
 
 ---
 
@@ -270,7 +272,7 @@ All five DB tabs (and the scheduling chrome that sits above them) live in two fi
 
 Three branches in [`NextRunPanelView`](../Packages/OsaurusCore/Views/Agent/NextRunPanelView.swift):
 
-- **`scheduledRow`** — fires when there's a row in `agent_next_run`. Two-row layout: top row carries the relative time ("in 22h"), absolute timestamp, "by …" badge, the Pause menu, and a read-only **Mode chip**; bottom row carries `Run now` / `Edit` / `Cancel` actions.
+- **`scheduledRow`** — fires when the agent has a pending wake. Two-row layout: top row carries the relative time ("in 22h"), absolute timestamp, "by …" badge, the Pause menu, and a read-only **Mode chip**; bottom row carries `Run now` / `Edit` / `Cancel` actions.
 - **`pausedBanner`** — fires when an `agent_pause` row is active. Same two-row shape: pause icon + "Paused until X" + reason + Mode chip on top, `Resume` on the bottom.
 - **`idleBanner`** — fires when neither is set. Keeps the Pause menu and Mode chip visible so the user always has an entry point.
 
@@ -287,7 +289,7 @@ Gated behind the **Self-scheduling** toggle: the mode picker and the Next Run ba
 | `Schema`   | Read-only catalogue of every table, its columns + types, and indexes. System tables grouped separately. |
 | `Data`     | Browse + edit rows. Table dropdown + `Active` / `Deleted` / `All` filter; per-row "Open" affordance; bulk soft-delete via row checkboxes; CSV export; **Import** button + drag-and-drop file ingest (CSV/TSV/JSON/JSONL), stamped `actor = user`. |
 | `Views`    | Manage saved views. Split pane: list of view names on the left, definition + live preview on the right. Pin a view to show on `Home`. |
-| `Activity` | Split pane of `agent_runs` (left) and the selected run's `_changelog` entries (right). The audit log. |
+| `Activity` | Split pane of the agent's tasks (left) and the selected run's `_changelog` entries (right). The audit log. |
 | `Home`     | Dashboard of pinned views. The agent's "what should I look at right now?" tab.                |
 
 ---

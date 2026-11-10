@@ -99,9 +99,9 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// as `coreModelProvider`). Nil for local/Foundation models.
     public var compactionModelProvider: String?
     /// Name of the model that runs LLM context compaction (conversation
-    /// summarization when a chat outgrows the context window). Unlike the
-    /// core model there is deliberately NO chat-model fallback: when unset,
-    /// the first compaction run asks the user to pick a model.
+    /// summarization when a chat outgrows the context window). When unset,
+    /// compaction uses the chat's current model
+    /// (`ContextCompactionService.effectiveModelIdentifier`).
     public var compactionModelName: String?
 
     /// Full compaction-model identifier for routing, or nil when unset.

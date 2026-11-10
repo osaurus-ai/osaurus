@@ -1,0 +1,636 @@
+{
+  "routes" : [
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "health",
+      "json" : true,
+      "keys" : [
+        "batch_diagnostics",
+        "chat_active",
+        "current_model",
+        "distillation",
+        "hardware",
+        "http_inference_limit",
+        "http_inflight",
+        "index_failures",
+        "inflight",
+        "loaded",
+        "local_model_scan",
+        "memory_database_open",
+        "memory_enabled",
+        "mlx_last_error",
+        "open_connections",
+        "open_file_descriptors",
+        "persistence",
+        "ram_feasibility",
+        "resident_models",
+        "sandbox_status",
+        "status",
+        "timestamp"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+        "agents" : [
+          "avatar",
+          "chat_quick_actions",
+          "created_at",
+          "description",
+          "id",
+          "is_built_in",
+          "memory_entry_count",
+          "name",
+          "supports_thinking",
+          "supports_vision",
+          "updated_at"
+        ]
+      },
+      "id" : "agents.list",
+      "json" : true,
+      "keys" : [
+        "agents",
+        "features"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "bad_request",
+      "id" : "agents.create.badBody",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "agent_not_found",
+      "id" : "agents.get.unknown",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "agent_not_editable",
+      "id" : "agents.patch.unknown",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 403
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "agent_not_editable",
+      "id" : "agents.delete.unknown",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 403
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "no_custom_avatar",
+      "id" : "agents.avatar.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "agent_not_found",
+      "id" : "agents.model.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+        "tools" : [
+          "agent_enabled",
+          "blocked_by",
+          "built_in",
+          "description",
+          "enabled",
+          "name",
+          "policy",
+          "remote_safe"
+        ]
+      },
+      "id" : "agents.tools.unknown",
+      "json" : true,
+      "keys" : [
+        "tools"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "tool_not_found",
+      "id" : "agents.tool.patch.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "bad_request",
+      "id" : "agents.tools.preset.unknown",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "agent_not_found",
+      "id" : "agents.warm.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "agents.run.badBody",
+      "json" : false,
+      "keys" : [
+
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+        "models" : [
+          "available",
+          "description",
+          "edits",
+          "favorite_key",
+          "id",
+          "kind",
+          "name",
+          "provider",
+          "source",
+          "tab",
+          "tab_title",
+          "thinking",
+          "vision"
+        ]
+      },
+      "id" : "models.picker",
+      "json" : true,
+      "keys" : [
+        "favorites",
+        "models"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "bad_request",
+      "id" : "models.favorites.badBody",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "bad_request",
+      "id" : "models.options.badBody",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "sessions.list",
+      "json" : true,
+      "keys" : [
+        "sessions"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "session_not_found",
+      "id" : "sessions.get.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "session_not_found",
+      "id" : "sessions.patch.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "session_not_found",
+      "id" : "sessions.delete.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "session_not_found",
+      "id" : "sessions.truncate.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+        "context" : [
+          "id",
+          "label",
+          "tint",
+          "tokens"
+        ]
+      },
+      "id" : "sessions.context.unknown",
+      "json" : true,
+      "keys" : [
+        "context",
+        "hard_overflow",
+        "messages",
+        "near_limit",
+        "tokens"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "image_not_found",
+      "id" : "sessions.image.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "run_not_found",
+      "id" : "runs.events.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "run_not_found",
+      "id" : "runs.stop.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "projects",
+      "json" : true,
+      "keys" : [
+        "plugins",
+        "projects",
+        "workspaces"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "privacy.reviews",
+      "json" : true,
+      "keys" : [
+        "reviews"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "review_not_pending",
+      "id" : "privacy.answer.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "config.approvals",
+      "json" : true,
+      "keys" : [
+        "approvals"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "approval_not_pending",
+      "id" : "config.answer.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "computerUse.prompts",
+      "json" : true,
+      "keys" : [
+        "prompts"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "prompt_not_pending",
+      "id" : "computerUse.answer.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "invalid_prompt_id",
+      "id" : "computerUse.answer.notUUID",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "secrets.prompts",
+      "json" : true,
+      "keys" : [
+        "prompts"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "prompt_not_pending",
+      "id" : "secrets.answer.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "approvals",
+      "json" : true,
+      "keys" : [
+        "approvals"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "approval_not_pending",
+      "id" : "approvals.answer.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "bad_request",
+      "id" : "approvals.answer.typo",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "workspaces.agents",
+      "json" : true,
+      "keys" : [
+        "workspaces"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "bad_request",
+      "id" : "workspaceAgent.run.badBody",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "job_not_found",
+      "id" : "images.events.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "images.cancel.badBody",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "artifact_not_found",
+      "id" : "artifacts.unknown",
+      "json" : true,
+      "keys" : [
+        "error"
+      ],
+      "status" : 404
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "id" : "pair.hello",
+      "json" : true,
+      "keys" : [
+        "name",
+        "pairing",
+        "v"
+      ],
+      "status" : 200
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "bad_request",
+      "id" : "pair.code.empty",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "bad_request",
+      "id" : "pair.confirm.empty",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 400
+    },
+    {
+      "elementKeys" : {
+
+      },
+      "error" : "not_paired_device",
+      "id" : "pair.unpair.owner",
+      "json" : true,
+      "keys" : [
+        "error",
+        "message"
+      ],
+      "status" : 403
+    }
+  ],
+  "upstreamSHA" : "eb0e968c35657472826062d707b5e27a74ca69f9"
+}

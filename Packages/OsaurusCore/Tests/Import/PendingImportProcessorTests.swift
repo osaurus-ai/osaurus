@@ -697,4 +697,84 @@ struct PendingImportProcessorTests {
             #expect(checker.agent.skills == .value([]))
         }
     }
+
+    // MARK: - Onboarding
+
+    private func applyOnboarding(
+        _ bundleId: String, _ onboarding: BundleOnboarding? = nil, forgets: Bool = false
+    ) async throws -> ImportResult {
+        let request = ImportRequest(
+            bundleId: bundleId, bundleName: "Onboarding Probe", bundleVersion: "1.0.0", operations: [],
+            confirmHighRisk: false, onboarding: onboarding, forgetsOnboarding: forgets ? true : nil)
+        try ImportQueue.enqueue(request, bundle: nil)
+        return try #require(await processor().process(requestId: request.id))
+    }
+
+    @Test
+    func onboardingIsKeptPerBundle_anUpdateWithoutItKeepsIt_andAWholeRemoveForgetsIt() async throws {
+        try await exclusive {
+            let first = "com.example.onboarding\(UUID().uuidString.prefix(8).lowercased())"
+            let second = "com.example.onboarding\(UUID().uuidString.prefix(8).lowercased())"
+            defer {
+                var kept = ImportQueue.loadOnboarding()
+                kept[first] = nil
+                kept[second] = nil
+                try? ImportQueue.saveOnboarding(kept)
+            }
+            let keeper = BundleOnboarding(skip: true, excludeTeammates: .names(["keeper"]))
+            let applied = try await applyOnboarding(first, keeper)
+            #expect(applied.status == .applied)
+            #expect(applied.exitCode == 0)
+            #expect(ImportQueue.loadOnboarding()[first] == keeper)
+
+            _ = try await applyOnboarding(first)
+            #expect(ImportQueue.loadOnboarding()[first] == keeper, "an update that asks nothing keeps the ask")
+
+            _ = try await applyOnboarding(second, BundleOnboarding(excludeTeammates: .names(["planner"])))
+            let effective = BundleOnboardingPreferences.effective
+            #expect(effective.skip)
+            #expect(effective.excludeTeammates.excludes("keeper") && effective.excludeTeammates.excludes("planner"))
+
+            _ = try await applyOnboarding(first, forgets: true)
+            #expect(ImportQueue.loadOnboarding()[first] == nil)
+            #expect(ImportQueue.loadOnboarding()[second] == BundleOnboarding(excludeTeammates: .names(["planner"])))
+        }
+    }
+
+    @Test
+    func anOnboardedMacKeepsItsTeammates_andTheImportSaysSo() async throws {
+        try await exclusive {
+            let bundleId = "com.example.onboarding\(UUID().uuidString.prefix(8).lowercased())"
+            defer {
+                var kept = ImportQueue.loadOnboarding()
+                kept[bundleId] = nil
+                try? ImportQueue.saveOnboarding(kept)
+            }
+            let agents = [
+                Agent(name: "Files Keeper", sourceTemplateID: Teammate.keeper.templateID),
+                Agent(name: "Scout", sourceTemplateID: Teammate.scout.templateID),
+                Agent(name: "Keeper"),
+            ]
+            func request(_ onboarding: BundleOnboarding) -> ImportRequest {
+                ImportRequest(
+                    bundleId: bundleId, bundleName: nil, bundleVersion: "1.0.0", operations: [],
+                    confirmHighRisk: false, onboarding: onboarding)
+            }
+
+            let keeper = request(BundleOnboarding(skip: true, excludeTeammates: .names(["keeper"])))
+            let warnings = BundleOnboardingPreferences.apply(keeper, alreadyOnboarded: true, agents: agents)
+            #expect(
+                warnings == [
+                    "Onboarding already finished on this Mac, so skipping it has no effect.",
+                    "Files Keeper already exists on this Mac; the bundle does not remove it.",
+                ])
+
+            let all = request(BundleOnboarding(excludeTeammates: .all))
+            #expect(
+                BundleOnboardingPreferences.apply(all, alreadyOnboarded: true, agents: agents).count == 2,
+                "every existing teammate, by its own name; a user agent named Keeper is not one")
+            #expect(BundleOnboardingPreferences.apply(all, alreadyOnboarded: false, agents: agents).isEmpty)
+            #expect(ImportQueue.loadOnboarding()[bundleId] == BundleOnboarding(excludeTeammates: .all))
+        }
+    }
 }

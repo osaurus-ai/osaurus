@@ -57,6 +57,10 @@ extension ResponsesGenerationStream {
                         continuation.yield(.artifacts(artifacts))
                     } else if let tool = StreamingAgentToolHint.decode(delta) {
                         continuation.yield(.agentTool(tool))
+                    } else if let approval = StreamingOwnerApprovalHint.decode(delta) {
+                        continuation.yield(.ownerApproval(approval))
+                    } else if let spoken = StreamingParticipantMessageHint.decode(delta) {
+                        continuation.yield(.participantMessage(spoken))
                     } else if let tool = StreamingToolHint.decodeDone(delta) {
                         continuation.yield(.remoteToolCompleted(tool))
                     } else if let name = StreamingToolHint.decode(delta) {

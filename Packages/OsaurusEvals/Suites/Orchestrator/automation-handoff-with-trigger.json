@@ -1,0 +1,31 @@
+{
+  "id": "orchestrator.automation-handoff-with-trigger",
+  "domain": "orchestrator",
+  "label": "orchestrator • no matching workflow: hand off to the Architect with the trigger in the brief",
+  "query": "Every Monday at 9am, pull last week's issues from the acme/widgets GitHub repo, summarize them, and post the summary to the #eng-updates Slack channel. Set that up for me.",
+  "notes": "A recurring multi-step process with no installed workflow; the repo and channel are named so nothing is left to ask. The Orchestrator hands off to the Architect with the schedule in the brief (the Architect attaches the trigger to its save), and must not create an agent or apply an automation itself. The handoff opens an Architect chat, which the harness cancels and closes after the case, so the store must stay empty.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "architect_handoff"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load",
+        "configurator_handoff",
+        "spawn_agent"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "architect_handoff",
+          "args": {
+            "brief": "monday"
+          }
+        }
+      ],
+      "expectAutomationCount": 0,
+      "maxIterations": 6
+    }
+  }
+}

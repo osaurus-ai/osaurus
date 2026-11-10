@@ -33,6 +33,11 @@ protocol OsaurusTool: Sendable {
     /// (alphabetical). See `ToolWirePropertyOrder`.
     var parameterOrder: [String]? { get }
 
+    /// JSON schema for the envelope's `result` payload, when the tool
+    /// declares one (MCP servers may publish `outputSchema`). Workflow tool
+    /// nodes validate against it. Default nil (undeclared).
+    var outputSchema: JSONValue? { get }
+
     /// Optional string arguments where `""` is meaningful (`new_string: ""`
     /// deletes the match). Schema coercion otherwise drops empty optional
     /// strings as placeholders. Default empty.
@@ -129,6 +134,8 @@ extension OsaurusTool {
 
     /// Default: alphabetical wire order (no authored order).
     var parameterOrder: [String]? { nil }
+
+    var outputSchema: JSONValue? { nil }
 
     /// Default: every empty optional string is a droppable placeholder.
     var preservedEmptyStringArguments: Set<String> { [] }

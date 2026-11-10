@@ -60,7 +60,7 @@ enum WorkspacesIntroStage: Int, CaseIterable, Identifiable {
         case .setUp: return "Set them up once and wire them into the tools your company already uses."
         case .handOut: return "Hand them to your teams. Everyone opens Osaurus and their agent is already there, wired in."
         case .yourRules: return "Runs on your own Macs, over a private network, under rules you write."
-        case .oneBill: return "Cloud models, if you want them, from one shared credit pool."
+        case .oneBill: return "Cloud models, if you want them, from shared workspace credits."
         }
     }
 }
@@ -131,8 +131,8 @@ struct WorkspacesIntroExplainer: View {
                 .overlay { canvas }
 
             Text(stage.caption, bundle: .module)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(theme.primaryText)
+                .font(SettingsFont.cardTitle)
+                .foregroundStyle(theme.text.primary)
                 .lineSpacing(2)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -158,14 +158,7 @@ struct WorkspacesIntroExplainer: View {
         WorkspacesIntroCanvas(stage: stage, reduceMotion: reduceMotion)
             .scaleEffect(scale)
             .frame(width: contentWidth, height: canvasHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.55 : 0.7))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(theme.primaryBorder.opacity(0.35), lineWidth: 1)
-            )
+            .settingsChrome(.surface)
             .contentShape(Rectangle())
             .onTapGesture { select(stage.next) }
             .accessibilityElement(children: .ignore)
@@ -186,19 +179,22 @@ struct WorkspacesIntroExplainer: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text(verbatim: "\(candidate.rawValue + 1)")
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .foregroundStyle(selected ? Color.white : theme.secondaryText)
+                            .font(SettingsFont.chip)
+                            .foregroundStyle(selected ? theme.action.primary.default.foreground : theme.text.secondary)
                             .frame(width: 16, height: 16)
                             .background(
-                                Circle().fill(selected ? theme.accentColor : theme.secondaryText.opacity(0.18))
+                                Circle().fill(
+                                    selected
+                                        ? theme.action.primary.default.background : theme.surface.pressed
+                                )
                             )
                         Text(candidate.chipLabel, bundle: .module)
-                            .font(.system(size: 12, weight: selected ? .semibold : .medium))
-                            .foregroundStyle(selected ? theme.primaryText : theme.secondaryText)
+                            .textStyle(.caption, weight: selected ? 600 : 500)
+                            .foregroundStyle(selected ? theme.text.primary : theme.text.secondary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     }
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, theme.space.s8)
                     .frame(
                         maxWidth: .infinity,
                         minHeight: WorkspacesIntroExplainer.chipRowHeight,
@@ -206,7 +202,7 @@ struct WorkspacesIntroExplainer: View {
                     )
                     .background(
                         ZStack(alignment: .leading) {
-                            Capsule().fill(selected ? theme.accentColor.opacity(0.10) : theme.secondaryBackground)
+                            Capsule().fill(selected ? theme.surface.selected : theme.surface.subtle)
                             if selected {
                                 // Story-style fill that sweeps across the
                                 // active chip over the auto-advance interval.
@@ -216,7 +212,7 @@ struct WorkspacesIntroExplainer: View {
                                 StageChipProgress(
                                     running: !reduceMotion,
                                     duration: stage.holdDuration,
-                                    color: theme.accentColor.opacity(0.22)
+                                    color: theme.border.strong
                                 )
                                 .id(stage)
                             }
@@ -225,8 +221,8 @@ struct WorkspacesIntroExplainer: View {
                     )
                     .overlay(
                         Capsule().stroke(
-                            selected ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.3),
-                            lineWidth: 1
+                            selected ? theme.border.strong : theme.border.subtle,
+                            lineWidth: theme.stroke.default
                         )
                     )
                 }
@@ -235,7 +231,7 @@ struct WorkspacesIntroExplainer: View {
                 .pointingHandCursor()
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stage)
+        .animation(theme.motion.quick, value: stage)
     }
 
     // MARK: - Behaviour
@@ -249,7 +245,7 @@ struct WorkspacesIntroExplainer: View {
         if reduceMotion {
             stage = target
         } else {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.82)) {
+            withAnimation(theme.motion.springAnimation) {
                 stage = target
             }
         }
@@ -272,6 +268,7 @@ struct WorkspacesIntroExplainer: View {
 /// appears and sweeps to the chip's full width over `duration`, in step
 /// with the auto-advance loop. When not running it sits at full width.
 private struct StageChipProgress: View {
+    @Environment(\.theme) private var theme
     let running: Bool
     let duration: Duration
     let color: Color
@@ -288,7 +285,7 @@ private struct StageChipProgress: View {
             guard running else { return }
             let seconds = Double(duration.components.seconds)
                 + Double(duration.components.attoseconds) / 1e18
-            withAnimation(.linear(duration: seconds)) {
+            withAnimation(theme.motion.timed(duration: seconds)) {
                 fraction = 1
             }
         }
@@ -380,7 +377,7 @@ private struct WorkspacesIntroCanvas: View {
     }
 
     private var animation: Animation? {
-        reduceMotion ? nil : .spring(response: 0.6, dampingFraction: 0.82)
+        theme.motion.springAnimation
     }
 
     var body: some View {
@@ -444,14 +441,14 @@ private struct WorkspacesIntroCanvas: View {
         return VStack(spacing: 5) {
             ZStack {
                 Circle()
-                    .fill(theme.accentColor.opacity(0.16))
+                    .fill(theme.status.info.background)
                     .frame(width: 44, height: 44)
                 Circle()
-                    .stroke(theme.accentColor.opacity(0.6), lineWidth: 1.5)
+                    .stroke(theme.border.strong, lineWidth: theme.stroke.default)
                     .frame(width: 44, height: 44)
                 Image(systemName: isRules ? "checkmark.shield" : "building.2.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(theme.accentColor)
+                    .glyphSize(18, weight: .semibold)
+                    .foregroundStyle(theme.text.link)
                     .contentTransition(.symbolEffect(.replace))
             }
             Group {
@@ -461,8 +458,8 @@ private struct WorkspacesIntroCanvas: View {
                     Text(localized: "Your company")
                 }
             }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(theme.primaryText)
+            .font(SettingsFont.smallLabel)
+            .foregroundStyle(theme.text.primary)
         }
         .opacity(stage == .agents ? 0 : 1)
         .scaleEffect(stage == .agents ? 0.6 : 1)
@@ -477,13 +474,18 @@ private struct WorkspacesIntroCanvas: View {
         // the setup. The agents leave the picture only when the story
         // moves on to hardware.
         let visible = appeared && (stage == .agents || stage == .setUp || stage == .handOut)
-        return pill(label: lane.agent.label, glyph: lane.agent.glyph, width: Layout.agentWidth, tint: theme.accentColor)
-            .scaleEffect(visible ? 1 : 0.6)
-            .opacity(visible ? 1 : 0)
-            .position(agentPosition(for: lane))
-            .animation(laneStagger(for: lane), value: stage)
-            .animation(laneStagger(for: lane), value: appeared)
-            .animation(columnMove(for: lane), value: introPhase)
+        return pill(
+            label: lane.agent.label,
+            glyph: lane.agent.glyph,
+            width: Layout.agentWidth,
+            tint: theme.action.primary.default.background
+        )
+        .scaleEffect(visible ? 1 : 0.6)
+        .opacity(visible ? 1 : 0)
+        .position(agentPosition(for: lane))
+        .animation(laneStagger(for: lane), value: stage)
+        .animation(laneStagger(for: lane), value: appeared)
+        .animation(columnMove(for: lane), value: introPhase)
     }
 
     /// Stage 1 opens with the agents in a row across the middle, then they
@@ -503,7 +505,7 @@ private struct WorkspacesIntroCanvas: View {
     /// stage 1, so the regrouping reads as one quick gesture.
     private static let columnStaggerInterval: Double = 0.1
     private func columnMove(for lane: Lane) -> Animation? {
-        reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.86).delay(Double(lane.id) * Self.columnStaggerInterval)
+        theme.motion.springAnimation.delay(Double(lane.id) * Self.columnStaggerInterval)
     }
 
     private func laneStagger(for lane: Lane, extra: Double = 0) -> Animation? {
@@ -516,7 +518,10 @@ private struct WorkspacesIntroCanvas: View {
         // 2, so the team visibly inherits a working setup.
         let visible = stage == .setUp || stage == .handOut
         return pill(
-            label: lane.service.label, glyph: lane.service.glyph, width: Layout.serviceWidth, tint: theme.infoColor,
+            label: lane.service.label,
+            glyph: lane.service.glyph,
+            width: Layout.serviceWidth,
+            tint: theme.status.info.foreground,
             subtle: true
         )
         .scaleEffect(visible ? 1 : 0.7)
@@ -536,7 +541,7 @@ private struct WorkspacesIntroCanvas: View {
             label: lane.member.label,
             glyph: isDevice ? "laptopcomputer" : lane.member.glyph,
             width: Layout.memberWidth,
-            tint: isDevice ? theme.successColor : theme.accentColor,
+            tint: isDevice ? theme.status.success.foreground : theme.action.primary.default.background,
             filled: isDevice
         )
         .scaleEffect(visible ? 1 : 0.6)
@@ -557,26 +562,26 @@ private struct WorkspacesIntroCanvas: View {
     ) -> some View {
         HStack(spacing: 7) {
             Image(systemName: glyph)
-                .font(.system(size: 11, weight: .semibold))
+                .glyphSize(11, weight: .semibold)
                 .foregroundStyle(tint)
                 .frame(width: 14)
                 .contentTransition(.symbolEffect(.replace))
             Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(subtle ? theme.secondaryText : theme.primaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundStyle(subtle ? theme.text.secondary : theme.text.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, theme.space.s8)
         .frame(width: width, height: 30)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(filled ? tint.opacity(0.14) : theme.cardBackground)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(filled ? tint.opacity(0.14) : theme.surface.raised)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(subtle ? theme.primaryBorder.opacity(0.35) : tint.opacity(0.45), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .stroke(subtle ? theme.border.subtle : tint.opacity(0.45), lineWidth: theme.stroke.default)
         )
     }
 
@@ -587,15 +592,15 @@ private struct WorkspacesIntroCanvas: View {
         return VStack(spacing: 4) {
             ZStack {
                 Circle()
-                    .fill(theme.successColor.opacity(0.14))
+                    .fill(theme.status.success.background)
                     .frame(width: 34, height: 34)
                 Image(systemName: "lock.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(theme.successColor)
+                    .glyphSize(14, weight: .semibold)
+                    .foregroundStyle(theme.status.success.foreground)
             }
             Text("Private network", bundle: .module)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(theme.secondaryText)
+                .font(SettingsFont.chip)
+                .foregroundStyle(theme.text.secondary)
         }
         .scaleEffect(visible ? 1 : 0.6)
         .opacity(visible ? 1 : 0)
@@ -606,16 +611,16 @@ private struct WorkspacesIntroCanvas: View {
         let visible = stage == .yourRules
         return VStack(spacing: 4) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.warningColor.opacity(0.14))
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(theme.status.warning.background)
                     .frame(width: 40, height: 40)
                 Image(systemName: "line.3.horizontal.decrease.circle")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(theme.warningColor)
+                    .glyphSize(18, weight: .semibold)
+                    .foregroundStyle(theme.status.warning.foreground)
             }
             Text("Scrubbed", bundle: .module)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(theme.secondaryText)
+                .font(SettingsFont.chip)
+                .foregroundStyle(theme.text.secondary)
         }
         .scaleEffect(visible ? 1 : 0.6)
         .opacity(visible ? 1 : 0)
@@ -626,11 +631,11 @@ private struct WorkspacesIntroCanvas: View {
         let visible = stage == .yourRules
         return VStack(spacing: 4) {
             Image(systemName: "cloud")
-                .font(.system(size: 26, weight: .regular))
-                .foregroundStyle(theme.tertiaryText)
+                .glyphSize(26)
+                .foregroundStyle(theme.text.tertiary)
             Text("Cloud, only if you want", bundle: .module)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(theme.secondaryText)
+                .font(SettingsFont.chip)
+                .foregroundStyle(theme.text.secondary)
                 .lineLimit(1)
         }
         .scaleEffect(visible ? 1 : 0.6)
@@ -643,35 +648,33 @@ private struct WorkspacesIntroCanvas: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Image(systemName: "creditcard")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.accentColor)
+                    .glyphSize(12, weight: .semibold)
+                    .foregroundStyle(theme.text.link)
                 Text("One credit pool", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundStyle(theme.text.primary)
             }
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(theme.secondaryText.opacity(0.18))
+                    Capsule().fill(theme.surface.pressed)
                     Capsule()
-                        .fill(theme.accentColor)
+                        .fill(theme.action.primary.default.background)
                         .frame(width: visible ? proxy.size.width * 0.62 : 0)
                 }
             }
             .frame(height: 8)
             Text("One bill for the whole team, ours or your own accounts", bundle: .module)
-                .font(.system(size: 10))
-                .foregroundStyle(theme.secondaryText)
+                .font(SettingsFont.footnote)
+                .foregroundStyle(theme.text.secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(width: Layout.poolWidth, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(theme.cardBackground)
-        )
+        .settingsChrome(.surface)
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(theme.accentColor.opacity(0.45), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .stroke(theme.border.strong, lineWidth: theme.stroke.default)
         )
         .scaleEffect(visible ? 1 : 0.7)
         .opacity(visible ? 1 : 0)
@@ -682,14 +685,14 @@ private struct WorkspacesIntroCanvas: View {
         let visible = stage == .yourRules || stage == .oneBill
         return HStack(spacing: 5) {
             Image(systemName: "bolt.fill")
-                .font(.system(size: 9, weight: .bold))
+                .glyphSize(9, weight: .bold)
             Text("Local inference stays free", bundle: .module)
-                .font(.system(size: 10, weight: .semibold))
+                .font(SettingsFont.chip)
         }
-        .foregroundStyle(Color.white)
-        .padding(.horizontal, 8)
+        .foregroundStyle(theme.action.primary.default.foreground)
+        .padding(.horizontal, theme.space.s8)
         .frame(height: 20)
-        .background(Capsule().fill(theme.accentColor))
+        .background(Capsule().fill(theme.action.primary.default.background))
         .opacity(visible ? 1 : 0)
         // Sits as a header over the Macs column: the claim is about them.
         .position(x: Layout.deviceX, y: Layout.rowY(0) - 34)
@@ -714,20 +717,18 @@ private struct WorkspacesIntroCanvas: View {
         let frameLeft = Layout.agentX - Layout.agentWidth / 2 - inset
         let frameRight = stage == .agents ? Layout.agentX + Layout.agentWidth / 2 + inset : Layout.frameRightX
         return ZStack(alignment: .top) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
                 .stroke(
-                    theme.accentColor.opacity(0.45),
-                    style: StrokeStyle(lineWidth: 1.5, dash: [5, 5])
+                    theme.border.strong,
+                    style: StrokeStyle(lineWidth: theme.stroke.default, dash: [5, 5])
                 )
             Text(localized: "Workspace")
-                .font(.system(size: 10, weight: .bold))
-                .tracking(0.6)
-                .textCase(.uppercase)
-                .foregroundStyle(theme.accentColor)
-                .padding(.horizontal, 8)
+                .font(SettingsFont.compactLabel)
+                .foregroundStyle(theme.text.link)
+                .padding(.horizontal, theme.space.s8)
                 .frame(height: 18)
-                .background(Capsule().fill(theme.secondaryBackground))
-                .overlay(Capsule().stroke(theme.accentColor.opacity(0.45), lineWidth: 1))
+                .background(Capsule().fill(theme.surface.subtle))
+                .overlay(Capsule().stroke(theme.border.strong, lineWidth: theme.stroke.default))
                 .offset(y: -9)
         }
         .frame(width: frameRight - frameLeft, height: frameHeight)
@@ -757,12 +758,12 @@ private struct WorkspacesIntroCanvas: View {
                     (
                         CGPoint(x: Layout.networkX + 18, y: Layout.midY),
                         CGPoint(x: Layout.deviceX - Layout.memberWidth / 2, y: y),
-                        theme.successColor
+                        theme.status.success.foreground
                     ),
                     (
                         CGPoint(x: Layout.deviceX + Layout.memberWidth / 2, y: y),
                         CGPoint(x: Layout.gateX - 22, y: Layout.midY),
-                        theme.warningColor
+                        theme.status.warning.foreground
                     ),
                 ]
             case .oneBill:
@@ -770,7 +771,7 @@ private struct WorkspacesIntroCanvas: View {
                     (
                         CGPoint(x: Layout.deviceX + Layout.memberWidth / 2, y: y),
                         CGPoint(x: Layout.poolX - Layout.poolWidth / 2, y: Layout.midY),
-                        theme.accentColor
+                        theme.action.primary.default.background
                     )
                 ]
             }
@@ -814,17 +815,17 @@ private struct WorkspacesIntroCanvas: View {
                 SequentialPulseTrain.Leg(
                     from: CGPoint(x: Layout.ownerX + 26, y: Layout.midY),
                     to: CGPoint(x: Layout.agentX - Layout.agentWidth / 2, y: y),
-                    color: theme.accentColor
+                    color: theme.action.primary.default.background
                 ),
                 SequentialPulseTrain.Leg(
                     from: CGPoint(x: Layout.agentX + Layout.agentWidth / 2, y: y),
                     to: CGPoint(x: Layout.serviceX - Layout.serviceWidth / 2, y: y),
-                    color: theme.infoColor
+                    color: theme.status.info.foreground
                 ),
                 SequentialPulseTrain.Leg(
                     from: CGPoint(x: Layout.frameRightX, y: y),
                     to: CGPoint(x: Layout.memberX - Layout.memberWidth / 2, y: y),
-                    color: theme.accentColor
+                    color: theme.action.primary.default.background
                 ),
             ]
         }
@@ -839,12 +840,12 @@ private struct WorkspacesIntroCanvas: View {
                 SequentialPulseTrain.Leg(
                     from: CGPoint(x: Layout.ownerX + 26, y: Layout.midY),
                     to: CGPoint(x: Layout.agentX - Layout.agentWidth / 2, y: y),
-                    color: theme.accentColor
+                    color: theme.action.primary.default.background
                 ),
                 SequentialPulseTrain.Leg(
                     from: CGPoint(x: Layout.agentX + Layout.agentWidth / 2, y: y),
                     to: CGPoint(x: Layout.serviceX - Layout.serviceWidth / 2, y: y),
-                    color: theme.infoColor
+                    color: theme.status.info.foreground
                 ),
             ]
         }
@@ -857,10 +858,10 @@ private struct WorkspacesIntroCanvas: View {
     private var focusRing: some View {
         switch stage {
         case .setUp:
-            BreathingRing(color: theme.accentColor, size: 44)
+            BreathingRing(color: theme.action.primary.default.background, size: 44)
                 .position(x: Layout.ownerX, y: Layout.midY - 9)
         case .yourRules:
-            BreathingRing(color: theme.successColor, size: 34)
+            BreathingRing(color: theme.status.success.foreground, size: 34)
                 .position(x: Layout.networkX, y: Layout.midY - 8)
         case .agents, .handOut, .oneBill:
             EmptyView()
@@ -882,7 +883,7 @@ private struct WorkspacesIntroCanvas: View {
                     from: CGPoint(x: Layout.ownerX + 26, y: Layout.midY),
                     to: CGPoint(x: Layout.agentX - Layout.agentWidth / 2, y: y),
                     shown: stage == .setUp || stage == .handOut,
-                    color: theme.accentColor.opacity(0.5),
+                    color: theme.border.strong,
                     animation: .some(laneStagger(for: lane))
                 )
 
@@ -892,7 +893,7 @@ private struct WorkspacesIntroCanvas: View {
                     from: CGPoint(x: Layout.frameRightX, y: y),
                     to: CGPoint(x: Layout.memberX - Layout.memberWidth / 2, y: y),
                     shown: stage == .handOut,
-                    color: theme.accentColor.opacity(0.5),
+                    color: theme.border.strong,
                     animation: .some(laneStagger(for: lane, extra: 0.2))
                 )
 
@@ -902,7 +903,7 @@ private struct WorkspacesIntroCanvas: View {
                     from: CGPoint(x: Layout.agentX + Layout.agentWidth / 2, y: y),
                     to: CGPoint(x: Layout.serviceX - Layout.serviceWidth / 2, y: y),
                     shown: stage == .setUp || stage == .handOut,
-                    color: theme.infoColor.opacity(0.55),
+                    color: theme.status.info.foreground,
                     dashed: true,
                     animation: .some(laneStagger(for: lane))
                 )
@@ -912,14 +913,14 @@ private struct WorkspacesIntroCanvas: View {
                     from: CGPoint(x: Layout.networkX + 18, y: Layout.midY),
                     to: CGPoint(x: Layout.deviceX - Layout.memberWidth / 2, y: y),
                     shown: stage == .yourRules,
-                    color: theme.successColor.opacity(0.5),
+                    color: theme.status.success.foreground,
                     dashed: true
                 )
                 wire(
                     from: CGPoint(x: Layout.deviceX + Layout.memberWidth / 2, y: y),
                     to: CGPoint(x: Layout.gateX - 22, y: Layout.midY),
                     shown: stage == .yourRules,
-                    color: theme.warningColor.opacity(0.45),
+                    color: theme.status.warning.border,
                     dashed: true
                 )
 
@@ -928,7 +929,7 @@ private struct WorkspacesIntroCanvas: View {
                     from: CGPoint(x: Layout.deviceX + Layout.memberWidth / 2, y: y),
                     to: CGPoint(x: Layout.poolX - Layout.poolWidth / 2, y: Layout.midY),
                     shown: stage == .oneBill,
-                    color: theme.accentColor.opacity(0.45)
+                    color: theme.border.strong
                 )
             }
 
@@ -937,7 +938,7 @@ private struct WorkspacesIntroCanvas: View {
                 from: CGPoint(x: Layout.ownerX + 24, y: Layout.midY),
                 to: CGPoint(x: Layout.networkX - 18, y: Layout.midY),
                 shown: stage == .yourRules,
-                color: theme.successColor.opacity(0.5),
+                color: theme.status.success.foreground,
                 dashed: true
             )
             // Gate -> cloud (stage 3)
@@ -945,7 +946,7 @@ private struct WorkspacesIntroCanvas: View {
                 from: CGPoint(x: Layout.gateX + 22, y: Layout.midY),
                 to: CGPoint(x: Layout.cloudX - 22, y: Layout.midY),
                 shown: stage == .yourRules,
-                color: theme.tertiaryText.opacity(0.5),
+                color: theme.text.disabled,
                 dashed: true
             )
         }
@@ -963,7 +964,7 @@ private struct WorkspacesIntroCanvas: View {
             .trim(from: 0, to: shown ? 1 : 0)
             .stroke(
                 color,
-                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: dashed ? [3, 4] : [])
+                style: StrokeStyle(lineWidth: theme.stroke.default, lineCap: .round, dash: dashed ? [3, 4] : [])
             )
             .opacity(shown ? 1 : 0)
             // `nil` keeps the canvas-wide spring; a stage-1 wire passes its
@@ -976,6 +977,7 @@ private struct WorkspacesIntroCanvas: View {
 /// other, forever. Lives on its own `@State` so the loop is independent of
 /// the stage spring; the host remounts it per stage to restart.
 private struct WirePulse: View {
+    @Environment(\.theme) private var theme
     let from: CGPoint
     let to: CGPoint
     let color: Color
@@ -988,13 +990,13 @@ private struct WirePulse: View {
     var body: some View {
         Wire(from: from, to: to)
             .trim(from: max(0, head - 0.14), to: head)
-            .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+            .stroke(color, style: StrokeStyle(lineWidth: theme.stroke.focus * 1.5, lineCap: .round))
             .opacity(visible ? 1 : 0)
             .onAppear {
                 // Wait for the stage spring to settle so pulses never
                 // chase cards that are still sliding into place.
-                withAnimation(.easeIn(duration: 0.3).delay(0.55 + delay)) { visible = true }
-                withAnimation(.linear(duration: duration).delay(0.55 + delay).repeatForever(autoreverses: false)) {
+                withAnimation(theme.motion.standard.delay(0.55 + delay)) { visible = true }
+                withAnimation(theme.motion.loop(duration: duration, delay: 0.55 + delay)) {
                     head = 1.14
                 }
             }
@@ -1006,6 +1008,7 @@ private struct WirePulse: View {
 /// `repeatForever` animations so the legs can never drift out of sequence;
 /// the drawing is a pure function of elapsed time.
 private struct SequentialPulseTrain: View {
+    @Environment(\.theme) private var theme
     struct Leg {
         let from: CGPoint
         let to: CGPoint
@@ -1036,7 +1039,7 @@ private struct SequentialPulseTrain: View {
                 let leg = legs[index]
                 Wire(from: leg.from, to: leg.to)
                     .trim(from: max(0, head - tail), to: min(1, head))
-                    .stroke(leg.color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .stroke(leg.color, style: StrokeStyle(lineWidth: theme.stroke.focus * 1.5, lineCap: .round))
             }
         }
         .onAppear { start = Date() }
@@ -1045,6 +1048,7 @@ private struct SequentialPulseTrain: View {
 
 /// A ring that swells and fades from the focal node, forever.
 private struct BreathingRing: View {
+    @Environment(\.theme) private var theme
     let color: Color
     var size: CGFloat = 44
 
@@ -1052,12 +1056,12 @@ private struct BreathingRing: View {
 
     var body: some View {
         Circle()
-            .stroke(color, lineWidth: 1.5)
+            .stroke(color, lineWidth: theme.stroke.default)
             .frame(width: size, height: size)
             .scaleEffect(expanded ? 1.6 : 1)
             .opacity(expanded ? 0 : 0.7)
             .onAppear {
-                withAnimation(.easeOut(duration: 1.8).delay(0.6).repeatForever(autoreverses: false)) {
+                withAnimation(theme.motion.loop(.easeOut, duration: 1.8, delay: 0.6)) {
                     expanded = true
                 }
             }

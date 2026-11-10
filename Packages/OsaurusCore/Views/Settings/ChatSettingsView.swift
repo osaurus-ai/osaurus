@@ -2,21 +2,23 @@
 //  ChatSettingsView.swift
 //  osaurus
 //
-//  The "Conversation" sidebar tab (`ManagementTab.chat`): how chats look,
-//  stream, name themselves and behave. Everyday switches sit in the open;
-//  the power-user knobs (thinking display, compaction model, sampling, tool
-//  attempt budget) sit under a collapsed Advanced section.
+//  The "Chat" category (`ManagementTab.chat`): how the transcript reads,
+//  how the composer behaves, what chats do on their own, and which models
+//  write titles and summaries, plus a drill-in to Commands. The sampling
+//  and tool-attempt knobs sit under a collapsed Advanced section.
 //
 //  What this tab deliberately does not own:
+//  - Keep Mac Awake While Agents Run → General → Power.
 //  - The Orchestrator's persona / temperature / max tokens → Orchestrator.
 //  - Context window cap and sampling defaults → Server → Cache / Sampling.
 //  - Tool permissions (auto-allow, per-tool policies) → Tools & MCP.
 //  - Tools and memory switches → Agents / Memory.
+//  - Core Model and Compaction Model → Models → Model Defaults.
 //
 //  Persistence is scoped to the fields this view owns. Saving does a
 //  load-modify-write on `ChatConfiguration` touching only the chat-owned
-//  fields so the General tab's hotkey + core-model values — which live in
-//  the same struct — are never clobbered.
+//  fields so the hotkey and model-role values — which live in the same
+//  struct — are never clobbered.
 //
 
 import AppKit
@@ -24,7 +26,6 @@ import SwiftUI
 
 struct ChatSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var taskManager = BackgroundTaskManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -38,13 +39,6 @@ struct ChatSettingsView: View {
     /// Master switch for AI-generated follow-up questions after a completed
     /// turn. Default on (see `ChatConfiguration.generateFollowUpSuggestions`).
     @State private var tempGenerateFollowUpSuggestions: Bool = true
-    /// Model that runs LLM context compaction (summarizing older messages
-    /// when a chat outgrows its context window). Same provider/name split
-    /// as the Core Model picker; empty = the chat's current model.
-    @State private var tempCompactionModelProvider: String = ""
-    @State private var tempCompactionModelName: String = ""
-    @State private var showCompactionModelPicker = false
-    @State private var compactionModelPickerItems: [ModelPickerItem] = []
 
     // `UserDefaults`-backed switches (applied immediately, excluded from the
     // debounced save baseline).
@@ -70,10 +64,8 @@ struct ChatSettingsView: View {
     /// Turn large pastes into an attachment chip instead of composer text.
     @AppStorage(ComposerPasteCollapseSetting.defaultsKey)
     private var collapseLongPastes: Bool = ComposerPasteCollapseSetting.defaultValue
-    /// Prevent idle system sleep while agent sessions are actively running
-    /// or queued. Display sleep and explicit system sleep remain available.
-    @AppStorage(AgentRunPowerManager.keepAwakeDefaultsKey)
-    private var keepMacAwakeForAgentRuns: Bool = true
+    /// One card under the greeting of a new chat (`DiscoveryCenter`).
+    @AppStorage(DiscoveryStore.enabledKey) private var discoveryCardsEnabled: Bool = true
 
     /// Baseline of the save-relevant fields as last loaded or saved. The
     /// debounced auto-save is gated on the live form differing from this so a
@@ -87,7 +79,6 @@ struct ChatSettingsView: View {
     /// Landing anchors rendered inside the Advanced disclosure, so a search
     /// result for one of them opens the disclosure before scrolling.
     private static let advancedAnchorIds: Set<String> = [
-        "settings.chat.thinkingDisplay", "settings.chat.compactionModel",
         "settings.chat.topP", "settings.chat.toolAttempts",
     ]
 
@@ -97,22 +88,21 @@ struct ChatSettingsView: View {
         SettingsPage {
             headerView
         } content: {
-            appearanceSection
+            ManagementChildLinks(parent: .chat)
+            transcriptSection
+            composerSection
             behaviorSection
-            agentSessionsSection
+            modelsSection
             advancedSection
         }
         .environment(\.theme, themeManager.currentTheme)
         .onAppear { loadConfiguration() }
-        // Shared model catalog for the compaction-model picker (same source
-        // the General tab's Core Model picker reads).
-        .onReceive(ModelPickerItemCache.shared.$items) { options in
-            compactionModelPickerItems = options
-        }
         // Any edit to a save-relevant field reschedules the debounced save.
         .onChange(of: currentFormState) { _, _ in scheduleAutoSave() }
-        .onChange(of: keepMacAwakeForAgentRuns) { _, _ in
-            taskManager.refreshPowerAssertion()
+        // `osaurus_config` can change these while the page is open; a pending
+        // edit here still wins.
+        .onReceive(NotificationCenter.default.publisher(for: .appConfigurationChanged)) { _ in
+            if !hasUnsavedChanges { applyLoadedConfiguration(chat: ChatConfigurationStore.load()) }
         }
         // Persist a pending edit if the user leaves before the debounce fires.
         .onDisappear { flushPendingSave() }
@@ -121,18 +111,18 @@ struct ChatSettingsView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeader(
-            title: L("Conversation"),
-            subtitle: L("How chats look, stream, and behave. Model personality lives under Orchestrator.")
+        SettingsPageHeader(
+            title: "Chat",
+            subtitle: "How chats read, stream and behave"
         )
     }
 
-    // MARK: - Appearance
+    // MARK: - Transcript
 
-    private var appearanceSection: some View {
-        SettingsSection(title: "Appearance", icon: "text.bubble") {
+    private var transcriptSection: some View {
+        SettingsSection(title: "Transcript") {
             SettingsToggle(
-                title: L("Smooth Streaming"),
+                title: "Smooth Streaming",
                 description:
                     "Reveal replies at a steady, readable pace like a typewriter. Turn off to show text the instant it arrives.",
                 anchorId: "settings.chat.smoothStreaming",
@@ -140,7 +130,7 @@ struct ChatSettingsView: View {
             )
 
             SettingsToggle(
-                title: L("Group Thinking & Tool Activity"),
+                title: "Group Thinking & Tool Activity",
                 description:
                     "Collapse runs of thinking and tool steps into one expandable summary row so long agent runs don't push the conversation out of view.",
                 anchorId: "settings.chat.activityRollup",
@@ -154,54 +144,29 @@ struct ChatSettingsView: View {
             }
 
             SettingsToggle(
-                title: L("Check Spelling While Typing"),
+                title: "Expand Thinking While Streaming",
+                description:
+                    "Keep the model's reasoning open while it is thinking, then collapse it once the answer begins. Useful for watching long agent tasks.",
+                anchorId: "settings.chat.thinkingDisplay",
+                isOn: $expandThinkingWhileStreamingEnabled
+            )
+        }
+    }
+
+    // MARK: - Composer
+
+    private var composerSection: some View {
+        SettingsSection(title: "Composer") {
+            SettingsToggle(
+                title: "Check Spelling While Typing",
                 description:
                     "Underline misspelled words in the chat input and offer corrections on right-click, using your macOS language and dictionary.",
                 anchorId: "settings.chat.spellCheck",
                 isOn: $composerSpellCheckEnabled
             )
-        }
-    }
-
-    // MARK: - Behavior
-
-    private var behaviorSection: some View {
-        SettingsSection(title: "Behavior", icon: "sparkles") {
-            SettingsToggle(
-                title: L("Automatically Name Chats"),
-                description:
-                    "Give each chat a short descriptive title after its first reply. Runs in the background; manual renames always win.",
-                anchorId: "settings.chat.autoGenerateTitles",
-                isOn: $tempAutoGenerateChatTitles
-            )
 
             SettingsToggle(
-                title: L("Suggest Follow-Up Questions"),
-                description:
-                    "Offer a few next questions after each reply as tappable rows. Each agent can tailor the prompt and model in its own settings.",
-                anchorId: "settings.chat.generateFollowUps",
-                isOn: $tempGenerateFollowUpSuggestions
-            )
-
-            SettingsLinkRow(
-                title: "Core Model",
-                description: "Chat titles and follow-up questions are written by the Core Model set under General.",
-                icon: "arrow.right",
-                actionTitle: "Change"
-            ) {
-                navigateToCoreModelSetting()
-            }
-
-            SettingsToggle(
-                title: L("Clipboard Monitoring"),
-                description:
-                    "Offer text you've just copied in any app as context, and grab the current selection when you summon Osaurus.",
-                anchorId: "settings.chat.clipboard",
-                isOn: $tempEnableClipboardMonitoring
-            )
-
-            SettingsToggle(
-                title: L("Collapse Long Pastes"),
+                title: "Collapse Long Pastes",
                 description:
                     "Turn long pasted text into a compact attachment instead of filling the message box. Turn off if a dictation or automation tool needs the pasted text to stay in the field.",
                 anchorId: "settings.chat.collapseLongPastes",
@@ -209,7 +174,7 @@ struct ChatSettingsView: View {
             )
 
             SettingsToggle(
-                title: L("⌘+N Starts a New Chat in the Current Window"),
+                title: "⌘+N Starts a New Chat in the Current Window",
                 description:
                     "New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window.",
                 anchorId: "settings.chat.cmdNNewChat",
@@ -218,41 +183,76 @@ struct ChatSettingsView: View {
         }
     }
 
-    // MARK: - Agent Sessions
+    // MARK: - Behavior
 
-    private var agentSessionsSection: some View {
-        SettingsSection(title: "Agent Sessions", icon: "bolt.horizontal.circle.fill") {
+    private var behaviorSection: some View {
+        SettingsSection(title: "Behavior") {
             SettingsToggle(
-                title: L("Keep Mac Awake While Agents Run"),
+                title: "Automatically Name Chats",
                 description:
-                    "Prevent idle sleep while agents are running or queued so long tasks can finish. The display may still sleep; closing the lid or choosing Sleep always wins.",
-                anchorId: "settings.chat.keepAwakeForAgentRuns",
-                isOn: $keepMacAwakeForAgentRuns
+                    "Give each chat a short descriptive title after its first reply. Runs in the background; manual renames always win.",
+                anchorId: "settings.chat.autoGenerateTitles",
+                isOn: $tempAutoGenerateChatTitles
             )
 
-            if keepMacAwakeForAgentRuns {
-                HStack(spacing: 9) {
-                    Image(
-                        systemName: taskManager.isPreventingIdleSystemSleep
-                            ? "bolt.fill"
-                            : "moon.stars.fill"
-                    )
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(
-                        taskManager.isPreventingIdleSystemSleep
-                            ? Color.accentColor
-                            : theme.tertiaryText
-                    )
+            SettingsToggle(
+                title: "Suggest Follow-Up Questions",
+                description:
+                    "Offer a few next questions after each reply as tappable rows. Each agent can tailor the prompt and model in its own settings.",
+                anchorId: "settings.chat.generateFollowUps",
+                isOn: $tempGenerateFollowUpSuggestions
+            )
 
-                    Text(
-                        taskManager.isPreventingIdleSystemSleep
-                            ? L("Keeping this Mac awake while agents work")
-                            : L("Ready — activates automatically with the next agent run")
-                    )
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            SettingsToggle(
+                title: "Clipboard Monitoring",
+                description:
+                    "Offer text you've just copied in any app as context, and grab the current selection when you summon Osaurus.",
+                anchorId: "settings.chat.clipboard",
+                isOn: $tempEnableClipboardMonitoring
+            )
+
+            SettingsToggle(
+                title: "Show Discovery Cards",
+                description:
+                    "Offer one thing you have not tried yet, and what is left to set up, under the greeting of a new chat. At most one new card a day.",
+                anchorId: "settings.chat.discoveryCards",
+                isOn: $discoveryCardsEnabled
+            )
+            .onChange(of: discoveryCardsEnabled) { _, enabled in
+                FeatureTelemetry.discoveryToggled(enabled: enabled)
+            }
+
+            SettingsLinkRow(
+                title: "Set Up Osaurus",
+                description: "Open a chat that lists what is left to set up.",
+                icon: "arrow.right",
+                anchorId: "settings.chat.setUpOsaurus"
+            ) {
+                DiscoveryCenter.shared.openSetUp(from: .settings)
+            }
+        }
+    }
+
+    // MARK: - Models
+
+    private var modelsSection: some View {
+        SettingsSection(title: "Models") {
+            SettingsLinkRow(
+                title: "Core Model",
+                description: "Writes chat titles and follow-up questions. Set in Model Defaults.",
+                icon: "arrow.right",
+                actionTitle: "Change"
+            ) {
+                navigateToModelDefault("settings.general.coreModel")
+            }
+
+            SettingsLinkRow(
+                title: "Compaction Model",
+                description: "Summarizes older messages near the context limit. Set in Model Defaults.",
+                icon: "arrow.right",
+                actionTitle: "Change"
+            ) {
+                navigateToModelDefault("settings.chat.compactionModel")
             }
         }
     }
@@ -261,36 +261,7 @@ struct ChatSettingsView: View {
 
     private var advancedSection: some View {
         SettingsAdvancedDisclosure(anchorIds: Self.advancedAnchorIds) {
-            SettingsToggle(
-                title: L("Expand Thinking While Streaming"),
-                description:
-                    "Keep the model's reasoning open while it is thinking, then collapse it once the answer begins. Useful for watching long agent tasks.",
-                anchorId: "settings.chat.thinkingDisplay",
-                isOn: $expandThinkingWhileStreamingEnabled
-            )
-
-            SettingsSubsection(label: "Compaction Model", anchorId: "settings.chat.compactionModel") {
-                VStack(alignment: .leading, spacing: 8) {
-                    compactionModelPicker
-                    Text(
-                        "Model used to summarize older messages when a chat outgrows its context window. Runs automatically near the limit and on demand from the context budget popover. Compaction requests Thinking Off when supported, without changing chat or agent settings. Remote models pass through your Privacy Filter. If unset, the chat's current model summarizes.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            SettingsLinkRow(
-                title: "Context Window Cap",
-                description: "Lower every model's chat window. Lives under Server → Cache so there is one editor.",
-                icon: "arrow.right",
-                actionTitle: "Open"
-            ) {
-                navigateToContextWindowCap()
-            }
-            SettingsSliderField(
+            SettingsSliderRow(
                 label: "Top P Override",
                 help: "Sampling diversity (0–1). Applies to chat only; the API uses Server → Sampling Defaults.",
                 text: $tempChatTopP,
@@ -300,7 +271,7 @@ struct ChatSettingsView: View {
                 formatString: "%.2f",
                 anchorId: "settings.chat.topP"
             )
-            SettingsStepperField(
+            SettingsStepperRow(
                 label: "Max Tool Attempts",
                 help: "Maximum consecutive tool calls per turn before the agent must answer.",
                 text: $tempChatMaxToolAttempts,
@@ -309,15 +280,23 @@ struct ChatSettingsView: View {
                 defaultValue: 15,
                 anchorId: "settings.chat.toolAttempts"
             )
+            SettingsLinkRow(
+                title: "Context Window Cap",
+                description: "Lower every model's chat window. Lives under Server → Cache so there is one editor.",
+                icon: "arrow.right",
+                actionTitle: "Open"
+            ) {
+                navigateToContextWindowCap()
+            }
         }
     }
 
     // MARK: - Navigation
 
-    /// Deep-links to the Core Model picker in the General settings tab.
-    private func navigateToCoreModelSetting() {
-        SettingsHighlightCoordinator.shared.request("settings.general.coreModel")
-        ManagementStateManager.shared.selectedTab = .settings
+    /// Deep-links to a model-role picker on Model Defaults.
+    private func navigateToModelDefault(_ anchorId: String) {
+        SettingsHighlightCoordinator.shared.request(anchorId)
+        ManagementStateManager.shared.selectedTab = .modelDefaults
     }
 
     /// The writable context cap lives on Server → Cache. Conversation only
@@ -326,116 +305,6 @@ struct ChatSettingsView: View {
         ManagementStateManager.shared.serverSectionRequest = "cache"
         SettingsHighlightCoordinator.shared.request("settings.chat.contextLength")
         ManagementStateManager.shared.selectedTab = .server
-    }
-
-    // MARK: - Compaction Model Picker
-
-    private var compactionModelIdentifierBinding: Binding<String> {
-        Binding(
-            get: {
-                if tempCompactionModelName.isEmpty { return "" }
-                return tempCompactionModelProvider.isEmpty
-                    ? tempCompactionModelName
-                    : "\(tempCompactionModelProvider)/\(tempCompactionModelName)"
-            },
-            set: { newValue in
-                if newValue.isEmpty {
-                    tempCompactionModelProvider = ""
-                    tempCompactionModelName = ""
-                    return
-                }
-                let parts = newValue.split(separator: "/", maxSplits: 1)
-                if parts.count == 2 {
-                    tempCompactionModelProvider = String(parts[0])
-                    tempCompactionModelName = String(parts[1])
-                } else {
-                    tempCompactionModelProvider = ""
-                    tempCompactionModelName = newValue
-                }
-            }
-        )
-    }
-
-    private var compactionModelSelectionBinding: Binding<String?> {
-        Binding(
-            get: {
-                let id = compactionModelIdentifierBinding.wrappedValue
-                return id.isEmpty ? nil : id
-            },
-            set: { compactionModelIdentifierBinding.wrappedValue = $0 ?? "" }
-        )
-    }
-
-    /// Same trigger + rich `ModelPickerView` popover as the General tab's
-    /// Core Model picker, with "unset" meaning "summarize with the chat's
-    /// current model" (see `ContextCompactionService.effectiveModelIdentifier`).
-    private var compactionModelPicker: some View {
-        let currentId = compactionModelIdentifierBinding.wrappedValue
-        let currentItem = compactionModelPickerItems.first { $0.id == currentId }
-        return HStack(spacing: 8) {
-            Button {
-                showCompactionModelPicker.toggle()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.down.right.and.arrow.up.left")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(currentId.isEmpty ? theme.tertiaryText : theme.accentColor)
-                    if currentId.isEmpty {
-                        Text("Use the current chat model (default)", bundle: .module)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.placeholderText)
-                    } else if let currentItem {
-                        Text(currentItem.displayName)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-                    } else {
-                        // Persisted-but-uninstalled values (e.g. a disconnected
-                        // remote model) keep an "(unavailable)" hint so the row
-                        // isn't an orphan.
-                        Text("\(currentId) (unavailable)", bundle: .module)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .popover(isPresented: $showCompactionModelPicker, arrowEdge: .bottom) {
-                ModelPickerView(
-                    options: compactionModelPickerItems,
-                    selectedModel: compactionModelSelectionBinding,
-                    agentId: nil,
-                    onDismiss: { showCompactionModelPicker = false }
-                )
-            }
-
-            if !currentId.isEmpty {
-                Button {
-                    compactionModelIdentifierBinding.wrappedValue = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
-                .localizedHelp("Use the current chat model (default)")
-            }
-        }
-        .frame(maxWidth: 320)
     }
 
     // MARK: - Configuration Loading
@@ -454,8 +323,6 @@ struct ChatSettingsView: View {
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
         tempAutoGenerateChatTitles = chat.autoGenerateChatTitles
         tempGenerateFollowUpSuggestions = chat.generateFollowUpSuggestions
-        tempCompactionModelProvider = chat.compactionModelProvider ?? ""
-        tempCompactionModelName = chat.compactionModelName ?? ""
 
         // Capture the pristine baseline so the auto-save stays idle until the
         // user actually edits something.
@@ -471,8 +338,6 @@ struct ChatSettingsView: View {
         var enableClipboardMonitoring: Bool
         var autoGenerateChatTitles: Bool
         var generateFollowUpSuggestions: Bool
-        var compactionModelProvider: String
-        var compactionModelName: String
     }
 
     private var currentFormState: SaveableFormState {
@@ -481,9 +346,7 @@ struct ChatSettingsView: View {
             maxToolAttempts: tempChatMaxToolAttempts,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             autoGenerateChatTitles: tempAutoGenerateChatTitles,
-            generateFollowUpSuggestions: tempGenerateFollowUpSuggestions,
-            compactionModelProvider: tempCompactionModelProvider,
-            compactionModelName: tempCompactionModelName
+            generateFollowUpSuggestions: tempGenerateFollowUpSuggestions
         )
     }
 
@@ -526,7 +389,7 @@ struct ChatSettingsView: View {
         }()
 
         // Load-modify-write: only touch the fields this tab owns so the
-        // General tab's hotkey + core-model values in the same struct survive.
+        // hotkey and model-role values in the same struct survive.
         // `systemPrompt` / `temperature` / `maxTokens` belong to
         // `DefaultAgentConfiguration`; keep their canonical empty values. The
         // retired `warmModelsOnLoad` and the Server-owned context fallback are
@@ -540,10 +403,6 @@ struct ChatSettingsView: View {
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring
         chatCfg.autoGenerateChatTitles = tempAutoGenerateChatTitles
         chatCfg.generateFollowUpSuggestions = tempGenerateFollowUpSuggestions
-        chatCfg.compactionModelProvider =
-            tempCompactionModelProvider.isEmpty ? nil : tempCompactionModelProvider
-        chatCfg.compactionModelName =
-            tempCompactionModelName.isEmpty ? nil : tempCompactionModelName
         ChatConfigurationStore.save(chatCfg)
 
         // Re-baseline so the dirty check clears now that the live form matches

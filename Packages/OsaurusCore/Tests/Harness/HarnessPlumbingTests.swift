@@ -351,3 +351,21 @@ struct HarnessRuntimeProbeTests {
         #expect(result.resolvedExecutable == script.path)
     }
 }
+
+@Suite("Harness chat text")
+struct HarnessChatTextTests {
+
+    /// Seen live: "…(plain code, no model).The code step crashed…" once the
+    /// tool calls between the two sentences moved into their own group.
+    @Test func textAfterAToolStartsANewParagraph() {
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: "Plan: count it.") == "\n\n")
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: "A list:\n") == "\n")
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: "Done.\n\n") == "")
+    }
+
+    @Test func streamedTextAndAnOpeningToolAddNothing() {
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: false, content: "Plan: count") == "")
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: "") == "")
+        #expect(ChatSession.harnessTextLead(resumingAfterTool: true, content: " \n") == "")
+    }
+}
