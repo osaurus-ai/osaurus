@@ -10,9 +10,9 @@ The mental model is simple: a smart secretary that knows what you've discussed a
 
 ## Getting Started
 
-1. Open the Management window (`⌘ Shift M`) → **Memory**
+1. Open Settings… (`⌘,`) → **Memory**
 2. Memory is **enabled by default** — toggle it off in the Memory settings if you prefer stateless conversations
-3. The **core model** for distillation defaults to `foundation` (Apple's on-device Language Model on macOS 26+) — change it in Settings → General if you'd rather use a remote model like `anthropic/claude-haiku-4-5`
+3. The **core model** for distillation defaults to `foundation` (Apple's on-device Language Model on macOS 26+) — change it in Settings → Models → Model Defaults → **Core Model** if you'd rather use a remote model like `anthropic/claude-haiku-4-5`
 4. Start chatting — sessions are distilled in the background once they end
 
 No manual tagging, saving, or annotation is required.
@@ -165,7 +165,7 @@ Consolidation never runs on the request path, so chat latency is unaffected.
 
 ## Configuration Reference
 
-The full configuration lives in `~/.osaurus/config/memory.json` and is editable from the Memory tab in the Management window.
+The full configuration lives in `~/.osaurus/config/memory.json` and is editable from Settings… (`⌘,`) → Memory.
 
 | Setting | Default | Range | Description |
 |---|---|---|---|
@@ -186,7 +186,7 @@ That's the entire surface. v1's 18 knobs (`mmrLambda`, `mmrFetchMultiplier`, `ve
 
 ## Storage
 
-All memory data is stored in a local SQLite database with WAL mode. As of 0.21.0 the database is **plaintext SQLite by default** (relying on macOS FileVault for at-rest protection), with **opt-in SQLCipher encryption** available in **Settings… (⌘,) → General → Advanced → Data & Storage** — the same posture chat history, methods, and tool indexes share. The earlier always-on encryption was walked back because a missing Keychain key could silently brick memory and search; see [STORAGE.md → Why encryption is opt-in](STORAGE.md#why-encryption-is-opt-in).
+All memory data is stored in a local SQLite database with WAL mode. As of 0.21.0 the database is **plaintext SQLite by default** (relying on macOS FileVault for at-rest protection), with **opt-in SQLCipher encryption** available in **Settings… (⌘,) → Privacy & Security → Data & Storage** — the same posture chat history, methods, and tool indexes share. The earlier always-on encryption was walked back because a missing Keychain key could silently brick memory and search; see [STORAGE.md → Why encryption is opt-in](STORAGE.md#why-encryption-is-opt-in).
 
 **Location:** `~/.osaurus/memory/memory.sqlite` (plaintext SQLite, or SQLCipher when encryption is opted in)
 
@@ -301,7 +301,7 @@ The v1 scopes `working`, `summaries`, `all`, and `graph` are gone — `working` 
 
 ### Memory View
 
-Open the Management window (`⌘ Shift M`) → **Memory** to see:
+Open Settings… (`⌘,`) → **Memory** to see:
 
 - Your **identity** (auto-derived content + manual overrides)
 - **Pinned facts** with salience bars and use counts

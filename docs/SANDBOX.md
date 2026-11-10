@@ -74,7 +74,7 @@ Most people never open the Sandbox page. The first custom-agent chat that needs 
 
 ### 2. Or Set It Up Ahead of Time
 
-Open the Management window (`⌘ Shift M`) → **Developer Tools** → **Sandbox** and click **Set Up Sandbox** to download the Linux kernel and initial filesystem, then boot the sandbox. This is a one-time setup that takes about a minute. If you leave setup deferred, the first custom-agent chat that needs sandbox execution receives the transient `sandbox_init_pending` tool. Calling it waits for provisioning and, on success, adds the real sandbox schemas to the next model step in that same run. A startup failure returns an actionable `unavailable` envelope instead of requiring a blind retry.
+Open Settings… (`⌘,`) → **Developer Tools** → **Sandbox** and click **Set Up Sandbox** to download the Linux kernel and initial filesystem, then boot the sandbox. This is a one-time setup that takes about a minute. If you leave setup deferred, the first custom-agent chat that needs sandbox execution receives the transient `sandbox_init_pending` tool. Calling it waits for provisioning and, on success, adds the real sandbox schemas to the next model step in that same run. A startup failure returns an actionable `unavailable` envelope instead of requiring a blind retry.
 
 ### 3. Start Using Sandbox Tools
 
@@ -82,14 +82,14 @@ Once the container is running, sandbox tools are registered as one canonical pro
 
 ### 4. Sandbox Plugins (Optional)
 
-With **Plugin Creation** on (Agents → the agent → Sandbox), an agent can write JSON tool recipes and register them with `sandbox_plugin_register`; their tools then appear read-only in **Tools** → **All Tools**. For native dylib plugins (full host API access), use **Tools** → **Plugins** and see [`docs/plugins/README.md`](plugins/README.md).
+With **Plugin Creation** on (Agents → the agent → Sandbox), an agent can write JSON tool recipes and register them with `sandbox_plugin_register`; their tools then appear read-only in **Tools & MCP** → **All Tools**. For native dylib plugins (full host API access), use **Tools & MCP** → **Plugins** and see [`docs/plugins/README.md`](plugins/README.md).
 
 ---
 
 ## Provisioning Preflight
 
 Before provisioning, or when a sandbox setup looks unhealthy, open the
-Management window (`⌘ Shift M`) → **Developer Tools** → **Sandbox** →
+Settings… (`⌘,`) → **Developer Tools** → **Sandbox** →
 **Troubleshooting** and use **Provisioning Preflight**. The report inspects the resolved Osaurus root, config directory
 and `sandbox.json`, cache directory, temporary directory, container workspace,
 agent/shared workspace roots, kernel/initfs assets, the rootfs template or an
@@ -165,7 +165,7 @@ swift test --package-path Packages/OsaurusCore --filter SandboxProvisioningDiagn
 
 ## Configuration
 
-Configure the container via the Management window → **Sandbox** → **Container** tab → **Resources** section.
+Configure the container in Settings… (`⌘,`) → **Developer Tools** → **Sandbox** → **Settings**.
 
 | Setting | Range | Default | Description |
 |---------|-------|---------|-------------|
@@ -485,18 +485,16 @@ Plugins are installed per agent. Each agent can have a different set of plugins 
 3. Create the agent's Linux user
 4. Install system dependencies via `apk`
 5. Create plugin directory and seed files via VirtioFS
-6. Configure secrets from Keys (`PluginCredentials`; see [CREDENTIALS.md](CREDENTIALS.md))
+6. Configure secrets from the Vault (`PluginCredentials`; see [CREDENTIALS.md](CREDENTIALS.md))
 7. Run the setup command
 8. Register plugin tools
 
 **Managing plugins:**
 
-- Open Settings → **Tools** → **Custom**
-- **Import** plugins from JSON files, URLs, or GitHub repos
-- **Create** new plugins with the built-in editor
-- **Export** and **duplicate** plugins for sharing
+- Agents create recipes with `sandbox_plugin_register` while **Plugin Creation** is on (Agents → the agent → Sandbox); see [Sandbox Plugins (Optional)](#4-sandbox-plugins-optional) above.
+- Registered recipes appear read-only under **Custom** in Settings → **Tools & MCP** → **All Tools**. There is no in-app recipe editor, importer, or exporter.
 
-Saving or importing a custom tool publishes its schemas immediately, and app
+Saving a custom tool publishes its schemas immediately, and app
 startup republishes every recipe in the library. The recipe is installed into
 an agent's isolated workspace on that agent's first invocation; no separate
 manual install step is required.
@@ -519,7 +517,7 @@ The `run` field is a shell command executed as the agent's Linux user with the w
 
 ## Secret Management
 
-Agents can check for and store secrets (API keys, tokens) using `sandbox_secret_check` and `sandbox_secret_set`. Values are saved in Keys (General → Keys, [CREDENTIALS.md](CREDENTIALS.md)) as the agent's own keys. The sandbox environment is every global key marked **Agents Can Use This When Running Code**, overlaid by the agent's own keys, so an agent's value replaces the shared one.
+Agents can check for and store secrets (API keys, tokens) using `sandbox_secret_check` and `sandbox_secret_set`. Values are saved in the Vault (General → Vault, [CREDENTIALS.md](CREDENTIALS.md)) as the agent's own keys. The sandbox environment is every global key marked **Agents Can Use This When Running Code**, overlaid by the agent's own keys, so an agent's value replaces the shared one.
 
 ### Two Storage Paths
 
@@ -592,7 +590,7 @@ The shared pipeline rejects a registration up-front (no library state is written
 - File paths fail `SandboxPathSanitizer.validatePluginFiles`
 - The `setup` command references a host outside `SandboxNetworkPolicy.setupAllowlist`
 - Any tool's `run` command references a host outside the same allowlist
-- A declared `secrets` entry has no value in Keys for the requesting agent (its own value or the one shared by all agents)
+- A declared `secrets` entry has no value in the Vault for the requesting agent (its own value or the one shared by all agents)
 - The agent exceeds `SandboxRateLimiter` quota for `service: "http"`
 - The sandbox container is not running (`unavailable` → HTTP 503)
 
