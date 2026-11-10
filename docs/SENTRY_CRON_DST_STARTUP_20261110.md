@@ -198,3 +198,85 @@ unchanged file bytes; they are retained rather than rerun or discarded.
 The new1.0 branch has the same original broken CronParser bytes, but its new
 consumer paths require separate qualification. No1.0 readiness or live-user
 upgrade/downgrade claim is made here; teammate release work stays untouched.
+
+
+## Fresh Classic integration qualification
+
+Classic source045be813e5ad2275d90716e07aa8fb047974a0f8 passed a new build-for-
+testing and isolated Release against unchanged clean official SDK1bcd74ad and
+Aptabasea552675. The actual59selected existing suites reported728declarations:
+724passed,4existing network opt-in skips,0failed. All19calendar argument rows
+and all6Schedule-folder suites passed. Three D3/image-owner suites added only
+to later main do not exist on Classic and were explicitly excluded, rather
+than reported as having run. Original315oracle and failed baseline evidence
+remain tied to their unchanged exact parser bytes.
+
+Actual XCTestPID93337 loaded the fresh Classic test binary with all6private
+flags. The observer also saw xcodebuild opening that file read-only and its
+post-test all-process flag assertion failed. Original receipts/assertion are
+retained. Original xcresult diagnostics identify93337as the actual runner;
+its observed flags and executable txt mapping all pass. This is a corrected
+process-role classification, not a waived child flag or test rerun. A copied
+launcher path error occurred before any test launch and is retained separately.
+
+The fresh private Classic app(binary SHA256
+5af40f8225f1bb93642ac694594d35909be168ff87215fda4d21a813cbd48d38)
+ran as PIDs98551and356with all6private flags verified. The initial fixture
+bytes exactly match the original failing5357743d07cf...fixture. Startup,
+Settings/Schedules Refresh, edit09to10/Save, restore09/Save, pause/Save and
+resume/Save all completed. Normal quit and relaunch retained enabled09:00,
+unchanged execution anchor and nextNov7,2027at09:00PST. Both samplers exited0;
+no schedule task was due or executed. All new native/profile/cache snapshots
+and original artifacts are retained.
+
+After restart the actual picker selected installed Gemma4E2B QAT MXFP4 with
+inherited ThinkingOff and no generation override. Two real get_current_time
+calls used exact UTC arguments and returned distinct correct visible times;
+a grounded UTC follow-up completed between them. All3user turns settled,
+Stop disappeared and input unlocked. Five model passes decoded at115.6,114.2,
+111.6,111.7and110.3tokens/s. Twelve actual inference rows, including7Foundation
+auxiliaries, all report200and rates; Activity end-to-end rates are retained
+separately from SDK decode rates. No protocol markers or length-stop pass.
+
+Disk restores were1797/2093,2145/2372and2372/2771tokens. Two other prefills
+started at0/2031and0/2709; these are not represented as cache hits. Final
+counters prefixHits0/prefixMisses0/diskL2Hits3/diskL2Misses18/diskL2Stores13.
+Paged RAM KV stays off. No TurboQuant layer topology is inferred. All12model
+file identities/config hashes match the preceding retained snapshot.
+
+Saved agent advanced settings and both harness/server-runtime JSON files are
+byte-identical before/after the conversation. Selecting a local model does
+intentionally save the agent's defaultModel and updatedAt: ChatView.swift
+1226-1275and AgentManager.swift1901-1921explicitly implement this contract.
+The observed Qwen-to-Gemma defaultModel change is retained; an initial helper
+assertion expecting that field unchanged was incorrect, and the exact intended
+two-field delta was verified instead. This does not prove session-only
+reasoning/MTP ownership, whose separate draft remains unqualified.
+
+Peak physical footprint5,343,138,736bytes exceeds4,002,479,278weight bytes:
+RAMFAIL. No low-RAM, best-speed, all-family or physicalM1/M2/M3 claim. Earlier
+long-ledger accuracy failures were not rerun or hidden after this integration.
+Their cause remains unassigned. The fresh private package disables telemetry,
+updates and URL-scheme registration; no normal profile or installation was
+changed. Keychain-free proof omits credential/network-plugin/sandbox startup.
+
+Only this documentation follows tested045be813. Non-document tree equality
+and final-head full normalCI/compiled-source/unfiltered-plan/terminal-log/merge-
+tree checks remain required. Original mainPR3370stays draft and its obsolete
+pre1.0CI was explicitly canceled, never counted as passing. Normal cancellation
+left its always-job queued; after a bounded400second wait only that exact own
+run was force-canceled under GitHub's documented endpoint. Every produced
+artifact and the complete log archive are retained. No teammate or release
+run was canceled; the new Classic fullCI gate is unchanged.
+
+SOURCE EVIDENCE: private startup-m1-20261110/classic-integration1/
+components-build1/RESULT.json, native-build1/RESULT.json,
+COMPONENT-SELECTION1.json, components1/QUALIFICATION1.json and
+components1/CRON-ALL19-ARGUMENT-ROWS1.json.
+
+LIVE EVIDENCE: same root/native-classic1/NATIVE-CLASSIC-QUALIFICATION1.json,
+FIRST-LAUNCH-CONTROLS-QUALIFICATION1.json, captures00-11, actualLAUNCH1/2and
+normal-exit receipts, both frozen profiles, full actual Activity payloads,
+current-PID prefill trace, resource samples and bundle identity readbacks.
+Original obsoleteCI retention: parent/original-pr3370-ci-retirement1/
+FINAL-RETENTION1.json. No evidence discarded or red result promoted to green.
