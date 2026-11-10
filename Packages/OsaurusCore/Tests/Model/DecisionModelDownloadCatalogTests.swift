@@ -53,28 +53,21 @@ struct DecisionModelDownloadCatalogTests {
         ))
     }
 
-    @Test func hubCompatibilityCarriesTheDecisionTaskOnlyWithDeclaredArtifacts() async throws {
+    @Test @MainActor func orgMetadataProducesDecisionCardsWithoutChangingTheirBackbone() throws {
         let object: [String: Any] = [
-            "id": "OsaurusAI/choice-fixture", "private": false,
-            "pipeline_tag": "zero-shot-classification", "tags": ["mlx", "decision-model"],
+            "id": "OsaurusAI/d3-flash-JANGH2",
+            "pipeline_tag": "zero-shot-classification",
+            "tags": ["mlx", "qwen3_5", "vision", "decision-model"],
             "siblings": artifacts.map { ["rfilename": $0] },
         ]
-        let meta = try JSONDecoder().decode(
-            HuggingFaceService.ModelMeta.self, from: JSONSerialization.data(withJSONObject: object)
-        )
-        let result = await HuggingFaceService().evaluateMLXCompatibility(repoId: meta.id, meta: meta)
-        #expect(result.isCompatible)
-        #expect(result.isDecision)
-        #expect(!result.isPrivate)
-
-        var missing = object
-        missing.removeValue(forKey: "pipeline_tag")
-        let legacyMeta = try JSONDecoder().decode(
-            HuggingFaceService.ModelMeta.self, from: JSONSerialization.data(withJSONObject: missing)
-        )
-        let legacy = await HuggingFaceService().evaluateMLXCompatibility(repoId: legacyMeta.id, meta: legacyMeta)
-        #expect(legacy.isCompatible)
-        #expect(!legacy.isDecision)
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let metadata = try JSONDecoder().decode(ModelManager.HFModel.self, from: data)
+        let model = ModelManager.makeAutoFetchedModel(from: metadata)
+        #expect(model.id == "OsaurusAI/d3-flash-JANGH2")
+        #expect(model.modelType == "qwen3_5")
+        #expect(model.isDecision)
+        #expect(model.useCase == nil)
+        #expect(!ModelPickerItem.fromMLXModel(model).isLikelyChatCapable)
     }
 
     @Test @MainActor func metadataEnrichmentAndSerializationKeepDecisionsOutOfChat() throws {

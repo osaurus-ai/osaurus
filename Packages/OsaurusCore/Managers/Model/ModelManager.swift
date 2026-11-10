@@ -531,9 +531,8 @@ public final class ModelManager: NSObject, ObservableObject {
     /// Resolve a model only if the Hugging Face repository is MLX-compatible.
     /// Policy:
     ///   - `mlx-community/*`: trust the org; HF compat check confirms.
-    ///   - `OsaurusAI/*`: public chat repos must already exist in the registry;
-    ///     declared decision bundles and authenticated private repos may be
-    ///     imported directly.
+    ///   - `OsaurusAI/*`: public repos must already exist in the registry;
+    ///     authenticated private repos may be imported directly.
     ///   - Other orgs: authenticated HF metadata must confirm MLX compatibility.
     ///     Private repos may use their actual file layout instead of a public
     ///     naming/tag convention.
@@ -574,7 +573,7 @@ public final class ModelManager: NSObject, ObservableObject {
         guard compatibility.isCompatible else {
             return .unsupported(compatibility.failure ?? .notMLX)
         }
-        if lower.hasPrefix("osaurusai/"), !compatibility.isPrivate, !compatibility.isDecision {
+        if lower.hasPrefix("osaurusai/"), !compatibility.isPrivate {
             return .registryGated
         }
 
@@ -582,8 +581,7 @@ public final class ModelManager: NSObject, ObservableObject {
             id: trimmed,
             name: ModelMetadataParser.friendlyName(from: trimmed),
             description: "Imported from deeplink",
-            downloadURL: "https://huggingface.co/\(trimmed)",
-            isDecision: compatibility.isDecision
+            downloadURL: "https://huggingface.co/\(trimmed)"
         )
         insertModel(model)
         return .model(model)
@@ -1705,7 +1703,7 @@ extension ModelManager {
 // MARK: - Hugging Face discovery helpers
 
 extension ModelManager {
-    fileprivate struct HFModel: Decodable, Sendable {
+    struct HFModel: Decodable, Sendable {
         let id: String
         let tags: [String]?
         let pipeline_tag: String?
@@ -1941,7 +1939,7 @@ extension ModelManager {
     /// The use-case pill is inferred where the HF metadata supports it
     /// (multimodal tags → Vision) so auto-fetched cards aren't all blank
     /// next to curated ones.
-    nonisolated fileprivate static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
+    nonisolated static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
         let modelType = inferModelType(from: hf.tags)
         let isDecision = Self.isDecisionCatalogEligible(
             id: hf.id, pipelineTag: hf.pipeline_tag, tags: hf.tags, files: hf.siblings?.map(\.rfilename)

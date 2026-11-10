@@ -21,9 +21,10 @@ Twenty-six downloader/model/UI files match byte-for-byte between shipping
 The baseline app uses consumed vMLX1bcd74ad. All nine current public D3
 repos return readable pinned metadata and require Osaurus0.25.26.
 
-The candidate recognizes the declared decision task and its existing JANG/
-decision config/readout artifacts in Hub metadata. Such models can enter
-the downloader Catalog or resolve through direct import. Their decision
+The current candidate recognizes the declared decision task and its existing
+JANG/decision config/readout artifacts in Hub metadata. Such models can enter
+the downloader Catalog; direct import then uses its existing registry rule.
+Their decision
 task survives size/download metadata enrichment and serialization; existing
 chat selectors continue to exclude them. No model-name allowlist or chat
 pipeline reclassification is introduced. Installed decision admission still
@@ -44,3 +45,22 @@ actual PID43175 launch/environment/exit receipts and resource logs retain
 three failing decision imports and the successful chat control. Automatic
 external discovery initially read three existing HF-cache bundles; originals
 were not changed. Private managed model/image roots stayed empty.
+
+
+## Candidate2 scope review
+
+The separate direct-import exception in candidate066a4cd4d is unnecessary
+for this reproduced failure once org Catalog discovery includes supported
+decision bundles. Candidate2 removes that exception and restores the entire
+HuggingFaceService byte-for-byte to main. The existing public OsaurusAI
+registry rule stays intact. Only org Catalog task eligibility and preservation
+of the decision marker change. The metadata fixture now exercises actual org
+response decoding and card construction, including its unchanged backbone
+type and chat exclusion.
+
+Candidate1 baseline/native apps, full component results, process-observation
+attempts, exact source and both compiled DerivedData snapshots are retained.
+Its178/182 components had0failures and4existing opt-in network skips; its
+fresh Release resolved base D3 import and showed D3 task badges. No weight
+transfer or model generation occurred in candidate1. These are historical
+receipts, not candidate2 proof. Candidate2 requires fresh build/tests/UI.
