@@ -517,7 +517,7 @@ public enum SpawnDescriptors {
     }
 
     @MainActor
-    private static func liveAgentSources() -> [AgentSource] {
+    static func liveAgentSources() -> [AgentSource] {
         // Snapshot the @Published array once so the per-iteration calls to
         // effectiveModel(for:), workingFolder(for:) and effectiveRuntime(for:)
         // do not re-read the property (each read triggers swift_conformsToProtocol checks in the
