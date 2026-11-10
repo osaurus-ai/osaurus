@@ -1,0 +1,48 @@
+{
+  "id": "configurator.automation-hidden-workflow",
+  "domain": "configurator",
+  "label": "configurator • bind a workflow the Orchestrator cannot run (orchestrator_can_run false) to a schedule",
+  "query": "Run my Invoice Sync workflow every hour.",
+  "notes": "`Invoice Sync` is installed with Let Osaurus Run This off, so `run_workflow` is not offered, but an automation can still run it. `osaurus_config` {action: 'workflows'} lists it with orchestrator_can_run false; the automation must bind it on an hourly schedule rather than hand off or report it missing.",
+  "fixtures": {
+    "seedInstalledWorkflows": [
+      {
+        "id": "6f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c46",
+        "name": "Invoice Sync",
+        "summary": "Copy new invoices into the ledger.",
+        "orchestratorVisible": false
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load",
+        "architect_handoff",
+        "run_workflow"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "Invoice Sync"
+          }
+        }
+      ],
+      "expectAutomations": [
+        {
+          "sourceKind": "schedule",
+          "action": "workflow",
+          "workflow": "Invoice Sync"
+        }
+      ],
+      "expectAutomationCount": 1,
+      "maxIterations": 8
+    }
+  }
+}

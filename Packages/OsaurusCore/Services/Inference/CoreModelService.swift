@@ -284,6 +284,111 @@ public actor CoreModelService {
         )
     }
 
+    /// One schema-enforced call for a workflow node. Runs exactly the bound
+    /// model: no chat-model fallback (a slot bound to a local model must
+    /// never be served from the cloud) and no circuit breaker (node
+    /// failures must not silence titles or memory). One attempt; the node's
+    /// own retry policy decides whether to call again. The backend enforces
+    /// `schema` natively or throws `StructuredOutputError.unsupportedModel`.
+    public func generateStructured(
+        model: String,
+        prompt: String,
+        systemPrompt: String?,
+        schema: JSONValue,
+        temperature: Double? = nil,
+        maxTokens: Int = 4096,
+        timeout: TimeInterval,
+        purpose: String = "workflow_node",
+        onDelta: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
+        try await generateStructured(
+            model: model, prompt: prompt, systemPrompt: systemPrompt, schema: schema, temperature: temperature,
+            maxTokens: maxTokens, timeout: timeout, purpose: purpose, requestSource: .httpAPI, onDelta: onDelta)
+    }
+
+    /// `requestSource` owns a local model the call cold-loads (an existing
+    /// owner is kept); it also gates interactive privacy review for cloud
+    /// models, so pass a non-API source only for local ones.
+    func generateStructured(
+        model: String,
+        prompt: String,
+        systemPrompt: String?,
+        schema: JSONValue,
+        temperature: Double? = nil,
+        maxTokens: Int = 4096,
+        timeout: TimeInterval,
+        purpose: String = "workflow_node",
+        requestSource: RequestSource,
+        onDelta: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
+        let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
+        let activity = ActivityContext(
+            purpose: purpose,
+            attribution: InsightsService.ActivityAttribution.current()
+        )
+        var params = GenerationParameters(
+            temperature: temperature.map { Float($0) },
+            maxTokens: maxTokens,
+            modelOptions: [:],
+            requestSource: requestSource,
+            loadIntent: .interactive,
+            preserveExistingResidencyOwner: true,
+            auxiliaryCacheIntent: true
+        )
+        // Scalar and array roots are wrapped here, once, so every backend
+        // (cloud `strictWire`, local `localWire`, and Foundation Models'
+        // `GenerationSchema`, which takes the schema as is) returns the
+        // `{value: …}` shape `StructuredOutputSchema.decode` unwraps.
+        params.responseSchema = StructuredOutputSchema.objectRoot(schema)
+        let finalParams = params
+        return try await withTimeout(seconds: timeout) {
+            try await self.executeModelCall(
+                model: model, messages: messages, params: finalParams, intent: .interactive,
+                applyFirstTokenDeadline: false, activity: activity, onDelta: onDelta)
+        }
+    }
+
+    /// One plain-text call for a workflow node whose output is a single
+    /// string field (`StructuredOutputSchema.singleTextField`). Same
+    /// contract as `generateStructured` (exactly the bound model, one
+    /// attempt, no fallback, no breaker) without a response schema, so the
+    /// model writes its answer as text rather than inside a JSON string.
+    /// A local model runs its native non-reasoning mode, as a schema-bound
+    /// step does. A reply cut off by the output budget throws.
+    func generateNodeText(
+        model: String,
+        prompt: String,
+        systemPrompt: String?,
+        temperature: Double? = nil,
+        maxTokens: Int = 4096,
+        timeout: TimeInterval,
+        purpose: String = "workflow_node",
+        requestSource: RequestSource,
+        onDelta: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
+        let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
+        let activity = ActivityContext(
+            purpose: purpose,
+            attribution: InsightsService.ActivityAttribution.current()
+        )
+        let local = ModelManager.findInstalledModel(named: model) != nil
+        let params = GenerationParameters(
+            temperature: temperature.map { Float($0) },
+            maxTokens: maxTokens,
+            modelOptions: local ? ["disableThinking": .bool(true)] : [:],
+            requestSource: requestSource,
+            loadIntent: .interactive,
+            preserveExistingResidencyOwner: true,
+            auxiliaryCacheIntent: true,
+            requireCompleteOutput: true
+        )
+        return try await withTimeout(seconds: timeout) {
+            try await self.executeModelCall(
+                model: model, messages: messages, params: params, intent: .interactive,
+                applyFirstTokenDeadline: false, activity: activity, onDelta: onDelta)
+        }
+    }
+
     /// Which model a `runWithRetries` pass is running. Decides the retry
     /// budget, whether the first-token deadline applies, and how the result
     /// feeds the breaker.
@@ -489,7 +594,7 @@ public actor CoreModelService {
                 "Remote provider '\(provider)' is not connected. Reconnect it under Settings → Providers."
         }
         return
-            "No local model named '\(modelId)' is downloaded. Pick a different Core Model under Settings → General."
+            "No local model named '\(modelId)' is downloaded. Pick a different Core Model under Models → Model Defaults."
     }
 
     // MARK: - Private — breaker bookkeeping
@@ -650,6 +755,8 @@ public actor CoreModelService {
     /// `.circuitBreakerOpen` won't either. Cancellation is never retryable.
     static func isRetryable(_ error: Error) -> Bool {
         if error is CancellationError { return false }
+        // The backend cannot enforce a schema; asking again changes nothing.
+        if case StructuredOutputError.unsupportedModel? = error as? StructuredOutputError { return false }
         if let fm = error as? FoundationModelServiceError { return fm.isTransient }
         guard let coreErr = error as? CoreModelError else { return true }
         return coreErr == .timedOut
@@ -679,7 +786,8 @@ public actor CoreModelService {
         params: GenerationParameters,
         intent: CoreModelIntent,
         applyFirstTokenDeadline: Bool,
-        activity: ActivityContext
+        activity: ActivityContext,
+        onDelta: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
         let remoteServices: [ModelService] = await MainActor.run {
             RemoteProviderManager.shared.connectedServices()
@@ -705,6 +813,20 @@ public actor CoreModelService {
             let startedAt = Date()
             do {
                 let text: String = try await WireTransportProbe.$current.withValue(probe) {
+                    // A caller that wants tokens as they come gets the
+                    // streaming path unless a schema is set that this
+                    // backend applies only in the one-shot below, where
+                    // the whole answer arrives at once.
+                    if let onDelta, params.responseSchema == nil || service.streamsResponseSchema {
+                        let stream = try await service.streamDeltas(
+                            messages: messages,
+                            parameters: params,
+                            requestedModel: model,
+                            stopSequences: []
+                        )
+                        return try await Self.collect(
+                            stream, requireCompleteOutput: params.requireCompleteOutput, onDelta: onDelta)
+                    }
                     if applyFirstTokenDeadline, let deadline = service.firstTokenDeadline {
                         let stream = try await service.streamDeltas(
                             messages: messages,
@@ -798,8 +920,38 @@ public actor CoreModelService {
             privacy: probe?.privacyOutcome,
             agentId: attribution.agentId,
             agentName: attribution.agentName,
-            sessionId: attribution.sessionId
+            sessionId: attribution.sessionId,
+            workflowRunId: attribution.workflowRunId,
+            workflowNodeId: attribution.workflowNodeId
         )
+    }
+
+    /// Drains `stream` into the full text, handing every visible chunk to
+    /// `onDelta` as it arrives. Hint sentinels (billing, reasoning, tool,
+    /// stats) that a remote stream interleaves are dropped from both. With
+    /// `requireCompleteOutput`, a stream whose stats report it was cut off
+    /// throws, as `MLXService.collectOneShot` does for the one-shot path.
+    static func collect(
+        _ stream: AsyncThrowingStream<String, Error>,
+        requireCompleteOutput: Bool = false,
+        onDelta: @Sendable (String) -> Void
+    ) async throws -> String {
+        var text = ""
+        var stopReason: String?
+        for try await delta in stream {
+            if let stats = StreamingStatsHint.decode(delta) {
+                stopReason = stats.stopReason
+                continue
+            }
+            if StreamingToolHint.isSentinel(delta) || delta.isEmpty { continue }
+            text += delta
+            onDelta(delta)
+        }
+        if requireCompleteOutput {
+            if stopReason == "length" { throw MLXService.OneShotError.outputTruncated }
+            if stopReason == "cancelled" { throw CancellationError() }
+        }
+        return text
     }
 
     /// Drain a delta stream into a single string, giving up with

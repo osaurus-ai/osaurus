@@ -14,6 +14,18 @@ import Testing
 @Suite("MCP tool filter")
 struct MCPToolFilterTests {
 
+    // MARK: - Call timeout
+
+    /// `workflow_test` runs a whole workflow inside one call; the old fixed
+    /// 30 seconds cut it off.
+    @Test func callTimeoutAllowsLongRunsAndHonorsTheOverride() {
+        #expect(MCPCommand.callTimeout(environment: [:]) == 900)
+        #expect(MCPCommand.callTimeout(environment: [MCPCommand.callTimeoutEnvironmentKey: "45"]) == 45)
+        for bad in ["0", "-3", "soon"] {
+            #expect(MCPCommand.callTimeout(environment: [MCPCommand.callTimeoutEnvironmentKey: bad]) == 900)
+        }
+    }
+
     // MARK: - Matching
 
     @Test func exactNamesMatchOnlyThemselves() throws {

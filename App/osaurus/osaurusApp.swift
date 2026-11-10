@@ -31,6 +31,8 @@ enum OsaurusMain {
         // by default. Ignore it so those writes fail with EPIPE and
         // surface as ordinary errors on the write path instead.
         signal(SIGPIPE, SIG_IGN)
+        DevelopmentDesignInspector.prepareProcess()
+        SpaceLauncher.prepareProcess()
         osaurusApp.main()
     }
 }
@@ -44,8 +46,7 @@ struct osaurusApp: SwiftUI.App {
     // download progress) did exactly that and hung the UI. Observe state from
     // small, dedicated menu-item views instead (see `VADToggleMenuItem`,
     // `ThemeMenuItems`).
-    private var scheduleManager = ScheduleManager.shared
-    private var watcherManager = WatcherManager.shared
+    private var eventManager = EventManager.shared
     /// Chat settings toggle: ⌘N starts a new chat in the frontmost chat
     /// window instead of opening a new window (see `NewChatShortcutSetting`).
     @AppStorage(NewChatShortcutSetting.defaultsKey)
@@ -122,8 +123,7 @@ private extension osaurusApp {
 
             Divider()
 
-            schedulesMenu
-            watchersMenu
+            automationsMenu
             agentsMenu
         }
     }
@@ -138,6 +138,24 @@ private extension osaurusApp {
                 Text(verbatim: LCached("Settings…"))
             }
             .keyboardShortcut(",", modifiers: .command)
+
+            Button {
+                openManagementTab(.agents)
+            } label: {
+                Text(verbatim: LCached("Agents…"))
+            }
+
+            Button {
+                openManagementTab(.workflows)
+            } label: {
+                Text(verbatim: LCached("Workflows…"))
+            }
+
+            Button {
+                Task { @MainActor in SetUpOsaurusCommand.run() }
+            } label: {
+                Text(verbatim: LCached("Set Up Osaurus…"))
+            }
         }
     }
 
@@ -182,7 +200,12 @@ private extension osaurusApp {
 
             Divider()
 
-            ThemeMenuItems()
+            AppearanceMenuItems()
+            if DevelopmentDesignInspector.isAvailable {
+                Divider()
+                Button("Live Design Inspector") { Task { @MainActor in DevelopmentDesignInspector.show() } }
+                    .keyboardShortcut("d", modifiers: [.command, .option])
+            }
         }
     }
 
@@ -248,12 +271,6 @@ private extension osaurusApp {
                 Text(verbatim: LCached("Keyboard Shortcuts"))
             }
 
-            Button {
-                Task { @MainActor in ChatLayoutTour.shared.start() }
-            } label: {
-                Text(verbatim: LCached("Chat Layout Tour"))
-            }
-
             Divider()
 
             Button {
@@ -271,63 +288,30 @@ private extension osaurusApp {
 
 private extension osaurusApp {
 
-    var schedulesMenu: some View {
+    var automationsMenu: some View {
         Menu {
-            ForEach(scheduleManager.schedules) { schedule in
+            ForEach(eventManager.events) { event in
                 Button {
-                    openManagementTab(.schedules)
+                    Task { @MainActor in
+                        ManagementStateManager.shared.pendingEventEditId = event.id
+                        openManagementTab(.automations)
+                    }
                 } label: {
-                    Text(verbatim: schedule.name)
+                    Text(verbatim: event.name)
                 }
             }
 
-            if !scheduleManager.schedules.isEmpty {
+            if !eventManager.events.isEmpty {
                 Divider()
             }
 
             Button {
-                openManagementTab(.schedules)
+                openManagementTab(.automations)
             } label: {
-                Text(verbatim: LCached("New Schedule…"))
-            }
-
-            Button {
-                openManagementTab(.schedules)
-            } label: {
-                Text(verbatim: LCached("Manage Schedules…"))
+                Text(verbatim: LCached("Manage Automations…"))
             }
         } label: {
-            Text(verbatim: LCached("Schedules"))
-        }
-    }
-
-    var watchersMenu: some View {
-        Menu {
-            ForEach(watcherManager.watchers) { watcher in
-                Button {
-                    openManagementTab(.watchers)
-                } label: {
-                    Text(verbatim: watcher.name)
-                }
-            }
-
-            if !watcherManager.watchers.isEmpty {
-                Divider()
-            }
-
-            Button {
-                openManagementTab(.watchers)
-            } label: {
-                Text(verbatim: LCached("New Watcher…"))
-            }
-
-            Button {
-                openManagementTab(.watchers)
-            } label: {
-                Text(verbatim: LCached("Manage Watchers…"))
-            }
-        } label: {
-            Text(verbatim: LCached("Watchers"))
+            Text(verbatim: LCached("Automations"))
         }
     }
 
@@ -436,13 +420,13 @@ private struct VADToggleMenuItem: View {
     }
 }
 
-// MARK: - Theme Menu Items
+// MARK: - Appearance Menu Items
 
-/// View-menu Theme submenu + font zoom items.
+/// View-menu Appearance submenu + font zoom items.
 ///
-/// Observes `ThemeManager` locally so theme changes only invalidate these
+/// Observes `ThemeManager` locally so appearance changes only invalidate these
 /// items rather than re-evaluating every App-level `Commands` builder.
-private struct ThemeMenuItems: View {
+private struct AppearanceMenuItems: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     var body: some View {
@@ -450,38 +434,8 @@ private struct ThemeMenuItems: View {
             appearanceButton(LCached("System"), mode: .system)
             appearanceButton(LCached("Light"), mode: .light)
             appearanceButton(LCached("Dark"), mode: .dark)
-
-            Divider()
-
-            ForEach(themeMenuThemeItems, id: \.metadata.id) { theme in
-                Button {
-                    if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
-                        themeManager.setAppearanceMode(mode, clearActiveTheme: true)
-                    } else {
-                        themeManager.applyCustomTheme(theme)
-                    }
-                } label: {
-                    HStack {
-                        Text(theme.metadata.name)
-                        if isThemeMenuItemActive(theme) {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-
-            Divider()
-
-            Button {
-                Task { @MainActor in
-                    AppDelegate.shared?.showManagementWindow(initialTab: .themes)
-                }
-            } label: {
-                Text(verbatim: LCached("Manage Themes…"))
-            }
         } label: {
-            Text(verbatim: LCached("Theme"))
+            Text(verbatim: LCached("Appearance"))
         }
 
         Divider()
@@ -515,27 +469,16 @@ private struct ThemeMenuItems: View {
 
     private func appearanceButton(_ title: String, mode: AppearanceMode) -> some View {
         Button {
-            themeManager.setAppearanceMode(mode, clearActiveTheme: true)
+            themeManager.setAppearanceMode(mode)
         } label: {
             HStack {
                 Text(verbatim: title)
-                if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == mode {
+                if themeManager.appearanceMode == mode {
                     Spacer()
                     Image(systemName: "checkmark")
                 }
             }
         }
-    }
-
-    private func isThemeMenuItemActive(_ theme: CustomTheme) -> Bool {
-        if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
-            return themeManager.activeCustomTheme == nil && themeManager.appearanceMode == mode
-        }
-        return themeManager.activeCustomTheme?.metadata.id == theme.metadata.id
-    }
-
-    private var themeMenuThemeItems: [CustomTheme] {
-        themeManager.installedThemes.filter { ThemeManager.appearanceMode(forBuiltInTheme: $0) == nil }
     }
 }
 

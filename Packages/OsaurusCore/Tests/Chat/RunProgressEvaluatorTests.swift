@@ -86,6 +86,17 @@ struct RunProgressEvaluatorTests {
         #expect(evaluate(idle: 180, previous: .active, loading: .prefill) == .stalled)
     }
 
+    @Test func workflowRunWaitsOutItsRunningStepsTimeout() {
+        let fiveMinuteStep = RunProgressLoadingPhase.workflowRun(stepTimeout: 300)
+        #expect(evaluate(idle: 45, previous: .active, loading: fiveMinuteStep) == .active, "no Still working chip")
+        #expect(evaluate(idle: 300, previous: .active, loading: fiveMinuteStep) == .active)
+        #expect(evaluate(idle: 419, previous: .active, loading: fiveMinuteStep) == .active)
+        #expect(evaluate(idle: 420, previous: .active, loading: fiveMinuteStep) == .stalled, "the runner missed its deadline")
+        // A short step adds its timeout to the chat's own ceiling.
+        #expect(evaluate(idle: 149, previous: .active, loading: .workflowRun(stepTimeout: 30)) == .active)
+        #expect(evaluate(idle: 150, previous: .active, loading: .workflowRun(stepTimeout: 30)) == .stalled)
+    }
+
     @Test func loadingStartClearsPreviousAndDoesNotSnapBack() {
         let afterBootStart = evaluate(
             idle: 0,

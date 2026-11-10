@@ -59,7 +59,7 @@ struct ExportChooserSheet: View {
 
     private func navigate(to next: Page, direction: SlideDirection) {
         self.direction = direction
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+        withAnimation(theme.motion.springAnimation) {
             page = next
         }
     }
@@ -80,8 +80,8 @@ struct ExportChooserSheet: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Choose a format to export this conversation.", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.bodySmall)
+                    .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 4)
@@ -116,28 +116,28 @@ struct ExportChooserSheet: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 14))
-                    .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                    .glyphSize(14)
+                    .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
                     .frame(width: 18)
                 Text(label, bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.label)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(11, weight: .bold)
+                        .foregroundColor(theme.text.primary)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground.opacity(0.4))
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(isSelected ? theme.surface.selected : theme.surface.raised)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(isSelected ? theme.accentColor.opacity(0.5) : theme.cardBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .stroke(isSelected ? theme.border.strong : theme.border.default, lineWidth: theme.stroke.default)
             )
         }
         .buttonStyle(PlainButtonStyle())
@@ -149,8 +149,8 @@ struct ExportChooserSheet: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Include in export", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.caption, weight: 600)
+                    .foregroundColor(theme.text.secondary)
 
                 toggleRow("Timestamps", binding: $options.includeTimestamps)
                 toggleRow("Deltas", binding: $options.includeDeltas)
@@ -160,8 +160,8 @@ struct ExportChooserSheet: View {
                     ProgressView().controlSize(.small)
                 } else if !hasTimingData {
                     Text("No timing data captured for this conversation.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .textStyle(.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .padding(.top, 2)
                 }
             }
@@ -193,12 +193,12 @@ struct ExportChooserSheet: View {
     private func toggleRow(_ label: LocalizedStringKey, binding: Binding<Bool>) -> some View {
         HStack {
             Text(label, bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(hasTimingData ? theme.primaryText : theme.tertiaryText)
+                .textStyle(.bodySmall)
+                .foregroundColor(hasTimingData ? theme.text.primary : theme.text.tertiary)
             Spacer()
             Toggle("", isOn: binding)
                 .labelsHidden()
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .settingsSwitch()
                 .disabled(!hasTimingData)
         }
     }
@@ -217,12 +217,12 @@ struct ExportChooserSheet: View {
     ) -> some View {
         Button(action: action) {
             Text(label, bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
+                .textStyle(.label, weight: 600)
                 .foregroundColor(actionTextColor(isPrimary: isPrimary, isDisabled: isDisabled))
                 .padding(.horizontal, 18)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                         .fill(actionBackground(isPrimary: isPrimary, isDisabled: isDisabled))
                 )
         }
@@ -231,14 +231,14 @@ struct ExportChooserSheet: View {
     }
 
     private func actionTextColor(isPrimary: Bool, isDisabled: Bool) -> Color {
-        if isDisabled { return theme.tertiaryText }
-        if isPrimary { return theme.isDark ? theme.primaryBackground : .white }
-        return theme.primaryText
+        if isDisabled { return theme.text.tertiary }
+        if isPrimary { return theme.action.primary.default.foreground }
+        return theme.text.primary
     }
 
     private func actionBackground(isPrimary: Bool, isDisabled: Bool) -> Color {
-        if isDisabled { return theme.tertiaryBackground.opacity(0.5) }
-        if isPrimary { return theme.accentColor }
-        return theme.tertiaryBackground.opacity(0.8)
+        if isDisabled { return theme.surface.hover }
+        if isPrimary { return theme.action.primary.default.background }
+        return theme.surface.hover
     }
 }

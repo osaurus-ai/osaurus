@@ -177,13 +177,30 @@ actor OsaurusRouterAPIClient {
         _ = try await idData(method: "DELETE", path: "/id/sessions/\(try routerPathComponent(id))")
     }
 
+    /// `POST /id/lookup` — claimed Osaurus IDs for 1–25 wallets, keyed by
+    /// lowercased wallet. Wallets without a claimed ID are absent.
+    func osaurusIDLookup(wallets: [String], timeout: TimeInterval = 3) async throws -> [String: String] {
+        struct Body: Encodable { let wallets: [String] }
+        struct Person: Decodable {
+            let wallet: String
+            let osaurus_id: String
+        }
+        struct Response: Decodable { let people: [Person] }
+        let body = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(Body(wallets: wallets))
+        let response: Response = try await idRequest(
+            method: "POST", path: "/id/lookup", bodyData: body, timeout: timeout)
+        return Dictionary(response.people.map { ($0.wallet.lowercased(), $0.osaurus_id) }, uniquingKeysWith: { a, _ in a })
+    }
+
     private func idRequest<T: Decodable>(
         method: String,
         path: String,
         queryItems: [URLQueryItem] = [],
-        bodyData: Data? = nil
+        bodyData: Data? = nil,
+        timeout: TimeInterval? = nil
     ) async throws -> T {
-        let data = try await idData(method: method, path: path, queryItems: queryItems, bodyData: bodyData)
+        let data = try await idData(
+            method: method, path: path, queryItems: queryItems, bodyData: bodyData, timeout: timeout)
         return try decoder.decode(T.self, from: data)
     }
 
@@ -193,12 +210,14 @@ actor OsaurusRouterAPIClient {
         method: String,
         path: String,
         queryItems: [URLQueryItem] = [],
-        bodyData: Data? = nil
+        bodyData: Data? = nil,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let url = try url(path: path, queryItems: queryItems)
         func makeRequest() -> URLRequest {
             var request = URLRequest(url: url)
             request.httpMethod = method
+            if let timeout { request.timeoutInterval = timeout }
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             if bodyData != nil {
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")

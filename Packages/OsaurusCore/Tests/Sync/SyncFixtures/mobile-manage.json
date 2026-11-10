@@ -1,0 +1,205 @@
+{
+  "description": "A Mac's management conversation (SYNC_MOBILE_CONTRACT.md v2 §5): the state with teammates' shared agents, one iPhone's requests for each new op and their results, the models message and one agent's detail message with its system prompt and avatar as blobs.",
+  "conversation": {
+    "title": "Manage Studio Mac",
+    "created_ms": 1767573000000,
+    "pinned": false,
+    "archived": false,
+    "tags": {
+      "ai.osaurus.kind": "manage",
+      "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+    },
+    "app_data": {
+      "ai.osaurus.manage-state/1": {
+        "v": 1,
+        "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+        "agents": [
+          {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "Osaurus",
+            "isDefault": true,
+            "model": "OsaurusAI/gemma-4-qat-mxfp4"
+          },
+          {
+            "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "name": "Writer",
+            "description": "Drafts posts and notes.",
+            "avatar": "✍️",
+            "model": "OsaurusAI/gemma-4-qat-mxfp4",
+            "settings": {
+              "tools_enabled": true,
+              "memory_enabled": true,
+              "web_search_enabled": false,
+              "autonomous_exec_enabled": false,
+              "autonomous_exec_available": true
+            }
+          }
+        ],
+        "models": [
+          { "id": "OsaurusAI/gemma-4-qat-mxfp4", "name": "Gemma 4 QAT", "provider": "Local" }
+        ],
+        "workspaceAgents": [
+          {
+            "workspaceId": "ws_3f2a",
+            "workspaceName": "Studio",
+            "address": "0xabababababababababababababababababababab",
+            "name": "Researcher",
+            "ownerName": "Sam"
+          }
+        ],
+        "projects": [{ "id": "D4C3B2A1-0F9E-4D8C-B7A6-5F4E3D2C1B0A", "name": "Launch" }],
+        "plugins": [{ "id": "osaurus.time", "name": "Time" }],
+        "workspaces": [{ "id": "ws_3f2a", "name": "Studio" }],
+        "updatedMs": 1767573000000
+      },
+      "ai.osaurus.manage-request/1/3b9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f": {
+        "v": 1,
+        "requests": [
+          { "id": "r10", "op": "setFavorite", "key": "local:OsaurusAI/gemma-4-qat-mxfp4", "favorite": true, "requestedMs": 1767573100000 },
+          { "id": "r11", "op": "getModelOptions", "model": "OsaurusAI/gemma-4-qat-mxfp4", "requestedMs": 1767573101000 },
+          { "id": "r12", "op": "setModelOption", "model": "OsaurusAI/gemma-4-qat-mxfp4", "option": "thinking", "value": false, "requestedMs": 1767573102000 },
+          { "id": "r13", "op": "setModelOption", "model": "OsaurusAI/gemma-4-qat-mxfp4", "option": "reasoningEffort", "clearValue": true, "requestedMs": 1767573103000 },
+          { "id": "r14", "op": "setTool", "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "name": "web_fetch", "agentEnabled": true, "policy": "ask", "requestedMs": 1767573104000 },
+          { "id": "r15", "op": "warm", "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "requestedMs": 1767573105000 },
+          { "id": "r16", "op": "contextUsage", "scope": "<the chat's conversation scope>", "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "requestedMs": 1767573106000 },
+          { "id": "r17", "op": "renameEverything", "requestedMs": 1767573107000 }
+        ]
+      },
+      "ai.osaurus.manage-result/1/3b9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f": {
+        "v": 1,
+        "results": {
+          "r10": { "ok": true, "data": { "favorites": ["local:OsaurusAI/gemma-4-qat-mxfp4"] }, "doneMs": 1767573100400 },
+          "r11": {
+            "ok": true,
+            "data": {
+              "model": "OsaurusAI/gemma-4-qat-mxfp4",
+              "thinking": { "enabled": true, "explicit": false, "tristate": false },
+              "options": [
+                {
+                  "id": "reasoningEffort",
+                  "label": "Reasoning",
+                  "kind": "segmented",
+                  "segments": [
+                    { "id": "low", "label": "Low" },
+                    { "id": "high", "label": "High" }
+                  ],
+                  "selected": "low",
+                  "explicit": true
+                }
+              ]
+            },
+            "doneMs": 1767573101400
+          },
+          "r14": {
+            "ok": true,
+            "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "data": {
+              "name": "web_fetch",
+              "description": "Fetch a web page.",
+              "enabled": true,
+              "policy": "ask",
+              "remote_safe": false,
+              "built_in": false,
+              "agent_enabled": true
+            },
+            "doneMs": 1767573104400
+          },
+          "r15": {
+            "ok": true,
+            "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "data": { "loaded": true, "already": false },
+            "doneMs": 1767573109000
+          },
+          "r17": {
+            "ok": false,
+            "error": "unsupported_op",
+            "message": "This Mac's Osaurus doesn't know that change yet. Update Osaurus on this Mac.",
+            "doneMs": 1767573107400
+          }
+        }
+      }
+    }
+  },
+  "messages": [
+    {
+      "role": "system",
+      "content": "models",
+      "created_ms": 1767573000100,
+      "app_data": {
+        "ai.osaurus.manage-models/1": {
+          "v": 1,
+          "favorites": ["local:OsaurusAI/gemma-4-qat-mxfp4"],
+          "models": [
+            {
+              "id": "OsaurusAI/gemma-4-qat-mxfp4",
+              "name": "Gemma 4 QAT",
+              "provider": "Local",
+              "source": "local",
+              "vision": true,
+              "thinking": true,
+              "params": "12B",
+              "quantization": "MXFP4",
+              "available": true,
+              "tab": "local",
+              "tab_title": "Local",
+              "favorite_key": "local:OsaurusAI/gemma-4-qat-mxfp4",
+              "context_length": 131072,
+              "kind": "chat",
+              "edits": false
+            }
+          ],
+          "digest": "0f3c",
+          "updatedMs": 1767573000100
+        }
+      }
+    },
+    {
+      "role": "system",
+      "content": "agent",
+      "created_ms": 1767573000200,
+      "app_data": {
+        "ai.osaurus.agent-detail/1": {
+          "v": 1,
+          "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+          "name": "Writer",
+          "isDefault": false,
+          "toolsEnabled": true,
+          "chatQuickActions": [
+            { "id": "C0FFEE00-0000-4000-8000-000000000001", "icon": "pencil", "text": "Draft a post", "prompt": "Draft a post about " }
+          ],
+          "systemPrompt": { "$blob": 0, "size": 18 },
+          "tools": [
+            {
+              "name": "web_fetch",
+              "description": "Fetch a web page.",
+              "enabled": true,
+              "policy": "ask",
+              "remote_safe": false,
+              "built_in": false,
+              "agent_enabled": true
+            },
+            {
+              "name": "computer_use",
+              "description": "Control apps on this Mac.",
+              "enabled": false,
+              "policy": "ask",
+              "remote_safe": false,
+              "blocked_by": ["accessibility"],
+              "built_in": false,
+              "agent_enabled": false
+            }
+          ],
+          "avatarImage": { "$blob": 1, "size": 3, "mimeType": "image/png" },
+          "digest": "9a1e",
+          "updatedMs": 1767573000200
+        }
+      },
+      "app_data_blobs": {
+        "ai.osaurus.agent-detail/1": [
+          { "name": "systemPrompt.json", "media_type": "application/json", "text": "\"You write posts.\"" },
+          { "name": "avatarImage", "media_type": "image/png", "text": "PNG" }
+        ]
+      }
+    }
+  ]
+}

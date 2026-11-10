@@ -97,7 +97,8 @@ To back up your data in plaintext (for example, before reinstalling macOS), open
 
 | Artifact | Default (plaintext) | Opt-in (encrypted) | On-disk location |
 |---|---|---|---|
-| Chat history | SQLite | SQLCipher | `~/.osaurus/chat-history/history.sqlite` |
+| Conversations | osaurus-sync (see [SYNC.md](SYNC.md)) | osaurus-sync | `~/.osaurus/sync/` |
+| Pre-sync chat history (read-only import source and backup) | SQLite | SQLCipher | `~/.osaurus/chat-history/history.sqlite` |
 | Router billing ledger | SQLite | SQLCipher | `~/.osaurus/billing/ledger.sqlite` |
 | Memory (identity, pinned facts, episodes, transcript, FTS5 mirrors) | SQLite | SQLCipher | `~/.osaurus/memory/memory.sqlite` |
 | Methods catalog | SQLite | SQLCipher | `~/.osaurus/methods/methods.sqlite` |
@@ -114,7 +115,7 @@ To back up your data in plaintext (for example, before reinstalling macOS), open
 **Always plaintext, by design.** A few artifacts stay plaintext in both modes:
 
 - The encryption posture marker `~/.osaurus/.storage-encryption.json` (it cannot be encrypted — see [Overview](#overview)).
-- JSON config under `~/.osaurus/config/`, `agents/`, `themes/`, `providers/`, `schedules/`, `watchers/`, `skills/` that is read as raw JSON by various consumers. (In encrypted mode, sensitive app-layer artifacts that go through `EncryptedFileStore` are wrapped; pure config that must be world-readable JSON stays plaintext.)
+- JSON config under `~/.osaurus/config/`, `agents/`, `providers/`, `schedules/`, `watchers/`, `skills/` that is read as raw JSON by various consumers. (In encrypted mode, sensitive app-layer artifacts that go through `EncryptedFileStore` are wrapped; pure config that must be world-readable JSON stays plaintext.)
 - Plugin manifests under `~/.osaurus/sandbox-plugins/`.
 - Vector index files under `~/.osaurus/memory/vectura/<agentId>/`. These are rebuilt from the SQLite source on demand; see [Limitations](#limitations-and-trade-offs).
 
@@ -254,8 +255,9 @@ State is persisted in `~/.osaurus/.storage-maintenance.json`. The first load sta
 | `~/.osaurus/.storage-key.salt` | HKDF salt sidecar (only present when DEK is master-derived) |
 | `~/.osaurus/quarantine/` | Unreadable stores moved here by Reset recovery (never deleted) |
 | `~/.osaurus/billing/ledger.sqlite` | Router billing ledger (SQLite, or SQLCipher when encrypted) |
-| `~/.osaurus/chat-history/history.sqlite` | Chat database (SQLite, or SQLCipher when encrypted) |
-| `~/.osaurus/chat-history/blobs/<sha256>` | Spilled attachments (plaintext blob, or `.osec` when encrypted) |
+| `~/.osaurus/sync/` | Conversations, in the osaurus-sync core's data directory (see [SYNC.md](SYNC.md)) |
+| `~/.osaurus/chat-history/history.sqlite` | Pre-sync chat database, read-only: imported into sync once and kept as a backup (SQLite, or SQLCipher when encrypted) |
+| `~/.osaurus/chat-history/blobs/<sha256>` | Cached large attachments (plaintext blob, or `.osec` when encrypted) |
 | `~/.osaurus/memory/memory.sqlite` | Memory database (SQLite, or SQLCipher when encrypted) |
 | `~/.osaurus/memory/vectura/<agentId>/` | Per-agent VecturaKit vector index (plaintext, see Limitations) |
 | `~/.osaurus/methods/methods.sqlite` | Methods catalog (SQLite, or SQLCipher when encrypted) |

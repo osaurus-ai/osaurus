@@ -1,0 +1,35 @@
+{
+  "id": "configurator.automation-bad-cron",
+  "domain": "configurator",
+  "label": "configurator • an impossible cron expression is refused, not silently saved",
+  "query": "Schedule my Daily Digest workflow with the cron expression 61 8 * * *.",
+  "notes": "Minute 61 does not exist. The cron is validated before apply, so the plan or apply fails with the five-field explanation; the model must report that (or ask which minute was meant) and must not save an automation that would never fire, nor invent a different time.",
+  "fixtures": {
+    "seedInstalledWorkflows": [
+      {
+        "id": "6f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c47",
+        "name": "Daily Digest",
+        "summary": "Summarize the day's news and calendar.",
+        "inputs": [
+          "day"
+        ],
+        "required": [
+          "day"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Tells the user the cron expression is invalid (minute 61 is out of range, minutes are 0-59) or asks which time they meant, and does not claim the automation was created."
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "expectAutomationCount": 0,
+      "maxIterations": 8
+    }
+  }
+}

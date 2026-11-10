@@ -24,7 +24,7 @@ Osaurus is committed to providing an accessible experience for all users. This d
 
 ## Color Palette Compliance
 
-### Light Theme
+### Light Appearance
 
 | Element           | Hex Code  | Contrast Ratio | Status        |
 | ----------------- | --------- | -------------- | ------------- |
@@ -42,7 +42,7 @@ Osaurus is committed to providing an accessible experience for all users. This d
 | Primary Border    | `#d0d0cc` | ~2.2:1         | ✅ Decorative |
 | Focus Border      | `#4a4a46` | ~8:1           | ✅ AAA        |
 
-### Dark Theme
+### Dark Appearance
 
 | Element           | Hex Code  | Contrast Ratio | Status        |
 | ----------------- | --------- | -------------- | ------------- |
@@ -62,40 +62,9 @@ Osaurus is committed to providing an accessible experience for all users. This d
 
 ---
 
-## Theme Presets Compliance
+## Color Change Guidelines
 
-### Neon Theme (Dark)
-
-| Element          | Hex Code  | Contrast Ratio | Status |
-| ---------------- | --------- | -------------- | ------ |
-| Primary Text     | `#f0f0f0` | ~18:1          | ✅ AAA |
-| Secondary Text   | `#b0b0b0` | ~9:1           | ✅ AAA |
-| Tertiary Text    | `#909090` | ~5.5:1         | ✅ AA  |
-| Accent (Magenta) | `#ff00ff` | ~6:1           | ✅ AA  |
-
-### Nord Theme (Dark)
-
-| Element        | Hex Code  | Contrast Ratio | Status |
-| -------------- | --------- | -------------- | ------ |
-| Primary Text   | `#eceff4` | ~10:1          | ✅ AAA |
-| Secondary Text | `#d8dee9` | ~7:1           | ✅ AA  |
-| Tertiary Text  | `#b8c4d4` | ~5:1           | ✅ AA  |
-| Accent (Frost) | `#88c0d0` | ~7:1           | ✅ AA  |
-
-### Paper Theme (Light)
-
-| Element        | Hex Code  | Contrast Ratio | Status |
-| -------------- | --------- | -------------- | ------ |
-| Primary Text   | `#3d3d3d` | ~9:1           | ✅ AAA |
-| Secondary Text | `#555555` | ~7:1           | ✅ AA  |
-| Tertiary Text  | `#737373` | ~5:1           | ✅ AA  |
-| Accent (Gold)  | `#9a7b30` | ~4.5:1         | ✅ AA  |
-
----
-
-## Custom Theme Guidelines
-
-When creating custom themes, users should ensure:
+When changing the light or dark palette, ensure:
 
 1. **Primary text** maintains at least **7:1** contrast for optimal readability
 2. **Secondary text** maintains at least **4.5:1** contrast

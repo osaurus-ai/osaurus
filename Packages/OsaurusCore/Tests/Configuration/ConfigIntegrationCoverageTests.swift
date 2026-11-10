@@ -82,7 +82,8 @@ struct ConfigIntegrationPlannerTests {
             document.channels = channels
         }
         #expect(issues.contains { $0.contains("channels.discord.default_read_limit") })
-        #expect(issues.contains { $0.contains("never the Default agent") })
+        // Legacy `inbound_agent` is translated into an event, validated like one.
+        #expect(issues.contains { $0.contains("cannot run the Default agent") })
         #expect(issues.contains { $0.contains("no custom agent named") })
     }
 
@@ -130,7 +131,6 @@ struct ConfigIntegrationPlannerTests {
             channels.writeEnabled = true
             var discord = ChannelPlatformSection()
             discord.writeEnabled = true
-            discord.autoReplyEnabled = true
             channels.discord = discord
             document.channels = channels
         }
@@ -139,9 +139,6 @@ struct ConfigIntegrationPlannerTests {
         }
         if current?.discord?.writeEnabled != true {
             #expect(plan.risks.contains(ConfigRisk.channelWrites("discord")))
-        }
-        if current?.discord?.autoReplyEnabled != true {
-            #expect(plan.risks.contains(ConfigRisk.channelAutoReply("discord")))
         }
     }
 
@@ -211,7 +208,7 @@ struct ConfigIntegrationApplyTests {
 
     @MainActor
     private static func runEphemeralProviderScope() async throws {
-        // Ephemeral providers (Bonjour peers, the eval harness's in-memory
+        // Ephemeral providers (the eval harness's in-memory
         // run/judge providers) are runtime state, not configuration: they
         // must never export, and a prune apply must never remove them.
         let name = "Ephemeral Probe \(UUID().uuidString.prefix(6))"
@@ -343,21 +340,20 @@ struct ConfigIntegrationApplyTests {
         var telegram = ChannelPlatformSection()
         telegram.defaultReadLimit = before?.telegram?.defaultReadLimit == 25 ? 40 : 25
         telegram.senderAllowlist = ["1001", "1002"]
-        telegram.requireMention = !(before?.telegram?.requireMention ?? true)
         channels.telegram = telegram
         expectNoFailures(await apply { $0.channels = channels })
 
         let after = ConfigExporter.export().channels
         #expect(after?.telegram?.defaultReadLimit == telegram.defaultReadLimit)
         #expect(after?.telegram?.senderAllowlist == ["1001", "1002"])
-        #expect(after?.telegram?.requireMention == telegram.requireMention)
+        // Mention gating lives on channel events now; channels never export it.
+        #expect(after?.telegram?.requireMention == nil)
         try expectIdempotentExport(sections: [.channels])
 
         var restore = ChannelsSection()
         var restoreTelegram = ChannelPlatformSection()
         restoreTelegram.defaultReadLimit = before?.telegram?.defaultReadLimit
         restoreTelegram.senderAllowlist = before?.telegram?.senderAllowlist ?? []
-        restoreTelegram.requireMention = before?.telegram?.requireMention
         restore.telegram = restoreTelegram
         _ = await apply { $0.channels = restore }
     }

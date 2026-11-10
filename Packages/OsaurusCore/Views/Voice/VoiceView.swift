@@ -2,37 +2,64 @@
 //  VoiceView.swift
 //  osaurus
 //
-//  Main Voice management view with sub-tabs for setup, voice input settings,
-//  VAD mode configuration, and model management.
+//  Capabilities → Voice. The overview holds the everyday switch (voice input
+//  in chat) and drill-in rows for Setup, Transcription, Text to Speech and
+//  Wake Word. Speech models download from Local Models → Speech; the default
+//  speech model is chosen in Model Defaults.
 //
 
 import SwiftUI
 
 // MARK: - Voice Tab Enum
 
-/// Voice sub-tabs. Raw values are stable deep-link ids (`voiceSubTabRequest`,
+/// Voice items. Raw values are stable deep-link ids (`voiceSubTabRequest`,
 /// settings-search `subTab`) and are deliberately not renamed when the
 /// visible title changes; use `resolved(from:)` to accept older spellings.
-enum VoiceTab: String, CaseIterable, AnimatedTabItem {
+/// `speechToText` (the retired Chat Voice tab) lands on the overview, where
+/// its switch now lives; `models` opens Local Models → Speech.
+enum VoiceTab: String, CaseIterable, SettingsDrillInItem {
     case setup = "Setup"
-    /// Microphone button inside the chat composer. Raw value predates the
-    /// "Chat Voice" title.
     case speechToText = "Speech To Text"
-    /// System-wide Transcription Mode plus the shared stop/cleanup behaviour.
     case transcription = "Transcription"
     case textToSpeech = "Text To Speech"
-    /// Wake-word agent activation. Raw value predates the "Wake Word" title.
     case vadMode = "VAD Mode"
     case models = "Models"
+
+    var id: String { rawValue }
+
+    /// Items listed as drill-in rows on the overview.
+    static let drillInItems: [VoiceTab] = [.setup, .transcription, .textToSpeech, .vadMode]
 
     var title: String {
         switch self {
         case .setup: return L("Setup")
-        case .speechToText: return L("Chat Voice")
+        case .speechToText: return L("Voice Input in Chat")
         case .transcription: return L("Transcription")
-        case .textToSpeech: return L("Text To Speech")
+        case .textToSpeech: return L("Text to Speech")
         case .vadMode: return L("Wake Word")
-        case .models: return L("Models")
+        case .models: return L("Speech Models")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .setup: return "checklist"
+        case .speechToText: return "mic.fill"
+        case .transcription: return "text.cursor"
+        case .textToSpeech: return "speaker.wave.2.fill"
+        case .vadMode: return "ear.fill"
+        case .models: return "waveform"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .setup: return L("Microphone, speech model, input device and sensitivity. Test your voice here.")
+        case .speechToText: return ""
+        case .transcription: return L("Dictate into any app with a hotkey; how Osaurus knows you've finished.")
+        case .textToSpeech: return L("Read replies aloud: voice, engine and preview.")
+        case .vadMode: return L("Start a chat by saying an agent's wake phrase.")
+        case .models: return L("Download and manage on-device speech models.")
         }
     }
 
@@ -41,10 +68,11 @@ enum VoiceTab: String, CaseIterable, AnimatedTabItem {
     static func resolved(from rawValue: String) -> VoiceTab? {
         if let tab = VoiceTab(rawValue: rawValue) { return tab }
         switch rawValue.lowercased() {
-        case "chat voice", "chat", "speech to text", "stt": return .speechToText
+        case "chat voice", "chat", "speech to text", "stt", "voice input in chat": return .speechToText
         case "transcription mode", "dictation": return .transcription
         case "wake word", "vad", "vad mode": return .vadMode
         case "tts", "text to speech": return .textToSpeech
+        case "speech models", "models": return .models
         default: return nil
         }
     }
@@ -54,97 +82,128 @@ enum VoiceTab: String, CaseIterable, AnimatedTabItem {
 
 struct VoiceView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    // Deliberately NOT `@ObservedObject` here. SpeechService republishes
-    // on every audio-level meter tick + every load-progress chunk,
-    // which would force a re-evaluation of the whole VoiceView shell
-    // (header, sidebar tab counts, tab content) at high frequency.
-    // The two indicators that actually need live SpeechService state
-    // live in dedicated `VoiceStatusIndicator` / audio-meter subviews
-    // that observe it locally. `microphonePermissionGranted` is read
-    // directly off the singleton — it changes rarely (system prompt)
-    // and the next published mutation on `modelManager` will pick up
-    // any change for the header subtitle.
+    // Deliberately NOT `@ObservedObject`: SpeechService republishes on every
+    // audio-level meter tick, which would re-render the whole page. The live
+    // status pill observes it locally.
     private let speechService = SpeechService.shared
     @ObservedObject private var modelManager = SpeechModelManager.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var selectedTab: VoiceTab = .setup
-    @State private var hasAppeared = false
+    @State private var selection: VoiceTab?
+    @State private var voiceInputEnabled = SpeechConfigurationStore.load().voiceInputEnabled
 
-    /// Whether setup is complete (permissions granted + model downloaded)
     private var isSetupComplete: Bool {
         speechService.microphonePermissionGranted && modelManager.downloadedModelsCount > 0
             && modelManager.selectedModel != nil
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
+        SettingsDrillInHost(rootTitle: L("Voice"), selection: $selection) {
+            overview
+        } detail: { item in
+            detail(item)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.surface.canvas)
+        .environment(\.theme, themeManager.currentTheme)
+        .onAppear {
+            if let requested = managementState.voiceSubTabRequest {
+                apply(requested)
+            } else if !isSetupComplete {
+                selection = .setup
+            }
+        }
+        .onChange(of: managementState.voiceSubTabRequest) { _, newValue in
+            if let newValue { apply(newValue) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
+            voiceInputEnabled = SpeechConfigurationStore.load().voiceInputEnabled
+        }
+    }
 
-            // Content based on tab
-            Group {
-                switch selectedTab {
-                case .setup:
-                    VoiceSetupTab(onComplete: { selectedTab = .speechToText })
-                case .speechToText:
-                    ChatVoiceSettingsTab()
+    private func apply(_ requested: String) {
+        managementState.voiceSubTabRequest = nil
+        switch VoiceTab.resolved(from: requested) {
+        case .speechToText: selection = nil
+        case .models: managementState.openLocalModels(kind: .speech)
+        case let tab?: selection = tab
+        case nil: break
+        }
+    }
+
+    // MARK: Overview
+
+    private var overview: some View {
+        SettingsPage {
+            SettingsPageHeader(
+                title: "Voice",
+                subtitle: headerSubtitle,
+                status: { VoiceHeaderStatusIndicator(isSetupComplete: isSetupComplete) }
+            )
+        } content: {
+            SettingsGroup {
+                SettingsToggle(
+                    title: "Voice Input in Chat",
+                    description: voiceInputEnabled
+                        ? "A microphone button appears in the chat input when voice is ready."
+                        : "Show a microphone button in the chat input area.",
+                    anchorId: "voice.chat.enable",
+                    isOn: $voiceInputEnabled
+                )
+                .onChange(of: voiceInputEnabled) { _, newValue in
+                    var config = SpeechConfigurationStore.load()
+                    guard config.voiceInputEnabled != newValue else { return }
+                    config.voiceInputEnabled = newValue
+                    SpeechConfigurationStore.save(config)
+                    NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
+                }
+            }
+
+            SettingsDrillInList(items: VoiceTab.drillInItems) { selection = $0 }
+
+            VStack(alignment: .leading, spacing: 8) {
+                SettingsSectionHeader(title: "Models")
+                SettingsGroup {
+                    SettingsNavigationRow(
+                        icon: VoiceTab.models.icon,
+                        title: VoiceTab.models.title,
+                        subtitle: VoiceTab.models.subtitle,
+                        badge: modelManager.downloadedModelsCount,
+                        anchorId: "voice.models"
+                    ) {
+                        managementState.openLocalModels(kind: .speech)
+                    }
+                    SettingsNavigationRow(
+                        icon: ManagementTab.modelDefaults.icon,
+                        title: "Default Speech Model",
+                        subtitle: modelManager.selectedModel?.name ?? L("Not chosen yet")
+                    ) {
+                        managementState.selectedTab = .modelDefaults
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func detail(_ item: VoiceTab) -> some View {
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                SettingsPageHeader(title: item.title, subtitle: item.subtitle)
+                switch item {
+                case .setup, .speechToText, .models:
+                    VoiceSetupTab(onComplete: { selection = nil })
                 case .transcription:
                     TranscriptionSettingsTab()
                 case .vadMode:
                     VADModeSettingsTab()
                 case .textToSpeech:
                     TTSModeSettingsTab()
-                case .models:
-                    VoiceModelsTab()
                 }
             }
-            .opacity(hasAppeared ? 1 : 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
-        .onAppear {
-            // Honour an explicit cross-view request (e.g. from the chat speaker button).
-            if let requested = managementState.voiceSubTabRequest,
-                let tab = VoiceTab.resolved(from: requested)
-            {
-                selectedTab = tab
-                managementState.voiceSubTabRequest = nil
-            } else if isSetupComplete {
-                selectedTab = .speechToText
-            } else {
-                selectedTab = .setup
-            }
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
-        .onChange(of: managementState.voiceSubTabRequest) { _, newValue in
-            guard let requested = newValue, let tab = VoiceTab.resolved(from: requested) else { return }
-            selectedTab = tab
-            managementState.voiceSubTabRequest = nil
-        }
-    }
-
-    // MARK: - Header View
-
-    private var headerView: some View {
-        ManagerHeaderWithTabs(
-            title: L("Voice"),
-            subtitle: headerSubtitle
-        ) {
-            VoiceHeaderStatusIndicator(isSetupComplete: isSetupComplete)
-        } tabsRow: {
-            HeaderTabsRow(
-                selection: $selectedTab,
-                counts: [
-                    .models: modelManager.downloadedModelsCount
-                ]
-            )
+            .settingsLandingScroll(proxy)
         }
     }
 
@@ -160,17 +219,13 @@ struct VoiceView: View {
             return L("Voice transcription ready")
         }
     }
-
 }
 
 // MARK: - Voice Status Indicator
 
-/// Header status pill for the Voice tab. Observes `SpeechService` here
-/// (instead of at the `VoiceView` root) so the high-frequency
-/// `objectWillChange` publishes that drive the model-load progress and
-/// audio-level meter only re-render this small pill, not the entire
-/// Voice settings shell. Named `…HeaderStatusIndicator` to avoid the
-/// public `VoiceStatusIndicator` in `VoiceComponents.swift`.
+/// Header status pill for the Voice page. Observes `SpeechService` here
+/// (instead of at the `VoiceView` root) so the high-frequency publishes only
+/// re-render this small pill.
 private struct VoiceHeaderStatusIndicator: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var speechService = SpeechService.shared
@@ -178,256 +233,15 @@ private struct VoiceHeaderStatusIndicator: View {
     let isSetupComplete: Bool
 
     var body: some View {
-        if speechService.isLoadingModel {
-            HStack(spacing: 6) {
-                ProgressView()
-                    .scaleEffect(0.6)
-                Text("Loading...", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(theme.tertiaryBackground)
-            )
+        if !isSetupComplete {
+            StatusChip(L("Setup Required"), tone: .warning, showsDot: true)
+        } else if speechService.isLoadingModel {
+            StatusChip(L("Loading..."), icon: "hourglass")
         } else if speechService.isModelLoaded {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(theme.successColor)
-                    .frame(width: 8, height: 8)
-                Text("Ready", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.successColor)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(theme.successColor.opacity(0.1))
-            )
-        } else if !isSetupComplete {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(theme.warningColor)
-                    .frame(width: 8, height: 8)
-                Text("Setup Required", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.warningColor)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(theme.warningColor.opacity(0.1))
-            )
-        }
-    }
-}
-
-// MARK: - Voice Models Tab
-
-private struct VoiceModelsTab: View {
-    @ObservedObject private var modelManager = SpeechModelManager.shared
-
-    /// Curated speech models, recommended first so the default stays on top.
-    /// Recomputed off `objectWillChange` (not per body render) so the
-    /// high-frequency download-progress publishes don't re-walk it each frame.
-    @State private var orderedModels: [SpeechModel] = []
-
-    private func isInstalled(_ model: SpeechModel) -> Bool {
-        modelManager.effectiveDownloadState(for: model) == .completed
-    }
-
-    private var installed: [SpeechModel] { orderedModels.filter(isInstalled) }
-    private var available: [SpeechModel] { orderedModels.filter { !isInstalled($0) } }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                // Legacy WhisperKit cleanup banner
-                if modelManager.legacyWhisperModelsExist {
-                    LegacyWhisperBanner()
-                }
-
-                if !installed.isEmpty {
-                    SettingsSection(title: "Installed", icon: "checkmark.seal.fill") {
-                        VStack(spacing: 8) {
-                            ForEach(installed) { SpeechModelListRow(model: $0) }
-                        }
-                    }
-                }
-
-                if !available.isEmpty {
-                    SettingsSection(title: "Available", icon: "square.and.arrow.down") {
-                        VStack(spacing: 8) {
-                            ForEach(available) { SpeechModelListRow(model: $0) }
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity, alignment: .top)
-            .settingsLandingAnchor("voice.models")
-        }
-        .onAppear { refreshModels() }
-        .onReceive(modelManager.objectWillChange) { _ in
-            // SpeechModelManager publishes per download progress chunk; the
-            // single ordering pass over the small list is cheap.
-            refreshModels()
+            StatusChip(L("Ready"), tone: .success, showsDot: true)
         }
     }
 
-    private func refreshModels() {
-        let all = modelManager.availableModels
-        orderedModels = all.filter { $0.isRecommended } + all.filter { !$0.isRecommended }
-    }
-}
-
-// MARK: - Legacy WhisperKit Cleanup Banner
-
-private struct LegacyWhisperBanner: View {
-    @Environment(\.theme) private var theme
-    @ObservedObject private var modelManager = SpeechModelManager.shared
-    @State private var isDeleting = false
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 18))
-                .foregroundColor(theme.warningColor)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Legacy WhisperKit models found", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Text(
-                    "These models are no longer used. Delete to free up \(modelManager.legacyWhisperModelsSizeString ?? "disk space").",
-                    bundle: .module
-                )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
-            Button(action: {
-                isDeleting = true
-                modelManager.deleteLegacyWhisperModels()
-                isDeleting = false
-            }) {
-                if isDeleting {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Text("Delete", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.errorColor)
-                        )
-                }
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(isDeleting)
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.warningColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.warningColor.opacity(0.25), lineWidth: 1)
-                )
-        )
-    }
-}
-
-// MARK: - Speech Model Row
-
-/// Adapts a Parakeet `SpeechModel` onto the shared `ModelListRow`: maps the
-/// speech-specific download state into the row's status, surfaces the EN /
-/// Default badges, and wires Download / Retry / Set as Default / Delete.
-private struct SpeechModelListRow: View {
-    @ObservedObject private var modelManager = SpeechModelManager.shared
-    @Environment(\.theme) private var theme
-
-    let model: SpeechModel
-
-    private var downloadState: SpeechDownloadState {
-        modelManager.effectiveDownloadState(for: model)
-    }
-
-    private var isCompleted: Bool { downloadState == .completed }
-    private var isSelected: Bool { modelManager.selectedModelId == model.id }
-
-    var body: some View {
-        ModelListRow(
-            title: model.name,
-            subtitle: "\(model.description) · \(model.size)",
-            leading: leading,
-            badges: model.isEnglishOnly ? [ModelBadge.Item(text: L("EN"), style: .neutral)] : [],
-            isDefault: isSelected && isCompleted,
-            status: status,
-            primary: primaryAction,
-            menuItems: menuItems,
-            onCancel: { modelManager.cancelDownload(model.id) }
-        )
-    }
-
-    private var leading: ModelListRow.Leading {
-        switch downloadState {
-        case .completed: return .init(icon: "waveform", tint: theme.successColor)
-        case .downloading: return .init(icon: "arrow.down.circle", tint: theme.accentColor)
-        case .failed: return .init(icon: "exclamationmark.triangle", tint: theme.errorColor)
-        case .notStarted: return .init(icon: "waveform.circle", tint: theme.secondaryText)
-        }
-    }
-
-    private var status: ModelListRow.Status {
-        switch downloadState {
-        case .notStarted: return .idle
-        case .downloading(let progress): return .inProgress(progress: progress, detail: nil)
-        case .completed: return .ready
-        case .failed(let error): return .failed(error)
-        }
-    }
-
-    private var primaryAction: ModelListRow.Action? {
-        switch downloadState {
-        case .notStarted:
-            return ModelListRow.Action(title: "Download", icon: "arrow.down.circle") {
-                modelManager.downloadModel(model)
-            }
-        case .failed:
-            return ModelListRow.Action(title: "Retry", icon: "arrow.clockwise") {
-                modelManager.downloadModel(model)
-            }
-        case .completed:
-            return isSelected
-                ? nil
-                : ModelListRow.Action(title: "Set as Default", icon: "checkmark.circle") {
-                    modelManager.setDefaultModel(model.id)
-                }
-        case .downloading:
-            return nil
-        }
-    }
-
-    private var menuItems: [ModelListRow.Action] {
-        guard isCompleted else { return [] }
-        return [
-            ModelListRow.Action(title: "Delete", icon: "trash", role: .destructive) {
-                modelManager.deleteModel(model)
-            }
-        ]
-    }
 }
 
 // MARK: - Preview

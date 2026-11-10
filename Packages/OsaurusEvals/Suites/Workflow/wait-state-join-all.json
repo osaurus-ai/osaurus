@@ -1,0 +1,78 @@
+{
+  "id": "workflow.wait-state-join-all",
+  "domain": "workflow",
+  "label": "workflow • two wait branches finish before a join-all step; state counts the run",
+  "query": "two wait branches finish before a join-all step; state counts the run",
+  "notes": "No model, no helper. Two wait steps run in parallel from a state increment; a `join: all` step only runs after both and binds both waits' `waited_seconds`. The counter starts at 0 for the fresh eval workflow, so the first run reads 1.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [
+          { "from": "count", "to": "short" },
+          { "from": "count", "to": "long" },
+          { "from": "short", "to": "both" },
+          { "from": "long", "to": "both" }
+        ],
+        "examples": [],
+        "input_schema": { "properties": {}, "type": "object" },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "count",
+            "kind": "state",
+            "name": "Count Run",
+            "state": { "action": "increment", "key": "runs" },
+            "output_schema": {}
+          },
+          {
+            "id": "short",
+            "kind": "wait",
+            "name": "Short Pause",
+            "timeout": 30,
+            "wait": { "seconds": "1" },
+            "output_schema": {}
+          },
+          {
+            "id": "long",
+            "kind": "wait",
+            "name": "Long Pause",
+            "timeout": 30,
+            "wait": { "seconds": "2" },
+            "output_schema": {}
+          },
+          {
+            "id": "both",
+            "kind": "state",
+            "name": "Record Both",
+            "join": "all",
+            "state": {
+              "action": "set",
+              "key": "waits",
+              "value": "{{nodes.short.output.waited_seconds}}+{{nodes.long.output.waited_seconds}}"
+            },
+            "output_schema": {}
+          }
+        ],
+        "output": {
+          "runs": "{{nodes.count.output.value}}",
+          "waits": "{{nodes.both.output.value}}"
+        },
+        "output_schema": {
+          "properties": { "runs": { "type": "number" }, "waits": { "type": "string" } },
+          "required": ["runs", "waits"],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {},
+      "status": "completed",
+      "nodeStatuses": { "count": "done", "short": "done", "long": "done", "both": "done" },
+      "outputValues": {
+        "runs": [1],
+        "waits": ["1+2"]
+      }
+    }
+  }
+}

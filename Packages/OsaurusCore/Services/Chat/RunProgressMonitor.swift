@@ -87,7 +87,7 @@ final class RunProgressMonitor: ObservableObject {
                 now: now
             ),
             clearsLatch: clearsLatch,
-            loadingPhase: RunProgressLoadingPhase.current(agentId: agentId())
+            loadingPhase: RunProgressLoadingPhase.current(agentId: agentId(), sessionId: sessionId())
         )
         clearsLatch = false
         guard next != state else { return }
@@ -125,6 +125,18 @@ final class RunProgressMonitor: ObservableObject {
         observeDiscrete(sandbox.$status)
         observeDiscrete(sandbox.$isProvisioning)
         observeDiscrete(sandbox.$provisioningProgress, throttleSeconds: 1)
+
+        // A step of a workflow run this chat started moved: started,
+        // streamed, called a tool, logged, retried, or finished.
+        let sessionId = self.sessionId
+        observeDiscrete(
+            WorkflowRunStore.shared.$live
+                .map { live in
+                    guard let session = sessionId() else { return [UUID: WorkflowRun]() }
+                    return live.filter { $0.value.caller.sessionID == session }
+                }
+                .removeDuplicates(),
+            throttleSeconds: 1)
 
         syncLiveExec(LiveExecRegistry.shared.currentEntries())
     }

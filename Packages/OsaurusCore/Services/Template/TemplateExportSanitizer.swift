@@ -3,10 +3,11 @@
 //  osaurus
 //
 //  What leaves the Mac in an exported template file, and what an imported
-//  one may carry in. Secret values and folder bookmarks are never part of
-//  a `Template`, so they cannot leak by construction; this pass removes the
-//  remaining machine-local details a payload can hold: absolute paths, and
-//  credentials an MCP server hint's endpoint or arguments can carry.
+//  one may carry in. Saved dialog answers, secret values, install bindings,
+//  and run history are never part of a `Template`, so they cannot leak by
+//  construction; this pass removes the remaining machine-local details a
+//  payload can hold: absolute paths, and secret-looking values in examples
+//  and dialog defaults.
 //
 //  A signed template is the signer's exact content: export sanitizes
 //  before signing, so an honest file is already clean, and changing one
@@ -30,10 +31,45 @@ public enum TemplateExportSanitizer {
             if let path = copy.agent.workingFolder.valueOrNil {
                 copy.agent.workingFolder = .value(portablePath(path))
             }
+        case .workflow(var def):
+            let secretKeys = secretFieldKeys(def)
+            def.examples = def.examples.map { ex in
+                WorkflowExample(name: ex.name, input: strip(ex.input, keys: secretKeys))
+            }
+            def.nodes = def.nodes.map { node in
+                if case .agent(let spec) = node.kind {
+                    var n = node
+                    n.kind = .agent(portable(spec))
+                    return n
+                }
+                guard case .dialog(var spec) = node.kind else { return node }
+                spec.fields = spec.fields.map { field in
+                    var f = field
+                    if f.type == .secret || f.type == .file || f.type == .folder { f.defaultValue = nil }
+                    return f
+                }
+                var n = node
+                n.kind = .dialog(spec)
+                return n
+            }
+            copy.payload = .workflow(def)
         }
         copy.serverHints = copy.serverHints.map(sanitized)
         copy.bundled = copy.bundled.map(sanitized)
         return copy.contentHash == copy.computedContentHash() ? copy : copy.sealed()
+    }
+
+    /// An agent step names its agent by display name and, for a shared one,
+    /// by workspace and address: never by this Mac's agent id. A ref
+    /// without a real address is dropped, leaving the name.
+    static func portable(_ spec: AgentNodeSpec) -> AgentNodeSpec {
+        let ref = spec.workspace.flatMap { ref -> WorkspaceAgentRef? in
+            let workspace = ref.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !workspace.isEmpty, WorkspaceAgentRef.looksLikeAddress(ref.agentAddress) else { return nil }
+            return WorkspaceAgentRef(workspaceId: workspace, agentAddress: ref.agentAddress)
+        }
+        return AgentNodeSpec(
+            agent: spec.agent.trimmingCharacters(in: .whitespacesAndNewlines), workspace: ref, task: spec.task)
     }
 
     /// A hint's shape already holds no header or env values; this drops
@@ -122,5 +158,37 @@ public enum TemplateExportSanitizer {
         let abbreviated = Template.abbreviateHome(path)
         if abbreviated.hasPrefix("~") { return abbreviated }
         return (path as NSString).lastPathComponent
+    }
+
+    /// Dialog secret fields and code-node secret keys. Example inputs never
+    /// carry values for them.
+    static func secretFieldKeys(_ def: WorkflowDefinition) -> Set<String> {
+        var keys = Set(def.secrets.map(\.key))
+        for node in def.nodes {
+            switch node.kind {
+            case .dialog(let spec):
+                for f in spec.fields where f.type == .secret { keys.insert(f.key) }
+            case .code(let spec):
+                keys.formUnion(spec.secrets)
+            default:
+                break
+            }
+        }
+        return keys
+    }
+
+    static func strip(_ value: JSONValue, keys: Set<String>) -> JSONValue {
+        switch value {
+        case .object(let o):
+            var out: [String: JSONValue] = [:]
+            for (k, v) in o where !keys.contains(k) { out[k] = strip(v, keys: keys) }
+            return .object(out)
+        case .array(let list):
+            return .array(list.map { strip($0, keys: keys) })
+        case .string(let s) where s.hasPrefix("/"):
+            return .string(portablePath(s))
+        default:
+            return value
+        }
     }
 }

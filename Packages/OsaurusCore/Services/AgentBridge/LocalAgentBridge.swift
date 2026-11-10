@@ -4,7 +4,8 @@
 //
 //  In-process implementation of `AgentRuntimeBridge`. Holds direct
 //  references to `AgentDatabaseStore` (per-agent SQLite), `SchedulerDatabase`
-//  (next-run + run history + pause), and `NotificationService` (delivery).
+//  (pause), `SelfScheduleAutomations` (the next-run slot), and
+//  `NotificationService` (delivery).
 //
 //  Concurrency model (spec §1.4, §16 Q1):
 //
@@ -510,28 +511,23 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
 
     // MARK: - AgentRuntimeBridge (scheduling, spec §9)
 
+    /// The wake lives on the agent's owned schedule automation
+    /// (`SelfScheduleAutomations`), so this runs on the main actor.
+    @MainActor
     @discardableResult
     public func scheduleNextRun(
         agentId: UUID,
         request: AgentScheduleRequest,
         bounds: AgentScheduleSettings
     ) throws -> AgentScheduleResult {
-        try serialized(agentId) {
-            try SchedulerDatabase.shared.open()
-
+        do {
             // Daily cap: in manual mode the cap is 0 — every self-schedule
             // attempt is rejected. We still want user-driven edits through
             // the Next Run panel to land regardless of the cap (the user is
             // the safety valve, not the dispatcher), so this guard only
             // fires for `.agent` writes (spec §13).
             let isAgentWrite = request.scheduledBy == .agent
-            let runWindow: TimeInterval = 24 * 3600
-            let usedToday =
-                (try? SchedulerDatabase.shared.successfulOrErroredRunCount(
-                    agentId: agentId,
-                    triggerKind: .schedule,
-                    in: runWindow
-                )) ?? 0
+            let usedToday = SelfScheduleAutomations.runsToday(agentId: agentId)
             let remainingBudget = max(0, bounds.dailyRunCap - usedToday)
 
             if isAgentWrite && bounds.mode == .manual {
@@ -551,7 +547,7 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
                 )
             }
             if isAgentWrite,
-                let pauseRecord = (try? SchedulerDatabase.shared.pauseInfo(for: agentId)),
+                let pauseRecord = try? pauseInfo(agentId: agentId),
                 pauseRecord.pausedUntil > Date()
             {
                 return AgentScheduleResult(
@@ -633,10 +629,7 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
                 scheduledBy: request.scheduledBy,
                 scheduledAtWall: Date()
             )
-            let stored = try SchedulerDatabase.shared.upsertNextRun(entry)
-            // Poke the scheduler so it doesn't wait out its 60s idle
-            // sleep to notice a freshly inserted near-term row.
-            Task { @MainActor in NextRunScheduler.shared.notifyRowChanged() }
+            let stored = SelfScheduleAutomations.schedule(entry)
             return AgentScheduleResult(
                 entry: stored,
                 clamped: !reasons.isEmpty,
@@ -646,22 +639,19 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
         }
     }
 
+    @MainActor
     @discardableResult
     public func cancelNextRun(agentId: UUID) throws -> Bool {
-        try serialized(agentId) {
-            try SchedulerDatabase.shared.open()
-            let existed = (try? SchedulerDatabase.shared.nextRun(for: agentId)) != nil
-            try SchedulerDatabase.shared.clearNextRun(for: agentId)
-            Task { @MainActor in NextRunScheduler.shared.notifyRowChanged() }
-            return existed
-        }
+        SelfScheduleAutomations.cancel(agentId: agentId)
     }
 
+    @MainActor
     public func nextRun(agentId: UUID) throws -> NextRunEntry? {
-        try SchedulerDatabase.shared.open()
-        return try SchedulerDatabase.shared.nextRun(for: agentId)
+        SelfScheduleAutomations.entry(for: agentId)
     }
 
+    /// A paused agent's wake waits for the pause to end
+    /// (`ScheduleEventSource` re-arms it when it comes due).
     public func pauseAgent(
         agentId: UUID,
         until: Date,
@@ -670,10 +660,6 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
         try serialized(agentId) {
             try SchedulerDatabase.shared.open()
             try SchedulerDatabase.shared.pause(agentId: agentId, until: until, reason: reason)
-            // No row change, but the scheduler's pause check fires at
-            // tick time — waking early lets the next iteration skip a
-            // just-paused agent immediately.
-            Task { @MainActor in NextRunScheduler.shared.notifyRowChanged() }
         }
     }
 
@@ -681,7 +667,6 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
         try serialized(agentId) {
             try SchedulerDatabase.shared.open()
             try SchedulerDatabase.shared.unpause(agentId: agentId)
-            Task { @MainActor in NextRunScheduler.shared.notifyRowChanged() }
         }
     }
 

@@ -377,14 +377,18 @@ final class PluginHostContext: @unchecked Sendable {
         // to the Default agent's secret namespace. Warn-once and return nil
         // so the plugin reads no value rather than the Default agent's.
         guard let agentId = resolvedAgentIdOrNil else {
+            // The Default agent has no private namespace here, but it does
+            // use the keys shared by all agents.
+            if Self.activeAgentId() == Agent.defaultId, PluginCredentials.isDeclaredSecret(pluginId: pluginId, key: key) {
+                return PluginCredentials.value(pluginId: pluginId, specId: key, agentId: nil)
+            }
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_get")
             return nil
         }
-        // Shared resolution policy (exact agent, then default-agent
-        // fallback) so `config_get` agrees with tool payload injection —
-        // a `bot_token` saved as a Plugins-tab global default must be
-        // readable here, not only via the injected payload.
-        return ToolSecretsKeychain.resolvedSecret(id: key, for: pluginId, agentId: agentId)
+        // Declared secrets resolve like tool payload injection (the agent's
+        // value, else the one saved for all agents); other keys are plugin
+        // config read from the plugin's own store.
+        return PluginCredentials.configValue(pluginId: pluginId, key: key, agentId: agentId)
     }
 
     /// Maximum config value byte size accepted by `config_set`. The
@@ -414,7 +418,9 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_set")
             return
         }
-        ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
+        if !PluginCredentials.configWrite(pluginId: pluginId, key: key, value: value, agentId: agentId) {
+            ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
+        }
         postConfigChange(key: key, value: value)
     }
 
@@ -423,7 +429,9 @@ final class PluginHostContext: @unchecked Sendable {
             Self.warnNoAgentContextOnce(pluginId: pluginId, op: "config_delete")
             return
         }
-        ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: agentId)
+        if !PluginCredentials.configWrite(pluginId: pluginId, key: key, value: nil, agentId: agentId) {
+            ToolSecretsKeychain.deleteSecret(id: key, for: pluginId, agentId: agentId)
+        }
         postConfigChange(key: key, value: nil)
     }
 
@@ -465,7 +473,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Outcome of `planDispatch`: either an error envelope to return
     /// straight to the plugin, or a fully-built `DispatchRequest` ready
-    /// for `TaskDispatcher`. Surfaced to tests so the security boundary
+    /// for `BackgroundTaskManager.dispatchChat`. Surfaced to tests so the security boundary
     /// (agent-scope enforcement, prompt validation, request-id parse,
     /// session_id passthrough) can be pinned without spinning up
     /// `BackgroundTaskManager` or a real chat engine.
@@ -478,7 +486,7 @@ final class PluginHostContext: @unchecked Sendable {
     /// the host-enforced agent scope (`activeAgent`, captured from TLS
     /// before `blockingAsync`). The returned `DispatchPlan` either
     /// carries the error envelope to send back, or the
-    /// `DispatchRequest` to hand to `TaskDispatcher`.
+    /// `DispatchRequest` to hand to `BackgroundTaskManager.dispatchChat`.
     ///
     /// Rate limiting is intentionally *not* in this function: it
     /// requires per-context state (`PluginHostContext.getContext(for:)`
@@ -685,7 +693,7 @@ final class PluginHostContext: @unchecked Sendable {
             // BackgroundTaskManager.dispatchChat now self-holds plugin
             // events between registerTask and trampoline-return, since
             // reattach can resolve a different task id than `requestId`.
-            let handle = await TaskDispatcher.shared.dispatch(request)
+            let handle = await BackgroundTaskManager.shared.dispatchChat(request)
             guard let handle else {
                 return (
                     Self.jsonString([
@@ -1554,6 +1562,11 @@ final class PluginHostContext: @unchecked Sendable {
                 activeAgentId: activeAgent,
                 engineFactory: engineFactory
             )
+            // The plugin is waiting on this completion like an API client,
+            // so queued background work yields to its model meanwhile.
+            let reservation = ForegroundReservationCenter.shared.reserve(
+                owner: "plugin:\(pid)", kind: .api, model: prep.enriched.request.model)
+            defer { ForegroundReservationCenter.shared.release(reservation) }
             var messages = prep.enriched.request.input
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
@@ -1893,6 +1906,11 @@ final class PluginHostContext: @unchecked Sendable {
                 activeAgentId: activeAgent,
                 engineFactory: engineFactory
             )
+            // The plugin is waiting on this completion like an API client,
+            // so queued background work yields to its model meanwhile.
+            let reservation = ForegroundReservationCenter.shared.reserve(
+                owner: "plugin:\(pid)", kind: .api, model: prep.enriched.request.model)
+            defer { ForegroundReservationCenter.shared.release(reservation) }
             let cid = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
             var messages = prep.enriched.request.input
             var lastContent = ""

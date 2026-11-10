@@ -2,12 +2,11 @@
 //  ManagementTabTests.swift
 //  OsaurusCoreTests
 //
-//  Guardrails for the management sidebar's information architecture:
-//  every tab must belong to exactly one labeled section, the flattened
-//  section order must cover every tab, and legacy deep-link raw values
-//  (`"dashboard"`, `"channels"`) must keep resolving as their destinations
-//  move. These pin the Settings IA cleanup so a future tab addition can't
-//  silently fall out of the sidebar.
+//  Guardrails for the management window's information architecture:
+//  group (`ManagementSection`) > category (sidebar tab) > item (child tab).
+//  Every tab is either a sidebar category in exactly one group or a child
+//  of exactly one category, the flattened order covers every tab, and
+//  legacy deep-link raw values keep resolving as their destinations move.
 //
 
 import Foundation
@@ -17,42 +16,90 @@ import Testing
 
 struct ManagementTabTests {
 
-    // MARK: - Section membership
+    // MARK: - Hierarchy
 
-    @Test func everyTabBelongsToExactlyOneSection() {
+    @Test func everyTabIsACategoryOrAChild() {
         for tab in ManagementTab.allCases {
             let owningSections = ManagementSection.allCases.filter { $0.tabs.contains(tab) }
-            #expect(
-                owningSections.count == 1,
-                "\(tab.rawValue) must appear in exactly one section, found \(owningSections.map(\.rawValue))"
-            )
-            // The tab's own `section` property must agree with the section
-            // that lists it, so the two definitions can't drift apart.
-            #expect(
-                owningSections.first == tab.section,
-                "\(tab.rawValue).section (\(tab.section.rawValue)) disagrees with the section listing it"
-            )
+            if ManagementTab.mainWindowCases.contains(tab) {
+                #expect(owningSections.isEmpty, "\(tab.rawValue) lives in the main window, not the sidebar")
+                #expect(tab.parent == nil)
+            } else if let parent = tab.parent {
+                #expect(owningSections.isEmpty, "\(tab.rawValue) is a child and must not be in the sidebar")
+                #expect(parent.parent == nil, "\(tab.rawValue)'s parent must be a sidebar category")
+                #expect(parent.children.contains(tab), "\(parent.rawValue).children must list \(tab.rawValue)")
+                #expect(tab.section == parent.section)
+                #expect(tab.sidebarTab == parent)
+            } else {
+                #expect(
+                    owningSections.count == 1,
+                    "\(tab.rawValue) must appear in exactly one section, found \(owningSections.map(\.rawValue))"
+                )
+                #expect(owningSections.first == tab.section)
+                #expect(tab.sidebarTab == tab)
+            }
         }
     }
 
-    @Test func sectionOrderCoversAllTabsWithoutDuplicates() {
-        let flattened = ManagementSection.allCases.flatMap(\.tabs)
-        #expect(flattened.count == Set(flattened).count, "sections must not repeat a tab")
-        #expect(
-            Set(flattened) == Set(ManagementTab.allCases),
-            "flattened sections must cover every ManagementTab case"
-        )
-        // `visibleCases` is the canonical sidebar order and must be that
-        // same flattening.
-        #expect(ManagementTab.visibleCases == flattened)
+    @Test func childrenAgreeWithParent() {
+        for tab in ManagementTab.allCases {
+            for child in tab.children {
+                #expect(child.parent == tab, "\(child.rawValue).parent must be \(tab.rawValue)")
+                #expect(!child.subtitle.isEmpty, "\(child.rawValue) needs a row subtitle on its parent's page")
+            }
+        }
     }
 
-    @Test func generalSectionLeadsAndDevelopersTrails() {
-        // The IA contract: General is the first group (landing area) and
-        // Developers is the last. Guards accidental reordering of allCases.
-        #expect(ManagementSection.allCases.first == .general)
+    @Test func visibleOrderCoversAllTabsWithoutDuplicates() {
+        let visible = ManagementTab.visibleCases
+        #expect(visible.count == Set(visible).count, "visible order must not repeat a tab")
+        #expect(Set(visible).isDisjoint(with: ManagementTab.mainWindowCases))
+        #expect(
+            Set(visible).union(ManagementTab.mainWindowCases) == Set(ManagementTab.allCases),
+            "visible order plus main-window surfaces must cover every ManagementTab case")
+        #expect(ManagementTab.sidebarCases == ManagementSection.allCases.flatMap(\.tabs))
+    }
+
+    @Test func agentsArePinnedFirstAndWorkflowsLiveInTheMainWindow() {
+        #expect(ManagementSection.allCases.first == .home)
+        #expect(ManagementSection.home.title.isEmpty)
+        #expect(ManagementSection.home.tabs == [.agents, .automations, .approvals])
+        #expect(ManagementTab.mainWindowCases == [.workflows])
+        #expect(ManagementTab.approvals.rawValue == "approvals")
+        #expect(ManagementTab.approvals.label == "Inbox")
+        #expect(ManagementTab.resolved(from: "inbox") == .approvals)
+        #expect(ManagementTab.resolved(from: "needsYou") == .approvals)
         #expect(ManagementSection.allCases.last == .developers)
-        #expect(ManagementTab.visibleCases.first == .settings)
+        #expect(ManagementSection.developers.tabs == [.server, .sandbox, .insights, .tasks])
+        #expect(ManagementTab.defaultTab == .agents)
+        #expect(ManagementTab.sidebarCases.first == .agents)
+    }
+
+    @Test func builtInAgentsHangOffAgents() {
+        #expect(ManagementTab.agents.children == [.orchestrator, .architect, .configurator, .delegation])
+        #expect(ManagementTab.architect.section == .home)
+        #expect(ManagementTab.orchestrator.sidebarTab == .agents)
+        #expect(ManagementTab.configurator.sidebarTab == .agents)
+        #expect(ManagementTab.delegation.sidebarTab == .agents)
+    }
+
+    @Test func groupedCategories() {
+        #expect(ManagementSection.general.tabs == [.settings, .chat, .keys, .identity, .privacy])
+        #expect(ManagementSection.sharing.tabs == [.workspaces, .access, .devices])
+        #expect(ManagementSection.sharing.title == "Sharing")
+        #expect(ManagementSection.models.tabs == [.models, .providers, .modelDefaults])
+        #expect(ManagementTab.identity.children == [.credits])
+        #expect(ManagementTab.workspaces.parent == nil)
+        #expect(ManagementTab.workspaces.section == .sharing)
+        #expect(ManagementTab.privacy.children == [.permissions])
+        #expect(ManagementTab.computerUse.children == [.browser])
+        #expect(ManagementTab.devices.children == [.connect])
+        #expect(ManagementTab.connect.section == .sharing)
+        #expect(ManagementTab.connect.label == "Mobile")
+        #expect(ManagementTab.chat.children == [.commands])
+        #expect(ManagementSection.context.tabs == [.memory, .projects, .knowledge, .skills])
+        #expect(ManagementTab.projects.parent == nil)
+        #expect(ManagementTab.projects.label == "Projects")
     }
 
     // MARK: - Legacy raw-value resolution
@@ -62,9 +109,23 @@ struct ManagementTabTests {
         #expect(ManagementTab.resolved(from: "channels") == .agentChannels)
         #expect(ManagementTab.resolved(from: "integrations") == .agentChannels)
         #expect(ManagementTab.resolved(from: "agent-channels") == .agentChannels)
-        // The removed Storage tab: its raw value lands on General, whose
-        // Advanced → Data & Storage subsection hosts encryption + file history.
-        #expect(ManagementTab.resolved(from: "storage") == .settings)
+        // Storage is Privacy & Security → Data & Storage.
+        #expect(ManagementTab.resolved(from: "storage") == .privacy)
+        #expect(ManagementTab.legacySubTab(from: "storage") == PrivacyTab.storage.rawValue)
+        #expect(ManagementTab.legacySubTab(from: "privacy") == nil)
+        // Custom themes were retired; Appearance lives on General.
+        #expect(ManagementTab.resolved(from: "themes") == .settings)
+        #expect(ManagementTab.resolved(from: "teams") == .workspaces)
+        #expect(ManagementTab.resolved(from: "schedules") == .automations)
+        #expect(ManagementTab.resolved(from: "watchers") == .automations)
+        #expect(ManagementTab.resolved(from: "events") == .automations)
+        #expect(ManagementTab.resolved(from: "model-defaults") == .modelDefaults)
+        // Sync merged into Devices and Mobile is its child page (kept for one
+        // release); Server's Relays moved to Access.
+        #expect(ManagementTab.resolved(from: "sync") == .devices)
+        #expect(ManagementTab.resolved(from: "connect") == .connect)
+        #expect(ManagementTab.resolved(from: "mobile") == .connect)
+        #expect(ManagementTab.resolved(from: "relays") == .access)
     }
 
     @Test func resolvedRoundTripsCurrentRawValues() {
@@ -74,21 +135,22 @@ struct ManagementTabTests {
         #expect(ManagementTab.resolved(from: "not-a-tab") == nil)
     }
 
-    @Test func settingsTabIsLabeledGeneral() {
-        // The tab formerly labeled "Settings" (inside the settings window)
-        // now reads "General"; its raw value stays stable for deep links.
+    @Test func renamedTabsKeepStableRawValues() {
         #expect(ManagementTab.settings.rawValue == "settings")
         #expect(ManagementTab.settings.label == "General")
-    }
-
-    @Test func renamedTabsKeepStableRawValues() {
-        // Labels changed in the settings IA cleanup; raw values (deep-link
-        // ids, persisted selection) must not.
         #expect(ManagementTab.chat.rawValue == "chat")
-        #expect(ManagementTab.chat.label == "Conversation")
-        #expect(ManagementTab.tools.rawValue == "tools")
-        #expect(ManagementTab.tools.label == "Tools & MCP")
+        #expect(ManagementTab.chat.label == "Chat")
+        #expect(ManagementTab.models.rawValue == "models")
+        #expect(ManagementTab.models.label == "Local Models")
+        #expect(ManagementTab.identity.label == "Osaurus ID")
+        #expect(ManagementTab.privacy.label == "Privacy & Security")
+        #expect(ManagementTab.keys.rawValue == "keys")
+        #expect(ManagementTab.keys.label == "Vault")
+        #expect(ManagementTab.keys.icon == "key.fill")
+        #expect(ManagementTab.computerUse.label == "Computer & Browser Use")
         #expect(ManagementTab.imageGeneration.rawValue == "imageGeneration")
-        #expect(ManagementTab.imageGeneration.label == "Images")
+        #expect(ManagementTab.imageGeneration.label == "Images & Video")
+        #expect(ManagementTab.automations.label == "Automations")
+        #expect(ManagementTab.automations.icon == "bolt.fill")
     }
 }

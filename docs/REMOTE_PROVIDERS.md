@@ -279,16 +279,15 @@ servers.
 See [Osaurus Router](OSAURUS_ROUTER.md) for the Router request contract,
 streaming diagnostics, billing hints, idempotency behavior, and local ledger.
 
-### Osaurus Agents (paired / discovered)
+### Osaurus Agents (paired)
 
-A native Osaurus peer — paired over the LAN via Bonjour or through a relay
-invite — is added as an `.osaurus` provider and can be used **two ways**:
+A native Osaurus peer — paired through a relay invite — is added as an `.osaurus` provider and can be used **two ways**:
 
 - **Inference backend (Mode 1).** Treated like any OpenAI-compatible provider:
   requests go to `/chat/completions`, your selected model and sampling settings
   are honored, and the **local** agent loop drives any tools. Pick one of the
   peer's models from the model selector.
-- **Remote agent run (Mode 2).** When you select a paired/discovered *agent*
+- **Remote agent run (Mode 2).** When you select a paired *agent*
   (not just one of its models), the conversation runs **fully server-side** on
   the peer via `/agents/{address}/run`: the remote agent uses its **own** model,
   system prompt, memory, and tools, and only text deltas (plus sanitized

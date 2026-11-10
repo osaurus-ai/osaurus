@@ -4,7 +4,8 @@
 //
 //  View-only grouping of `ActivityCategory` into a handful of scopes the
 //  Insights page shows as a quiet tab row (All · Models · Web · Tools ·
-//  Channels · API · Audio & Media · System), plus the active-filter
+//  Workflows · Automations · Tasks · Interactions · Channels · API ·
+//  Audio & Media · System), plus the active-filter
 //  tokens the toolbar renders beneath the search field. Nothing here is
 //  persisted; `ActivityFilter` stays the single source of truth and the
 //  store never sees scopes.
@@ -19,6 +20,10 @@ enum InsightsScope: String, CaseIterable, Hashable, AnimatedTabItem {
     case models
     case web
     case tools
+    case workflows
+    case events
+    case tasks
+    case interactions
     case channels
     case api
     case audioMedia
@@ -32,6 +37,10 @@ enum InsightsScope: String, CaseIterable, Hashable, AnimatedTabItem {
         case .models: return [.inference, .compaction, .embedding]
         case .web: return [.webSearch, .urlExtract]
         case .tools: return [.mcpToolCall, .pluginCall, .pluginLog]
+        case .workflows: return [.workflowRun, .workflowNode]
+        case .events: return [.event]
+        case .tasks: return [.task]
+        case .interactions: return [.interaction]
         case .channels: return [.channelDelivery]
         case .api: return [.inboundAPI, .routerControl]
         case .audioMedia: return [.audioTranscription, .speechSynthesis, .mediaGeneration]
@@ -45,6 +54,10 @@ enum InsightsScope: String, CaseIterable, Hashable, AnimatedTabItem {
         case .models: return L("Models")
         case .web: return L("Web")
         case .tools: return L("Tools")
+        case .workflows: return L("Workflows")
+        case .events: return L("Automations")
+        case .tasks: return L("Tasks")
+        case .interactions: return L("Interactions")
         case .channels: return L("Channels")
         case .api: return L("API")
         case .audioMedia: return L("Audio & Media")
@@ -81,6 +94,10 @@ struct ActivityFilterToken: Identifiable, Equatable {
         case destination
         case model
         case agent
+        case workflowRun
+        case task
+        case participant
+        case agentAddress
         case status
         case privacyFilter
         case pluginLogsHidden
@@ -130,6 +147,18 @@ struct ActivityFilterToken: Identifiable, Equatable {
         if filter.agentId != nil {
             out.append(.init(kind: .agent, label: L("Agent")))
         }
+        if filter.workflowRunId != nil {
+            out.append(.init(kind: .workflowRun, label: L("One workflow run")))
+        }
+        if filter.taskId != nil {
+            out.append(.init(kind: .task, label: L("One task")))
+        }
+        if let key = filter.participantKey {
+            out.append(.init(kind: .participant, label: ParticipantFormatter.keyLabel(key)))
+        }
+        if let address = filter.agentAddress {
+            out.append(.init(kind: .agentAddress, label: ParticipantFormatter.shortAddress(address)))
+        }
         if filter.status != .all {
             out.append(.init(kind: .status, label: filter.status.displayName))
         }
@@ -153,6 +182,10 @@ struct ActivityFilterToken: Identifiable, Equatable {
         case .destination: filter.destinationHost = nil
         case .model: filter.model = nil
         case .agent: filter.agentId = nil
+        case .workflowRun: filter.workflowRunId = nil
+        case .task: filter.taskId = nil
+        case .participant: filter.participantKey = nil
+        case .agentAddress: filter.agentAddress = nil
         case .status: filter.status = .all
         case .privacyFilter: filter.privacyFilterApplied = nil
         case .pluginLogsHidden: filter.includePluginLogs = true

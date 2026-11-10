@@ -165,26 +165,40 @@ enum AgentChannelInboundActivityPresentation {
             return L("Messages sent from your own account are ignored (Ignore Self Messages in Advanced settings).")
         case "bot_message_denied":
             return L("Messages from bot accounts are ignored (see Advanced settings).")
-        case "telegram_mention_detection_unavailable":
-            return L("Telegram dispatch does not support mention gating. Turn off Require an @mention for Telegram.")
         case "inbound_sender_missing":
             return L("Telegram did not include a sender for this message, so it cannot be authorized.")
         case "undecodable_envelope":
             return L("The provider sent an envelope Osaurus could not decode.")
         case "mention_required":
             return L("Mentions are required to start a conversation. Mention the bot user (not the Osaurus agent name) in your message.")
-        case "inbound_dispatch_disabled", "inbound_dispatch_not_configured":
-            return L("Dispatch to an agent is turned off. Enable it and pick an agent in the channel settings.")
-        case "inbound_agent_unavailable":
-            return L("The selected agent no longer exists. Pick a different agent in the channel settings.")
+        case "no_event_configured", "inbound_dispatch_disabled", "inbound_dispatch_not_configured":
+            return L("No automation uses this channel yet. Add one in Automations (Add Automation → this channel) to choose what runs.")
+        case "no_event_for_room":
+            return L("No automation covers this room. Add the room to an automation in Automations, or leave an automation's rooms empty to cover every room.")
+        case "agent_unavailable", "agent_not_selected", "inbound_agent_unavailable":
+            return L("The automation's agent no longer exists. Pick a different agent for it in Automations.")
+        case "disabled":
+            return L("The matching automation is turned off. Turn it on in Automations.")
+        case let value? where value.hasPrefix("filtered:"):
+            return L("The message did not pass the automation's Only When filter.")
+        case let value? where value.hasPrefix("duplicate_of:"):
+            return L("This message was already handled by the automation.")
+        case let value? where EventTargetProblem(rawValue: value) != nil:
+            return EventTargetProblem(rawValue: value)?.message
+        case "workflow_unavailable":
+            return L("The automation's workflow is no longer installed. Pick another workflow in Automations.")
+        case "conversation_busy":
+            return L("The agent was still replying in this conversation, and this automation skips new messages while it replies. To keep them, let it hold messages in the automation's Queueing step.")
         case "conversation_queue_full":
             return L("Too many messages are waiting for this conversation's current turn to finish. Send this one again once the agent replies.")
         case "invalid_dispatch_payload":
             return L("The message had no usable content to dispatch.")
-        case "no_route_matched":
-            return L("No routing rule claimed this message and no default agent is set. Add a route for this room or pick a default agent in the channel settings.")
+        case "no_event_matched", "no_route_matched":
+            return L("No automation claimed this message: an automation's name prefix did not match and none covers this room. Check the automations for this channel in Automations.")
         case "auto_reply_disabled":
-            return L("The reply stayed in Osaurus because Reply Automatically is off. Turn it on in the channel settings to post replies back.")
+            return L("The reply stayed in Osaurus because Reply Automatically is off for this automation. Turn it on in the automation's Reply step to post replies back.")
+        case "global_writes_disabled":
+            return L("The reply stayed in Osaurus because sending is paused. Turn on Allow Agents to Send Messages in Channels to post replies back.")
         case "rate_limited":
             return L("Inbound handling is rate limited right now. Wait a moment and try again.")
         default:
@@ -221,14 +235,18 @@ enum AgentChannelInboundActivityPresentation {
         }
         switch rule {
         case "default":
-            return L("Routed to \(agentName) (default agent)")
+            return L("Routed to \(agentName) (automation for any room)")
         case let value where value.hasPrefix("alias:"):
             let alias = String(value.dropFirst("alias:".count))
             return L("Routed to \(agentName) (name \"\(alias)\")")
         case let value where value.hasPrefix("room:"):
-            return L("Routed to \(agentName) (room rule)")
+            return L("Routed to \(agentName) (automation for this room)")
         default:
             return L("Routed to \(agentName)")
         }
+    }
+
+    static func firedReason(eventNames: [String]) -> String {
+        L("Fired \(eventNames.joined(separator: ", "))")
     }
 }

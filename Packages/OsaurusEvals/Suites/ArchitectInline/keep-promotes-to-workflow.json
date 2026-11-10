@@ -1,0 +1,11 @@
+{
+  "id": "architect_inline.keep-promotes-to-workflow",
+  "domain": "architect_inline",
+  "label": "architect_inline • yes to the keep offer raises Save and installs a valid workflow",
+  "notes": "Live. After the run completes the row answers the keep offer with its keep_draft id; the result must raise the Save card, and saving must install a workflow that validates. The installed workflow is deleted after the check.",
+  "query": "Take these meeting notes and pull out the action items with owners, then draft a short follow-up email to the team: Dana will send the budget by Tuesday; Raj owns the vendor call; we still need someone to book the offsite room.",
+  "fixtures": {},
+  "expect": {
+    "architectInline": { "result": "completed", "keep": true }
+  }
+}

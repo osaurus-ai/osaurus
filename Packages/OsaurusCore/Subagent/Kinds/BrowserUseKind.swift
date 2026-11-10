@@ -86,8 +86,8 @@ final class BrowserUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning
             invokingParentModelName: scope.parentModelName,
             idleWaitSeconds: Self.residencyIdleWaitSeconds,
             deniedMessage:
-                "Running Browser Use on a different local model requires \"Local Orchestrator "
-                + "Handoff\" enabled in Settings → Subagents (so the chat model can unload to "
+                "Running Browser Use on a different local model requires \"Swap Local Models for "
+                + "Subagents\" enabled in Settings → Agents → Delegation (so the chat model can unload to "
                 + "make room).",
             unavailableMessage:
                 "No model is selected for this agent, so Browser Use can't run. Pick a model first.",
@@ -137,6 +137,7 @@ final class BrowserUseKind: SubagentKind, SubagentPostAdmissionResidencyPlanning
 
     private func validateAuthority(_ scope: SubagentScope) async throws {
         guard evalModel == nil, executeOverride == nil else { return }
+        if scope.isGrantedByWorkflow(capability) { return }
         let allowed = await MainActor.run {
             guard scope.agentId != Agent.defaultId,
                 let agent = AgentManager.shared.agent(for: scope.agentId)

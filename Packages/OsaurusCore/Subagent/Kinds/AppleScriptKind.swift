@@ -94,7 +94,7 @@ final class AppleScriptKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             config: config,
             perAgentEnabled: settings?.appleScriptEnabled ?? false
         )
-        guard available else {
+        guard available || scope.isGrantedByWorkflow(capability) else {
             throw SubagentError.denied("AppleScript is not enabled for this agent.")
         }
 
@@ -214,6 +214,7 @@ final class AppleScriptKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
     }
 
     func validateExecutionAuthority(_ scope: SubagentScope, resolved: ResolvedModel) async throws {
+        if scope.isGrantedByWorkflow(capability) { return }
         let config = SubagentConfigurationStore.snapshot()
         let enabled = await MainActor.run {
             AgentManager.shared.agent(for: scope.agentId)?.settings.appleScriptEnabled ?? false

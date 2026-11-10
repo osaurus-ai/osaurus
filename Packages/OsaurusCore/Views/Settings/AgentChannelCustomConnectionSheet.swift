@@ -225,39 +225,40 @@ struct AgentChannelCustomConnectionSheet: View {
             )
 
             HStack(alignment: .top, spacing: 12) {
-                StyledSettingsTextField(
-                    label: L("Connection ID (required)"),
+                SettingsTextFieldRow(
+                    label: "Connection ID (required)",
                     text: $draft.id,
                     placeholder: "ops-webhook",
-                    help: L("Stable id used by agent_channel tools. Native provider ids are reserved.")
+                    help: "Stable id used by agent_channel tools. Native provider ids are reserved.",
+                    monospaced: true
                 )
-                StyledSettingsTextField(
-                    label: L("Display Name"),
+                SettingsTextFieldRow(
+                    label: "Display Name",
                     text: $draft.name,
                     placeholder: "Ops Webhook",
-                    help: L("Human-readable name shown in the channel list.")
+                    help: "Human-readable name shown in the channel list."
                 )
             }
 
             SettingsToggle(
-                title: L("Enabled"),
-                description: L("Allow this channel definition to be resolved by agent channel diagnostics and tools."),
+                title: "Enabled",
+                description: "Allow this channel definition to be resolved by agent channel diagnostics and tools.",
                 isOn: $draft.enabled
             )
 
             if draft.kind == .customHTTP {
-                SettingsDivider()
 
                 AgentChannelSectionHeading(
                     L("HTTP endpoint"),
                     detail: L("Requests only run for actions defined in Capabilities and are always confirmed before sending.")
                 )
 
-                StyledSettingsTextField(
-                    label: L("Base URL (required)"),
+                SettingsTextFieldRow(
+                    label: "Base URL (required)",
                     text: $draft.customBaseURL,
                     placeholder: "https://hooks.example.test",
-                    help: L("HTTPS origin agent tools call for this channel.")
+                    help: "HTTPS origin agent tools call for this channel.",
+                    monospaced: true
                 )
             }
         }
@@ -270,11 +271,9 @@ struct AgentChannelCustomConnectionSheet: View {
             actionsSection
 
             if draft.kind == .customHTTP {
-                SettingsDivider()
                 httpActionsSection
             }
 
-            SettingsDivider()
             accessSection
         }
     }
@@ -307,20 +306,13 @@ struct AgentChannelCustomConnectionSheet: View {
                             }
                         )
                     )
-                    .toggleStyle(.checkbox)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .settingsCheckbox()
+                    .textStyle(.caption)
+                    .foregroundColor(theme.text.secondary)
                 }
             }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .padding(theme.space.s8)
+            .settingsChrome(.surface)
         }
     }
 
@@ -376,7 +368,6 @@ struct AgentChannelCustomConnectionSheet: View {
     private var sendReceiveSectionContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             sendingSection
-            SettingsDivider()
             inboundAuthorizationSection
         }
     }
@@ -386,11 +377,11 @@ struct AgentChannelCustomConnectionSheet: View {
             AgentChannelSectionHeading(L("Allow sending (optional)"))
 
             SettingsToggle(
-                title: L("Allow Sending"),
+                title: "Allow Sending",
                 description: L(
                     "Permit send and reply actions only for write-allowlisted rooms. Tool calls still require confirmation."
                 ),
-                isOn: $draft.writeEnabled.animation(.easeOut(duration: 0.2))
+                isOn: $draft.writeEnabled.animation(theme.motion.quick)
             )
 
             if draft.writeEnabled {
@@ -430,13 +421,13 @@ struct AgentChannelCustomConnectionSheet: View {
             }
 
             SettingsToggle(
-                title: L("Accept Bot Messages"),
-                description: L("Store incoming messages flagged as sent by bots."),
+                title: "Accept Bot Messages",
+                description: "Store incoming messages flagged as sent by bots.",
                 isOn: $draft.inboundAllowBotMessages
             )
             SettingsToggle(
-                title: L("Accept Self Messages"),
-                description: L("Store messages this connection itself sent (echo events)."),
+                title: "Accept Self Messages",
+                description: "Store messages this connection itself sent (echo events).",
                 isOn: $draft.inboundAllowSelfMessages
             )
         }
@@ -448,7 +439,6 @@ struct AgentChannelCustomConnectionSheet: View {
         VStack(alignment: .leading, spacing: 20) {
             validationSummary
 
-            SettingsDivider()
 
             VStack(alignment: .leading, spacing: 12) {
                 AgentChannelSectionHeading(
@@ -461,25 +451,17 @@ struct AgentChannelCustomConnectionSheet: View {
                 if let diagnosticsText {
                     ScrollView {
                         Text(diagnosticsText)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.secondary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
+                            .padding(theme.space.s8)
                     }
                     .frame(maxHeight: 180)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.cardBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.cardBorder, lineWidth: 1)
-                            )
-                    )
+                    .settingsChrome(.surface)
                 }
             }
 
-            SettingsDivider()
             advancedSection
         }
     }
@@ -492,11 +474,11 @@ struct AgentChannelCustomConnectionSheet: View {
             if findings.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.successColor)
+                        .glyphSize(13, weight: .semibold)
+                        .foregroundColor(theme.status.success.foreground)
                     Text("This configuration looks structurally valid.", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
@@ -511,47 +493,44 @@ struct AgentChannelCustomConnectionSheet: View {
     private func findingRow(_ finding: AgentChannelDraftValidationFinding) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.warningColor)
-                .padding(.top, 1)
+                .glyphSize(11, weight: .semibold)
+                .foregroundColor(theme.status.warning.foreground)
+                .padding(.top, theme.space.s2)
 
             Text(finding.message)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 8)
 
             if finding.sectionId != AgentChannelCustomSetupSection.review.rawValue {
                 Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
+                    withAnimation(theme.motion.quick) {
                         selectedSectionId = finding.sectionId
                     }
                 } label: {
                     Text("Fix", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
         }
-        .padding(10)
+        .padding(theme.space.s8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.warningColor.opacity(0.07))
-        )
+        .settingsChrome(.status(.warning))
     }
 
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 12) {
-                    StyledSettingsTextField(
-                        label: L("Default Read Limit"),
+                    SettingsTextFieldRow(
+                        label: "Default Read Limit",
                         text: $draft.defaultReadLimit,
                         placeholder: "50",
-                        help: L("Default recent-message count. Clamped to 1-100.")
+                        help: "Default recent-message count. Clamped to 1-100."
                     )
                     AgentChannelMultilineSettingsField(
                         title: L("Secret References"),
@@ -561,18 +540,46 @@ struct AgentChannelCustomConnectionSheet: View {
                     )
                 }
 
+                ForEach(draft.secretReferences.filter { !$0.name.isEmpty }, id: \.name) { reference in
+                    secretValueField(reference)
+                }
+
                 Button(action: revealConfigurationFile) {
                     HStack(spacing: 4) {
                         Image(systemName: "folder")
-                            .font(.system(size: 10))
+                            .glyphSize(10)
                         Text("Open configuration file", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                     }
-                    .foregroundColor(theme.accentColor)
+                    .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(L("Show agent-channels.json in Finder"))
             }
+        }
+    }
+
+    private func secretSlot(_ reference: AgentChannelSecretReference) -> CredentialSlot {
+        ChannelCredentialSlots.agentChannel(
+            connectionId: draft.id, connectionName: draft.name, secretName: reference.storageName)
+    }
+
+    private func secretValueField(_ reference: AgentChannelSecretReference) -> some View {
+        let slot = secretSlot(reference)
+        let key = slot.effectiveKey()
+        let isSet = CredentialResolver.isSatisfied(slot, agentId: nil)
+        return SettingsFieldRow(
+            label: L("\(reference.name) Value"),
+            hint: CredentialField.hint(key: key, isSet: isSet),
+            verbatimHint: true,
+            verbatimLabel: true
+        ) {
+            SettingsTextField(
+                placeholder: isSet ? L("Unchanged") : "",
+                text: Binding(
+                    get: { draft.secretValues[reference.name] ?? "" },
+                    set: { draft.secretValues[reference.name] = $0 }),
+                monospaced: true, isSecure: true, revealable: true)
         }
     }
 
@@ -582,6 +589,16 @@ struct AgentChannelCustomConnectionSheet: View {
         do {
             let saved = try draft.connection()
             try manager.upsertConnection(saved, replacingOriginalId: draft.originalId)
+            for reference in saved.secrets {
+                guard let value = draft.secretValues[reference.name],
+                    !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else { continue }
+                let outcome = ChannelCredentials.saveAgentChannel(
+                    value, connectionId: saved.id, connectionName: saved.name, secretName: reference.storageName)
+                if let message = outcome.failureDescription(label: reference.name) {
+                    _ = ToastManager.shared.error(message)
+                }
+            }
             _ = ToastManager.shared.success(L("Channel connection saved"))
             onDidChange()
             dismiss()
@@ -590,7 +607,7 @@ struct AgentChannelCustomConnectionSheet: View {
             // action map or reserved/invalid id) instead of only reporting.
             if let finding = draft.validationFindings().first {
                 attentionSectionId = finding.sectionId
-                withAnimation(.easeOut(duration: 0.15)) {
+                withAnimation(theme.motion.quick) {
                     selectedSectionId = finding.sectionId
                 }
             }
@@ -615,7 +632,7 @@ struct AgentChannelCustomConnectionSheet: View {
     private func diagnose() {
         let connectionId = trimmedDraftId
         guard !connectionId.isEmpty else { return }
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(theme.motion.quick) {
             selectedSectionId = AgentChannelCustomSetupSection.review.rawValue
         }
         guard let originalId = draft.originalId,
@@ -699,8 +716,8 @@ private struct AgentChannelStructuredActionsEditor: View {
                         "No actions defined yet. Add one below — agents can only call actions that are defined here.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -713,41 +730,32 @@ private struct AgentChannelStructuredActionsEditor: View {
             } else {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.warningColor)
+                        .glyphSize(11, weight: .semibold)
+                        .foregroundColor(theme.status.warning.foreground)
                     Text(
                         "The action map JSON does not parse, so it can't be edited as fields. Fix it in the Advanced JSON editor below.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(10)
+                .padding(theme.space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.warningColor.opacity(0.08))
-                )
+                .settingsChrome(.status(.warning))
             }
         }
     }
 
     private func addActionMenu(existing: Set<String>) -> some View {
         let available = AgentChannelAction.allCases.filter { !existing.contains($0.rawValue) }
-        return Menu {
+        return SettingsMenuButton(.tertiary, "Add Action", icon: "plus", size: .compact) {
             ForEach(available, id: \.self) { action in
                 Button(action.displayName) {
                     addAction(action)
                 }
             }
-        } label: {
-            Label(L("Add Action"), systemImage: "plus.circle")
-                .font(.system(size: 11, weight: .medium))
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .foregroundColor(theme.accentColor)
         .disabled(available.isEmpty)
     }
 
@@ -797,20 +805,15 @@ private struct AgentChannelActionEditorRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text(displayName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
 
                 Text(name)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
 
                 if !isStandardAction {
-                    Text("Not a standard action", bundle: .module)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(theme.warningColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(theme.warningColor.opacity(0.12)))
+                    StatusChip(L("Not a standard action"), tone: .warning)
                 }
 
                 Spacer()
@@ -821,8 +824,8 @@ private struct AgentChannelActionEditorRow: View {
                     }
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.errorColor)
+                        .glyphSize(10, weight: .medium)
+                        .foregroundColor(theme.status.error.foreground)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(Text("Remove this action", bundle: .module))
@@ -831,32 +834,17 @@ private struct AgentChannelActionEditorRow: View {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 6) {
                     fieldLabel(L("Method"))
-                    Picker("", selection: methodBinding) {
+                    SettingsMenuPicker(selection: methodBinding) {
                         ForEach(methodChoices, id: \.self) { method in
                             Text(method).tag(method)
                         }
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
                     .frame(width: 92, alignment: .leading)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
                     fieldLabel(L("Path"))
-                    TextField("/rooms/{room_id}/messages", text: pathBinding)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
+                    SettingsTextField(placeholder: L("/rooms/{room_id}/messages"), text: pathBinding, monospaced: true)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -865,35 +853,29 @@ private struct AgentChannelActionEditorRow: View {
                 fieldLabel(L("Headers"))
                 headersEditor
                 Text("One per line: Header-Name: value. Use ${secret:name} for tokens.", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 fieldLabel(L("Body Template (optional)"))
                 bodyEditor
-                Text("Request body sent for this action. ${content} is replaced with the message text.", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                Text(
+                    "Request body sent for this action. ${content} is replaced with the message text.",
+                    bundle: .module
+                )
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.surface)
     }
 
     private func fieldLabel(_ title: String) -> some View {
         Text(title)
-            .textCase(.uppercase)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundColor(theme.tertiaryText)
-            .tracking(0.5)
+            .font(SettingsFont.compactLabel)
+            .foregroundColor(theme.text.tertiary)
     }
 
     private var methodChoices: [String] {
@@ -983,31 +965,11 @@ private struct AgentChannelActionRowTextEditor: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            if text.isEmpty && !placeholder.isEmpty {
-                Text(placeholder)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.placeholderText)
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 8)
-                    .allowsHitTesting(false)
-            }
-
-            TextEditor(text: $text)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-        }
-        .frame(minHeight: minHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
+        SettingsTextEditor(
+            text: $text,
+            placeholder: placeholder.isEmpty ? nil : placeholder,
+            minHeight: minHeight,
+            monospaced: true
         )
         .onChange(of: text) {
             onChange(text)
@@ -1039,6 +1001,9 @@ struct AgentChannelConnectionDraft {
     var writeEnabled = false
     var defaultReadLimit = "50"
     var secretReferencesText = ""
+    /// Values typed into the secret fields, keyed by reference name. Saved to
+    /// Keys on save; never written to the configuration file.
+    var secretValues: [String: String] = [:]
     var customBaseURL = ""
     var customActionsJSON = Self.defaultActionsJSON
     var inboundSenderAllowlistText = ""
@@ -1278,8 +1243,12 @@ struct AgentChannelConnectionDraft {
             )
         }
         for secret in Self.parseSecretReferences(secretReferencesText)
-        where secret.keychainId.isEmpty {
-            add(.review, L("Secret \"\(secret.name)\" has no keychain id (expected name=keychain-id)."))
+        where secret.keychainId.isEmpty && secretValues[secret.name]?.isEmpty != false
+            && !CredentialResolver.isSatisfied(
+                ChannelCredentialSlots.agentChannel(connectionId: id, connectionName: name, secretName: secret.name),
+                agentId: nil)
+        {
+            add(.review, L("Secret \"\(secret.name)\" has no value. Enter it under Advanced."))
         }
         return findings
     }
@@ -1288,6 +1257,8 @@ struct AgentChannelConnectionDraft {
     func validationIssues() -> [String] {
         validationFindings().map(\.message)
     }
+
+    var secretReferences: [AgentChannelSecretReference] { Self.parseSecretReferences(secretReferencesText) }
 
     private static func parseSecretReferences(_ text: String) -> [AgentChannelSecretReference] {
         text.components(separatedBy: .newlines).compactMap { line in

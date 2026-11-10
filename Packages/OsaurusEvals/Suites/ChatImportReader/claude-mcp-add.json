@@ -1,0 +1,19 @@
+{
+  "id": "chat_import_reader.claude-mcp-add",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • a pasted `claude mcp add` command",
+  "query": "Add this MCP server:\nclaude mcp add --transport http linear https://mcp.linear.app/mcp",
+  "notes": "No page, just the command in the user's message. The reader names the server `linear` with the exact URL.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "your message",
+          "text": "Add this MCP server:\nclaude mcp add --transport http linear https://mcp.linear.app/mcp"
+        }
+      ],
+      "items": [{ "kind": "mcp_server", "name": "linear" }]
+    }
+  }
+}

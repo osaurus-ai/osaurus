@@ -161,16 +161,51 @@ struct ConfigureAIStateDownloadTests {
     // MARK: - Provider navigation
 
     /// Drilling into bring-your-own-key moves to the BYOK picker, and backing
-    /// out returns to the recommended local setup.
-    @Test func byokDrillInAndBackReturnsHome() {
+    /// out returns to the provider chips it was entered from.
+    @Test func byokDrillInAndBackReturnsToProviders() {
         let state = ConfigureAIState()
 
-        state.showBYOK()
+        state.showKeys()
+        state.enterProvider(.openai)
         #expect(state.screen == .byok)
-        #expect(state.apiSubstate == .picker)
+        #expect(state.apiSubstate == .keyForm(.openai))
 
-        state.popBYOKToHome()
+        state.popBYOKToProviders()
+        #expect(state.screen == .keys)
+        #expect(state.apiSubstate == .picker)
+        #expect(state.substateDirection == .backward)
+    }
+
+    /// The three paths are peers: each opens from home and returns to it.
+    @Test func pathsOpenFromHomeAndReturn() {
+        let state = ConfigureAIState()
+
+        state.showLocal()
+        #expect(state.screen == .local)
+        #expect(state.substateDirection == .forward)
+        state.popToHome()
         #expect(state.screen == .home)
+
+        state.showKeys()
+        #expect(state.screen == .keys)
+        state.popToHome()
+        #expect(state.screen == .home)
+        #expect(state.substateDirection == .backward)
+    }
+
+    /// An abandoned custom-endpoint dialog over the provider chips drops its
+    /// half-filled form.
+    @Test func abandonedCustomDialogResetsOverProviders() {
+        let state = ConfigureAIState()
+        state.showKeys()
+        state.enterCustomProvider()
+        #expect(state.connectDialog == .apiKey)
+        #expect(state.apiSubstate == .customForm)
+
+        state.closeConnectDialog()
+        #expect(state.connectDialog == nil)
+        #expect(state.apiSubstate == .picker)
+        #expect(state.screen == .keys)
     }
 
     // MARK: - Local commit (non-blocking)

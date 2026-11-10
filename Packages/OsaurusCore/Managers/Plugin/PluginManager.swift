@@ -328,9 +328,7 @@ final class PluginManager {
                 // Superseded plugins never reach this point — the scan stage
                 // filters them out (see `excludeSupersededPlugins`), so every
                 // loaded plugin registers its full tool and skill surface.
-                for tool in loaded.tools {
-                    ToolRegistry.shared.registerPluginTool(tool)
-                }
+                ToolRegistry.shared.registerPluginTools(loaded.tools)
                 for skill in loaded.skills {
                     await SkillManager.shared.registerPluginSkill(skill)
                 }
@@ -351,6 +349,7 @@ final class PluginManager {
         if loadedNew || removedSomething || !failedPlugins.isEmpty {
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
         }
+        if loadedNew { CredentialMigration.scheduleRun() }
 
         observeTunnelStatus()
         // Every model-facing tool/skill registry mutation is complete here.
@@ -611,18 +610,15 @@ final class PluginManager {
         else { return }
 
         let allFieldKeys = Set(configSpec.sections.flatMap { $0.fields.map { $0.key } })
-        // Shared resolution policy (exact agent overlaid on default-agent
-        // globals) so initial delivery matches tool payload injection —
-        // a key saved once on the Plugins tab reaches every agent's
-        // `on_config_changed`, not just the Default agent's.
-        var values = ToolSecretsKeychain.resolvedSecretsWithDefaults(
-            pluginId: pluginId, agentId: agentId)
+        // Same resolution as tool payload injection: declared secrets come
+        // from the Keys store (the agent's value, else the one for all
+        // agents), config from the plugin's own store.
+        var values = loaded.plugin.resolvedSecrets(agentId: agentId)
 
         for section in configSpec.sections {
             for field in section.fields {
                 if values[field.key] == nil, field.type != .readonly, field.type != .status,
-                    let val = ToolSecretsKeychain.resolvedSecret(
-                        id: field.key, for: pluginId, agentId: agentId)
+                    let val = PluginCredentials.configValue(pluginId: pluginId, key: field.key, agentId: agentId)
                 {
                     values[field.key] = val
                 }
@@ -630,8 +626,7 @@ final class PluginManager {
                     values[field.key] = def.stringValue
                 }
                 if let connKey = field.connected_when, values[connKey] == nil,
-                    let val = ToolSecretsKeychain.resolvedSecret(
-                        id: connKey, for: pluginId, agentId: agentId)
+                    let val = PluginCredentials.configValue(pluginId: pluginId, key: connKey, agentId: agentId)
                 {
                     values[connKey] = val
                 }

@@ -50,7 +50,39 @@ final class ForcedToolChoiceGate: @unchecked Sendable {
     }
 }
 
+/// How the last model step of an Orchestrator turn ended, for
+/// `ChatToolChoicePolicy.forceStateIfMissing`.
+enum StateStepEnding: Sendable, Equatable {
+    /// Plain text and no tool calls.
+    case finalText
+    /// The step cap, just before the tool-free wrap-up.
+    case iterationCap
+    /// A `clarify` question. The turn has no answer yet, by design.
+    case clarify
+    /// A parked `awaiting_user` handoff or workflow run.
+    case awaitingUser
+}
+
 enum ChatToolChoicePolicy {
+    /// One extra step that offers only `state` and forces it: on a turn
+    /// that must record state (the presenting turn after a host dispatch,
+    /// or one that got a `HandoffResult`), when the turn is ending and no
+    /// `state` write landed. Never after Stop, and never on a turn that
+    /// ended asking the user something (`clarify`, `awaiting_user`), which
+    /// has no answer to record yet.
+    static func forceStateIfMissing(
+        qualifying: Bool,
+        interrupted: Bool,
+        lastStepEndedOn ending: StateStepEnding,
+        stateWritten: Bool,
+        tools: [Tool]
+    ) -> (tools: [Tool], choice: ToolChoiceOption)? {
+        guard qualifying, !interrupted, !stateWritten, ending == .finalText || ending == .iterationCap,
+            let state = tools.first(where: { $0.function.name == StateTool.toolName })
+        else { return nil }
+        return ([state], .function(.init(type: "function", function: .init(name: StateTool.toolName))))
+    }
+
     /// Resolve only from the actual task. App-added delivery instructions may
     /// name tools without the caller requesting any tool invocation.
     static func resolve(

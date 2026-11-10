@@ -436,10 +436,11 @@ struct HTTPHandlerEndpointTests {
     /// discovery returns the real metadata instead of `invalid_agent_id`
     /// (which degraded the remote model picker to `["default"]`).
     @Test func getAgent_byCryptoAddress_resolvesMetadata() async throws {
-        let server = try await startServer()
-        defer { Task { await server.shutdown() } }
-
+        // Storage lock before the server lease: the streaming suite takes
+        // them in that order, and the reverse deadlocks the parallel run.
         try await ChatHistoryTestStorage.run {
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
             let hostAgentId = UUID()
             let address = "0xfeed000000000000000000000000000000000099"
             let agent = Agent(
@@ -499,10 +500,9 @@ struct HTTPHandlerEndpointTests {
     /// `GET /agents/{id}` so a connected peer can surface the agent's own
     /// prompt shortcuts, and the client parser round-trips it into metadata.
     @Test func getAgent_advertisesActionBarQuickActions() async throws {
-        let server = try await startServer()
-        defer { Task { await server.shutdown() } }
-
         try await ChatHistoryTestStorage.run {
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
             let hostAgentId = UUID()
             let address = "0xfeed0000000000000000000000000000000000aa"
             let actions = [

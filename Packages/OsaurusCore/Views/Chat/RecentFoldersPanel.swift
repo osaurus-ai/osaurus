@@ -30,8 +30,8 @@ struct RecentFoldersList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Recent Folders", bundle: .module)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.micro, weight: 600)
+                .foregroundColor(theme.text.tertiary)
                 .textCase(.uppercase)
                 .padding(.horizontal, horizontalInset)
                 .padding(.bottom, 2)
@@ -63,18 +63,18 @@ struct RecentFoldersList: View {
             Button(action: onPick) {
                 HStack(spacing: 8) {
                     Image(systemName: isActive ? "checkmark" : "folder")
-                        .font(.system(size: 11, weight: .medium))
+                        .glyphSize(11, weight: .medium)
                         .frame(width: 16)
-                        .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+                        .foregroundColor(isActive ? theme.text.primary : theme.text.secondary)
                     Text(verbatim: entry.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .textStyle(.caption, weight: 500)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if showsPath {
                         Text(verbatim: entry.path)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .textStyle(.footnote)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -86,8 +86,8 @@ struct RecentFoldersList: View {
                 .padding(.trailing, horizontalInset + 20)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isHovering ? theme.secondaryBackground.opacity(0.8) : Color.clear)
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .fill(isHovering ? theme.surface.subtle : Color.clear)
                 )
                 .padding(.horizontal, 6)
                 .contentShape(Rectangle())
@@ -97,15 +97,15 @@ struct RecentFoldersList: View {
             .accessibilityLabel(Text(verbatim: entry.name))
             .accessibilityValue(Text(verbatim: entry.path))
             .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+                withAnimation(theme.motion.quick) { isHovering = hovering }
             }
             .overlay(alignment: .trailing) {
                 Button(action: onRemove) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(9, weight: .bold)
+                        .foregroundColor(theme.text.tertiary)
                         .frame(width: 16, height: 16)
-                        .background(Circle().fill(theme.secondaryBackground.opacity(0.9)))
+                        .background(Circle().fill(theme.surface.subtle))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)

@@ -2,12 +2,23 @@
 //  AgentChannelInboundRelay.swift
 //  osaurus
 //
-//  Provider-neutral bridge from verified channel messages to headless agents.
+//  Runs the agent turn for a channel-message event: conversation steering,
+//  queueing behind a running turn, quick reattach and reply delivery.
+//  Which agent answers is decided upstream, by the event that matched
+//  (`EventManager.ingestChannelMessage`).
 //
 
 import Foundation
 
 typealias AgentChannelInboundReplyHandler = @Sendable (String) async throws -> Void
+
+/// How a channel agent turn went, reported back to the event ledger.
+enum AgentChannelTurnOutcome: Sendable, Equatable {
+    case started(sessionId: UUID)
+    case finished(status: EventRunStatus, sessionId: UUID?, error: String?, reason: String?)
+}
+
+typealias AgentChannelTurnOutcomeHandler = @MainActor @Sendable (AgentChannelTurnOutcome) -> Void
 
 /// Delivers one agent-produced file (a shared artifact staged on the host) back
 /// to the channel as a native attachment. `path` is a trusted host path inside
@@ -23,10 +34,27 @@ struct AgentChannelInboundRelayRequest: Sendable {
     var providerRoute: AgentChannelProviderRoute
     var content: String
     var attachments: [AgentChannelStoredAttachment]
-    var settings: AgentChannelInboundDispatchConfiguration
+    /// The agent the matched event runs.
+    var target: AgentDispatchTarget
+    /// The event selection rule ("alias:<alias>", "room:<roomId>", "default").
+    var rule: String
+    /// The event's rendered instructions, put ahead of the message.
+    var instructions: String
+    var autoReplyEnabled: Bool
+    /// Messages held behind a running turn for this conversation; past this
+    /// they are skipped. From the event's Queueing step.
+    var maxQueued: Int
+    /// Whether a message may join a still-running turn instead of waiting.
+    var steerRunningTurn: Bool
+    var folderPath: String?
+    var folderBookmark: Data?
     var sourceLabel: String
     var reply: AgentChannelInboundReplyHandler?
     var replyAttachment: AgentChannelInboundAttachmentReplyHandler?
+    /// Keeps an unsent reply for review on this Mac (an email draft) when
+    /// auto-reply is off. Nothing leaves the Mac.
+    var draftReply: AgentChannelInboundReplyHandler?
+    var onOutcome: AgentChannelTurnOutcomeHandler?
 
     init(
         identity: ChannelIdentity,
@@ -35,10 +63,19 @@ struct AgentChannelInboundRelayRequest: Sendable {
         providerRoute: AgentChannelProviderRoute,
         content: String,
         attachments: [AgentChannelStoredAttachment] = [],
-        settings: AgentChannelInboundDispatchConfiguration,
+        target: AgentDispatchTarget,
+        rule: String = "default",
+        instructions: String = "",
+        autoReplyEnabled: Bool = true,
+        maxQueued: Int = AgentChannelInboundRelay.maxQueuedMessagesPerConversation,
+        steerRunningTurn: Bool = true,
+        folderPath: String? = nil,
+        folderBookmark: Data? = nil,
         sourceLabel: String,
         reply: AgentChannelInboundReplyHandler? = nil,
-        replyAttachment: AgentChannelInboundAttachmentReplyHandler? = nil
+        replyAttachment: AgentChannelInboundAttachmentReplyHandler? = nil,
+        draftReply: AgentChannelInboundReplyHandler? = nil,
+        onOutcome: AgentChannelTurnOutcomeHandler? = nil
     ) {
         self.identity = identity
         self.connectionId = connectionId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -46,17 +83,29 @@ struct AgentChannelInboundRelayRequest: Sendable {
         self.providerRoute = providerRoute
         self.content = content.trimmingCharacters(in: .whitespacesAndNewlines)
         self.attachments = attachments
-        self.settings = settings
+        self.target = target
+        self.rule = rule
+        self.instructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.autoReplyEnabled = autoReplyEnabled
+        self.maxQueued = max(0, maxQueued)
+        self.steerRunningTurn = steerRunningTurn
+        self.folderPath = folderPath
+        self.folderBookmark = folderBookmark
         self.sourceLabel = sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         self.reply = reply
         self.replyAttachment = replyAttachment
+        self.draftReply = draftReply
+        self.onOutcome = onOutcome
     }
 }
 
 enum AgentChannelInboundRelaySubmission: Equatable, Sendable {
-    /// The message was handed to `target`; `rule` is the matched routing
-    /// rule ("alias:<alias>", "room:<roomId>", or "default") for telemetry.
+    /// The message was handed to `target`; `rule` is the matched event's
+    /// selection rule ("alias:<alias>", "room:<roomId>", or "default").
     case dispatched(target: AgentDispatchTarget, rule: String)
+    /// The message fired events that are not one agent turn (a workflow,
+    /// or several events at once).
+    case fired(eventNames: [String], rule: String)
     case suppressed(String)
 
     /// Convenience for the (many) local-only call sites and tests.
@@ -65,13 +114,13 @@ enum AgentChannelInboundRelaySubmission: Equatable, Sendable {
     }
 
     var dispatchAttempted: Int {
-        if case .dispatched = self { return 1 }
-        return 0
+        if case .suppressed = self { return 0 }
+        return 1
     }
 
     var dispatchSuppressed: Int {
-        if case .dispatched = self { return 0 }
-        return 1
+        if case .suppressed = self { return 1 }
+        return 0
     }
 }
 
@@ -86,6 +135,7 @@ final class AgentChannelInboundRelay {
     private let taskManager: BackgroundTaskManager
     private let activityCenter: AgentChannelInboundActivityCenter
     private let focusPreference: AgentChannelInboundFocusPreference
+    private let writeGate: ChannelWriteKillSwitch
     private let revealTask: @MainActor (UUID) -> Void
     /// A message that arrived while its conversation already had a turn in
     /// flight, held until that turn ends.
@@ -104,6 +154,19 @@ final class AgentChannelInboundRelay {
     /// grow the follow-up prompt without bound.
     nonisolated static let maxQueuedMessagesPerConversation = 20
 
+    /// A message for a busy conversation joins the running turn only when
+    /// the event allows it and nothing is already queued ahead of it.
+    nonisolated static func shouldTrySteer(queued: Int, request: AgentChannelInboundRelayRequest) -> Bool {
+        request.steerRunningTurn && queued == 0
+    }
+
+    /// Why a message for a busy conversation can't wait in line, or nil
+    /// when it can.
+    nonisolated static func queueRejection(queued: Int, request: AgentChannelInboundRelayRequest) -> String? {
+        if request.maxQueued == 0 { return "conversation_busy" }
+        return queued < request.maxQueued ? nil : "conversation_queue_full"
+    }
+
     init(
         substrate: AgentChannelAsyncSubstrate = .shared,
         safetyGate: ChannelRemoteSafetyGate = .shared,
@@ -111,6 +174,7 @@ final class AgentChannelInboundRelay {
         taskManager: BackgroundTaskManager = .shared,
         activityCenter: AgentChannelInboundActivityCenter = .shared,
         focusPreference: AgentChannelInboundFocusPreference = .shared,
+        writeGate: ChannelWriteKillSwitch = .shared,
         revealTask: @escaping @MainActor (UUID) -> Void = { ChatWindowManager.shared.revealTask($0) }
     ) {
         self.substrate = substrate
@@ -119,6 +183,7 @@ final class AgentChannelInboundRelay {
         self.taskManager = taskManager
         self.activityCenter = activityCenter
         self.focusPreference = focusPreference
+        self.writeGate = writeGate
         self.revealTask = revealTask
     }
 
@@ -132,19 +197,12 @@ final class AgentChannelInboundRelay {
         revealTask(taskId)
     }
 
+    /// Starts, steers or queues the turn. A `.suppressed` result is final;
+    /// otherwise `request.onOutcome` reports how the turn ends.
     func submit(_ request: AgentChannelInboundRelayRequest) async -> AgentChannelInboundRelaySubmission {
-        guard request.settings.enabled else {
-            return .suppressed("inbound_dispatch_disabled")
-        }
-        guard let resolution = AgentChannelDispatchRouter.resolve(
-            settings: request.settings,
-            roomId: request.providerRoute.conversationId,
-            content: request.content
-        ) else {
-            return .suppressed("no_route_matched")
-        }
-        let target = resolution.target
-        // A local route must name a real custom agent; a workspace route
+        let target = request.target
+        let rule = request.rule
+        // A local target must name a real custom agent; a workspace target
         // must still be a shared agent in one of our rosters (the owner may
         // have unshared it or we may have left the workspace). Liveness is
         // NOT checked here — `BackgroundTaskManager.dispatchChat` runs the
@@ -163,7 +221,7 @@ final class AgentChannelInboundRelay {
             }
         }
         let agentId = target.localId
-        let content = resolution.content
+        let content = request.content
         guard (!content.isEmpty || !request.attachments.isEmpty),
               !request.connectionId.isEmpty,
               !request.providerEventId.isEmpty,
@@ -181,12 +239,12 @@ final class AgentChannelInboundRelay {
         if var queue = activePartitions[key] {
             // Steer a live turn when nothing is queued ahead of this message
             // (#2988). A queue already in line keeps arrival order.
-            if queue.isEmpty,
+            if Self.shouldTrySteer(queued: queue.count, request: request),
                 let steered = await steerRunningTurn(
                     request,
                     content: content,
                     target: target,
-                    rule: resolution.matchedRule,
+                    rule: rule,
                     partition: partition
                 )
             {
@@ -200,20 +258,20 @@ final class AgentChannelInboundRelay {
                     request,
                     content: content,
                     target: target,
-                    rule: resolution.matchedRule,
+                    rule: rule,
                     partition: partition
                 )
             }
             queue = current
-            guard queue.count < Self.maxQueuedMessagesPerConversation else {
+            if let rejection = Self.queueRejection(queued: queue.count, request: request) {
                 NSLog(
                     "[AgentChannelInboundRelay] Dropped message %@, %d already waiting behind the running turn",
                     request.providerEventId,
                     queue.count
                 )
-                return .suppressed("conversation_queue_full")
+                return .suppressed(rejection)
             }
-            queue.append(QueuedMessage(request: request, content: content, rule: resolution.matchedRule))
+            queue.append(QueuedMessage(request: request, content: content, rule: rule))
             activePartitions[key] = queue
             NSLog(
                 "[AgentChannelInboundRelay] Queued message %@ behind the running turn (%d waiting)",
@@ -231,19 +289,19 @@ final class AgentChannelInboundRelay {
                     metadata: [
                         "conversation_hash": partition.conversationHash,
                         "external_session_key": key,
-                        "dispatch_rule": resolution.matchedRule,
+                        "dispatch_rule": rule,
                         "queued": "true",
                     ]
                 )
             )
-            return .dispatched(target: target, rule: resolution.matchedRule)
+            return .dispatched(target: target, rule: rule)
         }
         activePartitions[key] = []
         return await start(
             request,
             content: content,
             target: target,
-            rule: resolution.matchedRule,
+            rule: rule,
             partition: partition
         )
     }
@@ -283,6 +341,8 @@ final class AgentChannelInboundRelay {
                     metadata: ["reason": safety.reason.rawValue]
                 )
             )
+            request.onOutcome?(
+                .finished(status: .suppressed, sessionId: nil, error: nil, reason: safety.reason.rawValue))
             // A queued batch has no caller left to report the denial, so
             // tell the sender instead of dropping their messages silently.
             if notifyOnDenial {
@@ -292,11 +352,12 @@ final class AgentChannelInboundRelay {
             return .suppressed(safety.reason.rawValue)
         }
 
-        let prompt = ChannelRemoteSafetyGate.wrapUntrustedContent(
+        let wrapped = ChannelRemoteSafetyGate.wrapUntrustedContent(
             content + Self.attachmentContext(request.attachments),
             source: request.sourceLabel,
             assessment: safety.contentAssessment
         )
+        let prompt = request.instructions.isEmpty ? wrapped : request.instructions + "\n\n" + wrapped
         var startedMetadata = [
             "conversation_hash": partition.conversationHash,
             "external_session_key": partition.externalSessionKey,
@@ -363,7 +424,9 @@ final class AgentChannelInboundRelay {
         partition: AgentChannelSessionPartition,
         safety: ChannelRemoteSafetyDecision
     ) async {
-        guard request.settings.autoReplyEnabled, let responder = request.reply else { return }
+        guard request.autoReplyEnabled, writeGate.snapshot().writeEnabled, let responder = request.reply else {
+            return
+        }
         let notice = Self.denialNotice(retryAfterSeconds: safety.retryAfterSeconds)
         let activity = Self.replyActivity(for: request, agentId: agentId, sessionId: partition.sessionId)
         do {
@@ -396,6 +459,14 @@ final class AgentChannelInboundRelay {
         let content = contents.filter { !$0.isEmpty }.joined(separator: "\n\n")
         request.content = content
         request.attachments = requests.flatMap(\.attachments)
+        let handlers: [AgentChannelTurnOutcomeHandler] = requests.compactMap(\.onOutcome)
+        if handlers.isEmpty {
+            request.onOutcome = nil
+        } else {
+            request.onOutcome = { @MainActor @Sendable (outcome: AgentChannelTurnOutcome) in
+                for handler in handlers { handler(outcome) }
+            }
+        }
         return (request, content)
     }
 
@@ -458,6 +529,7 @@ final class AgentChannelInboundRelay {
             return nil
         }
         NSLog("[AgentChannelInboundRelay] Steered message %@ into the running turn", request.providerEventId)
+        request.onOutcome?(.finished(status: .succeeded, sessionId: runningId, error: nil, reason: "steered"))
         await auditLog.record(
             AgentChannelAuditEvent(
                 kind: .dispatchStarted,
@@ -494,7 +566,7 @@ final class AgentChannelInboundRelay {
             source: .channel,
             externalSessionKey: partition.externalSessionKey,
             target: target
-        ), taskManager.submitQuickReply(replyableId, text: prompt) {
+        ), taskManager.submitQuickReply(replyableId, text: prompt, author: Self.author(of: request)) {
             taskId = replyableId
             try? await Task.sleep(for: .milliseconds(100))
         } else {
@@ -503,6 +575,8 @@ final class AgentChannelInboundRelay {
                 prompt: prompt,
                 target: target,
                 title: request.providerRoute.displayName ?? "Channel conversation",
+                folderPath: request.folderPath,
+                folderBookmark: request.folderBookmark,
                 // Channel turns surface in the Activity section like any other background
                 // work so the user can watch (and cancel) remote-triggered runs.
                 showToast: true,
@@ -522,7 +596,8 @@ final class AgentChannelInboundRelay {
                     )
                 } ?? [],
                 externalSurface: true,
-                loadIntent: .background
+                loadIntent: .background,
+                author: Self.author(of: request)
             )
             guard let handle = await taskManager.dispatchChat(dispatch) else {
                 // A refused workspace run carries the real reason (host
@@ -532,6 +607,8 @@ final class AgentChannelInboundRelay {
                     taskManager.consumeWorkspaceDispatchRefusal(for: $0)
                 }
                 let message = refusal ?? "The selected agent could not accept this channel message."
+                request.onOutcome?(
+                    .finished(status: .failed, sessionId: nil, error: message, reason: "dispatch_unavailable"))
                 await recordFailure(
                     request,
                     agentId: agentId,
@@ -539,7 +616,9 @@ final class AgentChannelInboundRelay {
                     code: .dispatchUnavailable,
                     message: message
                 )
-                if let refusal, request.settings.autoReplyEnabled, let responder = request.reply {
+                if let refusal, request.autoReplyEnabled, writeGate.snapshot().writeEnabled,
+                    let responder = request.reply
+                {
                     let activity = Self.replyActivity(for: request, agentId: agentId, sessionId: partition.sessionId)
                     do {
                         try await responder(refusal)
@@ -558,10 +637,13 @@ final class AgentChannelInboundRelay {
         }
 
         revealConversationIfPreferred(taskId: taskId)
+        request.onOutcome?(.started(sessionId: taskId))
 
         var turnStartedAt = runStartedAt
+        var outcome = AgentChannelTurnOutcome.finished(status: .succeeded, sessionId: taskId, error: nil, reason: nil)
+        defer { request.onOutcome?(outcome) }
         while true {
-            await deliverReply(request, taskId: taskId, agentId: agentId, runStartedAt: turnStartedAt)
+            outcome = await deliverReply(request, taskId: taskId, agentId: agentId, runStartedAt: turnStartedAt)
             // Steered messages that arrived after the last iteration boundary
             // have not been answered yet: they become the follow-up turn.
             let leftover = taskManager.takeRemoteSteers(taskId)
@@ -575,22 +657,40 @@ final class AgentChannelInboundRelay {
                     code: .dispatchUnavailable,
                     message: "\(leftover.count) message(s) arrived while the agent was working but the turn ended before they could be answered."
                 )
+                outcome = .finished(
+                    status: .failed, sessionId: taskId,
+                    error: "\(leftover.count) message(s) arrived too late to be answered.", reason: "steer_missed")
                 break
             }
             try? await Task.sleep(for: .milliseconds(100))
         }
     }
 
+    /// Waits for the turn, sends its reply, and says how the turn ended.
     private func deliverReply(
         _ request: AgentChannelInboundRelayRequest,
         taskId: UUID,
         agentId: UUID?,
         runStartedAt: Date
-    ) async {
+    ) async -> AgentChannelTurnOutcome {
         let terminal = await waitForReply(taskId: taskId, runStartedAt: runStartedAt)
         switch terminal {
         case .reply(let text, let awaitingClarification, let artifacts):
-            guard request.settings.autoReplyEnabled, let responder = request.reply else {
+            let answered = AgentChannelTurnOutcome.finished(
+                status: awaitingClarification ? .awaitingUser : .succeeded, sessionId: taskId, error: nil,
+                reason: nil)
+            guard request.autoReplyEnabled, let responder = request.reply else {
+                var metadata = ["auto_reply": "disabled"]
+                if let draft = request.draftReply {
+                    let sanitized = ChannelRemoteSafetyGate.sanitizeResult(ChannelRemoteResultPayload(text: text))
+                    do {
+                        try await draft(sanitized.text)
+                        metadata["draft"] = "saved"
+                    } catch {
+                        metadata["draft"] = "failed"
+                        metadata["draft_error"] = error.localizedDescription
+                    }
+                }
                 await auditLog.record(
                     AgentChannelAuditEvent(
                         kind: .taskCompleted,
@@ -599,7 +699,7 @@ final class AgentChannelInboundRelay {
                         agentId: agentId,
                         sessionId: taskId,
                         auditKey: request.providerEventId,
-                        metadata: ["auto_reply": "disabled"]
+                        metadata: metadata
                     )
                 )
                 await activityCenter.record(
@@ -608,11 +708,38 @@ final class AgentChannelInboundRelay {
                     stage: .agentReplied,
                     reason: Self.autoReplyDisabledReason
                 )
-                return
+                return .finished(
+                    status: awaitingClarification ? .awaitingUser : .succeeded,
+                    sessionId: taskId, error: nil, reason: Self.autoReplyDisabledReason)
             }
             let sanitized = ChannelRemoteSafetyGate.sanitizeResult(
                 ChannelRemoteResultPayload(text: text)
             )
+            guard writeGate.snapshot().writeEnabled else {
+                Self.replyActivity(for: request, agentId: agentId, sessionId: taskId).finish(
+                    contentLength: sanitized.text.utf8.count, outcome: "blocked", error: nil,
+                    extraDetails: ["reason": Self.globalWritesDisabledReason])
+                await auditLog.record(
+                    AgentChannelAuditEvent(
+                        kind: .taskCompleted,
+                        status: awaitingClarification ? .awaitingClarification : .completed,
+                        connectionId: request.connectionId,
+                        agentId: agentId,
+                        sessionId: taskId,
+                        auditKey: request.providerEventId,
+                        metadata: ["auto_reply": "blocked", "reason": Self.globalWritesDisabledReason]
+                    )
+                )
+                await activityCenter.record(
+                    connectionId: request.connectionId,
+                    providerEventId: request.providerEventId,
+                    stage: .agentReplied,
+                    reason: Self.globalWritesDisabledReason
+                )
+                return .finished(
+                    status: awaitingClarification ? .awaitingUser : .succeeded,
+                    sessionId: taskId, error: nil, reason: Self.globalWritesDisabledReason)
+            }
             // Activity log: the reply is about to leave this Mac for the
             // provider. Captured before the send so attribution reads the
             // caller's task-locals; written once the attempt settles.
@@ -664,6 +791,7 @@ final class AgentChannelInboundRelay {
                     providerEventId: request.providerEventId,
                     stage: .replySent
                 )
+                return answered
             } catch {
                 replyActivity.finish(
                     contentLength: sanitized.text.utf8.count,
@@ -678,6 +806,8 @@ final class AgentChannelInboundRelay {
                     code: .providerUnavailable,
                     message: error.localizedDescription
                 )
+                return .finished(
+                    status: .failed, sessionId: taskId, error: error.localizedDescription, reason: "reply_failed")
             }
         case .failed(let message):
             await recordFailure(
@@ -687,7 +817,14 @@ final class AgentChannelInboundRelay {
                 code: .internalFailure,
                 message: message
             )
+            return .finished(status: .failed, sessionId: taskId, error: message, reason: nil)
         }
+    }
+
+    /// The channel sender who wrote the message, so two people in one thread
+    /// read as two authors in the transcript.
+    nonisolated static func author(of request: AgentChannelInboundRelayRequest) -> ParticipantRef {
+        Participant.channelSender(kind: request.identity.kind, sender: request.identity.sender)
     }
 
     /// Ceiling on how many plugin tools a channel dispatch will pre-load.
@@ -764,6 +901,11 @@ final class AgentChannelInboundRelay {
     /// barred from proactive publishing, this is a silently dropped reply
     /// unless the activity UI explains it.
     nonisolated static let autoReplyDisabledReason = "auto_reply_disabled"
+
+    /// Machine reason recorded when a reply stays local because Settings →
+    /// Channels → Sending → Allow Agents to Send Messages is off. Shares the
+    /// code the publish path uses for the same gate.
+    nonisolated static let globalWritesDisabledReason = "global_writes_disabled"
 
     private func waitForReply(taskId: UUID, runStartedAt: Date) async -> TerminalReply {
         let deadline = Date().addingTimeInterval(Self.maxReplyWait)

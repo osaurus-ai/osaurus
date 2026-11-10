@@ -6,7 +6,8 @@
 //  headless run (spawn, schedule, watcher, channel) is admitted.
 //
 //  Why not the cached roster presence: `WorkspaceRosterStore.presence` is a
-//  hint that decays to `.unknown` 35 s after the last verification and lags
+//  hint that decays to `.unknown` 40 s after the last verification
+//  (`WorkspaceRosterStore.verificationLifetime`) and lags
 //  the relay's Redis claim TTL, and a spawn that trusts it can still land on
 //  a host that went to sleep a minute ago. The relay is the authority — a
 //  `GET /agents/{address}` through `*.agent.osaurus.ai` either reaches the

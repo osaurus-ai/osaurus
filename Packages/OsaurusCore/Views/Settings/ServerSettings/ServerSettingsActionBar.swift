@@ -38,7 +38,7 @@ struct ServerSettingsActionBar: View {
             Button(action: onReset) {
                 Text("Reset", bundle: .module)
             }
-            .buttonStyle(SettingsButtonStyle())
+            .assignedSettingsButtonStyle()
             .disabled(saving || !hasUnsavedChanges)
             .opacity(hasUnsavedChanges ? 1 : 0.5)
 
@@ -48,23 +48,23 @@ struct ServerSettingsActionBar: View {
                         ProgressView().scaleEffect(0.55)
                     } else {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .semibold))
+                            .glyphSize(10, weight: .semibold)
                     }
                     Text(saving ? "Saving…" : "Save Changes", bundle: .module)
                 }
             }
-            .buttonStyle(SettingsButtonStyle(isPrimary: true))
+            .assignedSettingsButtonStyle(.primary)
             .disabled(saving || !hasUnsavedChanges || hasBlockingIssues)
             .keyboardShortcut("s", modifiers: .command)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s12)
         .frame(maxWidth: .infinity)
         .background(
-            theme.secondaryBackground
+            theme.surface.subtle
                 .overlay(alignment: .top) {
                     Rectangle()
-                        .fill(theme.cardBorder)
+                        .fill(theme.border.default)
                         .frame(height: 1)
                 }
         )
@@ -73,7 +73,7 @@ struct ServerSettingsActionBar: View {
     private var statusBadge: some View {
         HStack(spacing: 7) {
             Circle()
-                .fill(hasUnsavedChanges ? theme.warningColor : theme.successColor)
+                .fill(hasUnsavedChanges ? theme.status.warning.foreground : theme.status.success.foreground)
                 .frame(width: 7, height: 7)
             Text(
                 LocalizedStringKey(
@@ -81,8 +81,8 @@ struct ServerSettingsActionBar: View {
                 ),
                 bundle: .module
             )
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(hasUnsavedChanges ? theme.primaryText : theme.tertiaryText)
+            .textStyle(.caption, weight: 500)
+            .foregroundColor(hasUnsavedChanges ? theme.text.primary : theme.text.tertiary)
         }
     }
 
@@ -90,49 +90,19 @@ struct ServerSettingsActionBar: View {
     /// next to the unsaved indicator. Tooltip carries the full
     /// explanation so the chip itself stays compact.
     private var restartChip: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 10, weight: .semibold))
-            Text("Restart required", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-        }
-        .foregroundColor(theme.warningColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(theme.warningColor.opacity(0.10))
-                .overlay(
-                    Capsule().stroke(theme.warningColor.opacity(0.25), lineWidth: 0.5)
-                )
-        )
-        .help(
-            "Saving these changes will restart the NIO server to bind the new socket and refresh middleware."
-        )
+        StatusChip(L("Restart required"), tone: .warning, icon: "arrow.triangle.2.circlepath")
+            .help(
+                "Saving these changes will restart the NIO server to bind the new socket and refresh middleware."
+            )
     }
 
     /// Container-owned cache and Memory Safety inputs are captured at model
     /// load. Say what Save will do instead of presenting these controls as
     /// live mutation.
     private var modelReloadChip: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "arrow.clockwise.circle")
-                .font(.system(size: 10, weight: .semibold))
-            Text("Models reload after Save", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-        }
-        .foregroundColor(theme.warningColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(theme.warningColor.opacity(0.10))
-                .overlay(
-                    Capsule().stroke(theme.warningColor.opacity(0.25), lineWidth: 0.5)
-                )
-        )
-        .help(
-            "Saving unloads resident local models whose cache or Memory Safety policy changed. The next request reloads them with the saved policy."
-        )
+        StatusChip(L("Models reload after Save"), tone: .warning, icon: "arrow.clockwise.circle")
+            .help(
+                "Saving unloads resident local models whose cache or Memory Safety policy changed. The next request reloads them with the saved policy."
+            )
     }
 }

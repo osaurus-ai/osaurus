@@ -15,24 +15,17 @@ import SwiftUI
 /// `OsaurusCore/Resources/Assets.xcassets`
 public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
     case blue, green, orange, purple, red, yellow
+    /// The day-one team, drawn from the same `dino.riv` costumes the first
+    /// run shows them in.
+    case triceBeret = "trice-beret"
+    case rexPurse = "rex-purse"
+    case brontoScarf = "bronto-scarf"
+    case triceBackpack = "trice-backpack"
+    case rexMecha = "rex-mecha"
 
     public var id: String { rawValue }
     public var assetName: String { "osaurus-avatar-\(rawValue)" }
 
-    /// The dino's signature color, used to theme surfaces around the mascot
-    /// (e.g. the onboarding hero glow, avatar tint, and selection ring) so
-    /// the UI reacts in the selected dino's actual color rather than a
-    /// name-hash approximation.
-    public var color: Color {
-        switch self {
-        case .blue: return Color(red: 0.30, green: 0.56, blue: 0.92)
-        case .green: return Color(red: 0.36, green: 0.72, blue: 0.42)
-        case .orange: return Color(red: 0.95, green: 0.58, blue: 0.24)
-        case .purple: return Color(red: 0.62, green: 0.42, blue: 0.92)
-        case .red: return Color(red: 0.91, green: 0.38, blue: 0.36)
-        case .yellow: return Color(red: 0.95, green: 0.78, blue: 0.27)
-        }
-    }
 
     /// Human-friendly label for accessibility / tooltip surfaces. Avoids
     /// leaking the raw enum case (`"blue"`) into help text — the avatar
@@ -45,6 +38,11 @@ public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
         case .purple: return "Purple dino"
         case .red: return "Red dino"
         case .yellow: return "Yellow dino"
+        case .triceBeret: return "Trice in a beret"
+        case .rexPurse: return "Rex with a purse"
+        case .brontoScarf: return "Bronto in a scarf"
+        case .triceBackpack: return "Trice with a backpack"
+        case .rexMecha: return "Rex in a mecha helmet"
         }
     }
 
@@ -63,9 +61,10 @@ public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// Renders an agent avatar at the given diameter. Uses the mascot image when
-/// `mascotId` matches a known `AgentMascot` otherwise draws a tinted circle
-/// with the first letter of `name` (or `?` when name is empty)
+/// Renders an agent avatar at the given diameter. Uses the custom image, then
+/// the mascot image when `mascotId` matches a known `AgentMascot`, otherwise
+/// the first letter of `name` (or `?` when name is empty) tinted in the
+/// agent's colour.
 struct AgentAvatarView: View {
     let mascotId: String?
     let name: String
@@ -83,55 +82,81 @@ struct AgentAvatarView: View {
     /// list/sidebar avatars where the inset reads as more iconic.
     var bleedsToEdge: Bool = false
 
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var baseComponentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(11, enabled: baseComponentEnabled) }
     @Environment(\.displayScale) private var displayScale
 
+    private var resolvedDiameter: CGFloat { theme.catalogMetric("avatarSize", fallback: diameter) }
+    private var avatarShape: AnyShape {
+        #if OSAURUS_DESIGN_SYSTEM
+        AnyShape(RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2)))
+        #else
+        AnyShape(Circle())
+        #endif
+    }
     var body: some View {
         ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [tint.opacity(0.2), tint.opacity(0.05)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+            if let artwork {
+                #if OSAURUS_DESIGN_SYSTEM
+                avatarShape.fill(theme.assignedColor("component.library.11." + (baseComponentEnabled ? "background" : "disabledBackground"), fallback: theme.surface.raised))
+                #else
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [tint.opacity(0.2), tint.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
-
-            if let url = customImageURL,
-                let nsImage = AvatarBitmapRenderer.shared.image(
-                    customURL: url,
-                    pointSize: diameter,
-                    scale: displayScale
-                )
-            {
-                Image(nsImage: nsImage)
-            } else if let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)),
-                let nsImage = AvatarBitmapRenderer.shared.image(
-                    mascot: mascot,
-                    pointSize: mascotPointSize,
-                    scale: displayScale
-                )
-            {
-                Image(nsImage: nsImage)
+                #endif
+                Image(nsImage: artwork)
+                #if OSAURUS_DESIGN_SYSTEM
+                RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2))
+                    .strokeBorder(theme.assignedColor("component.library.11.border", fallback: tint.opacity(0.5)), lineWidth: theme.catalogMetric("borderWidth", fallback: borderWidth))
+                #else
+                Circle().strokeBorder(tint.opacity(0.5), lineWidth: borderWidth)
+                #endif
             } else {
-                Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
-                    .font(.system(size: monogramFontSize, weight: .bold, design: .rounded))
-                    .foregroundColor(tint)
+                monogram
             }
-
-            Circle()
-                .strokeBorder(tint.opacity(0.5), lineWidth: borderWidth)
         }
-        .frame(width: diameter, height: diameter)
-        .clipShape(Circle())
+        .frame(width: resolvedDiameter, height: resolvedDiameter)
+        .clipShape(avatarShape)
+    }
+
+    /// The custom image, else the mascot, pre-rendered at display size.
+    private var artwork: NSImage? {
+        if let url = customImageURL,
+            let image = AvatarBitmapRenderer.shared.image(customURL: url, pointSize: resolvedDiameter, scale: displayScale)
+        {
+            return image
+        }
+        if let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)) {
+            return AvatarBitmapRenderer.shared.image(mascot: mascot, pointSize: mascotPointSize, scale: displayScale)
+        }
+        return nil
+    }
+
+    /// No artwork: the name's initial on a soft wash of the agent's own
+    /// colour, borderless, so a list of letter avatars reads as a set of
+    /// distinct agents rather than a column of keycaps.
+    private var monogram: some View {
+        ZStack {
+            avatarShape.fill(tint.opacity(baseComponentEnabled ? 0.18 : 0.08))
+            Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
+                .glyphSize(min(monogramFontSize, resolvedDiameter * 0.5), weight: .semibold, design: .rounded)
+                .foregroundStyle(baseComponentEnabled ? tint : theme.text.disabled)
+        }
     }
 
     /// Mascot edge length in points: full bleed, or inset 8% per side. The
     /// inset is snapped so the leftover margin is a whole number of pixels on
     /// each side; a half-pixel offset would make the GPU resample the bitmap.
     private var mascotPointSize: CGFloat {
-        guard !bleedsToEdge else { return diameter }
+        guard !bleedsToEdge else { return resolvedDiameter }
         let scale = max(displayScale, 1)
-        let outerPixels = (diameter * scale).rounded()
+        let outerPixels = (resolvedDiameter * scale).rounded()
         var innerPixels = (outerPixels * 0.84).rounded()
         if Int(outerPixels - innerPixels) % 2 != 0 { innerPixels -= 1 }
         return max(innerPixels, 1) / scale

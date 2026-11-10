@@ -19,6 +19,29 @@ enum KeychainQueryHelpers {
         ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] == "1"
     }
 
+    static let designProviderService = "studio.topiary.osaurus-design-integration.remote"
+
+    static var usesConnectedDesignProviders: Bool {
+        #if OSAURUS_DESIGN_INSPECTOR
+        return Bundle.main.bundleIdentifier == "studio.topiary.osaurus-design-integration"
+            && ProcessInfo.processInfo.environment["OSAURUS_DESIGN_INSPECTOR_CONNECTED_MODELS"] == "1"
+        #else
+        return false
+        #endif
+    }
+
+    /// Connected design builds may use only their own provider-token service.
+    /// Identity keys and the installed app's credentials retain the proof gate.
+    static func disablesKeychain(for service: String) -> Bool {
+        providerServiceIsDisabled(service, processDisabled: disablesKeychainForProcess,
+            connectedDesignProviders: usesConnectedDesignProviders)
+    }
+
+    static func providerServiceIsDisabled(_ service: String, processDisabled: Bool,
+        connectedDesignProviders: Bool) -> Bool {
+        processDisabled && !(connectedDesignProviders && service == designProviderService)
+    }
+
     /// Unit tests need deterministic secret storage without touching the user's
     /// login Keychain or the CI runner's flaky transient Keychain state.
     static var usesInMemoryKeychainStoreForTests: Bool {

@@ -7,12 +7,13 @@
 
 import Foundation
 
-enum AgentChannelKind: String, Codable, CaseIterable, Sendable {
+public enum AgentChannelKind: String, Codable, CaseIterable, Sendable {
     case discord
     case slack
     case telegram
     case imessage
     case whatsapp
+    case email
     case n8n
     case customHTTP = "custom_http"
 }
@@ -385,6 +386,10 @@ struct AgentChannelSecretReference: Codable, Equatable, Sendable {
     var name: String
     var keychainId: String
 
+    /// The id the value is saved under: the keychain id, or the name when
+    /// the reference has none.
+    var storageName: String { keychainId.isEmpty ? name : keychainId }
+
     var normalized: AgentChannelSecretReference {
         AgentChannelSecretReference(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -591,6 +596,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
     static let nativeTelegramConnectionId = "telegram"
     static let nativeIMessageConnectionId = "imessage"
     static let nativeWhatsAppConnectionId = "whatsapp"
+    static let nativeEmailConnectionId = "email"
 
     var id: String
     var name: String
@@ -761,7 +767,7 @@ enum AgentChannelBindingRunSource: String, Codable, CaseIterable, Sendable {
         case .schedule: self = .schedule
         case .watcher: self = .watcher
         case .selfSchedule: self = .selfSchedule
-        case .plugin, .http, .channel, .imported, .delegation, .workspace: return nil
+        case .plugin, .http, .webhook, .email, .automation, .channel, .imported, .delegation, .workspace: return nil
         }
     }
 }
@@ -1087,7 +1093,8 @@ enum AgentChannelConfigurationStore {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
+        let data = try encoder.encode(configuration.normalized)
+        try LegacyInboundDispatchCarryOver.connectionsFile(data, replacing: url).write(to: url, options: [.atomic])
         // Deliver on main: subscribers (ChatSession's budget-signal pipeline)
         // attach MainActor-isolated closures that Combine invokes synchronously
         // on the posting thread, and runtime isolation checks SIGTRAP the

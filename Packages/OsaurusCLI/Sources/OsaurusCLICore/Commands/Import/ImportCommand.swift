@@ -29,6 +29,9 @@ public struct ImportInvocation: Equatable, Sendable {
     public var names: [String] = []
     public var yes = false
     public var json = false
+    /// `--skip-onboarding` / `--exclude-teammates`, merged over the
+    /// manifest's `onboarding`.
+    public var onboarding = BundleOnboarding()
 }
 
 public struct ImportUsageError: Error, Equatable, CustomStringConvertible {
@@ -74,6 +77,9 @@ public struct ImportReport: Codable, Equatable, Sendable {
     public var cancelledRequests: [String]?
     public var installed: [ImportReceipt]?
     public var queued: [Queued]?
+    /// (`install` / `update`) What the request asks of onboarding: the
+    /// manifest's `onboarding` merged with the command's flags.
+    public var onboarding: BundleOnboarding?
 
     public init(command: String) { self.command = command }
 }
@@ -199,6 +205,14 @@ public struct ImportCommand: Command {
             }
             return args[index]
         }
+        var onboardingFlags: [String] = []
+        func exclude(_ list: String) throws {
+            let exclusion = TeammateExclusion.normalized(list.split(separator: ",").map(String.init))
+            let problems = exclusion.problems(label: "--exclude-teammates")
+            guard problems.isEmpty else { throw ImportUsageError(message: problems.joined(separator: "\n")) }
+            guard !exclusion.isEmpty else { throw ImportUsageError(message: "--exclude-teammates needs a value.") }
+            invocation.onboarding.excludeTeammates = invocation.onboarding.excludeTeammates.union(exclusion)
+        }
         while index < args.count {
             let arg = args[index]
             switch arg {
@@ -206,12 +220,21 @@ public struct ImportCommand: Command {
             case "--bundle": invocation.bundleId = try value(for: arg)
             case "--yes", "-y": invocation.yes = true
             case "--json": invocation.json = true
+            case "--skip-onboarding":
+                invocation.onboarding.skip = true
+                onboardingFlags.append(arg)
+            case "--exclude-teammates":
+                try exclude(try value(for: arg))
+                onboardingFlags.append(arg)
             case "-h", "--help": return ImportInvocation(subcommand: .help)
             default:
                 if arg.hasPrefix("--from=") {
                     invocation.from = String(arg.dropFirst("--from=".count))
                 } else if arg.hasPrefix("--bundle=") {
                     invocation.bundleId = String(arg.dropFirst("--bundle=".count))
+                } else if arg.hasPrefix("--exclude-teammates=") {
+                    try exclude(String(arg.dropFirst("--exclude-teammates=".count)))
+                    onboardingFlags.append("--exclude-teammates")
                 } else if arg.hasPrefix("-") {
                     throw ImportUsageError(message: "Unknown option: \(arg)")
                 } else {
@@ -226,6 +249,10 @@ public struct ImportCommand: Command {
             positionals.removeFirst()
         }
         invocation.names = positionals
+
+        if let flag = onboardingFlags.first, subcommand != .install && subcommand != .update {
+            throw ImportUsageError(message: "\(flag) only applies to install and update.")
+        }
 
         switch subcommand {
         case .validate:
@@ -462,6 +489,8 @@ public struct ImportCommand: Command {
         }
 
         let action: ImportAction = invocation.subcommand == .update ? .update : .install
+        let onboarding = (bundle.manifest.onboarding ?? BundleOnboarding()).merged(with: invocation.onboarding)
+        report.onboarding = onboarding.isEmpty ? nil : onboarding
         let request = ImportRequest(
             bundleId: bundle.id,
             bundleName: bundle.manifest.name,
@@ -469,7 +498,8 @@ public struct ImportCommand: Command {
             operations: items.map {
                 ImportOperation(action: action, kind: $0.kind, name: $0.name, explicit: $0.explicit)
             },
-            confirmHighRisk: invocation.yes)
+            confirmHighRisk: invocation.yes,
+            onboarding: report.onboarding)
         do {
             try ImportQueue.enqueue(request, bundle: bundle)
         } catch {
@@ -528,7 +558,9 @@ public struct ImportCommand: Command {
             report.exitCode = 1
             return report
         }
-        guard !operations.isEmpty else {
+        let forgetsOnboarding =
+            invocation.names.isEmpty && invocation.kind == nil && ImportQueue.loadOnboarding()[bundleId] != nil
+        guard !operations.isEmpty || forgetsOnboarding else {
             report.state = "nothing_to_do"
             report.exitCode = 0
             if report.cancelledRequests == nil {
@@ -542,7 +574,8 @@ public struct ImportCommand: Command {
             bundleName: receipts.first?.bundleName,
             bundleVersion: receipts.first?.bundleVersion,
             operations: operations,
-            confirmHighRisk: false)
+            confirmHighRisk: false,
+            forgetsOnboarding: forgetsOnboarding ? true : nil)
         do {
             try ImportQueue.enqueue(request, bundle: nil)
         } catch {
@@ -605,6 +638,7 @@ public struct ImportCommand: Command {
                     message: $0.message, pendingSecrets: $0.pendingSecrets)
             }
             report.pendingSecrets = Array(Set(result.items.flatMap { $0.pendingSecrets ?? [] })).sorted()
+            report.warnings += result.warnings ?? []
             report.state = result.status.rawValue
             report.exitCode = result.exitCode
             return report
@@ -703,6 +737,16 @@ public struct ImportCommand: Command {
             print("High-risk changes:")
             for risk in report.risks { print("  ! \(risk)") }
         }
+        if let onboarding = report.onboarding {
+            var parts: [String] = []
+            if onboarding.skip { parts.append("skip the intro") }
+            switch onboarding.excludeTeammates {
+            case .all: parts.append("no starter teammates")
+            case .names(let names) where !names.isEmpty: parts.append("without " + names.joined(separator: ", "))
+            case .names: break
+            }
+            print("Onboarding: \(parts.joined(separator: "; "))")
+        }
         for item in report.items {
             var line = "\(symbol(item.status)) \(item.kind.rawValue)/\(item.name): \(item.status)"
             if let message = item.message { line += " — \(message)" }
@@ -762,10 +806,12 @@ public struct ImportCommand: Command {
               osaurus import validate --from <bundle> [--json]
                                       Check a bundle without installing anything.
               osaurus import install  --from <bundle> [agent|skill|mcp|runtime|setting] [<name> ...] [--yes] [--json]
+                                      [--skip-onboarding] [--exclude-teammates <names|all>]
                                       Install items (all of them when no names are given).
                                       Installing an agent also installs the skills, MCP
                                       servers and harness runtime it uses from the same bundle.
               osaurus import update   --from <bundle> [agent|skill|mcp|runtime|setting] [<name> ...] [--yes] [--json]
+                                      [--skip-onboarding] [--exclude-teammates <names|all>]
                                       Update items this bundle installed to the bundle's version.
                                       A setting the user changed since is left as it is.
               osaurus import remove   --bundle <id> [agent|skill|mcp|runtime|setting] [<name> ...] [--json]
@@ -773,6 +819,14 @@ public struct ImportCommand: Command {
                                       Settings stay as they are.
               osaurus import list     [--bundle <id>] [--json]
                                       Show what bundles installed and what is still queued.
+
+            Onboarding (install and update; merged with the manifest's "onboarding"):
+              --skip-onboarding       Skip the welcome step and the in-chat walkthrough on
+                                      first launch. Choosing a model still runs.
+              --exclude-teammates <names|all>
+                                      Starter teammates not to create on first launch, comma
+                                      separated: planner, courier, keeper, scout, builder,
+                                      or all. Existing teammates are never removed.
 
             Options:
               --access-key <key>      Access key for a running Osaurus that has Require Access

@@ -298,6 +298,65 @@ struct MCPHTTPHandlerTests {
         }
     }
 
+    /// The Architect on a harness reaches its drafting tools over the
+    /// bridge. The grant carries the chat, so the draft tools find (or make)
+    /// that chat's draft; without it they have nowhere to put one.
+    @Test func architect_grant_binds_draft_tools_to_its_chat() async throws {
+        let chatId = UUID()
+        let grant = HarnessGrantStore.shared.mint(
+            agentId: Agent.architectId,
+            chatId: chatId,
+            allowsConfigWrites: false,
+            allowedToolNames: HarnessGrantStore.architectToolNames
+        )
+        let unbound = HarnessGrantStore.shared.mint(
+            agentId: Agent.architectId,
+            allowsConfigWrites: false,
+            allowedToolNames: HarnessGrantStore.architectToolNames
+        )
+        defer {
+            HarnessGrantStore.shared.revoke(grant)
+            HarnessGrantStore.shared.revoke(unbound)
+            if let draft = WorkflowDraftStore.shared.draft(forSession: chatId.uuidString) {
+                WorkflowDraftStore.shared.delete(draft.id)
+            }
+        }
+
+        let server = try await startTestServer()
+        defer { Task { await server.shutdown() } }
+
+        var list = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/tools")!)
+        list.setValue(grant, forHTTPHeaderField: HarnessGrantStore.headerName)
+        let (listData, _) = try await URLSession.shared.data(for: list)
+        let tools = try #require(
+            (try JSONSerialization.jsonObject(with: listData) as? [String: Any])?["tools"] as? [[String: Any]])
+        let names = Set(tools.compactMap { $0["name"] as? String })
+        #expect(names.isSubset(of: HarnessGrantStore.architectToolNames))
+        #expect(names.contains(WorkflowDraftTool.toolName))
+        #expect(names.contains(WorkflowProposeSaveTool.toolName))
+        let inspect = tools.first { $0["name"] as? String == "osaurus_inspect" }
+        #expect(inspect?["description"] as? String == OsaurusInspectTool.architectDescription)
+
+        func callDraftGet(_ token: String) async throws -> String {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(token, forHTTPHeaderField: HarnessGrantStore.headerName)
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "name": WorkflowDraftTool.toolName, "arguments": ["action": "get"],
+            ])
+            let (data, _) = try await URLSession.shared.data(for: request)
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        let bound = try await callDraftGet(grant)
+        #expect(bound.contains(#""isError":false"#), "\(bound)")
+        #expect(WorkflowDraftStore.shared.draft(forSession: chatId.uuidString) != nil)
+
+        let loose = try await callDraftGet(unbound)
+        #expect(loose.contains("no chat to attach a workflow draft"), "\(loose)")
+    }
+
     @Test func harness_token_is_confined_to_inference_and_mcp_routes() async throws {
         let grant = HarnessGrantStore.shared.mint(agentId: UUID(), allowsConfigWrites: false)
         defer { HarnessGrantStore.shared.revoke(grant) }

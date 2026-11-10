@@ -355,13 +355,13 @@ enum PrivacyFilterPipeline {
         if ChatExecutionContext.voiceCallPrivacy == .off {
             print("[PrivacyFilter] Bypass: turned off for this voice call by the owner.")
             Logger(subsystem: "ai.osaurus", category: "privacy.filter").notice(
-                "Privacy Filter bypassed: turned off for a paired phone call"
+                "Privacy Filter bypassed: turned off for this voice call"
             )
             return (messages, nil)
         }
         if ChatExecutionContext.voiceCallPrivacy == .auto {
             Logger(subsystem: "ai.osaurus", category: "privacy.filter").notice(
-                "Privacy Filter review set to auto-accept for a paired phone call"
+                "Privacy Filter review set to auto-accept for this voice call"
             )
         }
         // Every detection redacted, unasked, when the call chose so.
@@ -589,10 +589,11 @@ enum PrivacyFilterPipeline {
                 // A sub-agent of a phone run is built as a chat-UI engine
                 // (`AgentSubagentRunner`), but the person is on the phone, not
                 // at this Mac: its review goes where the parent's would.
-                allowInteractive: requestSource == .chatUI && !ChatExecutionContext.hasRemoteReviewer,
+                allowInteractive: requestSource == .chatUI && !ChatExecutionContext.reviewsElsewhere,
                 // A non-interactive caller normally fails closed; the owner's
-                // paired phone can answer instead of blocking the send.
-                allowRemote: ChatExecutionContext.hasRemoteReviewer
+                // paired phone, or the device a hosted run is for, can answer
+                // instead of blocking the send.
+                allowRemote: ChatExecutionContext.reviewsElsewhere
             )
         case .autoScrub:
             print("[PrivacyFilter] Review: auto-scrubbing \(newDetections.count) detections for a delegated loop step.")

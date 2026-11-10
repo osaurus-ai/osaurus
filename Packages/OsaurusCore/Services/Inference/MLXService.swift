@@ -76,6 +76,7 @@ actor MLXService: ToolCapableService, ResponsesGenerationService {
         stopSequences: [String]
     ) async throws -> AsyncThrowingStream<String, Error> {
         let model = try selectModel(requestedName: requestedModel)
+        let parameters = try Self.structuredParameters(parameters, model: model.name)
         try Self.validateRuntimePolicy(
             modelName: model.name,
             modelId: model.modelId,
@@ -84,15 +85,84 @@ actor MLXService: ToolCapableService, ResponsesGenerationService {
             tools: [],
             runtime: ServerRuntimeSettingsStore.snapshot()
         )
-        return try await ModelRuntime.shared.streamWithTools(
-            messages: messages,
-            parameters: parameters,
-            stopSequences: stopSequences,
-            tools: [],
-            toolChoice: nil,
-            modelId: model.modelId,
-            modelName: model.name
-        )
+        let hasSchema = parameters.responseSchema != nil
+        do {
+            let stream = try await ModelRuntime.shared.streamWithTools(
+                messages: messages,
+                parameters: parameters,
+                stopSequences: hasSchema ? [] : stopSequences,
+                tools: [],
+                toolChoice: nil,
+                modelId: model.modelId,
+                modelName: model.name
+            )
+            guard hasSchema else { return stream }
+            return Self.mappingStructuredFailures(stream, model: model.name)
+        } catch {
+            guard hasSchema else { throw error }
+            throw Self.mapStructuredFailure(error, model: model.name)
+        }
+    }
+
+    // MARK: - Structured output (workflow nodes)
+
+    /// Turn a workflow node's `responseSchema` into the engine's
+    /// grammar-constrained request. The schema goes to vmlx in the same
+    /// strict wire form every cloud provider receives, so
+    /// `StructuredOutputSchema.decode` reads one shape regardless of
+    /// backend. The engine rejects a request whose prompt opens a reasoning
+    /// envelope rather than letting a caller coerce it, so when the caller
+    /// expressed no reasoning preference the model's own non-reasoning
+    /// template switch is selected; an explicit `disableThinking` or
+    /// `reasoningEffort` is left alone. Nothing is added to the prompt.
+    nonisolated static func structuredParameters(
+        _ parameters: GenerationParameters, model: String
+    ) throws -> GenerationParameters {
+        guard let schema = parameters.responseSchema else { return parameters }
+        var out = parameters
+        do {
+            out.jsonSchema = try StructuredOutputSchema.localWire(schema)
+        } catch {
+            throw StructuredOutputError.unsupportedModel(
+                model: model, reason: "the node output schema could not be encoded: \(error.localizedDescription)")
+        }
+        if out.modelOptions["disableThinking"] == nil, out.modelOptions["reasoningEffort"] == nil {
+            out.modelOptions["disableThinking"] = .bool(true)
+        }
+        return out
+    }
+
+    /// Whether a runtime error means the request could not be prepared for
+    /// constrained decoding (unsupported tokenizer, active reasoning
+    /// envelope, schema outside the engine's subset). Asking again with the
+    /// same model changes nothing, so these become the non-retryable
+    /// `StructuredOutputError.unsupportedModel`. Decoding-stage failures
+    /// (length exhaustion before the matcher accepted a stop token) pass
+    /// through and stay retryable under the node's retry policy.
+    nonisolated static func mapStructuredFailure(_ error: Error, model: String) -> Error {
+        if let engine = error as? ChatEngine.EngineError, case .invalidStructuredOutput(let reason) = engine.kind {
+            return StructuredOutputError.unsupportedModel(model: model, reason: reason)
+        }
+        if let failure = error as? GenerationFailure, failure.stage == .preparation {
+            return StructuredOutputError.unsupportedModel(model: model, reason: failure.cause)
+        }
+        return error
+    }
+
+    private nonisolated static func mappingStructuredFailures(
+        _ upstream: AsyncThrowingStream<String, Error>, model: String
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await delta in upstream { continuation.yield(delta) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: mapStructuredFailure(error, model: model))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     func generateOneShot(

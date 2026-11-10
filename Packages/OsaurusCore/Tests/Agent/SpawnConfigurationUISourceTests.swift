@@ -3,8 +3,8 @@
 import Foundation
 import Testing
 
-/// Source-level pins for the shared Spawn editor (Settings → Orchestrator
-/// and the custom-agent sheet). These guard the simplified delegation
+/// Source-level pins for the shared Spawn editor (Settings → Agents →
+/// Delegation and the custom-agent sheet). These guard the simplified delegation
 /// surface: one `spawn_agent` tool, agents (local + shared) as the only
 /// targets, Always Allow as the local default, and stale pool entries
 /// pruned instead of rendered as "Unavailable".
@@ -30,14 +30,15 @@ struct SpawnConfigurationUISourceTests {
 
         #expect(agents.components(separatedBy: "SpawnConfigurationEditor(").count - 1 == 1)
         #expect(settings.components(separatedBy: "SpawnConfigurationEditor(").count - 1 == 1)
-        #expect(settings.contains(#"label: "Allowed subagents""#))
+        #expect(settings.contains(#"title: "Subagents""#))
+        #expect(settings.contains(#"anchorId: "settings.agents.delegation.mainChat""#))
         // Labels converge on "subagent" / "delegate"; "Spawn" survives only
         // in tool ids.
         #expect(!settings.contains(#"label: "Main Chat Spawn""#))
         #expect(editor.contains(#"Text("Allowed subagents", bundle: .module)"#))
-        #expect(editor.contains(#"AgentSheetSectionLabel("Allowed agents")"#))
-        #expect(editor.contains(#"AgentSheetSectionLabel("Allowed shared agents")"#))
-        #expect(editor.contains(#"AgentSheetSectionLabel("Limits")"#))
+        #expect(editor.contains(#"SettingsFieldLabel("Allowed agents")"#))
+        #expect(editor.contains(#"SettingsFieldLabel("Allowed shared agents")"#))
+        #expect(editor.contains(#"title: "Limits""#))
         #expect(editor.contains(#"title: "Max output tokens per subagent""#))
         #expect(editor.contains(#"title: "Max turns per subagent""#))
         #expect(editor.contains(#"title: "Time limit per subagent (seconds)""#))
@@ -47,7 +48,7 @@ struct SpawnConfigurationUISourceTests {
 
         // Bare-model workers and their tool-access switch are gone: the
         // worker IS the agent, with its own tools and Working Folder.
-        #expect(!editor.contains(#"AgentSheetSectionLabel("Allowed models")"#))
+        #expect(!editor.contains(#"SettingsFieldLabel("Allowed models")"#))
         #expect(!editor.contains("maxToolCalls"))
         #expect(!editor.contains("Let model subagents read files"))
         #expect(!editor.contains("SpawnToolAccess"))
@@ -59,8 +60,8 @@ struct SpawnConfigurationUISourceTests {
     func starterAgentsAndDefaultPermission() throws {
         let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
 
-        #expect(editor.contains(#"Text("Create starter agents", bundle: .module)"#))
-        #expect(editor.contains("agentManager.createStarterAgents()"))
+        #expect(editor.contains(#".tertiary, "Create starter agents""#))
+        #expect(editor.contains("TeamSeeder.createTeam("))
         #expect(editor.contains("Always Allow is the default"))
         #expect(editor.contains(#""Permission for shared (workspace) agents""#))
         #expect(editor.contains("SubagentPermissionDefaults.workspaceSpawnKindId"))
@@ -93,8 +94,8 @@ struct SpawnConfigurationUISourceTests {
     @Test("shared global editors use revision-safe three-way store saves")
     func globalEditorsDoNotReplaceStaleSharedSnapshots() throws {
         let paths = [
-            "Views/Settings/OrchestratorSettingsView.swift",
-            "Views/Model/AppleScriptModelsView.swift",
+            "Views/Settings/DelegationSettingsView.swift",
+            "Views/Model/AppleScriptAutomationView.swift",
             "Views/ImageGeneration/ImageGenerationView.swift",
         ]
 
@@ -110,7 +111,7 @@ struct SpawnConfigurationUISourceTests {
 
     @Test("Main Chat batch edits use an origin-aware Server update path")
     func mainChatBatchEditsUpdateServerWithoutNotificationEchoes() throws {
-        let settings = try Self.source("Views/Settings/OrchestratorSettingsView.swift")
+        let settings = try Self.source("Views/Settings/DelegationSettingsView.swift")
         let controller = try Self.source("Networking/ServerController.swift")
 
         #expect(settings.contains("server.applyMainChatBatchLimit(from: saved)"))

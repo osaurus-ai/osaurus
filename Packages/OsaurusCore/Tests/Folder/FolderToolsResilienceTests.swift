@@ -761,7 +761,7 @@ struct FolderToolsResilienceTests {
 
     /// A stringified `edits` array (the model double-encoded the JSON) is
     /// unwrapped by coercion when it parses; a broken string is still
-    /// rejected with the plain "must be an array" message.
+    /// rejected, and the message says a string arrived.
     @Test func fileEdit_stringifiedEditsArrayIsUnwrappedWhenValid() async throws {
         let tool = FileEditTool(rootPath: tmpRoot())
         let valid = await ToolRegistry.shared.preflightForTest(
@@ -781,6 +781,7 @@ struct FolderToolsResilienceTests {
             return
         }
         #expect(EnvelopeAssertions.failureField(envelope) == "edits")
+        #expect(EnvelopeAssertions.failureMessage(envelope)?.contains("not a string") == true)
     }
 
     // MARK: - file_undo
