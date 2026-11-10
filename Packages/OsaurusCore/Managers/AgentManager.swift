@@ -336,8 +336,8 @@ public final class AgentManager: ObservableObject {
             updated.settings.spawnableAgentIDs = updated.settings.spawnableAgentIDs.filter {
                 liveIDs.contains($0)
             }
-            if let teammate = agent.teammate, agent.avatar == teammate.previousStockAvatar.rawValue {
-                updated.avatar = teammate.avatar.rawValue
+            if let avatar = agent.avatar, let stock = AgentMascot.retiredIDs[avatar] {
+                updated.avatar = stock.rawValue
             }
             if updated.settings != agent.settings || updated.avatar != agent.avatar {
                 AgentStore.save(updated)

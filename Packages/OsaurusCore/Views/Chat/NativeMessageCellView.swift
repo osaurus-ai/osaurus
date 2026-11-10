@@ -396,7 +396,7 @@ final class NativeHeaderView: NSView {
         {
             return img
         }
-        if let mascot = source.avatar.flatMap(AgentMascot.init(rawValue:)),
+        if let mascot = source.avatar.flatMap(AgentMascot.init(storedID:)),
             let img = renderer.image(mascot: mascot, pointSize: currentAvatarSize, scale: scale)
         {
             return img
