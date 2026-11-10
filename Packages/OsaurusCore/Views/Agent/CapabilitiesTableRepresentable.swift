@@ -78,6 +78,7 @@ enum CapabilityRow: Equatable, Identifiable {
 /// Bundles all per-render context the coordinator needs to configure cells.
 struct CapabilityRenderingContext {
     let theme: ThemeProtocol
+    let isEnabled: Bool
 
     let onToggleGroup: ((String) -> Void)?
     let onEnableAllInGroup: ((String) -> Void)?
@@ -91,6 +92,7 @@ struct CapabilityRenderingContext {
 
 struct CapabilitiesTableRepresentable: NSViewRepresentable {
 
+    @Environment(\.isEnabled) private var isEnabled
     let rows: [CapabilityRow]
     let theme: ThemeProtocol
 
@@ -127,7 +129,8 @@ struct CapabilitiesTableRepresentable: NSViewRepresentable {
 
     private func renderingContext(coordinator: Coordinator) -> CapabilityRenderingContext {
         CapabilityRenderingContext(
-            theme: theme,
+            theme: theme.catalogFamily(48, enabled: isEnabled, authoritative: true),
+            isEnabled: isEnabled,
             onToggleGroup: onToggleGroup,
             onEnableAllInGroup: onEnableAllInGroup,
             onDisableAllInGroup: onDisableAllInGroup,
@@ -247,18 +250,35 @@ extension CapabilitiesTableRepresentable {
             _ rows: [CapabilityRow],
             context: CapabilityRenderingContext
         ) {
+            let appearanceChanged = ctx?.theme.inspectionRevision != context.theme.inspectionRevision
+                || ctx?.theme.renderFingerprint != context.theme.renderFingerprint
+                || ctx?.isEnabled != context.isEnabled
             ctx = context
 
             let newIds = rows.map(\.id)
             let newLookup = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
 
-            if newIds == rowIds, !hasContentChanges(newLookup: newLookup) {
+            if newIds == rowIds, !appearanceChanged, !hasContentChanges(newLookup: newLookup) {
                 return
             }
 
             if newIds == rowIds {
                 rowLookup = newLookup
+                if appearanceChanged, let tableView {
+                    tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<rowIds.count))
+                }
+                #if OSAURUS_DESIGN_SYSTEM
+                if appearanceChanged {
+                    // The table may be outside a parent ScrollView's viewport.
+                    // Its retained hosting cells still need the new theme and
+                    // enabled environment, even when visibleRect is empty.
+                    for row in rowIds.indices { reconfigureCell(at: row) }
+                } else {
+                    reconfigureVisibleCells()
+                }
+                #else
                 reconfigureVisibleCells()
+                #endif
                 return
             }
 
@@ -337,12 +357,14 @@ extension CapabilitiesTableRepresentable {
                     let content = makeHeaderContent(rowData, isHovered: isHovered)
                 else { return }
                 cell.configure(id: rowData.id, content: content)
+                allowAssignedFocusOverflow(cell)
 
             case .tool:
                 guard let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ToolCell,
                     let content = makeToolContent(rowData, isHovered: isHovered)
                 else { return }
                 cell.configure(id: rowData.id, content: content)
+                allowAssignedFocusOverflow(cell)
             }
         }
 
@@ -355,7 +377,6 @@ extension CapabilitiesTableRepresentable {
             // retained by the diff) versus freshly inserted by the data
             // source.
             let previouslyVisibleIds = Set(visibleRowIndices().map { rowIds[$0] })
-
             rowLookup = newLookup
             rowIds = newIds
 
@@ -375,6 +396,19 @@ extension CapabilitiesTableRepresentable {
             for row in visibleRowIndices() where previouslyVisibleIds.contains(rowIds[row]) {
                 reconfigureCell(at: row)
             }
+        }
+
+        private var focusRequests: [String: (epoch: Int, master: Bool)] = [:]
+        private var focusEpoch = 0
+        private func requestKeyboardFocus(_ id: String, master: Bool) {
+            focusEpoch += 1
+            focusRequests[id] = (focusEpoch, master)
+        }
+        private func allowAssignedFocusOverflow(_ cell: NSView) {
+            #if OSAURUS_DESIGN_SYSTEM
+            cell.clipsToBounds = false
+            for view in cell.subviews { view.clipsToBounds = false }
+            #endif
         }
 
         // MARK: - Reuse Identifiers
@@ -404,6 +438,7 @@ extension CapabilitiesTableRepresentable {
             else { return nil }
             return ThemedContent(
                 theme: theme,
+                isEnabled: ctx?.isEnabled ?? true,
                 content: GroupHeaderCell(
                     name: name,
                     icon: icon,
@@ -415,7 +450,11 @@ extension CapabilitiesTableRepresentable {
                     onToggle: { [weak self] in self?.ctx?.onToggleGroup?(id) },
                     onEnableAll: { [weak self] in self?.ctx?.onEnableAllInGroup?(id) },
                     onDisableAll: { [weak self] in self?.ctx?.onDisableAllInGroup?(id) },
-                    onStatusTap: { [weak self] in self?.ctx?.onGroupStatusTap?(id) }
+                    onStatusTap: { [weak self] in self?.ctx?.onGroupStatusTap?(id) },
+                    groupFocusRequest: focusRequests[id]?.master == false ? (focusRequests[id]?.epoch ?? 0) : 0,
+                    masterFocusRequest: focusRequests[id]?.master == true ? (focusRequests[id]?.epoch ?? 0) : 0,
+                    onKeyboardFocusRequest: { [weak self] master in self?.requestKeyboardFocus(id, master: master) },
+                    onKeyboardFocusRestored: { [weak self] in self?.focusRequests.removeValue(forKey: id) }
                 )
             )
         }
@@ -438,6 +477,7 @@ extension CapabilitiesTableRepresentable {
             else { return nil }
             return ThemedContent(
                 theme: theme,
+                isEnabled: ctx?.isEnabled ?? true,
                 content: ToolRowCell(
                     name: name,
                     description: description,
@@ -467,6 +507,7 @@ extension CapabilitiesTableRepresentable {
                     }()
                 if let content = makeHeaderContent(rowData, isHovered: isHovered) {
                     cell.configure(id: rowData.id, content: content)
+                allowAssignedFocusOverflow(cell)
                 }
                 return cell
 
@@ -478,6 +519,7 @@ extension CapabilitiesTableRepresentable {
                     }()
                 if let content = makeToolContent(rowData, isHovered: isHovered) {
                     cell.configure(id: rowData.id, content: content)
+                allowAssignedFocusOverflow(cell)
                 }
                 return cell
             }
@@ -507,6 +549,22 @@ extension CapabilitiesTableRepresentable {
 
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
             guard row < rowIds.count, let rowData = rowLookup[rowIds[row]] else { return 44 }
+            #if OSAURUS_DESIGN_SYSTEM
+            if let theme = ctx?.theme {
+                let padding = theme.catalogMetric("padding", fallback: 10)
+                let label = theme.assignedLineHeight("component.library.48.label", fallback: 18)
+                let text = theme.assignedLineHeight("component.library.48.text", fallback: 16)
+                let gap = theme.catalogMetric("gap", fallback: 3)
+                let content: CGFloat
+                switch rowData {
+                case .groupHeader: content = max(label, 26)
+                case .tool: content = max(label + gap + text * 2, theme.assignedMetric("component.library.48.switchHeight", fallback: 24))
+                }
+                let outlineSpace: CGFloat
+                if case .groupHeader = rowData { outlineSpace = capabilityHeaderFocusSpace(theme) } else { outlineSpace = 0 }
+                return max(theme.catalogMetric("height", fallback: 44), content + padding * 2) + outlineSpace * 2
+            }
+            #endif
             return Self.estimatedHeight(for: rowData)
         }
 
@@ -530,11 +588,16 @@ extension CapabilitiesTableRepresentable {
 /// nameable type for use with TypedHostingCellView generic parameter.
 struct ThemedContent<C: View>: View {
     let theme: ThemeProtocol
+    var isEnabled = true
     let content: C
 
     var body: some View {
-        content.environment(\.theme, theme)
-    }
+        Group {
+
+        content.environment(\.theme, theme).disabled(!isEnabled)
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Cell SwiftUI Views
@@ -553,8 +616,15 @@ struct GroupHeaderCell: View {
     let onEnableAll: () -> Void
     let onDisableAll: () -> Void
     var onStatusTap: () -> Void = {}
+    var groupFocusRequest = 0
+    var masterFocusRequest = 0
+    var onKeyboardFocusRequest: (Bool) -> Void = { _ in }
+    var onKeyboardFocusRestored: () -> Void = {}
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(48, enabled: inspectionEnabled, authoritative: true) }
+    @Environment(\.isEnabled) private var componentEnabled
 
     private var allEnabled: Bool { totalCount > 0 && enabledCount == totalCount }
     private var noneEnabled: Bool { enabledCount == 0 }
@@ -569,35 +639,34 @@ struct GroupHeaderCell: View {
     }
 
     private var masterIconColor: Color {
-        if noneEnabled { return theme.tertiaryText }
-        return theme.accentColor
+        #if OSAURUS_DESIGN_SYSTEM
+        if !componentEnabled { return theme.text.disabled }
+        #endif
+        if noneEnabled { return theme.text.tertiary }
+        return theme.action.primary.default.background
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        Group {
+
+        HStack(spacing: theme.catalogLayoutMetric("component.library.48.elements.layout.groupHeaderCell.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: 10))) {
             Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(10, weight: .semibold)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 12)
                 .rotationEffect(.degrees(isExpanded ? 90 : 0))
 
             // Rounded-square icon tile — same tile language as the Tools
             // manager's plugin cards and the Abilities overview cards.
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(isHovered || enabledCount > 0 ? theme.accentColor : theme.secondaryText)
+                .glyphSize(11, weight: .semibold)
+                .foregroundColor(isHovered || enabledCount > 0 ? theme.text.link : theme.text.secondary)
                 .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(
-                            enabledCount > 0
-                                ? theme.accentColor.opacity(0.12) : theme.inputBackground
-                        )
-                )
+                .settingsChrome(enabledCount > 0 ? .selected : .inset)
 
             Text(name)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .assignedTypography("component.library.48.label", fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
 
             Spacer()
@@ -609,7 +678,7 @@ struct GroupHeaderCell: View {
             // Assignment cluster: the badge says how many are on, the
             // checkbox right next to it acts on exactly that set — trailing
             // placement keeps the two visually paired.
-            CountBadge(enabled: enabledCount, total: totalCount)
+            CapabilityCountBadge(enabled: enabledCount, total: totalCount)
 
             // Tri-state master toggle. Tap = enable-all when none/some are on,
             // disable-all when all are on. Acts on the FULL group (registry),
@@ -622,30 +691,49 @@ struct GroupHeaderCell: View {
                 }
             } label: {
                 Image(systemName: masterIcon)
-                    .font(.system(size: 14, weight: .medium))
+                    .glyphSize(NativeComponentInspectionStyle.metric(48, "indicatorSize", 22, theme) * 14 / 22, weight: .medium)
                     .foregroundColor(masterIconColor)
-                    .frame(width: 22, height: 22)
+                    .frame(width: NativeComponentInspectionStyle.metric(48, "indicatorSize", 22, theme), height: NativeComponentInspectionStyle.metric(48, "indicatorSize", 22, theme))
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .assignedBasePlainButtonStyle()
+            .assignedBaseKeyboardButton(48, focusRequest: masterFocusRequest,
+                onFocusRequestHandled: onKeyboardFocusRestored) {
+                onKeyboardFocusRequest(true)
+                if allEnabled { onDisableAll() } else { onEnableAll() }
+            }
             .help(allEnabled ? Text(localized: "Disable all") : Text(localized: "Enable all"))
             .accessibilityLabel(
                 allEnabled
                     ? Text(localized: "Disable all") : Text(localized: "Enable all")
             )
             .accessibilityAddTraits(allEnabled ? [.isSelected] : [])
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        }.catalogLayoutTarget("component.library.48.elements.layout.groupHeaderCell.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.48.elements.layout.groupHeaderCell.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: 12))).catalogLayoutTarget("component.library.48.elements.layout.groupHeaderCell.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.48.elements.layout.groupHeaderCell.body.paddingY", inheriting: theme.catalogMetric("padding", fallback: 9))).catalogLayoutTarget("component.library.48.elements.layout.groupHeaderCell.body.paddingY")
         .contentShape(Rectangle())
         // Tap on the row body (outside the master button) toggles expansion only;
         // the master button has its own hit area for select-all-or-none.
         .onTapGesture { onToggle() }
+        .assignedBaseKeyboardButton(48, focusRequest: groupFocusRequest,
+            onFocusRequestHandled: onKeyboardFocusRestored) {
+                onKeyboardFocusRequest(false); onToggle()
+            }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: true))
         // Outer gutter: insets the hover wash from the table edges so the
         // row content aligns with the header's 24pt gutter.
-        .padding(.horizontal, 12)
-    }
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.48.elements.layout.groupHeaderCell.body.paddingX2", inheriting: theme.catalogMetric("padding", fallback: 12))).catalogLayoutTarget("component.library.48.elements.layout.groupHeaderCell.body.paddingX2")
+        .padding(.vertical, capabilityHeaderFocusSpace(theme))
+        #if OSAURUS_DESIGN_SYSTEM
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(verbatim: name))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(isExpanded ? Text("Expanded", bundle: .module) : Text("Collapsed", bundle: .module))
+        .accessibilityAction(.default) { if componentEnabled { onToggle() } }
+        #endif
+    
+        }.environment(\.theme, theme)
+}
 }
 
 /// Pure-SwiftUI switch for rows hosted inside the capabilities NSTableView.
@@ -656,30 +744,42 @@ struct GroupHeaderCell: View {
 /// the cell. Drawing the switch with shapes sidesteps the AppKit control
 /// entirely, so it renders correctly at any point in the cell lifecycle.
 struct CapabilitySwitch: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(48, enabled: inspectionEnabled, authoritative: true) }
     let isOn: Bool
     let tint: Color
     var disabled: Bool = false
     let onToggle: () -> Void
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        Group {
+
+        #if OSAURUS_DESIGN_SYSTEM
+        Toggle("Enable tool", isOn: Binding(get: { isOn }, set: { _ in onToggle() }))
+            .settingsSwitch().disabled(disabled)
+        #else
         Button(action: { if !disabled { onToggle() } }) {
             Capsule()
                 .fill(isOn ? tint : Color.primary.opacity(0.2))
                 .frame(width: 26, height: 15)
                 .overlay(alignment: isOn ? .trailing : .leading) {
                     Circle()
-                        .fill(Color.white)
+                        .fill(FixedPalette.onMedia)
                         .frame(width: 11, height: 11)
                         .padding(2)
-                        .shadow(color: .black.opacity(0.25), radius: 0.5, y: 0.5)
+                        .themeElevation(theme.elevation.raised)
                 }
-                .animation(.easeInOut(duration: 0.15), value: isOn)
+                .animation(theme.motion.quick, value: isOn)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.4 : 1.0)
         .frame(width: 36)
-    }
+        #endif
+    
+        }.environment(\.theme, theme)
+}
 }
 
 /// Tool row cell rendered in the NSTableView.
@@ -694,24 +794,28 @@ struct ToolRowCell: View {
     let isHovered: Bool
     let onToggle: () -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(48, enabled: inspectionEnabled, authoritative: true) }
 
     private var nameColor: Color {
-        enabled ? theme.primaryText : theme.secondaryText
+        enabled ? theme.text.primary : theme.text.secondary
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        Group {
+
+        HStack(spacing: theme.catalogLayoutMetric("component.library.48.elements.layout.toolRowCell.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: 12))) {
             CapabilitySwitch(
                 isOn: enabled,
-                tint: theme.accentColor,
+                tint: theme.action.primary.default.background,
                 onToggle: onToggle
             )
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.48.elements.layout.toolRowCell.body.verticalGap", inheriting: theme.catalogMetric("gap", fallback: 3))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.48.elements.layout.toolRowCell.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(48, "gap", 6, theme))) {
                     Text(name)
-                        .font(.system(size: 12, weight: .medium))
+                        .assignedTypography("component.library.48.label", fallback: SettingsFont.compactLabel)
                         .foregroundColor(nameColor)
                         .lineLimit(1)
 
@@ -720,12 +824,12 @@ struct ToolRowCell: View {
                     }
 
                     ToolAvailabilityBadge(availability: availability)
-                }
+                }.catalogLayoutTarget("component.library.48.elements.layout.toolRowCell.body.horizontalGap2")
                 Text(description)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .assignedTypography("component.library.48.text", fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(2)
-            }
+            }.catalogLayoutTarget("component.library.48.elements.layout.toolRowCell.body.verticalGap")
 
             Spacer()
 
@@ -735,16 +839,16 @@ struct ToolRowCell: View {
                         ? "~\(estimatedTokens) tokens"
                         : "Catalog: ~\(catalogTokens), Full: ~\(estimatedTokens) tokens"
                 )
-        }
-        .padding(.leading, 32)
-        .padding(.trailing, 12)
-        .padding(.vertical, 10)
+        }.catalogLayoutTarget("component.library.48.elements.layout.toolRowCell.body.horizontalGap")
+        .padding(.leading, theme.catalogLayoutMetric("component.library.48.elements.layout.toolRowCell.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: 32))).catalogLayoutTarget("component.library.48.elements.layout.toolRowCell.body.paddingX")
+        .padding(.trailing, theme.catalogLayoutMetric("component.library.48.elements.layout.toolRowCell.body.paddingX2", inheriting: theme.catalogMetric("padding", fallback: 12))).catalogLayoutTarget("component.library.48.elements.layout.toolRowCell.body.paddingX2")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.48.elements.layout.toolRowCell.body.paddingY", inheriting: theme.catalogMetric("padding", fallback: 10))).catalogLayoutTarget("component.library.48.elements.layout.toolRowCell.body.paddingY")
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: enabled))
         // Outer gutter: matches the group header inset so hover washes and
         // content share one gutter with the sticky header above.
-        .padding(.horizontal, 12)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.48.elements.layout.toolRowCell.body.paddingX3", inheriting: theme.catalogMetric("padding", fallback: 12))).catalogLayoutTarget("component.library.48.elements.layout.toolRowCell.body.paddingX3")
         // The availability detail used to be a third text line on every row;
         // it's tooltip-only now, keeping the row to name + description.
         .help(
@@ -752,7 +856,9 @@ struct ToolRowCell: View {
                 ? "\(availability.displayDetail) These tools turn on and off together with their app."
                 : availability.displayDetail
         )
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 /// Trailing status capsule on a group header ("Permission needed"). Acts as
@@ -761,34 +867,25 @@ private struct GroupStatusBadge: View {
     let status: CapabilityGroupStatus
     let onTap: () -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(48, enabled: inspectionEnabled, authoritative: true) }
 
     var body: some View {
-        let tint = status.isWarning ? theme.warningColor : theme.secondaryText
+        Group {
+
         Button(action: { if status.isActionable { onTap() } }) {
-            HStack(spacing: 4) {
-                Image(systemName: status.icon)
-                    .font(.system(size: 9, weight: .semibold))
-                Text(status.text)
-                    .font(.system(size: 10, weight: .medium))
-                    .lineLimit(1)
-            }
-            .foregroundColor(tint)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(tint.opacity(0.12))
-                    .overlay(Capsule().strokeBorder(tint.opacity(0.25), lineWidth: 1))
-            )
-            .contentShape(Capsule())
+            StatusChip(status.text, tone: status.isWarning ? .warning : .neutral, icon: status.icon)
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(!status.isActionable)
         .help(status.detail)
         .accessibilityLabel(Text(status.text))
         .accessibilityHint(Text(status.detail))
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Shared Components (Internal to this file)
@@ -797,19 +894,24 @@ private struct HoverRowStyle: ViewModifier {
     let isHovered: Bool
     let showAccent: Bool
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(48, enabled: inspectionEnabled, authoritative: true) }
 
-    func body(content: Content) -> some View {
+    @ViewBuilder func body(content: Content) -> some View {
+        #if OSAURUS_DESIGN_SYSTEM
+        content.assignedBaseChrome(48)
+        #else
         content
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHovered ? theme.secondaryBackground.opacity(0.7) : Color.clear)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(isHovered ? theme.surface.subtle : Color.clear)
                     .overlay(
                         isHovered && showAccent
-                            ? RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            ? RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                                 .fill(
                                     LinearGradient(
-                                        colors: [theme.accentColor.opacity(0.06), Color.clear],
+                                        colors: [theme.surface.hover, Color.clear],
                                         startPoint: .leading,
                                         endPoint: .trailing
                                     )
@@ -819,88 +921,74 @@ private struct HoverRowStyle: ViewModifier {
             )
             .overlay(
                 isHovered
-                    ? RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    ? RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                         .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    theme.glassEdgeLight.opacity(0.12),
-                                    theme.primaryBorder.opacity(0.08),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
+                            theme.border.subtle,
+                            lineWidth: theme.stroke.default
                         )
                     : nil
             )
+        #endif
     }
 }
 
 private struct TokenBadge: View {
     let count: Int
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(48, enabled: inspectionEnabled, authoritative: true) }
 
     var body: some View {
-        HStack(spacing: 2) {
-            Text("~\(count)", bundle: .module).font(.system(size: 10, weight: .medium, design: .monospaced))
-            Text("tokens", bundle: .module).font(.system(size: 9)).opacity(0.6)
-        }
-        .foregroundColor(theme.tertiaryText)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(theme.secondaryBackground.opacity(0.5)))
-    }
+        Group {
+
+        StatusChip("~\(count) \(L("tokens"))")
+    
+        }.environment(\.theme, theme)
+}
 }
 
 private struct SmallCapsuleBadge: View {
     let text: String
     var icon: String? = nil
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(48, enabled: inspectionEnabled, authoritative: true) }
 
     var body: some View {
-        HStack(spacing: 3) {
-            if let icon = icon {
-                Image(systemName: icon)
-                    .font(.system(size: 7))
-            }
-            Text(text)
-                .font(.system(size: 8, weight: .medium))
-        }
-        .foregroundColor(theme.secondaryText)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 2)
-        .background(
-            Capsule()
-                .fill(theme.secondaryBackground)
-                .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1))
-        )
-    }
+        Group {
+
+        StatusChip(text, icon: icon)
+    
+        }.environment(\.theme, theme)
+}
 }
 
-private struct CountBadge: View {
+private struct CapabilityCountBadge: View {
     let enabled: Int
     let total: Int
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(48, enabled: inspectionEnabled, authoritative: true) }
 
     var body: some View {
-        Text("\(enabled)/\(total)", bundle: .module)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(enabled > 0 ? theme.accentColor : theme.tertiaryText)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(enabled > 0 ? theme.accentColor.opacity(0.15) : theme.primaryBackground)
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(
-                                enabled > 0 ? theme.accentColor.opacity(0.2) : theme.primaryBorder.opacity(0.1),
-                                lineWidth: 1
-                            )
-                    )
-            )
-    }
+        Group {
+
+        StatusChip("\(enabled)/\(total)", tone: enabled > 0 ? .accent : .neutral)
+    
+        }.environment(\.theme, theme)
+}
+}
+
+/// Space outside the styled header for an assigned outline; the component's
+/// visual height/padding stay unchanged and focus never changes row geometry.
+private func capabilityHeaderFocusSpace(_ theme: any ThemeProtocol) -> CGFloat {
+    #if OSAURUS_DESIGN_SYSTEM
+    max(0, theme.assignedMetric("component.focus.offset", fallback: theme.focusOffset))
+        + max(0, theme.assignedMetric("component.focus.width", fallback: theme.stroke.focus)) / 2
+    #else
+    0
+    #endif
 }

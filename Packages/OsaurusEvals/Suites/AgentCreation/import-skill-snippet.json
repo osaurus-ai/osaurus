@@ -1,0 +1,16 @@
+{
+  "id": "agent_creation.import-skill-snippet",
+  "domain": "agent_creation",
+  "label": "agent creation • a pasted SKILL.md is queued as a skill for the new agent",
+  "query": "Build me an agent for release notes and give it this skill:\n\n---\nname: release-notes\ndescription: Turns a list of merged pull requests into user-facing release notes.\n---\n# Release Notes\n\nGroup changes by user impact. Lead with new features, then fixes. Keep each line under 20 words and skip internal refactors.",
+  "notes": "Universal chat import inside the New Agent chat, using an inline SKILL.md so the lane needs no network. The skill is queued to install on Create and attach to the new agent. The harness requires one successful agent_draft import that queued a skill and checks nothing was installed during the turn.",
+  "fixtures": {},
+  "expect": {
+    "agentCreation": {
+      "maxIterations": 8,
+      "replies": ["Just release notes from merged PRs, that's it."],
+      "importKinds": ["skill"],
+      "maxClarifications": 1
+    }
+  }
+}

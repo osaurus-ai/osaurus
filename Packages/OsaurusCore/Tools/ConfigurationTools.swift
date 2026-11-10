@@ -34,9 +34,8 @@ import OsaurusRepository
 /// "no providers connected" premise is false only because of test
 /// infrastructure. When `OSAURUS_EVALS_HIDE_EPHEMERAL_PROVIDERS=1` (set by
 /// the eval CLI), the reads drop ephemeral providers so the scenario sees the
-/// genuine user-configured state. The eval binary runs no Bonjour discovery,
-/// so in-process the only ephemeral providers are the harness's; PRODUCTION
-/// never sets the flag, so Bonjour-discovered providers stay visible there.
+/// genuine user-configured state. In-process the only ephemeral providers are
+/// the harness's; PRODUCTION never sets the flag.
 /// Routing (`findService(forModel:)`) is untouched, so the model still runs.
 /// Agent-facing capability payload for describe reads. Lived on the old
 /// `AgentConfigurationDomain` before the per-domain write tools were replaced
@@ -65,7 +64,6 @@ enum AgentCapabilitiesPayload {
             "task_checklist_enabled": agent.settings.taskChecklistEnabled,
             "clarify_enabled": agent.settings.clarifyEnabled,
             "artifacts_enabled": agent.settings.artifactsEnabled,
-            "theme_id": agent.themeId?.uuidString ?? "",
         ]
     }
 }
@@ -152,17 +150,17 @@ enum ConfigurationReadNextStep {
     /// Status is the one read with no single scope, and it is where models
     /// land first for app-wide settings asks. Observed dead ends get
     /// explicit routes: settings sections are NOT inspect scopes (they are
-    /// read via export), server/chat/app settings are Settings-UI-only, and
+    /// read via export), server settings are Settings-UI-only, and
     /// "what is Osaurus / how does X work" questions belong to
     /// `osaurus_help`, not to a snapshot recital.
     static let statusHint =
         hint(hasShape: false)
-        + " Settings sections (memory, default_agent, tools, delegation) "
-        + "are document sections: read one with osaurus_inspect {action: 'describe', "
+        + " Settings sections (memory, default_agent, model_defaults, chat, app, tools, "
+        + "delegation) are document sections: read one with osaurus_inspect {action: 'describe', "
         + "scope: '<section>'} (or osaurus_config {action: 'export', sections: [...]}), "
         + "and change it with osaurus_config {action: 'apply', yaml: ...}. "
-        + "Server runtime, chat behavior, and app settings are managed in the Settings UI, "
-        + "not with these tools. "
+        + "Server runtime settings, and Chat or General controls those sections do not list, "
+        + "are managed in the Settings UI, not with these tools. "
         + "For questions about what Osaurus is or how a feature works, read the matching "
         + "osaurus_help topic instead of answering from this snapshot."
 
@@ -261,7 +259,7 @@ enum ConfigurationReadNextStep {
     }
 
     /// Declarative sections whose YAML shape a read scope embeds. Scopes
-    /// without a declarative writer (skills, themes) map to nothing and
+    /// without a declarative writer (skills) map to nothing and
     /// keep the plain hint.
     static func shapeSections(forScope scope: String) -> Set<ConfigSectionID>? {
         switch scope {
@@ -270,8 +268,7 @@ enum ConfigurationReadNextStep {
         case "providers": return [.providers]
         case "mcp", "mcp_providers": return [.mcpServers]
         case "plugins": return [.plugins]
-        case "schedules": return [.schedules]
-        case "watchers": return [.watchers]
+        case "automations", "events", "schedules", "watchers": return [.automations]
         case "knowledge": return [.knowledgeCollections]
         case "commands": return [.commands]
         case "channels": return [.channels]
@@ -281,6 +278,10 @@ enum ConfigurationReadNextStep {
         // carries the replace-list semantics of `spawnable_agents` with it.
         case "memory": return [.memory]
         case "default_agent": return [.defaultAgent]
+        case "configurator": return [.configurator]
+        case "model_defaults": return [.modelDefaults]
+        case "chat": return [.chat]
+        case "app": return [.app]
         case "tools": return [.tools]
         case "delegation": return [.delegation]
         case "harness_runtimes": return [.harnessRuntimes]
@@ -358,18 +359,18 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
     public let name = "osaurus_inspect"
     public let description =
         "Read Osaurus configuration. `action`: status (one-shot snapshot of everything — default "
-        + "agent, server, models, providers, plugins, schedules, watchers, skills, knowledge, "
+        + "agent, server, models, providers, plugins, automations, skills, knowledge, "
         + "channels, memory, sandbox — plus `suggestions`; call it first when the user asks "
         + "what's configured), list (rows in one `scope`), describe (full detail for one item; "
         + "needs `scope` + `id`; providers/mcp include runtime connected/last_error; skills, "
-        + "knowledge, commands, themes also match by name). "
-        + "`scope` ∈ {agents, models, providers, mcp, plugins, schedules, skills, watchers, "
-        + "knowledge, themes, commands, channels, search, workspaces, shared_agents}. "
+        + "knowledge, commands also match by name). "
+        + "`scope` ∈ {agents, models, providers, mcp, plugins, automations, skills, "
+        + "knowledge, commands, channels, search, workspaces, shared_agents}. "
         + "shared_agents = teammates' agents you can delegate to (name, owner, workspace, "
         + "presence, `target` for spawn_agent; describe by Name@Workspace). "
         + "Optional `filter` (list only): models: installed|downloading|recommended|all; "
         + "providers/mcp: enabled|disabled|connected|all; plugins: installed|available|failed; "
-        + "schedules/watchers/knowledge/channels: enabled|disabled; "
+        + "knowledge/channels/automations: enabled|disabled; "
         + "skills/commands: builtin|custom|plugin; shared_agents: online|in_pool."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -385,33 +386,33 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             // only scope roster a compact-schema model ever sees (removing
             // it regressed scope-less/junk-arg calls immediately). It also
             // includes the settings DOCUMENT SECTIONS (`memory`, `tools`, …)
-            // and the removed `server`/`chat`/`app` names: those execute as
+            // and the removed `server` name: those execute as
             // a teaching failure (see `unknownScopeFailure`) — sections
             // redirect to osaurus_config export/apply, removed names get an
             // honest "Settings UI only" answer — instead of a generic
-            // schema rejection the model would loop on.
+            // schema rejection the model would loop on. `model_defaults` is
+            // left out to hold `OrchestratorSchemaBudgetTests`; it is read
+            // through osaurus_config export.
             "scope": .object([
                 "type": .string("string"),
                 "enum": .array([
                     .string("agents"), .string("models"), .string("providers"),
-                    .string("mcp"), .string("plugins"), .string("schedules"),
-                    .string("skills"), .string("watchers"), .string("knowledge"),
+                    .string("mcp"), .string("plugins"), .string("automations"),
+                    .string("skills"), .string("knowledge"),
                     .string("themes"), .string("commands"), .string("channels"),
                     .string("search"), .string("workspaces"), .string("shared_agents"),
                     .string("mcp_servers"), .string("knowledge_collections"),
                     .string("search_providers"),
                     .string("server"), .string("chat"), .string("app"),
-                    .string("memory"), .string("default_agent"),
+                    .string("memory"), .string("default_agent"), .string("configurator"),
                     .string("new_chat_agent"), .string("active_agent"), .string("tools"),
                     .string("delegation"), .string("harness_runtimes"),
                 ]),
                 "description": .string(
-                    "Configuration scope. Required for list and describe. memory, "
-                        + "default_agent, new_chat_agent (alias active_agent), tools, delegation, and "
-                        + "harness_runtimes are settings "
-                        + "document sections — list/describe returns the section's current "
-                        + "values (change them with osaurus_config apply). server, chat, and "
-                        + "app are Settings-UI-only."),
+                    "Configuration scope (required for list/describe). Settings document sections "
+                        + "(memory, default_agent, configurator, new_chat_agent (alias active_agent), model_defaults, "
+                        + "chat, app, tools, delegation, harness_runtimes) return their current values; "
+                        + "change them with osaurus_config apply. server is Settings-UI-only."),
             ]),
             "id": .object([
                 "type": .string("string"),
@@ -428,14 +429,36 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
 
     public init() {}
 
+    /// Scopes retired into `automations`. Kept out of the `scope` enum (schema
+    /// budget), so they are rewritten here, before the shared validator.
+    static let retiredScopeAliases: Set<String> = ["events", "schedules", "watchers"]
+
+    public func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        guard let data = argumentsJSON.data(using: .utf8),
+            var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+            let scope = object["scope"] as? String,
+            Self.retiredScopeAliases.contains(scope.lowercased())
+        else { return argumentsJSON }
+        object["scope"] = "automations"
+        guard let rewritten = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+            let json = String(data: rewritten, encoding: .utf8)
+        else { return argumentsJSON }
+        return json
+    }
+
     public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
+        if let gate = ConfigurationToolBase.readGateFailure(tool: name) {
             return gate
         }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
         let actionReq = requireAction(args, allowed: ["status", "list", "describe"])
         guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
+        if ChatExecutionContext.currentAgentId == Agent.architectId,
+            let refusal = Self.architectScopeFailure(action: action, args: args, tool: name)
+        {
+            return refusal
+        }
 
         switch action {
         case "status":
@@ -491,11 +514,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                 PluginRepositoryService.shared.lastRefreshResult
             )
 
-            let schedules = ScheduleManager.shared.schedules
-            let enabledSchedules = schedules.filter { $0.isEnabled }
-
-            let watchers = WatcherStore.loadAll()
-            let enabledWatchers = watchers.filter { $0.isEnabled }
+            let eventSummary = EventInspection.statusSummary()
 
             let channelConfiguration = AgentChannelConnectionManager.shared.loadConfiguration()
             let enabledChannels = channelConfiguration.connections.filter { $0.enabled }
@@ -548,8 +567,8 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             }
 
             // The Orchestrator's spawn pool. An empty pool is the one state
-            // in which the Orchestrator has no `spawn_agent` at all — the
-            // status read must say so instead of letting it pass as "no
+            // in which the Orchestrator can hand work to none of your agents —
+            // the status read must say so instead of letting it pass as "no
             // agents", and name the repair (a `delegation.spawnable_agents`
             // apply, or Settings → Orchestrator → Add all agents).
             let delegation = SubagentConfigurationStore.snapshot()
@@ -568,7 +587,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             if poolState == "empty" {
                 suggestions.append(
                     "Spawn pool is EMPTY although \(customAgents.count) custom agent(s) exist — the "
-                        + "Orchestrator has no spawn_agent tool. Restore delegation with "
+                        + "Orchestrator cannot hand work to any of them. Restore delegation with "
                         + "osaurus_config apply `delegation: {spawnable_agents: [<names to allow>]}` "
                         + "(the list replaces the pool) or Settings → Orchestrator → Add all agents.")
             }
@@ -616,14 +635,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     "failed": failedPlugins.count,
                     "repository": pluginRepositoryDiagnostic ?? [:],
                 ],
-                "schedules": [
-                    "total": schedules.count,
-                    "enabled": enabledSchedules.count,
-                ],
-                "watchers": [
-                    "total": watchers.count,
-                    "enabled": enabledWatchers.count,
-                ],
+                "automations": eventSummary,
                 "skills": [
                     "installed": skillCount
                 ],
@@ -939,49 +951,11 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     ) ?? [:],
                     "items": filtered,
                 ]
-            case "schedules":
-                let schedules = ScheduleManager.shared.schedules.map { s -> [String: Any] in
-                    return [
-                        "id": s.id.uuidString,
-                        "name": s.name,
-                        "enabled": s.isEnabled,
-                        "frequency": s.frequency.displayDescription,
-                    ]
-                }
-                let filtered: [[String: Any]]
-                switch filter {
-                case "enabled": filtered = schedules.filter { ($0["enabled"] as? Bool) == true }
-                case "disabled": filtered = schedules.filter { ($0["enabled"] as? Bool) == false }
-                default: filtered = schedules
-                }
-                payload = ["scope": "schedules", "filter": filter, "items": filtered]
-            case "watchers":
-                let watchers = WatcherStore.loadAll().map { w -> [String: Any] in
-                    return [
-                        "id": w.id.uuidString,
-                        "name": w.name,
-                        "enabled": w.isEnabled,
-                        "watch_path": w.watchPath ?? "",
-                        "agent_id": w.agentId?.uuidString ?? "",
-                        "recursive": w.recursive,
-                    ]
-                }
+            case "automations", "events", "schedules", "watchers":
                 payload = [
-                    "scope": "watchers", "filter": filter,
-                    "items": Self.filterByEnabledConnected(watchers, filter: filter),
+                    "scope": scope, "filter": filter,
+                    "items": EventInspection.list(scope: scope, filter: filter.isEmpty ? nil : filter),
                 ]
-            case "themes":
-                let activeId = ThemeConfigurationStore.loadActiveThemeId()
-                let themes = ThemeConfigurationStore.listThemes().map { theme -> [String: Any] in
-                    return [
-                        "id": theme.metadata.id.uuidString,
-                        "name": theme.metadata.name,
-                        "author": theme.metadata.author,
-                        "built_in": theme.isBuiltIn,
-                        "active": theme.metadata.id == activeId,
-                    ]
-                }
-                payload = ["scope": "themes", "filter": filter, "items": themes]
             case "commands":
                 // Built-ins live in code, custom commands on disk — the
                 // popup shows both, so the read scope must too.
@@ -1142,8 +1116,8 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
 public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
     public let name = "osaurus_help"
     public let description =
-        "Bundled Osaurus user guide and settings catalog — answers questions about what Osaurus is "
-        + "and how its features work, and where a setting lives. "
+        "Osaurus user guide and settings catalog. Answers what Osaurus is, how its features work, and "
+        + "where a setting lives. "
         + "`action`: topics (index of topic ids with summaries), read (needs `topic` id; returns the "
         + "full topic text), find (needs `query`; returns Management breadcrumbs from the same "
         + "catalog as in-app settings search). Answer from the topic or find results — for the "
@@ -1512,59 +1486,10 @@ extension OsaurusInspectTool {
                 } else {
                     payload = nil
                 }
-            case "schedules":
-                let scheduleUUID = UUID(uuidString: idStr)
-                if let s = ScheduleManager.shared.schedules.first(where: {
-                    $0.id == scheduleUUID || $0.name.caseInsensitiveCompare(idStr) == .orderedSame
-                }) {
-                    payload = [
-                        "id": s.id.uuidString,
-                        "name": s.name,
-                        "instructions": s.instructions,
-                        "agent_id": s.agentId?.uuidString ?? "",
-                        "enabled": s.isEnabled,
-                        "frequency": s.frequency.displayDescription,
-                    ]
-                } else {
-                    payload = nil
-                }
-            case "watchers":
-                let watcherUUID = UUID(uuidString: idStr)
-                if let w = WatcherStore.loadAll().first(where: {
-                    $0.id == watcherUUID || $0.name.caseInsensitiveCompare(idStr) == .orderedSame
-                }) {
-                    var dict: [String: Any] = [
-                        "id": w.id.uuidString,
-                        "name": w.name,
-                        "instructions": w.instructions,
-                        "watch_path": w.watchPath ?? "",
-                        "agent_id": w.agentId?.uuidString ?? "",
-                        "enabled": w.isEnabled,
-                        "recursive": w.recursive,
-                        "responsiveness": w.responsiveness.rawValue,
-                    ]
-                    if let last = w.lastTriggeredAt {
-                        dict["last_triggered_at"] = ISO8601DateFormatter().string(from: last)
-                    }
-                    payload = dict
-                } else {
-                    payload = nil
-                }
-            case "themes":
-                let uuid = UUID(uuidString: idStr)
-                if let theme = ThemeConfigurationStore.listThemes().first(where: {
-                    $0.metadata.id == uuid
-                        || $0.metadata.name.caseInsensitiveCompare(idStr) == .orderedSame
-                }) {
-                    payload = [
-                        "id": theme.metadata.id.uuidString,
-                        "name": theme.metadata.name,
-                        "author": theme.metadata.author,
-                        "version": theme.metadata.version,
-                        "built_in": theme.isBuiltIn,
-                        "dark": theme.isDark,
-                        "active": theme.metadata.id == ThemeConfigurationStore.loadActiveThemeId(),
-                    ]
+            case "automations", "events", "schedules", "watchers":
+                if let event = EventInspection.find(idStr, scope: scope) {
+                    payload = EventInspection.detail(
+                        event, runs: EventManager.shared.runsSnapshot(eventId: event.id, limit: 20))
                 } else {
                     payload = nil
                 }
@@ -1699,8 +1624,8 @@ extension OsaurusInspectTool {
     /// unknown-scope failure and the describe pre-check can't drift from the
     /// switch statements.
     static let knownReadScopes: Set<String> = [
-        "agents", "models", "providers", "mcp", "mcp_providers", "plugins",
-        "schedules", "skills", "watchers", "knowledge", "themes", "commands",
+        "agents", "models", "providers", "mcp", "mcp_providers", "plugins", "automations",
+        "events", "schedules", "skills", "watchers", "knowledge", "commands",
         "channels", "search", "workspaces", "shared_agents",
     ]
 
@@ -1716,38 +1641,95 @@ extension OsaurusInspectTool {
         }
     }
 
+    /// What the Architect may read: what a workflow step can reference.
+    static let architectScopes = ["models", "mcp", "plugins"]
+
+    static func architectScopeFailure(action: String, args: [String: Any], tool: String) -> String? {
+        let scope = ((args["scope"] as? String) ?? (args["filter"] as? String)).map { canonicalScope($0.lowercased()) }
+        guard action == "status" || !architectScopes.contains(scope ?? "") else { return nil }
+        return ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "The Architect reads only `list` or `describe` with scope models, mcp, or plugins.",
+            field: action == "status" ? "action" : "scope",
+            expected: "{action: list|describe, scope: models|mcp|plugins}", tool: tool)
+    }
+
+    /// The Architect's `osaurus_inspect` schema: the same tool, limited to
+    /// `architectScopes`.
+    static func architectSpec(_ tool: Tool) -> Tool {
+        Tool(
+            type: tool.type,
+            function: ToolFunction(
+                name: tool.function.name,
+                description: architectDescription,
+                parameters: architectParameters))
+    }
+
+    static let architectDescription =
+        "Read the models, MCP servers, and plugins on this Mac before a step references them: "
+        + "list (rows in a scope) or describe (one item by id or name)."
+
+    static var architectParameters: JSONValue {
+        .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "properties": .object([
+                "action": .object(["type": .string("string"), "enum": .array([.string("list"), .string("describe")])]),
+                "scope": .object([
+                    "type": .string("string"), "enum": .array(architectScopes.map { .string($0) }),
+                ]),
+                "id": .object([
+                    "type": .string("string"),
+                    "description": .string("For describe: the item's id or exact name."),
+                ]),
+                "filter": .object([
+                    "type": .string("string"),
+                    "description": .string(
+                        "For list: models installed|recommended|all; mcp enabled|connected|all; plugins installed|failed."),
+                ]),
+            ]),
+            "required": .array([.string("action"), .string("scope")]),
+        ])
+    }
+
     /// Section names removed from the declarative surface in scope
     /// reduction 2. A model guessing these gets an honest "Settings UI
     /// only" answer instead of an export redirect it would loop on.
-    static let settingsUIOnlyScopes: Set<String> = ["server", "chat", "app"]
+    static let settingsUIOnlyScopes: Set<String> = ["server"]
+
+    /// Scopes whose feature was removed. Still in the schema enum so a model
+    /// guessing them gets the replacement instead of a bare rejection.
+    static let retiredScopes: [String: String] = [
+        "themes":
+            "Custom themes were removed. Osaurus has System, Light and Dark appearance only: "
+            + "Settings… (⌘,) → General → Appearance, or View → Appearance.",
+    ]
 
     /// Unknown-scope failure that TEACHES instead of just rejecting. Small
     /// models guess document-section names (`tools`, `memory`,
     /// `delegation`, …) as inspect scopes and then loop on a bare "must be
     /// one of" error; when the guess IS a declarative section, the failure
     /// routes them to `osaurus_config` export/apply, which is the real way
-    /// to read and change those settings. The removed `server`/`chat`/`app`
-    /// names get an honest not-declarative answer.
+    /// to read and change those settings. The removed `server` name gets an
+    /// honest not-declarative answer.
     static func unknownScopeFailure(scope: String, tool: String) -> String {
         let valid =
-            "agents, models, providers, mcp, plugins, schedules, skills, watchers, "
-            + "knowledge, themes, commands, channels, search"
+            "agents, models, providers, mcp, plugins, automations, skills, "
+            + "knowledge, commands, channels, search"
+        if let replacement = retiredScopes[scope.lowercased()] {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "\(replacement) There is nothing to read or apply here. "
+                    + "Do NOT claim to have changed anything. Inspect scopes: \(valid).",
+                field: "scope",
+                tool: tool
+            )
+        }
         if settingsUIOnlyScopes.contains(scope.lowercased()) {
-            let path: String
-            switch scope.lowercased() {
-            case "server":
-                path =
-                    "Settings… (⌘,) → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
-                    + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
-            case "chat":
-                path =
-                    "Settings… (⌘,) → Conversation (streaming, clipboard; compaction under Advanced). "
-                    + "Context Window Cap is Server → Settings → Cache, not Conversation."
-            default:
-                path =
-                    "Settings… (⌘,) → General (login, dock icon, hotkey, notifications). "
-                    + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
-            }
+            let path =
+                "Settings… (⌘,) → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
+                + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:

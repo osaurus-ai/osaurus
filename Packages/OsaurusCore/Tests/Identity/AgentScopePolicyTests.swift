@@ -147,6 +147,14 @@ struct AgentScopePolicyTests {
         #expect(rejection(.GET, "/tasks/\(taskId)")?.code == "agent_scope_denied")
         #expect(rejection(.DELETE, "/tasks/\(taskId)")?.code == "agent_scope_denied")
         #expect(rejection(.POST, "/tasks/\(taskId)/clarify")?.code == "agent_scope_denied")
+        // Named runs the key started, and its conversation mailbox; the
+        // handlers scope both to the key.
+        #expect(rejection(.GET, "/runs/run-1/events") == nil)
+        #expect(rejection(.POST, "/runs/run-1/stop") == nil)
+        #expect(rejection(.GET, "/conversations/s-1/events") == nil)
+        #expect(rejection(.POST, "/runs/run-1/events")?.code == "agent_scope_denied")
+        #expect(rejection(.GET, "/runs/run-1")?.code == "agent_scope_denied")
+        #expect(rejection(.POST, "/conversations/s-1/events")?.code == "agent_scope_denied")
     }
 
     @Test func deniesEverythingElse() {

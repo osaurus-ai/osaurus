@@ -197,6 +197,16 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    /// Whether macOS shows a dialog for this permission when a tool first
+    /// needs it. Full Disk Access, Accessibility, and Screen Recording have
+    /// no dialog: the person grants them in System Settings.
+    var promptsWhenMissing: Bool {
+        switch self {
+        case .disk, .accessibility, .screenRecording: return false
+        default: return true
+        }
+    }
+
     /// URL scheme to open the relevant System Settings pane
     var systemSettingsURL: URL? {
         switch self {

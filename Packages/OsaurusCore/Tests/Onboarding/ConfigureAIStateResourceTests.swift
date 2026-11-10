@@ -159,6 +159,49 @@ struct ConfigureAIStateResourceTests {
         #expect(ConfigureAIState.chooserSubtitle(for: makeModel(tag: "uncased")) == nil)
     }
 
+    // MARK: - Outcome copy
+
+    /// The recommendation says why in terms of this Mac, and only for the
+    /// model the app actually picked.
+    @Test func pickReasonNamesThisMacsMemoryForTheRecommendation() {
+        let model = makeModel(tag: "pick", sizeBytes: 4 * gb)
+        let reason = ConfigureAIState.pickReason(for: model, recommendedId: model.id, totalMemoryGB: 32)
+        #expect(reason?.contains("32 GB") == true)
+        #expect(reason?.contains("runs smoothly") == true)
+        #expect(ConfigureAIState.pickReason(for: model, recommendedId: "someone-else", totalMemoryGB: 32) == nil)
+        #expect(ConfigureAIState.pickReason(for: model, recommendedId: model.id, totalMemoryGB: 0) == nil)
+    }
+
+    /// When nothing fits comfortably the pick is the lightest, and the
+    /// reason says so instead of promising smooth running.
+    @Test func pickReasonOnATightMacSaysLightest() {
+        let model = makeModel(tag: "tight", sizeBytes: 8 * gb)
+        let reason = ConfigureAIState.pickReason(for: model, recommendedId: model.id, totalMemoryGB: 12)
+        #expect(reason?.contains("lightest") == true)
+        #expect(reason?.contains("runs smoothly") == false)
+    }
+
+    @Test func standoutsMarkTheLightestAndTheSmartestThatRunSmoothly() {
+        let small = makeModel(tag: "small", sizeBytes: 1 * gb)
+        let middle = makeModel(tag: "middle", sizeBytes: 3 * gb)
+        let big = makeModel(tag: "big", sizeBytes: 8 * gb)
+        let huge = makeModel(tag: "huge", sizeBytes: 40 * gb)
+
+        let standouts = ConfigureAIState.standouts(in: [middle, big, small, huge], totalMemoryGB: 32)
+        #expect(standouts.lightestId == small.id)
+        #expect(standouts.smartestId == big.id)
+
+        let alone = ConfigureAIState.standouts(in: [small, huge], totalMemoryGB: 32)
+        #expect(alone.lightestId == nil && alone.smartestId == nil)
+    }
+
+    @Test func fitLabelSpeaksInOutcomes() {
+        #expect(ConfigureAIState.fitLabel(.compatible) == "Runs smoothly here")
+        #expect(ConfigureAIState.fitLabel(.tight) == "May slow your other apps")
+        #expect(ConfigureAIState.fitLabel(.tooLarge) == "Too big for this Mac")
+        #expect(ConfigureAIState.fitLabel(.unknown) == nil)
+    }
+
     // MARK: - Same-family variant dedupe
 
     /// Two quant builds of one model (same `simplifiedName`) collapse to a

@@ -150,6 +150,7 @@ struct ModelPickerItem: Identifiable, Hashable {
     let imageCapabilities: ImageModelCapabilities?
     let imageDefaultSteps: Int?
     let imageDefaultGuidance: Float?
+    /// The engine's request limits, when the bundle's family publishes them.
     let imageRequestLimits: ImageRequestLimits?
     let imageReady: Bool
     /// Provider-neutral media metadata for remote image/video rows. Local

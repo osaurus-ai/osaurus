@@ -1,0 +1,104 @@
+{
+  "description": "A chat one Mac served for a workspace teammate: the teammate's turn, the reply, an owner turn written on another of the user's devices and delivered, a pending owner approval and that device's answer.",
+  "conversation": {
+    "title": "Draft the release notes",
+    "created_ms": 1767484800000,
+    "pinned": false,
+    "archived": false,
+    "tags": {
+      "osaurus.session": "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+      "source": "workspace",
+      "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "externalSessionKey": "0x5aa0e4b1c0d2f3a4b5c6d7e8f9a0b1c2d3e4f5a6:2f6d",
+      "servedBy": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+    },
+    "app_data": {
+      "ai.osaurus.session/1": {
+        "v": 1,
+        "id": "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d",
+        "source": "workspace",
+        "sourcePluginId": "__workspace__",
+        "externalSessionKey": "0x5aa0e4b1c0d2f3a4b5c6d7e8f9a0b1c2d3e4f5a6:2f6d",
+        "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "workspace": {
+          "workspaceId": "ws_3f2a",
+          "agentAddress": "0x9b1e0c2d3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c",
+          "callerWallet": "0x5aa0e4b1c0d2f3a4b5c6d7e8f9a0b1c2d3e4f5a6",
+          "callerName": "Alice",
+          "callerHandle": "alice",
+          "callerKind": "teammate"
+        }
+      },
+      "ai.osaurus.served-delivery/1": {
+        "v": 1,
+        "delivered": ["f0000000-0000-4000-8000-000000000003"]
+      },
+      "ai.osaurus.owner-approval/1": {
+        "v": 1,
+        "pending": [
+          {
+            "id": "e2000000-0000-4000-8000-000000000001",
+            "tool": "file_write",
+            "title": "@alice wants Writer to use file_write",
+            "description": "Approve to let it run. Nothing runs until you answer.",
+            "arguments": "{\"path\":\"RELEASE_NOTES.md\"}",
+            "caller": "@alice",
+            "agent": "Writer",
+            "offersConversationLease": false,
+            "requestedMs": 1767484860000,
+            "expiresMs": 1767485460000
+          }
+        ]
+      },
+      "ai.osaurus.owner-approval-answer/1/3b9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f": {
+        "v": 1,
+        "answers": {
+          "e2000000-0000-4000-8000-000000000001": { "answer": "approved", "answeredMs": 1767484870000 }
+        }
+      }
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Can you draft the release notes from the merged PRs?",
+      "created_ms": 1767484800000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "f0000000-0000-4000-8000-000000000001",
+          "role": "user",
+          "createdAt": 1767484800000,
+          "author": { "kind": "teammate", "handle": "alice", "displayName": "Alice", "wallet": "0x5aa0e4b1c0d2f3a4b5c6d7e8f9a0b1c2d3e4f5a6" }
+        }
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "Here is a first draft with the six merged changes.",
+      "created_ms": 1767484830000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "f0000000-0000-4000-8000-000000000002",
+          "role": "assistant",
+          "createdAt": 1767484830000
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "Leave out the internal refactors.",
+      "created_ms": 1767484850000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "f0000000-0000-4000-8000-000000000003",
+          "role": "user",
+          "createdAt": 1767484850000,
+          "author": { "kind": "owner_device", "deviceLabel": "MacBook Air" }
+        }
+      }
+    }
+  ]
+}

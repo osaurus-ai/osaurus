@@ -280,6 +280,47 @@ enum FeatureTelemetry {
         service.track("agent_run", ["source": source])
     }
 
+    /// An item that needed a person settled. Closed tokens only: the
+    /// `AttentionKind`, the outcome, the surface that answered, and a wait
+    /// bucket. Never the requester, agent, tool, or any text.
+    static func attentionResolved(
+        kind: AttentionKind,
+        outcome: String,
+        surface: AttentionSurface,
+        wait: TimeInterval?,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "attention_resolved",
+            [
+                "kind": kind.rawValue,
+                "outcome": outcome,
+                "surface": surface.rawValue,
+                "wait_bucket": waitBucket(wait),
+            ]
+        )
+    }
+
+    /// An item was delivered to one notification channel.
+    static func notificationDelivered(
+        kind: AttentionKind,
+        channel: NotificationChannelID,
+        service: TelemetryService = .shared
+    ) {
+        service.track("notification_delivered", ["kind": kind.rawValue, "channel": channel.rawValue])
+    }
+
+    nonisolated static func waitBucket(_ wait: TimeInterval?) -> String {
+        guard let wait else { return "none" }
+        switch wait {
+        case ..<10: return "lt_10s"
+        case ..<60: return "10_60s"
+        case ..<300: return "1_5m"
+        case ..<1800: return "5_30m"
+        default: return "gte_30m"
+        }
+    }
+
     /// The model invoked `computer_use`. Fired at the registry permission
     /// gate — the single chokepoint every real invocation passes — BEFORE any
     /// refusal can happen, so the funnel's denominator is "attempts", not
@@ -518,12 +559,14 @@ enum FeatureTelemetry {
     /// A sandbox VM boot reached `.running`. `kind` is the closed
     /// `SandboxBootSample.BootKind` token (`cold` | `warm` |
     /// `warmFallback`); `durationBucket` is a coarse
-    /// `SandboxStartupMetricsStore.latencyBucket` value. Raw durations,
-    /// image digests, and agent identity are never attached — full
-    /// fidelity stays in the local startup-metrics file.
+    /// `SandboxStartupMetricsStore.latencyBucket` value; `dominantPhase` is
+    /// one of `SandboxBootSample.dominantPhases`. Raw durations, image
+    /// digests, and agent identity are never attached — full fidelity stays
+    /// in the local startup-metrics file.
     static func sandboxBoot(
         kind: String,
         durationBucket: String,
+        dominantPhase: String,
         service: TelemetryService = .shared
     ) {
         service.track(
@@ -531,6 +574,26 @@ enum FeatureTelemetry {
             [
                 "kind": kind,
                 "duration_bucket": durationBucket,
+                "dominant_phase": dominantPhase,
+            ]
+        )
+    }
+
+    /// The sandbox VM restarted so another agent could join the pod (pod
+    /// membership is fixed at boot). `waitBucket` is a
+    /// `SandboxStartupMetricsStore.latencyBucket` value for how long the
+    /// restart waited on other agents' work; `interruptedWork` is whether
+    /// that work was still running when the wait gave up.
+    static func sandboxMembershipRestart(
+        waitBucket: String,
+        interruptedWork: Bool,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "sandbox_membership_restart",
+            [
+                "wait_bucket": waitBucket,
+                "interrupted_work": interruptedWork,
             ]
         )
     }
@@ -542,6 +605,8 @@ enum FeatureTelemetry {
     /// - `errorClass`: one of `SandboxToolRegistrar.failureErrorClasses`.
     /// - `trigger`: `SandboxToolRegistrar.RegistrationTrigger` raw value.
     /// - `coldStart`: whether the attempt was a first-run cold provision.
+    /// - `ownerState`: `vmnet_in_use` only, `SandboxVMOwnershipLease.OwnerState`.
+    /// - `bootstrapStep`: failed script step, `SandboxProvisionStepError.BootstrapStep`.
     static func sandboxProvisionFailure(
         category: String,
         backend: String,
@@ -549,19 +614,21 @@ enum FeatureTelemetry {
         errorClass: String,
         trigger: String,
         coldStart: Bool,
+        ownerState: String? = nil,
+        bootstrapStep: String? = nil,
         service: TelemetryService = .shared
     ) {
-        service.track(
-            "sandbox_provision_failure",
-            [
-                "category": category,
-                "backend": backend,
-                "phase": phase,
-                "error_class": errorClass,
-                "trigger": trigger,
-                "cold_start": coldStart,
-            ]
-        )
+        var props: [String: Value] = [
+            "category": category,
+            "backend": backend,
+            "phase": phase,
+            "error_class": errorClass,
+            "trigger": trigger,
+            "cold_start": coldStart,
+        ]
+        if let ownerState { props["owner_state"] = ownerState }
+        if let bootstrapStep { props["bootstrap_step"] = bootstrapStep }
+        service.track("sandbox_provision_failure", props)
     }
 
     // MARK: - Feature adoption / scope
@@ -606,6 +673,40 @@ enum FeatureTelemetry {
         service.track("agent_created", ["number_of_agents": numberOfAgents])
     }
 
+    /// A New Agent chat opened. `source` is a closed token (`agents_page`,
+    /// `discovery`, `deeplink`).
+    static func agentCreationStarted(source: String, service: TelemetryService = .shared) {
+        service.track("agent_creation_started", ["source": source])
+    }
+
+    /// Create in a New Agent chat saved the agent. Counts only: how many
+    /// messages the user sent the Configurator, how many fields they edited
+    /// in the panel, and whether setup needed the wizard first.
+    static func agentCreationFinished(
+        userMessages: Int, editedFields: Int, neededSetup: Bool, service: TelemetryService = .shared
+    ) {
+        service.track(
+            "agent_creation_finished",
+            ["user_messages": userMessages, "edited_fields": editedFields, "needed_setup": neededSetup])
+    }
+
+    /// The Configurator's first change to a New Agent draft.
+    static func agentCreationDrafted(service: TelemetryService = .shared) {
+        service.track("agent_creation_drafted", [:])
+    }
+
+    /// The first hand edit of one panel field in a draft. `field` is the
+    /// field's fixed id (name, model, tools, ...), never its value.
+    static func agentCreationEdited(field: String, service: TelemetryService = .shared) {
+        service.track("agent_creation_edited", ["field": field])
+    }
+
+    /// A New Agent chat closed before Create. The draft stays resumable;
+    /// counts only.
+    static func agentCreationAbandoned(touchedFields: Int, service: TelemetryService = .shared) {
+        service.track("agent_creation_abandoned", ["touched_fields": touchedFields])
+    }
+
     // MARK: - Settings engagement
 
     /// The management (settings) window was opened, or the user switched to
@@ -638,8 +739,10 @@ enum FeatureTelemetry {
         case .settings: return "general"
         case .chat: return "chat"
         case .voice: return "voice"
-        case .themes: return "themes"
         case .orchestrator: return "orchestrator"
+        case .architect: return "architect"
+        case .configurator: return "configurator"
+        case .delegation: return "delegation"
         case .models: return "models"
         case .providers: return "providers"
         case .imageGeneration: return "image_generation"
@@ -647,13 +750,16 @@ enum FeatureTelemetry {
         case .agentChannels: return "agent_channels"
         case .agentRuntimes: return "agent_runtimes"
         case .memory: return "memory"
+        case .projects: return "projects"
         case .knowledge: return "knowledge"
         case .tools: return "tools"
         case .search: return "search"
         case .skills: return "skills"
         case .commands: return "commands"
-        case .schedules: return "schedules"
-        case .watchers: return "watchers"
+        case .workflows: return "workflows"
+        case .automations: return "automations"
+        case .approvals: return "approvals"
+        case .tasks: return "tasks"
         case .sandbox: return "sandbox"
         case .computerUse: return "computer_use"
         case .browser: return "browser"
@@ -663,8 +769,12 @@ enum FeatureTelemetry {
         case .identity: return "identity"
         case .credits: return "credits"
         case .workspaces: return "workspaces"
+        case .access: return "access"
+        case .devices: return "devices"
         case .connect: return "connect"
         case .insights: return "insights"
+        case .modelDefaults: return "model_defaults"
+        case .keys: return "keys"
         }
     }
 
@@ -716,7 +826,8 @@ enum FeatureTelemetry {
     }
 
     /// A chat-history import saved at least one conversation. `source` is a
-    /// closed two-value entry-point token: `sidebar` or `onboarding_prompt`.
+    /// closed entry-point token: `sidebar`, `onboarding_prompt`, or
+    /// `discovery`.
     /// Counts only — never file names, provider formats, or content.
     static func chatHistoryImported(
         source: String,
@@ -736,6 +847,21 @@ enum FeatureTelemetry {
                 "failed_files": failedFiles,
             ]
         )
+    }
+
+    // MARK: - Discovery
+
+    /// The discovery setting changed. Boolean only.
+    /// `source` is `settings`, `greeting` (Skip setup under a new chat's
+    /// greeting), or `undo` (its toast's Undo).
+    static func discoveryToggled(enabled: Bool, source: String = "settings", service: TelemetryService = .shared) {
+        service.track("discovery_toggled", ["enabled": enabled, "source": source])
+    }
+
+    /// Set Up Osaurus was opened. `source` is `menu` or `settings`;
+    /// `remaining` is how many items it listed.
+    static func setUpOsaurusOpened(source: String, remaining: Int, service: TelemetryService = .shared) {
+        service.track("set_up_osaurus_opened", ["source": source, "remaining": remaining])
     }
 
     // MARK: - Derivation helpers
@@ -767,6 +893,9 @@ enum FeatureTelemetry {
         case .channel: return "channel"
         case .schedule: return "schedule"
         case .watcher: return "watcher"
+        case .webhook: return "webhook"
+        case .email: return "email"
+        case .automation: return "automation"
         case .selfSchedule: return "self_schedule"
         case .tool: return "tool"
         case .system: return "system"

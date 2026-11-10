@@ -158,8 +158,12 @@ actor HarnessSession {
         let adapter = HarnessAdapters.adapter(for: context.runtime)
         let token = HarnessGrantStore.shared.mint(
             agentId: context.agentId,
-            allowsConfigWrites: adapter.tokenAllowsConfigWrites(context: context),
-            allowedToolNames: adapter.tokenToolScope(context: context)
+            chatId: context.chatId,
+            allowsConfigWrites: !context.isArchitect && adapter.tokenAllowsConfigWrites(context: context),
+            // The Architect's surface is fixed on every harness, whatever
+            // the adapter would otherwise defer to.
+            allowedToolNames: context.isArchitect
+                ? HarnessGrantStore.architectToolNames : adapter.tokenToolScope(context: context)
         )
         let plan: HarnessLaunchPlan
         let process: HarnessProcess

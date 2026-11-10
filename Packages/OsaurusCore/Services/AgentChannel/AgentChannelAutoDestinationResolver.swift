@@ -5,7 +5,7 @@
 //  Zero-config proactive destinations. A user who connected a native
 //  channel already told Osaurus everything a proactive destination needs:
 //  which rooms the bot may WRITE to (the write allowlist) and which agent
-//  answers there (inbound dispatch). This resolver derives ask-first
+//  answers there (its channel-message events). This resolver derives ask-first
 //  (`confirm` mode) destination bindings from that existing configuration
 //  so proactive posting works without a separate setup form.
 //
@@ -33,7 +33,7 @@ struct AgentChannelAutoDestinationSource: Sendable {
     let hasCredential: Bool
     let writeEnabled: Bool
     let writableRoomIds: [String]
-    let dispatch: AgentChannelInboundDispatchConfiguration
+    let listeners: ChannelEventListeners
 
     init(
         connectionId: String,
@@ -41,14 +41,14 @@ struct AgentChannelAutoDestinationSource: Sendable {
         hasCredential: Bool,
         writeEnabled: Bool,
         writableRoomIds: [String],
-        dispatch: AgentChannelInboundDispatchConfiguration
+        listeners: ChannelEventListeners
     ) {
         self.connectionId = AgentChannelConnection.normalizedId(connectionId)
         self.displayName = displayName
         self.hasCredential = hasCredential
         self.writeEnabled = writeEnabled
         self.writableRoomIds = AgentChannelConnection.normalizedIds(writableRoomIds)
-        self.dispatch = dispatch
+        self.listeners = listeners
     }
 }
 
@@ -93,11 +93,13 @@ enum AgentChannelAutoDestinationResolver {
 
         var derived: [AgentChannelBinding] = []
         for source in sources {
-            guard source.hasCredential, source.writeEnabled, source.dispatch.enabled else {
+            guard source.hasCredential, source.writeEnabled, !source.listeners.isEmpty else {
                 continue
             }
             for roomId in source.writableRoomIds {
-                for agentId in agentIds(answering: roomId, dispatch: source.dispatch) {
+                // Workspace-agent events answer on the host machine; they
+                // never derive a local publish destination.
+                for agentId in source.listeners.agentIds(answering: roomId) {
                     let route = RouteKey(
                         agentId: agentId,
                         connectionId: source.connectionId,
@@ -143,28 +145,6 @@ enum AgentChannelAutoDestinationResolver {
         )
     }
 
-    /// Agents assigned to answer `roomId` on this connection: the dispatch
-    /// default agent plus any route scoped to this room (or unscoped).
-    private static func agentIds(
-        answering roomId: String,
-        dispatch: AgentChannelInboundDispatchConfiguration
-    ) -> [UUID] {
-        var seen = Set<UUID>()
-        var ids: [UUID] = []
-        if let target = dispatch.targetAgentId, seen.insert(target).inserted {
-            ids.append(target)
-        }
-        for route in dispatch.routes {
-            // Workspace-agent routes answer on the host machine; they never
-            // derive a local publish destination.
-            guard route.roomId == nil || route.roomId == roomId, let agentId = route.agentId else { continue }
-            if seen.insert(agentId).inserted {
-                ids.append(agentId)
-            }
-        }
-        return ids
-    }
-
     /// Live derivation inputs for the native providers. The write
     /// allowlists come from the same resolved connection views the publish
     /// path enforces at send time, so a derived destination can never
@@ -179,36 +159,19 @@ enum AgentChannelAutoDestinationResolver {
     static func liveSources() -> [AgentChannelAutoDestinationSource] {
         let service = AgentChannelConnectionService.shared
         let availability = AgentChannelCredentialAvailability.shared
-        let slackConfig = SlackConnectionService.shared.configuration()
-        let natives: [(id: String, hasCredential: Bool, dispatch: AgentChannelInboundDispatchConfiguration)] = [
-            (
-                AgentChannelConnection.nativeDiscordConnectionId,
-                availability.hasCredential(.discord),
-                DiscordConnectionService.shared.configuration().inboundDispatch
-            ),
-            (
-                AgentChannelConnection.nativeSlackConnectionId,
-                availability.hasCredential(.slack) || !slackConfig.workspaceAccounts.isEmpty,
-                slackConfig.inboundDispatch
-            ),
-            (
-                AgentChannelConnection.nativeTelegramConnectionId,
-                availability.hasCredential(.telegram),
-                TelegramConnectionService.shared.configuration().inboundDispatch
-            ),
-            (
-                AgentChannelConnection.nativeIMessageConnectionId,
-                // iMessage has no token; a verified helper is what makes
-                // sends possible, so it plays the credential role here.
-                availability.hasCredential(.imessage),
-                IMessageConnectionService.shared.configuration().inboundDispatch
-            ),
-            (
-                AgentChannelConnection.nativeWhatsAppConnectionId,
-                // WhatsApp's credential is the helper's linked Web session.
-                availability.hasCredential(.whatsapp),
-                WhatsAppConnectionService.shared.configuration().inboundDispatch
-            ),
+        var natives: [(id: String, kind: AgentChannelKind, hasCredential: Bool)] = [
+            AgentChannelKind.discord, .slack, .telegram,
+        ].flatMap { kind in
+            ChannelAccounts.accounts(kind: kind).map {
+                ($0.connectionId, kind, availability.hasCredential(connectionId: $0.connectionId))
+            }
+        }
+        natives += [
+            // iMessage has no token; a verified helper is what makes sends
+            // possible, so it plays the credential role here.
+            (AgentChannelConnection.nativeIMessageConnectionId, .imessage, availability.hasCredential(.imessage)),
+            // WhatsApp's credential is the helper's linked Web session.
+            (AgentChannelConnection.nativeWhatsAppConnectionId, .whatsapp, availability.hasCredential(.whatsapp)),
         ]
         return natives.compactMap { native in
             guard let view = try? service.resolvedConnectionView(id: native.id) else { return nil }
@@ -218,7 +181,7 @@ enum AgentChannelAutoDestinationResolver {
                 hasCredential: native.hasCredential,
                 writeEnabled: view.writeEnabled,
                 writableRoomIds: view.writeRoomAllowlist,
-                dispatch: native.dispatch
+                listeners: EventManager.channelListeners(kind: native.kind, connectionId: native.id)
             )
         }
     }

@@ -65,12 +65,13 @@ Osaurus to make this work.
 
 ## Common properties (every event)
 
-One coarse property is attached automatically to **every** event by
+Two coarse properties are attached automatically to **every** event by
 `TelemetryService.track`:
 
 | Property | Type | Values / meaning |
 |----------|------|------------------|
 | `total_memory_gb` | string | Coarse physical-RAM bucket for this Mac, snapped to a fixed tier: `8`, `16`, `18`, `24`, `32`, `36`, `48`, `64`, `96`, or `128+`. Sourced from `ProcessInfo.physicalMemory`. |
+| `build_channel` | string | `release` (the shipped `com.dinoki.osaurus` app), `beta` (Osaurus Beta, `com.dinoki.osaurus.beta`), `proof` (a re-bundled live-proof app, any other `com.dinoki.osaurus.<id>`), `dev` (any other bundle id, or a Release build run from Xcode DerivedData or a SwiftPM `.build` directory), `debug` (DEBUG builds, which also report to the Debug bucket). Lets proof and dev builds, which report to the production bucket, be filtered out. |
 
 This lets any metric (bounce, funnel, adoption) be segmented by machine class —
 e.g. checking whether a 26B MoE bounces more on lower-RAM Macs — without
@@ -104,7 +105,8 @@ admission, model selection, unload timing, samplers, caches, or macOS swap polic
 ### Other events
 
 Every property listed below is the complete event-specific set. In addition,
-the common `total_memory_gb` property above is attached to every event.
+the common `total_memory_gb` and `build_channel` properties above are attached
+to every event.
 No other data is attached.
 
 ### `message_sent` (primary metric)
@@ -161,6 +163,29 @@ Emitted once when an agent run is initiated.
 |----------|------|------------------|
 | `source` | string | `http_api` (the `/agents/{id}/run` endpoint) or `dispatch` (background / scheduled / plugin dispatch) |
 
+### `attention_resolved`
+
+Emitted when something that needed a person settles: a tool approval, an
+owner approval for a shared agent, a clarifying question, a workflow form, and
+so on (docs/AGENT_ATTENTION.md). Every value is a closed token. The requester,
+agent, tool name, and any reply text are never attached.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `kind` | string | `AttentionKind`: `tool_approval`, `owner_approval`, `clarification`, `workflow_dialog`, `config_approval`, `computer_use`, `secret_request`, `elicitation`, `inbound_message`, `inbound_shared_run`, `agent_notice` |
+| `outcome` | string | `approved`, `denied`, `allowed_for_conversation`, `replied`, `dismissed`, `timed_out`, `abandoned`, or `retracted` (withdrawn by the app) |
+| `surface` | string | Where it was answered: `inline`, `desktop`, `phone`, `push`, or `system` (no person) |
+| `wait_bucket` | string | Time waited: `lt_10s`, `10_60s`, `1_5m`, `5_30m`, `gte_30m`, or `none` |
+
+### `notification_delivered`
+
+Emitted once per notification channel an item was delivered to.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `kind` | string | `AttentionKind` token, as above |
+| `channel` | string | `in_app`, `desktop`, `phone`, or `push` |
+
 ### `server_started`
 
 Emitted when the local server transitions to running. No properties. (No port
@@ -175,8 +200,20 @@ below are sent.
 
 | Property | Type | Values / meaning |
 |----------|------|------------------|
-| `kind` | string | `cold` (full image unpack), `warm` (reused rootfs), `warmFallback` (warm attempt failed, cold rebuild succeeded), or `template` (rootfs cloned copy-on-write from the immutable base template) |
+| `kind` | string | `cold` (full image unpack into the base template), `warm` (every container's environment clone reused), `template` (at least one environment cloned copy-on-write from the template), or `warmFallback` (booting from the template failed, a fresh unpack succeeded) |
 | `duration_bucket` | string | Coarse total-boot latency bucket: `lt_1s`, `1_5s`, `5_15s`, `15_60s`, `1_5m`, `gte_5m` |
+| `dominant_phase` | string | The longest measured boot phase: `asset` (kernel, initfs, and image download or lookup), `create` (image unpack into the template and environment clones), `vm_boot` (VM and container start), `configure` (in-guest setup), or `unknown` when no phase was measured |
+
+### `sandbox_membership_restart`
+
+Emitted when the sandbox VM restarts so another agent can get its own
+container (the set of containers is fixed when the VM boots). No agent
+identity is attached.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `wait_bucket` | string | How long the restart waited for other agents' running commands and background jobs, in the `duration_bucket` buckets above |
+| `interrupted_work` | bool | Whether that work was still running when the wait (capped at two minutes) ended |
 
 ### `sandbox_provision_failure`
 
@@ -185,8 +222,8 @@ recorded by `SandboxToolRegistrar`. The cool-down and lockout notices that
 follow one failure are local-only and do not re-emit. Every value is a token
 from a closed list; the user-facing error message, paths, hosts, and agent
 identity stay on the machine (a mirror of the same tokens is kept in
-`~/.osaurus/container/startup-failures.json` and shown in Settings → Sandbox →
-Diagnostics so users can self-report).
+`~/.osaurus/container/startup-failures.json` and shown in Developer Tools → Sandbox →
+Troubleshooting so users can self-report).
 
 | Property | Type | Values / meaning |
 |----------|------|------------------|
@@ -196,18 +233,21 @@ Diagnostics so users can self-report).
 | `error_class` | string | One of `SandboxToolRegistrar.failureErrorClasses`: `sandbox_*` cases of `SandboxError`, `posix_*` (`eexist`, `ebusy`, `eaddrinuse`, `eacces`, `eperm`, `enospc`, `other`), `cocoa_*` (`file_exists`, `out_of_space`, `no_permission`, `other`), `url_*` (`offline`, `timeout`, `dns`, `other`), `sdk_grpc`, `sdk_vmnet`, `cancelled`, `none`, `other` |
 | `trigger` | string | What ran the registration: `launch_autostart`, `on_demand` (first sandboxed tool use), `agent_switch`, `agent_updated`, `status_change`, `auto_retry`, `runtime_recovery`, `external` (chat send / plugin host / evals) |
 | `cold_start` | bool | `true` when the sandbox had never completed setup on this machine (first-run download path), `false` for a warm restart |
+| `owner_state` | string | `vmnet_in_use` only. Who holds the VM lease: `self` (this process leaked it), `osaurus_alive` (another Osaurus app or eval process), `other_alive` (a non-Osaurus process has the lease file open, e.g. a child that inherited it), `owner_dead_lock_held` (the recorded owner exited but the lock is still held), `unknown`. The holders' PIDs and paths are recorded only in the local failure file |
+| `bootstrap_step` | string | `agent_provision.bootstrap_script` only. The script line that failed: `adduser`, `chmod_home`, `plugins_dir`, `token_dir`, `token_write`, `token_chown`, `soul_seed`, or `unknown` |
 
 ### `app_launched`
 
 Emitted once at launch. Carries the three install-cohort dimensions below
-(see "Install cohort and age") so launches can be segmented by cohort; no
-other properties.
+(see "Install cohort and age") so launches can be segmented by cohort, plus
+which kind of Space the app opened in.
 
 | Property | Type | Values / meaning |
 |----------|------|------------------|
 | `install_cohort` | string | ISO week the install belongs to, e.g. `2026-W38` |
 | `install_age_days` | string | Whole local calendar days since the install's first launch: `0`, `1`, … `364`, or `365+` |
 | `install_cohort_source` | string | How the install date was determined: `install`, `inferred`, or `unknown` |
+| `space` | string | `default` for the Default Space, `custom` for any other Space. A new Space has its own preferences, so it reports as a fresh install; filter on `custom` to drop those runs from the fresh-install funnel |
 
 ### `daily_active`
 
@@ -266,8 +306,8 @@ Emitted when a model finishes downloading and is verified on disk.
 
 ### `remote_provider_added`
 
-Emitted when a user configures a remote inference provider. Bonjour-discovered
-ephemeral providers are excluded.
+Emitted when a user configures a remote inference provider. Ephemeral
+providers (eval harness and test fixtures) are excluded.
 
 | Property | Type | Values / meaning |
 |----------|------|------------------|
@@ -299,7 +339,7 @@ lower activation. No setting names or values are ever attached.
 
 | Property | Type | Values / meaning |
 |----------|------|------------------|
-| `tab` | string | Stable token for the settings tab (closed enum): `general`, `chat`, `voice`, `themes`, `models`, `providers`, `image_generation`, `agents`, `agent_channels`, `memory`, `knowledge`, `tools`, `search`, `skills`, `commands`, `plugins`, `schedules`, `watchers`, `sandbox`, `computer_use`, `browser`, `server`, `privacy`, `permissions`, `identity`, `storage`, `credits`, `insights` |
+| `tab` | string | Stable token for the settings tab (closed enum): `general`, `chat`, `voice`, `models`, `providers`, `image_generation`, `agents`, `agent_channels`, `memory`, `knowledge`, `tools`, `search`, `skills`, `commands`, `plugins`, `schedules`, `watchers`, `sandbox`, `computer_use`, `browser`, `server`, `privacy`, `permissions`, `identity`, `storage`, `credits`, `insights` |
 | `before_first_message` | bool | Whether this install has never sent a chat-UI message yet — separates pre-activation settings visits from post-activation ones |
 
 ### Onboarding funnel
@@ -315,6 +355,32 @@ low-cardinality `source` is `hosted`, `local`, or `provider_key`; the provider
 path adds the closed-enum `provider` type and the local path adds boolean
 `download_started` — whether committing kicked off a background model
 download. No key, model id, or URL is ever attached.
+
+#### First run in chat and discovery
+
+Every property is a closed token or a count: no message text, file or folder
+name, workflow input or output, or model id is attached. The first-run
+events carry `distribution` like the rest of the funnel.
+
+| Event | Properties |
+|-------|------------|
+| `onboarding_agent_opening_shown` | `brain`: `local`, `bridged`, `downloading`, `provider`, or `none` |
+| `onboarding_agent_path_selected` | `path`: `planner`, `courier`, `keeper`, `scout`, `builder`, or `skip` |
+| `onboarding_agent_finished` | `reason`: `first_task` or `dismissed`; `step`: the step it ended on (`brain`, `choice`, `first_task`, `keep`); `ask`: whether an authored ask ran |
+| `onboarding_keep_resolved` | `offer`: `turn_on` or `save_to_notes`; `outcome`: `taken`, `declined`, `failed`, or `not_now` |
+| `discovery_card_shown` | `item`: the discovery id (below); `new`: false when the card was shown before |
+| `discovery_opened` | `item`; `source`: `card` or `set_up` |
+| `discovery_taken` | `item` — the walkthrough's primary step was taken |
+| `discovery_declined` | `item`; `via`: `dismiss` (retired for good) or `not_now` |
+| `discovery_completed` | `item` — an item that had shown as a card became done in app state |
+| `discovery_toggled` | `enabled`: bool — Show Discovery Cards changed; `source`: `settings`, `greeting` (Skip setup under a new chat's greeting), or `undo` (that notice's Undo) |
+| `set_up_osaurus_opened` | `source`: `menu` or `settings`; `remaining`: how many items it listed |
+
+Discovery ids: `turn_on_workflow`, `working_folder`, `keeper_folders`,
+`keeper_redaction`, `history`, `people`, `navigator`, `builder`, `own_agent`,
+`privacy_ai`, `search`, `shortcuts`, `store`, `messages`, `phone`,
+`encryption`, `music`, `voice`. `chat_history_imported` gains the `source`
+value `discovery` for an import started from a card.
 
 ## Remote identifiers
 

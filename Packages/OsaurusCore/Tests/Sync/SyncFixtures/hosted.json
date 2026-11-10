@@ -1,0 +1,105 @@
+{
+  "description": "A chat on one Mac with an agent hosted on another: the run request, the host's reply, a pending approval, its answer and a stop request.",
+  "conversation": {
+    "title": "Summarize the logs",
+    "created_ms": 1767398400000,
+    "pinned": false,
+    "archived": false,
+    "tags": {
+      "osaurus.session": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+      "source": "chat",
+      "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "hostDevice": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+    },
+    "app_data": {
+      "ai.osaurus.session/1": {
+        "v": 1,
+        "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+        "source": "chat",
+        "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "hostDevice": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+      },
+      "ai.osaurus.approval/1": {
+        "v": 1,
+        "pending": [
+          {
+            "id": "e1000000-0000-4000-8000-000000000001",
+            "turnId": "d0000000-0000-4000-8000-000000000003",
+            "tool": "shell_run",
+            "description": "Run a shell command on this Mac.",
+            "arguments": "{\"command\":\"tail -n 200 /var/log/system.log\"}",
+            "surface": "nativeHost",
+            "offersRunLease": true,
+            "requestedMs": 1767398460000
+          }
+        ]
+      },
+      "ai.osaurus.approval-answer/1": {
+        "v": 1,
+        "answers": { "e1000000-0000-4000-8000-000000000001": "allowOnce" }
+      },
+      "ai.osaurus.run/1": {
+        "v": 1,
+        "stop": "d0000000-0000-4000-8000-000000000003",
+        "stopMs": 1767398470000
+      },
+      "ai.osaurus.host-run/1": {
+        "v": 1,
+        "turn": "d0000000-0000-4000-8000-000000000003",
+        "state": "running",
+        "updatedMs": 1767398450500
+      }
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "What changed on the build machine yesterday?",
+      "created_ms": 1767398400000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "d0000000-0000-4000-8000-000000000001",
+          "role": "user",
+          "createdAt": 1767398400000,
+          "hostRun": {
+            "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+            "requestedMs": 1767398400000
+          }
+        }
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "Two packages were updated and the nightly job moved to 02:00.",
+      "created_ms": 1767398430000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "d0000000-0000-4000-8000-000000000002",
+          "role": "assistant",
+          "createdAt": 1767398410000,
+          "completedAt": 1767398430000,
+          "terminalStopReason": "stop"
+        }
+      }
+    },
+    {
+      "role": "user",
+      "content": "Summarize today's system log too.",
+      "created_ms": 1767398450000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "d0000000-0000-4000-8000-000000000003",
+          "role": "user",
+          "createdAt": 1767398450000,
+          "hostRun": {
+            "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+            "requestedMs": 1767398450000
+          }
+        }
+      }
+    }
+  ]
+}

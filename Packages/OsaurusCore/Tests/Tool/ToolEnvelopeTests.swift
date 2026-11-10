@@ -165,6 +165,21 @@ struct ToolEnvelopeTests {
         #expect(ToolEnvelope.isError(legacy))
     }
 
+    @Test func leadingOKDecidesOverFailureWordsInThePayload() {
+        let success = ToolEnvelope.success(
+            result: ["error": "step failed", "retryable": false, "probe": ["ok": false]])
+        #expect(!ToolEnvelope.isError(success))
+        #expect(ToolEnvelope.isSuccess(success))
+
+        let failure = ToolEnvelope.failure(
+            kind: .executionError, message: "boom", metadata: ["probe": ["ok": true]])
+        #expect(ToolEnvelope.isError(failure))
+        #expect(!ToolEnvelope.isSuccess(failure))
+
+        #expect(ToolEnvelope.isError(#"{ "ok" : false, "kind": "rejected"}"#))
+        #expect(!ToolEnvelope.isError(#"{ "ok" : true, "result": {"error": "x", "retryable": true}}"#))
+    }
+
     @Test func isErrorIgnoresOrdinaryJSON() {
         #expect(!ToolEnvelope.isError(#"{"value": 42}"#))
         #expect(!ToolEnvelope.isError("plain text"))

@@ -22,18 +22,18 @@ struct AgentChannelWebhookIngressTests {
 
     private final class RelayRecorder: @unchecked Sendable {
         private let lock = NSLock()
-        private var requests: [AgentChannelInboundRelayRequest] = []
+        private var requests: [ChannelInboundMessage] = []
         var submission: AgentChannelInboundRelaySubmission = .dispatched(
             agentId: AgentChannelWebhookIngressTests.agentId,
             rule: "default"
         )
 
-        func record(_ request: AgentChannelInboundRelayRequest) -> AgentChannelInboundRelaySubmission {
+        func record(_ request: ChannelInboundMessage) -> AgentChannelInboundRelaySubmission {
             lock.withLock { requests.append(request) }
             return submission
         }
 
-        var all: [AgentChannelInboundRelayRequest] { lock.withLock { requests } }
+        var all: [ChannelInboundMessage] { lock.withLock { requests } }
     }
 
     private struct FixedSecretResolver: AgentChannelSecretResolving {
@@ -73,8 +73,7 @@ struct AgentChannelWebhookIngressTests {
         method: AgentChannelSourceVerificationMethod = .sharedSecretHeader,
         policy: AgentChannelN8nRemoteTransportPolicy = .secureChannelRequired,
         senders: [String] = ["user-1"],
-        conversations: [String] = ["conv-1"],
-        dispatchEnabled: Bool = true
+        conversations: [String] = ["conv-1"]
     ) -> AgentChannelConnection {
         AgentChannelConnection(
             id: id,
@@ -89,11 +88,6 @@ struct AgentChannelWebhookIngressTests {
             ),
             n8n: AgentChannelN8nConfiguration(
                 inboundVerification: AgentChannelN8nInboundVerification(method: method),
-                inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                    enabled: dispatchEnabled,
-                    targetAgentId: agentId,
-                    autoReplyEnabled: false
-                ),
                 remoteTransportPolicy: policy
             )
         )
@@ -131,6 +125,7 @@ struct AgentChannelWebhookIngressTests {
                 transportHealth: health,
                 relaySubmit: { request in relay.record(request) },
                 taskLookup: taskLookup,
+                targetLookup: { _ in .local(AgentChannelWebhookIngressTests.agentId) },
                 rateLimiter: rateLimiter
             )
             try await body(
@@ -259,7 +254,7 @@ struct AgentChannelWebhookIngressTests {
             #expect(relayed.first?.sourceLabel == "n8n connection n8n-main, conversation conv-1, sender user-1")
             #expect(relayed.first?.content == "Summarize today's invoices")
             #expect(relayed.first?.attachments.first?.providerId == "att-1")
-            #expect(relayed.first?.settings.requireMention == false)
+            #expect(relayed.first?.mentionsBot == nil)
             #expect(relayed.first?.reply == nil)
 
             let stored = try harness.store.recentMessages(connectionId: Self.connectionId, roomId: "conv-1", limit: 5)
@@ -1125,7 +1120,6 @@ struct AgentChannelWebhookIngressTests {
         let n8n = try #require(decoded.n8n)
         #expect(n8n.inboundVerification.method == .sharedSecretHeader)
         #expect(n8n.inboundVerification.effectiveHeaderName == "X-Osaurus-Channel-Secret")
-        #expect(n8n.inboundDispatch.requireMention == false)
         #expect(n8n.remoteTransportPolicy == .plaintextAllowed)
         #expect(n8n.outbound.webhookURL == "https://n8n.example.com/webhook/x")
         #expect(n8n.outbound.signBodies)

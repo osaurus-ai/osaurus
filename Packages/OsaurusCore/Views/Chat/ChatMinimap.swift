@@ -15,6 +15,7 @@
 //  collapsed tick stand for a group of messages (with a crossfade).
 //
 
+import AppKit
 import SwiftUI
 
 struct ChatMinimap: View {
@@ -32,10 +33,29 @@ struct ChatMinimap: View {
     var availableHeight: CGFloat = .infinity
     let onSelect: (UUID) -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var enabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(44, enabled: enabled, authoritative: true) }
     @State private var isExpanded: Bool = false
 
-    private let expandAnimation = Animation.spring(response: 0.36, dampingFraction: 0.86)
+    private var expandAnimation: Animation { theme.motion.springAnimation }
+
+    /// Collapsed rail width. Bare ticks, narrow enough to sit in the thread's
+    /// side gutter instead of over the message column.
+    static let collapsedWidth: CGFloat = 14
+
+    /// Trailing inset that keeps the collapsed ticks off the vertical
+    /// scroller, which sits at the thread's right edge. A wide gutter clears
+    /// the whole scroller track; a narrow one puts the ticks between the
+    /// message column and the idle overlay knob (about 10pt from the edge).
+    static func trailingInset(threadWidth: CGFloat) -> CGFloat {
+        let gutter =
+            max(0, (threadWidth - CenteredMessageScrollView.defaultMaxContentWidth) / 2)
+            + CenteredMessageScrollView.minimumSideInset
+        let scroller = NSScroller.scrollerWidth(for: .regular, scrollerStyle: NSScroller.preferredScrollerStyle)
+        if gutter >= scroller + collapsedWidth + 4 { return scroller + 2 }
+        return 9
+    }
 
     // MARK: - Metrics
 
@@ -74,6 +94,16 @@ struct ChatMinimap: View {
         case grouped
     }
 
+    private var expandedInset: CGFloat { NativeComponentInspectionStyle.metric(44, "padding", Metrics.expandedPadding, theme) }
+    private var expandedGap: CGFloat { NativeComponentInspectionStyle.metric(44, "gap", Metrics.expandedSpacing, theme) }
+    private var expandedRowHeight: CGFloat {
+        #if OSAURUS_DESIGN_SYSTEM
+        return max(theme.assignedMetric("component.library.44.height", fallback: Metrics.expandedRowHeight), theme.lineHeight(.caption) + 2 * theme.assignedMetric("component.library.44.padding", fallback: 4))
+        #else
+        return Metrics.expandedRowHeight
+        #endif
+    }
+
     private var heightBudget: CGFloat {
         max(availableHeight - Metrics.reservedVertical, Metrics.minHeight)
     }
@@ -85,7 +115,7 @@ struct ChatMinimap: View {
         let count = CGFloat(markers.count)
         let gaps = max(count - 1, 0)
         let expandedHeight =
-            count * Metrics.expandedRowHeight + gaps * Metrics.expandedSpacing + Metrics.expandedPadding * 2
+            count * expandedRowHeight + gaps * expandedGap + expandedInset * 2
         if expandedHeight <= expandedCap { return .plain }
 
         let usable = collapsedCap - Metrics.collapsedPadding * 2
@@ -102,9 +132,9 @@ struct ChatMinimap: View {
 
     var body: some View {
         content
-            .padding(.horizontal, isExpanded ? 6 : 7)
-            .frame(width: isExpanded ? 240 : 24, alignment: .trailing)
-            .background(containerBackground)
+            .padding(.horizontal, isExpanded ? 6 : 2)
+            .frame(width: isExpanded ? 240 : Self.collapsedWidth, alignment: .trailing)
+            .background(containerBackground.opacity(isExpanded ? 1 : 0))
             .animation(expandAnimation, value: isExpanded)
             .onHover { hovering in
                 isExpanded = hovering
@@ -125,12 +155,12 @@ struct ChatMinimap: View {
 
     /// Original layout: every marker as a row in a plain stack.
     private var plainList: some View {
-        VStack(alignment: .leading, spacing: isExpanded ? Metrics.expandedSpacing : Metrics.collapsedSpacing) {
+        VStack(alignment: .leading, spacing: isExpanded ? expandedGap : Metrics.collapsedSpacing) {
             ForEach(markers) { m in
                 row(for: m, collapsedTickHeight: Metrics.tickHeight)
             }
         }
-        .padding(.vertical, isExpanded ? Metrics.expandedPadding : Metrics.collapsedPadding)
+        .padding(.vertical, isExpanded ? expandedInset : Metrics.collapsedPadding)
     }
 
     /// One scroll view for both states. Collapsed it shows every tick
@@ -143,12 +173,12 @@ struct ChatMinimap: View {
             count * collapsedTickHeight + max(count - 1, 0) * collapsedSpacing + Metrics.collapsedPadding * 2
         return ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: isExpanded ? Metrics.expandedSpacing : collapsedSpacing) {
+                VStack(alignment: .leading, spacing: isExpanded ? expandedGap : collapsedSpacing) {
                     ForEach(markers) { m in
                         row(for: m, collapsedTickHeight: collapsedTickHeight).id(m.id)
                     }
                 }
-                .padding(.vertical, isExpanded ? Metrics.expandedPadding : Metrics.collapsedPadding)
+                .padding(.vertical, isExpanded ? expandedInset : Metrics.collapsedPadding)
             }
             .scrollIndicators(isExpanded ? .automatic : .hidden)
             .scrollDisabled(!isExpanded)
@@ -171,12 +201,12 @@ struct ChatMinimap: View {
         if isExpanded {
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
-                    LazyVStack(alignment: .leading, spacing: Metrics.expandedSpacing) {
+                    LazyVStack(alignment: .leading, spacing: expandedGap) {
                         ForEach(markers) { m in
                             row(for: m, collapsedTickHeight: Metrics.denseTickHeight).id(m.id)
                         }
                     }
-                    .padding(.vertical, Metrics.expandedPadding)
+                    .padding(.vertical, expandedInset)
                 }
                 .frame(height: expandedCap)
                 .onAppear {
@@ -210,22 +240,17 @@ struct ChatMinimap: View {
     // MARK: - Background
 
     private var containerBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: isExpanded ? 10 : 8, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(44, "radius", isExpanded ? 10 : 8, theme), style: .continuous)
         return
             shape
-            .fill(theme.secondaryBackground.opacity(isExpanded ? 0.96 : 0.70))
+            .fill(theme.assignedColor("component.library.44.background", fallback: theme.surface.subtle))
             .overlay(
                 shape.strokeBorder(
-                    theme.secondaryText.opacity(0.14),
-                    lineWidth: 1
+                    theme.assignedColor("component.library.44.border", fallback: theme.surface.hover),
+                    lineWidth: theme.stroke.default
                 )
             )
-            .shadow(
-                color: theme.shadowColor.opacity(isExpanded ? 0.25 : 0.12),
-                radius: isExpanded ? 12 : 5,
-                x: 0,
-                y: isExpanded ? 3 : 1
-            )
+            .themeElevation(isExpanded ? theme.elevation.overlay : theme.elevation.raised)
     }
 
     // MARK: - Row
@@ -237,30 +262,33 @@ struct ChatMinimap: View {
             guard isExpanded else { return }
             onSelect(marker.id)
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.44.elements.layout.chatMinimap.row.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(44, "gap", 10, theme))) {
                 handle(isActive: isActive, collapsedHeight: collapsedTickHeight)
 
                 if isExpanded {
                     Text(displayText(for: marker))
-                        .font(.system(size: 12))
-                        .foregroundColor(isActive ? theme.primaryText : theme.secondaryText)
+                        .componentInspectionText(44, role: .caption, fallback: .caption, theme: theme)
+                        .foregroundColor(isActive ? theme.text.primary : theme.text.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-            .padding(.vertical, isExpanded ? 4 : 0)
-            .padding(.horizontal, isExpanded ? 6 : 0)
+            }.catalogLayoutTarget("component.library.44.elements.layout.chatMinimap.row.horizontalGap")
+            .padding(.vertical, isExpanded ? theme.catalogLayoutMetric("component.library.44.elements.layout.chatMinimap.expandedRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(44, "padding", 4, theme)) : 0).catalogLayoutTarget("component.library.44.elements.layout.chatMinimap.expandedRow.paddingY")
+            .padding(.horizontal, isExpanded ? theme.catalogLayoutMetric("component.library.44.elements.layout.chatMinimap.expandedRow.paddingX", inheriting: NativeComponentInspectionStyle.metric(44, "padding", 6, theme)) : 0).catalogLayoutTarget("component.library.44.elements.layout.chatMinimap.expandedRow.paddingX")
             .frame(maxWidth: .infinity, alignment: isExpanded ? .leading : .trailing)
-            .background(rowBackground(isActive: isActive))
+            .frame(minHeight: isExpanded ? expandedRowHeight : 0)
+            .background {
+                if isExpanded { Color.clear.componentInspectionSurface(44, background: isActive ? theme.surface.selected : .clear, radius: theme.radius.small, selected: isActive) }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
     private func handle(isActive: Bool, collapsedHeight: CGFloat) -> some View {
-        let color: Color = isActive ? theme.accentColor : theme.secondaryText.opacity(0.5)
-        let width: CGFloat = isExpanded ? 3 : (isActive ? 12 : 10)
+        let color: Color = isActive ? theme.assignedColor("component.library.44.accent", fallback: theme.text.primary) : theme.text.tertiary
+        let width: CGFloat = isExpanded ? 3 : (isActive ? 10 : 7)
         let height: CGFloat = isExpanded ? 14 : collapsedHeight
         return Capsule(style: .continuous)
             .fill(color)
@@ -268,8 +296,8 @@ struct ChatMinimap: View {
     }
 
     private func rowBackground(isActive: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(isExpanded && isActive ? theme.accentColor.opacity(0.16) : Color.clear)
+        RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
+            .fill(isExpanded && isActive ? theme.surface.selected : Color.clear)
     }
 
     private func displayText(for marker: Marker) -> String {

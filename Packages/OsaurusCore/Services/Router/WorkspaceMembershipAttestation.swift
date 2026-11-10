@@ -57,12 +57,16 @@ struct WorkspaceMembershipAttestation: Equatable, Sendable {
         /// The member's wallet address, lowercase.
         let wallet: String
         let role: String
+        /// Whether the workspace was entitled when minted. Tokens from a
+        /// router that predates the claim read as active.
+        let workspaceSuspended: Bool
         let iat: Int
         let exp: Int
 
         enum CodingKeys: String, CodingKey {
             case v, wallet, role, iat, exp
             case workspaceId = "workspace_id"
+            case workspaceStatus = "workspace_status"
             /// Pre-rename claim name. Legacy tokens expire within 10 minutes
             /// of the router upgrade, but accept them so a handshake in flight
             /// across the cutover doesn't fail.
@@ -81,6 +85,7 @@ struct WorkspaceMembershipAttestation: Equatable, Sendable {
             accountId = try c.decode(String.self, forKey: .accountId)
             wallet = try c.decode(String.self, forKey: .wallet)
             role = try c.decode(String.self, forKey: .role)
+            workspaceSuspended = try c.decodeIfPresent(String.self, forKey: .workspaceStatus) == "suspended"
             iat = try c.decode(Int.self, forKey: .iat)
             exp = try c.decode(Int.self, forKey: .exp)
         }

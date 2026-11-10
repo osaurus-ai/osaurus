@@ -1,0 +1,26 @@
+{
+  "description": "osl-v1 test vector. The key is Hardhat/Anvil test account #0: public, never use it for anything real. Signing is RFC 6979 deterministic, so every conforming signer produces this exact assertion. Pinned in Packages/OsaurusCore/Tests/Auth/LoginAssertionTests.swift.",
+  "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  "address": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+  "request": {
+    "client_id": "https://store.osaurus.ai",
+    "redirect_uri": "https://store.osaurus.ai/auth/osaurus/callback",
+    "state": "st_8f2b1c",
+    "nonce": "n0nce-0123456789abcdef"
+  },
+  "payload": {
+    "aud": "https://store.osaurus.ai",
+    "dev": "a1b2c3d4",
+    "exp": 1791600300,
+    "iat": 1791600000,
+    "iss": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "jti": "00000000-0000-4000-8000-000000000001",
+    "nonce": "n0nce-0123456789abcdef",
+    "osaurus_id": "alice",
+    "redirect_uri": "https://store.osaurus.ai/auth/osaurus/callback",
+    "typ": "osaurus-login",
+    "ver": 1
+  },
+  "assertion": "osl-v1.eyJhdWQiOiJodHRwczovL3N0b3JlLm9zYXVydXMuYWkiLCJkZXYiOiJhMWIyYzNkNCIsImV4cCI6MTc5MTYwMDMwMCwiaWF0IjoxNzkxNjAwMDAwLCJpc3MiOiIweGYzOWZkNmU1MWFhZDg4ZjZmNGNlNmFiODgyNzI3OWNmZmZiOTIyNjYiLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJub25jZSI6Im4wbmNlLTAxMjM0NTY3ODlhYmNkZWYiLCJvc2F1cnVzX2lkIjoiYWxpY2UiLCJyZWRpcmVjdF91cmkiOiJodHRwczovL3N0b3JlLm9zYXVydXMuYWkvYXV0aC9vc2F1cnVzL2NhbGxiYWNrIiwidHlwIjoib3NhdXJ1cy1sb2dpbiIsInZlciI6MX0.0x88f363e07abe047263f0fed7555f9ba48b8e74a0533d18a21dfb3c083dc0d1df4369368a71b0713ae7adf4dc6edfd77611facd102331cdb2ed1e3db589d62fc11c",
+  "verify_at": 1791600010
+}

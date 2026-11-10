@@ -8,6 +8,12 @@
 import Foundation
 import OsaurusSQLCipher
 
+extension Notification.Name {
+    /// A channel message was refused or failed before reaching an
+    /// automation (Automations → History lists these).
+    static let agentChannelUnreachedMessageRecorded = Notification.Name("ai.osaurus.agentChannel.unreachedMessage")
+}
+
 public enum AgentChannelMessageStoreError: Error, LocalizedError, Equatable {
     case failedToOpen(String)
     case failedToExecute(String)
@@ -1416,14 +1422,21 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
     public func recentAuditEvents(
         connectionId: String? = nil,
         roomId: String? = nil,
+        statuses: [AgentChannelAuditStatus]? = nil,
+        action: String? = nil,
         limit: Int
     ) throws -> [AgentChannelAuditRecord] {
         let safeLimit = max(1, min(limit, 200))
         let connection = connectionId.flatMap(Self.normalizedOptionalId)
         let room = roomId.flatMap(Self.normalizedOptionalId)
+        let statusValues = statuses?.map(\.rawValue) ?? []
         var clauses: [String] = []
         if connection != nil { clauses.append("connection_id = ?") }
         if room != nil { clauses.append("room_id = ?") }
+        if !statusValues.isEmpty {
+            clauses.append("status IN (\(Array(repeating: "?", count: statusValues.count).joined(separator: ", ")))")
+        }
+        if action != nil { clauses.append("action = ?") }
         let whereClause = clauses.isEmpty ? "" : "WHERE \(clauses.joined(separator: " AND "))"
         var rows: [AgentChannelAuditRecord] = []
 
@@ -1443,6 +1456,14 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
                 }
                 if let room {
                     Self.bindText(stmt, index: index, value: room)
+                    index += 1
+                }
+                for value in statusValues {
+                    Self.bindText(stmt, index: index, value: value)
+                    index += 1
+                }
+                if let action {
+                    Self.bindText(stmt, index: index, value: action)
                     index += 1
                 }
                 sqlite3_bind_int(stmt, index, Int32(safeLimit))
@@ -1513,6 +1534,76 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
     public func pruneAuditEvents(olderThan cutoff: Date) throws -> Int {
         try executeUpdate("DELETE FROM channel_audit_events WHERE created_at < ?1") { stmt in
             sqlite3_bind_double(stmt, 1, cutoff.timeIntervalSince1970)
+        }
+    }
+
+    /// Moves one account's rows to its own connection id: messages,
+    /// cursors, audit events and outbound intents whose room is in
+    /// `roomIds` or starts with one of `roomPrefixes`, and seen events whose
+    /// id starts with one of `eventIdPrefixes`. One transaction; a row that
+    /// already exists under `to` is left where it was.
+    @discardableResult
+    public func reassign(
+        from: String, to: String, roomIds: [String] = [], roomPrefixes: [String] = [],
+        eventIdPrefixes: [String] = []
+    ) throws -> Int {
+        let from = Self.normalizedId(from)
+        let to = Self.normalizedId(to)
+        guard Self.isUsableId(from), Self.isUsableId(to), from != to else { return 0 }
+        let rooms = roomIds.map(Self.normalizedId).filter { !$0.isEmpty }
+        let prefixes = roomPrefixes.filter { !$0.isEmpty }
+        let eventPrefixes = eventIdPrefixes.filter { !$0.isEmpty }
+        return try queue.sync {
+            guard db != nil else { throw AgentChannelMessageStoreError.notOpen }
+            try executeRaw("BEGIN IMMEDIATE")
+            do {
+                var moved = 0
+                if !rooms.isEmpty || !prefixes.isEmpty {
+                    for table in [
+                        "channel_messages", "channel_receive_cursors", "channel_audit_events",
+                        "channel_outbound_intents",
+                    ] {
+                        moved += try reassignOnQueue(
+                            table: table, column: "room_id", from: from, to: to, values: rooms, prefixes: prefixes)
+                    }
+                }
+                if !eventPrefixes.isEmpty {
+                    moved += try reassignOnQueue(
+                        table: "channel_seen_events", column: "provider_event_id", from: from, to: to,
+                        values: [], prefixes: eventPrefixes)
+                }
+                try executeRaw("COMMIT")
+                return moved
+            } catch {
+                try? executeRaw("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    private func reassignOnQueue(
+        table: String, column: String, from: String, to: String, values: [String], prefixes: [String]
+    ) throws -> Int {
+        var clauses: [String] = []
+        var index = 3
+        for _ in values {
+            clauses.append("\(column) = ?\(index)")
+            index += 1
+        }
+        for _ in prefixes {
+            clauses.append("substr(\(column), 1, length(?\(index))) = ?\(index)")
+            index += 1
+        }
+        guard !clauses.isEmpty else { return 0 }
+        let sql =
+            "UPDATE OR IGNORE \(table) SET connection_id = ?2 WHERE connection_id = ?1 AND ("
+            + clauses.joined(separator: " OR ") + ")"
+        return try executeUpdateOnQueue(sql) { stmt in
+            Self.bindText(stmt, index: 1, value: from)
+            Self.bindText(stmt, index: 2, value: to)
+            for (offset, value) in (values + prefixes).enumerated() {
+                Self.bindText(stmt, index: Int32(3 + offset), value: value)
+            }
         }
     }
 
@@ -1718,6 +1809,9 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             connectionId: normalizedConnectionId,
             maxRows: Self.maxAuditEventsPerConnection
         )
+        if event.status == .denied || event.status == .failed {
+            NotificationCenter.default.post(name: .agentChannelUnreachedMessageRecorded, object: nil)
+        }
         return inserted
     }
 

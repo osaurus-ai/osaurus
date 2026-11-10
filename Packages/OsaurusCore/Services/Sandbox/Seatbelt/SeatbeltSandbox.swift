@@ -77,6 +77,17 @@ public enum SeatbeltSandbox {
         )
     }
 
+    /// Per-agent scratch under `scratchDir`. Every Seatbelt process runs
+    /// as the same macOS user, so a shared `TMPDIR` would let one agent
+    /// read or plant files in another agent's temp space.
+    public static func scratchDir(forAgent agentName: String) -> String {
+        canonicalProfilePath(
+            URL(fileURLWithPath: scratchDir, isDirectory: true)
+                .appendingPathComponent(agentName, isDirectory: true)
+                .path
+        )
+    }
+
     /// xcrun's shared lookup database. Apple's `/usr/bin` developer-tool
     /// shims consult this file even when `TMPDIR` points at our private
     /// scratch directory. It is exposed read-only: letting sandboxed work
@@ -200,37 +211,34 @@ public enum SeatbeltSandbox {
 
     // MARK: - Profile
 
-    /// Network policy for a generated profile, derived from
-    /// `SandboxConfiguration.network`.
+    /// Network policy for a generated profile, from the calling agent's
+    /// own setting (`SandboxManager.seatbeltNetwork(forUser:)`).
     public enum NetworkPolicy: Sendable, Equatable {
         case allowed
         case denied
-
-        /// Map the shared sandbox config's network mode. "outbound"
-        /// allows network. "none" denies it. "proxy" (domain
-        /// allowlist) cannot be enforced by Seatbelt — the filtering
-        /// egress proxy is a vmnet construct — so it fails CLOSED to
-        /// no network rather than silently widening an allowlist to
-        /// unrestricted egress.
-        public static func from(configNetwork: String) -> NetworkPolicy {
-            configNetwork == "outbound" ? .allowed : .denied
-        }
     }
 
     /// Build the Seatbelt profile (`.sb` scheme text) for one exec.
     ///
     /// - Parameters:
     ///   - workspaceRoot: Host directory that plays the role of the
-    ///     VM's `/workspace` mount. Read-write.
+    ///     VM's `/workspace` mount. Read-write when `writableRoots` is nil.
     ///   - tempDir: Per-process scratch directory. Read-write.
     ///   - network: Whether the process may use the network.
+    ///   - writableRoots: The workspace directories this process may read
+    ///     and write. An agent's exec passes its own home plus the shared
+    ///     directory, so it cannot reach another agent's home; `nil`
+    ///     grants the whole workspace (host-side system execs only).
     public static func profile(
         workspaceRoot: String,
         tempDir: String,
         network: NetworkPolicy,
+        writableRoots: [String]? = nil,
         developerDirectory: String? = activeDeveloperDirectory
     ) -> String {
-        let workspaces = profilePathVariants(workspaceRoot).map(escapeProfilePath)
+        let workspaces = (writableRoots ?? [workspaceRoot])
+            .flatMap(profilePathVariants)
+            .map(escapeProfilePath)
         let temps = profilePathVariants(tempDir).map(escapeProfilePath)
         let xcrunCaches = xcrunCacheFiles.map(escapeProfilePath)
 
@@ -301,6 +309,9 @@ public enum SeatbeltSandbox {
         switch network {
         case .allowed:
             lines.append("(allow network*)")
+            // Host loopback is the Osaurus server and every other local
+            // service on the Mac; the VM backend never shares it.
+            lines.append("(deny network-outbound (remote ip \"localhost:*\"))")
             // DNS via the system resolver daemon.
             lines.append("(allow system-socket)")
         case .denied:

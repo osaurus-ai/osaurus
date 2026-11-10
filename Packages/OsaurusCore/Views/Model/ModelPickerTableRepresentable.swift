@@ -99,31 +99,30 @@ struct ThemeColorCache {
     let tertiaryText: NSColor
     let accentColor: NSColor
 
-    let accentAlpha09: NSColor
-    let accentAlpha012: NSColor
-    let accentAlpha015: NSColor
-    let secondaryTextAlpha09: NSColor
-    let secondaryTextAlpha012: NSColor
+    let accentBadgeFill: NSColor
+    let accentBadgeBorder: NSColor
+    let badgeFill: NSColor
     let hoverBg: NSColor
+    let rowRadius: CGFloat
 
     init(theme: ThemeProtocol) {
-        primaryText = NSColor(theme.primaryText)
-        secondaryText = NSColor(theme.secondaryText)
-        tertiaryText = NSColor(theme.tertiaryText)
-        accentColor = NSColor(theme.accentColor)
+        primaryText = NSColor(theme.text.primary)
+        secondaryText = NSColor(theme.text.secondary)
+        tertiaryText = NSColor(theme.text.tertiary)
+        accentColor = NSColor(theme.action.primary.default.background)
 
-        accentAlpha09 = accentColor.withAlphaComponent(0.9)
-        accentAlpha012 = accentColor.withAlphaComponent(0.12)
-        accentAlpha015 = accentColor.withAlphaComponent(0.15)
-        secondaryTextAlpha09 = secondaryText.withAlphaComponent(0.9)
-        secondaryTextAlpha012 = secondaryText.withAlphaComponent(0.12)
-        hoverBg = NSColor(theme.secondaryBackground).withAlphaComponent(0.7)
+        accentBadgeFill = NSColor(theme.surface.selected)
+        accentBadgeBorder = NSColor(theme.border.focus)
+        badgeFill = NSColor(theme.surface.hover)
+        hoverBg = NSColor(theme.surface.hover)
+        rowRadius = theme.radius.medium
     }
 }
 
 // MARK: - ModelPickerTableRepresentable
 
 struct ModelPickerTableRepresentable: NSViewRepresentable {
+    @Environment(\.isEnabled) private var inspectorEnabled
 
     let rows: [ModelPickerRow]
     let theme: ThemeProtocol
@@ -155,6 +154,9 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         coordinator.onToggleFavorite = onToggleFavorite
         coordinator.onDismiss = onDismiss
         coordinator.isFavoritesTab = isFavoritesTab
+        #if OSAURUS_DESIGN_SYSTEM
+        coordinator.inspectionEnabled = inspectorEnabled
+        #endif
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
         coordinator.applyRows(rows)
@@ -163,12 +165,18 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        #if OSAURUS_DESIGN_SYSTEM
+        defer { scrollView.updateCatalogInspection(context.environment.nativeCatalogInspection, selection: context.environment.nativeCatalogSelection) }
+        #endif
         let coordinator = context.coordinator
         coordinator.onSelectModel = onSelectModel
         coordinator.onSwitchTab = onSwitchTab
         coordinator.onToggleFavorite = onToggleFavorite
         coordinator.onDismiss = onDismiss
         coordinator.updateFavoritesTab(isFavoritesTab)
+        #if OSAURUS_DESIGN_SYSTEM
+        coordinator.inspectionEnabled = inspectorEnabled
+        #endif
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
         coordinator.applyRows(rows)
@@ -310,7 +318,7 @@ private final class PickerBadgeView: NSView {
     func configure(
         text: String,
         iconImage: NSImage? = nil,
-        font: NSFont = .systemFont(ofSize: 9, weight: .medium),
+        font: NSFont = ThemeManager.shared.chatTheme.nsFont(.micro, weight: .medium),
         textColor: NSColor,
         bgColor: NSColor,
         borderColor: NSColor = .clear,
@@ -361,6 +369,29 @@ private final class PickerBadgeView: NSView {
         frame.size = CGSize(width: ceil(w), height: ceil(label.frame.height + vPad * 2))
     }
 
+    #if OSAURUS_DESIGN_SYSTEM
+    func applyInspection(_ recipe: InspectorNativeModelPickerRecipe, color: NSColor) {
+        catalogAssignmentTarget(["selected", "radius", "border", "borderWidth"].map { "component.library.26.elements.badge." + $0 }, name: "Badge “" + label.stringValue + "”")
+        label.catalogAssignmentTarget(["caption", "secondary", "accent"].map { "component.library.26.elements.badge." + $0 }, name: "Badge text “" + label.stringValue + "”")
+        label.attributedStringValue = recipe.string(label.stringValue, attributes: recipe.badgeCaption, color: color)
+        label.sizeToFit()
+        label.frame.size.height = max(label.frame.height, recipe.badgeCaptionHeight)
+        var width = label.frame.width + hPad * 2
+        if !iconView.isHidden { width += 13 }
+        frame.size = NSSize(width: ceil(width), height: ceil(label.frame.height + vPad * 2))
+        iconView.contentTintColor = color
+        layer?.backgroundColor = recipe.badgeBackground.cgColor
+        layer?.cornerRadius = recipe.badgeRadius
+        layer?.borderWidth = recipe.badgeBorderWidth
+        layer?.borderColor = recipe.badgeBorder.cgColor
+        needsLayout = true
+    }
+    #endif
+
+    var textBaselineFromTop: CGFloat {
+        vPad + label.firstBaselineOffsetFromTop
+    }
+
     override func layout() {
         super.layout()
         var x = hPad
@@ -386,6 +417,32 @@ private enum RowAccessoryKind: Equatable {
 /// Model row cell with hover/selection background.
 @MainActor
 private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelegate {
+    #if OSAURUS_DESIGN_SYSTEM
+    private var inspectionRecipe: InspectorNativeModelPickerRecipe?
+    func applyInspection(_ recipe: InspectorNativeModelPickerRecipe, row: ModelPickerRow, enabled: Bool) {
+        inspectionRecipe = recipe
+        let unavailable = !enabled || !row.isMLXFormat
+        let ink = unavailable ? recipe.disabledForeground : recipe.foreground
+        let secondary = unavailable ? recipe.disabledForeground : recipe.secondary
+        let accent = unavailable ? recipe.disabledForeground : recipe.accent
+        nameLabel.font = recipe.label[.font] as? NSFont
+        descLabel.font = recipe.text[.font] as? NSFont
+        nameLabel.attributedStringValue = recipe.string(row.displayName, attributes: recipe.label, color: ink)
+        descLabel.attributedStringValue = recipe.string(row.description ?? "", attributes: recipe.text, color: secondary)
+        catalogAssignmentTarget(["radius", "padding", "height", "background", "selected", "hover", "disabledBackground", "gap"].map { "component.library.26.elements.row." + $0 }, name: "Model row “" + row.displayName + "”")
+        nameLabel.catalogAssignmentTarget(["label", "foreground", "disabledForeground"].map { "component.library.26.elements.row." + $0 }, name: "Model name “" + row.displayName + "”")
+        descLabel.catalogAssignmentTarget(["text", "secondary"].map { "component.library.26.elements.row." + $0 }, name: "Model description")
+        for badge in [vlmBadge, mediaBadge, providerBadge, paramBadge, quantBadge, privacyBadge, priceBadge] where !badge.isHidden {
+            badge.applyInspection(recipe, color: unavailable ? recipe.disabledForeground : badge === vlmBadge || badge === mediaBadge ? recipe.badgeAccent : recipe.badgeSecondary)
+        }
+        bgLayer.cornerRadius = recipe.radius
+        bgLayer.backgroundColor = (unavailable ? recipe.disabledBackground : cachedIsSelected || cachedIsHighlighted ? recipe.selected : cachedIsHovered ? recipe.hover : recipe.background).cgColor
+        checkmarkView.contentTintColor = accent
+        accessoryButton.contentTintColor = accent
+        accessoryButton.isEnabled = enabled
+        needsLayout = true
+    }
+    #endif
     private let bgLayer = CALayer()
     private let nameLabel = makeLabel()
     private let vlmBadge = PickerBadgeView()
@@ -434,7 +491,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         super.init(frame: frameRect)
         wantsLayer = true
 
-        bgLayer.cornerRadius = 8
         bgLayer.cornerCurve = .continuous
         layer?.addSublayer(bgLayer)
 
@@ -588,8 +644,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                     iconImage: eyeImage,
                     font: badgeFontSmall,
                     textColor: colors.accentColor,
-                    bgColor: colors.accentAlpha012,
-                    borderColor: colors.accentAlpha015,
+                    bgColor: colors.accentBadgeFill,
+                    borderColor: colors.accentBadgeBorder,
                     isCapsule: true
                 )
             }
@@ -618,8 +674,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                     iconImage: icon,
                     font: badgeFontSmall,
                     textColor: colors.accentColor,
-                    bgColor: colors.accentAlpha012,
-                    borderColor: colors.accentAlpha015,
+                    bgColor: colors.accentBadgeFill,
+                    borderColor: colors.accentBadgeBorder,
                     isCapsule: true
                 )
             }
@@ -633,8 +689,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                 providerBadge.configure(
                     text: provider,
                     font: badgeFont,
-                    textColor: colors.secondaryTextAlpha09,
-                    bgColor: colors.secondaryTextAlpha012,
+                    textColor: colors.secondaryText,
+                    bgColor: colors.badgeFill,
                     isCapsule: true
                 )
             }
@@ -658,8 +714,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             if structureChanged {
                 paramBadge.configure(
                     text: params,
-                    textColor: colors.accentAlpha09,
-                    bgColor: colors.accentAlpha012
+                    textColor: colors.accentColor,
+                    bgColor: colors.accentBadgeFill
                 )
             }
             paramBadge.isHidden = false
@@ -671,8 +727,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             if structureChanged {
                 quantBadge.configure(
                     text: quant,
-                    textColor: colors.secondaryTextAlpha09,
-                    bgColor: colors.secondaryTextAlpha012
+                    textColor: colors.secondaryText,
+                    bgColor: colors.badgeFill
                 )
             }
             quantBadge.isHidden = false
@@ -686,8 +742,8 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                     text: privacy,
                     iconImage: privacyImage,
                     font: badgeFont,
-                    textColor: colors.secondaryTextAlpha09,
-                    bgColor: colors.secondaryTextAlpha012,
+                    textColor: colors.secondaryText,
+                    bgColor: colors.badgeFill,
                     isCapsule: true
                 )
             }
@@ -702,9 +758,9 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                     text: price,
                     iconImage: priceImage,
                     font: badgeFont,
-                    textColor: colors.accentAlpha09,
-                    bgColor: colors.accentAlpha012,
-                    borderColor: colors.accentAlpha015,
+                    textColor: colors.accentColor,
+                    bgColor: colors.accentBadgeFill,
+                    borderColor: colors.accentBadgeBorder,
                     isCapsule: true
                 )
             }
@@ -727,6 +783,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         if cachedIsHovered != isHovered || cachedIsHighlighted != isHighlighted || cachedIsSelected != isSelected {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
+            bgLayer.cornerRadius = colors.rowRadius
             bgLayer.backgroundColor =
                 (isHovered || isHighlighted || isSelected)
                 ? colors.hoverBg.cgColor
@@ -796,9 +853,21 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         super.layout()
         let w = bounds.width
         let h = bounds.height
+        #if OSAURUS_DESIGN_SYSTEM
+        let pad: CGFloat = inspectionRecipe?.padding ?? 12
+        let nameH: CGFloat = inspectionRecipe?.labelHeight ?? 16
+        let metaH: CGFloat = inspectionRecipe?.metaHeight ?? 16
+        let lineGap: CGFloat = inspectionRecipe?.gap ?? 4
+        let descH: CGFloat = inspectionRecipe?.textHeight ?? 14
+        let detailsGap: CGFloat = inspectionRecipe?.gap ?? 2
+        #else
         let pad: CGFloat = 12
         let nameH: CGFloat = 16
         let metaH: CGFloat = 16
+        let lineGap: CGFloat = 4
+        let descH: CGFloat = 14
+        let detailsGap: CGFloat = 2
+        #endif
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -813,16 +882,12 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         // Name-only rows center the name line vertically.
         let hasMeta = hasDesc || hasBadges
         let hasMediaDetailsLine = hasMedia && hasDesc
+        #if OSAURUS_DESIGN_SYSTEM
+        let nameY: CGFloat = hasMeta ? pad : (h - nameH) / 2
+        #else
         let nameY: CGFloat = hasMediaDetailsLine ? 7 : (hasMeta ? 10 : (h - nameH) / 2)
+        #endif
 
-        if !checkmarkView.isHidden {
-            checkmarkView.frame = CGRect(
-                x: pad,
-                y: nameY + (nameH - 14) / 2,
-                width: 14,
-                height: 14
-            )
-        }
         let contentX = pad + 14 + 6
 
         var trailingX = w - pad
@@ -861,6 +926,17 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
             height: nameH
         )
 
+        let nameBaseline = nameY + nameLabel.firstBaselineOffsetFromTop
+        let nameFont = nameLabel.font ?? ThemeManager.shared.chatTheme.nsFont(.caption, weight: .medium)
+        let nameCenter = nameBaseline - nameFont.capHeight / 2
+
+        if !checkmarkView.isHidden {
+            checkmarkView.frame = CGRect(x: pad, y: nameCenter - 7, width: 14, height: 14)
+        }
+        for badge in [providerBadge, mediaBadge, vlmBadge] where !badge.isHidden {
+            badge.frame.origin.y = nameBaseline - badge.textBaselineFromTop
+        }
+
         // Heart sits right after the name text, clamped so it never runs into
         // the right-aligned Vision badge (or the trailing edge). The button is
         // framed at the symbol's natural size and its glyph (the image's
@@ -872,8 +948,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         // placement so both tabs read the same.
         if accessoryKind != .none {
             let imgSize = accessoryButton.image?.size ?? .zero
-            let font = nameLabel.font ?? NSFont.systemFont(ofSize: 12, weight: .medium)
-            let textCenterY = nameY + nameLabel.firstBaselineOffsetFromTop - font.capHeight / 2 - 1.5
+            let textCenterY = nameCenter - 1.5
             // Glyph centre from the image's top edge (alignment rect is bottom-up).
             let alignment = accessoryButton.image?.alignmentRect ?? CGRect(origin: .zero, size: imgSize)
             let glyphCenterFromTop = imgSize.height - alignment.midY
@@ -893,7 +968,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         }
 
         if hasMeta {
-            let metaY = nameY + nameH + 4
+            let metaY = nameY + nameH + lineGap
             var x = contentX
             if !privacyBadge.isHidden {
                 privacyBadge.sizeToFitContent()
@@ -931,14 +1006,19 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
                 if hasMediaDetailsLine {
                     descLabel.frame = CGRect(
                         x: contentX,
-                        y: metaY + metaH + 2,
+                        y: metaY + metaH + detailsGap,
                         width: max(0, w - pad - contentX),
-                        height: 14
+                        height: descH
                     )
                 } else {
-                    if x > contentX { x += 4 }
                     let descW = w - pad - x
-                    descLabel.frame = CGRect(x: x, y: metaY + 1, width: max(0, descW), height: 14)
+                    descLabel.frame = CGRect(
+                        x: x, y: metaY + (metaH - descH) / 2, width: max(0, descW), height: descH
+                    )
+                    if let badge = [privacyBadge, priceBadge, paramBadge, quantBadge].first(where: { !$0.isHidden }) {
+                        let baseline = badge.frame.minY + badge.textBaselineFromTop
+                        descLabel.frame.origin.y = baseline - descLabel.firstBaselineOffsetFromTop
+                    }
                 }
             }
         }
@@ -1015,16 +1095,21 @@ extension ModelPickerTableRepresentable {
 
         // MARK: Cached Theme Colors & Images
 
-        private var colors = ThemeColorCache(theme: LightTheme())
-        private var lastThemeTypeId: ObjectIdentifier?
+        private var colors = ThemeColorCache(theme: CustomizableTheme.light())
+        #if OSAURUS_DESIGN_SYSTEM
+        var inspectionEnabled = true
+        private var previousInspectionEnabled = true
+        private var inspectionRecipe: InspectorNativeModelPickerRecipe?
+        #endif
+        private var lastThemeFingerprint: Int?
 
         // MARK: Cached Fonts
 
-        private lazy var regularFont = NSFont.systemFont(ofSize: 12, weight: .medium)
-        private lazy var semiboldFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        private lazy var descFont = NSFont.systemFont(ofSize: 10)
-        private lazy var badgeFont = NSFont.systemFont(ofSize: 9, weight: .medium)
-        private lazy var badgeFontSmall = NSFont.systemFont(ofSize: 8, weight: .medium)
+        private var regularFont = CustomizableTheme.light().nsFont(.caption, weight: .medium)
+        private var semiboldFont = CustomizableTheme.light().nsFont(.caption, weight: .semibold)
+        private var descFont = CustomizableTheme.light().nsFont(.micro)
+        private var badgeFont = CustomizableTheme.light().nsFont(.micro, weight: .medium)
+        private var badgeFontSmall = CustomizableTheme.light().nsFont(.micro, weight: .medium)
 
         private lazy var checkmarkImage: NSImage? = NSImage(
             systemSymbolName: "checkmark",
@@ -1176,6 +1261,9 @@ extension ModelPickerTableRepresentable {
         }
 
         private func selectHighlighted() {
+            #if OSAURUS_DESIGN_SYSTEM
+            guard inspectionEnabled else { return }
+            #endif
             guard let index = highlightedIndex, index < rowIds.count,
                 let row = rowLookup[rowIds[index]],
                 row.isMLXFormat
@@ -1186,10 +1274,26 @@ extension ModelPickerTableRepresentable {
         // MARK: Theme
 
         func updateColorsIfNeeded(from theme: ThemeProtocol) {
-            let typeId = ObjectIdentifier(type(of: theme))
-            guard typeId != lastThemeTypeId else { return }
-            lastThemeTypeId = typeId
+            #if OSAURUS_DESIGN_SYSTEM
+            guard theme.renderFingerprint != lastThemeFingerprint || previousInspectionEnabled != inspectionEnabled else { return }
+            previousInspectionEnabled = inspectionEnabled
+            inspectionRecipe = InspectorNativeModelPickerRecipe(theme: theme)
+            #else
+            guard theme.renderFingerprint != lastThemeFingerprint else { return }
+            #endif
+            lastThemeFingerprint = theme.renderFingerprint
             colors = ThemeColorCache(theme: theme)
+            regularFont = theme.nsFont(.caption, weight: .medium)
+            semiboldFont = theme.nsFont(.caption, weight: .semibold)
+            descFont = theme.nsFont(.micro)
+            badgeFont = theme.nsFont(.micro, weight: .medium)
+            badgeFontSmall = theme.nsFont(.micro, weight: .medium)
+            #if OSAURUS_DESIGN_SYSTEM
+            reconfigureVisibleCells()
+            if let tableView, !rowIds.isEmpty {
+                tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<rowIds.count))
+            }
+            #endif
         }
 
         // MARK: Selection
@@ -1321,7 +1425,7 @@ extension ModelPickerTableRepresentable {
             cell.toolTip =
                 !row.isMLXFormat
                 ? L("Not an MLX model — the local engine can't load this bundle")
-                : (row.mediaKind == nil ? nil : row.description)
+                : [row.displayName, row.description].compactMap { $0 }.joined(separator: "\n")
             cell.configure(
                 id: row.id,
                 displayName: row.displayName,
@@ -1355,12 +1459,22 @@ extension ModelPickerTableRepresentable {
                 badgeFontSmall: badgeFontSmall,
                 onSelect: { [weak self] in
                     guard row.isMLXFormat else { return }
+                    #if OSAURUS_DESIGN_SYSTEM
+                    guard self?.inspectionEnabled == true else { return }
+                    #endif
                     self?.onSelectModel?(id)
                 },
                 onAccessory: { [weak self] in
+                    #if OSAURUS_DESIGN_SYSTEM
+                    guard self?.inspectionEnabled == true else { return }
+                    #endif
                     self?.onToggleFavorite?(row)
                 }
             )
+            #if OSAURUS_DESIGN_SYSTEM
+            cell.alphaValue = 1
+            if let inspectionRecipe { cell.applyInspection(inspectionRecipe, row: row, enabled: inspectionEnabled) }
+            #endif
         }
 
         // MARK: Hover
@@ -1410,6 +1524,9 @@ extension ModelPickerTableRepresentable {
 
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
             guard row < rowIds.count, let rowData = rowLookup[rowIds[row]] else { return 36 }
+            #if OSAURUS_DESIGN_SYSTEM
+            if let inspectionRecipe { return inspectionRecipe.rowHeight(rowData) }
+            #endif
             return Self.rowHeight(for: rowData)
         }
 

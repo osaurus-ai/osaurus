@@ -1,0 +1,35 @@
+{
+  "id": "configurator.settings-default-agent-model",
+  "domain": "configurator",
+  "label": "configurator • change its own model via osaurus_config",
+  "query": "Set your own model to \"mlx-community/Qwen3-4B-4bit\".",
+  "notes": "The self-configuration path: the Default agent's own model lives under the `default_agent:` section of the document. A run that tries to patch it as a custom `agents:` entry exercises the old dead end (the Default agent is not a custom agent).",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "Qwen3-4B-4bit"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "default_agent"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

@@ -18,7 +18,8 @@ struct HarnessRuntimeModelTests {
     @Test func newRuntimesGetTheirKindDefaults() {
         let pi = HarnessRuntime(name: "Pi", kind: .piRPC)
         #expect(pi.executable == "pi")
-        #expect(pi.arguments == ["--mode", "rpc"])
+        #expect(pi.arguments == ["--mode", "rpc", "--session-id", "{chat_id}"])
+        #expect(pi.resumesSessions, "a new Pi runtime resumes its chats out of the box")
         let claude = HarnessRuntime(name: "Claude", kind: .claudeCode)
         #expect(claude.executable == "claude")
         #expect(claude.arguments.isEmpty)
@@ -30,7 +31,7 @@ struct HarnessRuntimeModelTests {
         let runtime = try JSONDecoder().decode(HarnessRuntime.self, from: Data(json.utf8))
         #expect(runtime.id == id)
         #expect(runtime.executable == "pi")
-        #expect(runtime.arguments == ["--mode", "rpc"])
+        #expect(runtime.arguments == ["--mode", "rpc", "--session-id", "{chat_id}"])
         #expect(runtime.environment.isEmpty)
         #expect(runtime.displayName == "Pi (RPC)", "a blank name still displays")
     }
@@ -72,7 +73,7 @@ struct HarnessRuntimeModelTests {
 
     @Test func onlyChatKeyedPiRuntimesResume() {
         #expect(HarnessRuntime(name: "C", kind: .claudeCode).resumesSessions)
-        #expect(!HarnessRuntime(name: "P", kind: .piRPC).resumesSessions)
+        #expect(!HarnessRuntime(name: "P", kind: .piRPC, arguments: ["--mode", "rpc"]).resumesSessions)
         #expect(HarnessRuntime(name: "P", kind: .piRPC, arguments: ["--mode", "rpc", "--session-dir", "/x/{chat_id}"]).resumesSessions)
     }
 

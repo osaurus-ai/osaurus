@@ -19,12 +19,18 @@ struct TemplateImportSheet: View {
 
     /// A dropped file's contents. Empty opens on the file chooser.
     var initialText: String = ""
-    /// Restricts the sheet to one kind (the Agents tab imports agents).
+    /// The host a deep link downloaded `initialText` from; shown first so
+    /// the person knows where the file came from.
+    var sourceHost: String? = nil
+    /// Restricts the sheet to one kind (the Agents tab imports agents). A
+    /// file of the other kind closes this sheet and reopens on its own tab.
     var expectedKind: TemplateKind? = nil
     /// The primary button for a new template, when the caller does more
-    /// than save it.
+    /// than save it (Workflows adds it right after).
     var importLabel: LocalizedStringKey = "Import"
-    let onImported: (Template) -> Void
+    /// The saved template, and the bundled workflows this import added to
+    /// the library (new, or a newer version).
+    let onImported: (_ template: Template, _ bundled: [Template]) -> Void
     let onCancel: () -> Void
 
     @State private var parsed: Template?
@@ -40,7 +46,7 @@ struct TemplateImportSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AgentSheetHeader(
+            SettingsSheetHeader(
                 icon: "square.and.arrow.down",
                 title: "Import Template",
                 subtitle: "Choose a template file or drop one here",
@@ -48,6 +54,15 @@ struct TemplateImportSheet: View {
             )
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if let sourceHost, !sourceHost.isEmpty {
+                        note(
+                            "link",
+                            L(
+                                "Downloaded from \(sourceHost). Review what it does before importing; it will be set up, not run, after import."
+                            ),
+                            tint: theme.status.info.foreground
+                        )
+                    }
                     if let parsed {
                         TemplateImportReviewView(template: parsed)
                         dispositionBox(parsed)
@@ -56,21 +71,20 @@ struct TemplateImportSheet: View {
                     }
                     if let parseError { errorBox(parseError) }
                 }
-                .padding(20)
+                .padding(theme.space.s16)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            AgentSheetFooter(
+            SettingsSheetFooter(
                 primary: primaryAction,
-                secondary: AgentSheetFooter.Action(label: "Cancel", handler: onCancel),
+                secondary: SettingsSheetFooter.Action(label: "Cancel", handler: onCancel),
                 hint: nil
             )
         }
         .fittedSheetFrame(width: 640, height: 620)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1))
+        .settingsSheetSurface()
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.xlarge).stroke(theme.border.subtle, lineWidth: theme.stroke.default))
         .opacity(hasAppeared ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: hasAppeared)
+        .animation(theme.motion.quick, value: hasAppeared)
         .onAppear {
             hasAppeared = true
             if parsed == nil, !initialText.isEmpty { parse(initialText) }
@@ -80,25 +94,26 @@ struct TemplateImportSheet: View {
     private var dropZone: some View {
         VStack(spacing: 12) {
             Image(systemName: "doc.badge.plus")
-                .font(.system(size: 28, weight: .light))
-                .foregroundColor(isDropTargeted ? theme.accentColor : theme.tertiaryText)
+                .glyphSize(28, weight: .light)
+                .foregroundColor(isDropTargeted ? theme.text.link : theme.text.tertiary)
             Text("Drop a .osaurustemplate file here", bundle: .module)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.rowTitle)
+                .foregroundColor(theme.text.primary)
             Button {
                 TemplateFileExport.chooseFile(onText: parse, onError: { parseError = $0 })
             } label: {
                 Label { Text("Choose File…", bundle: .module) } icon: { Image(systemName: "folder") }
-                    .font(.system(size: 12, weight: .medium))
+                    .font(SettingsFont.compactLabel)
             }
-            .buttonStyle(SecondaryButtonStyle())
+            .assignedSettingsButtonStyle(.secondary)
         }
         .frame(maxWidth: .infinity, minHeight: 220)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: theme.radius.large)
                 .strokeBorder(
-                    isDropTargeted ? theme.accentColor : theme.inputBorder,
-                    style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                    isDropTargeted ? theme.action.primary.default.background : theme.border.strong,
+                    style: StrokeStyle(lineWidth: theme.stroke.default, dash: [6, 5])
+                )
         )
         .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
             TemplateFileExport.loadDroppedFile(providers, onText: parse, onError: { parseError = $0 })
@@ -109,43 +124,53 @@ struct TemplateImportSheet: View {
     private func dispositionBox(_ template: Template) -> some View {
         switch disposition {
         case .alreadyPresent?:
-            note("checkmark.circle", L("This exact version is already in your library."), tint: theme.successColor)
+            note(
+                "checkmark.circle",
+                L("This exact version is already in your library."),
+                tint: theme.status.success.foreground
+            )
         case .update(let from)?:
             note(
                 "arrow.up.circle",
-                L("Updates \"\(template.name)\" from version \(from) to \(template.version)."),
-                tint: theme.infoColor)
+                L(
+                    "Updates \"\(template.name)\" from version \(from) to \(template.version). Installed workflows keep their pin until you update them."
+                ),
+                tint: theme.status.info.foreground
+            )
         case .older(let latest)?:
             note(
                 "clock.arrow.circlepath",
                 L("You already have version \(latest). This older version is added to its history."),
-                tint: theme.secondaryText)
+                tint: theme.text.secondary
+            )
         case .signerMismatch(let address)?:
             VStack(alignment: .leading, spacing: 8) {
                 note(
                     "exclamationmark.triangle.fill",
-                    L("Your copy of this template is signed by \(SharedAgentIdentity.shortAddress(address)) and this file is not. It can only be imported as a copy."),
-                    tint: theme.warningColor)
-                StyledTextField(placeholder: L("Name for the copy"), text: $copyName, icon: "textformat")
+                    L(
+                        "Your copy of this template is signed by \(SharedAgentIdentity.shortAddress(address)) and this file is not. It can only be imported as a copy."
+                    ),
+                    tint: theme.status.warning.foreground
+                )
+                SettingsTextField(placeholder: L("Name for the copy"), text: $copyName, icon: "textformat")
             }
         case .conflict?:
             VStack(alignment: .leading, spacing: 8) {
                 note(
                     "exclamationmark.triangle.fill",
                     L("Version \(template.version) of this template is already here with different content."),
-                    tint: theme.warningColor)
-                Picker("", selection: $keepBoth) {
-                    Text("Keep both", bundle: .module).tag(true)
-                    Text("Replace", bundle: .module).tag(false)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                    tint: theme.status.warning.foreground
+                )
+                AssignedBaseSegmentedPicker(
+                    selection: $keepBoth,
+                    options: [.init(true, "Keep both"), .init(false, "Replace")]
+                )
                 if keepBoth {
-                    StyledTextField(placeholder: L("Name for the copy"), text: $copyName, icon: "textformat")
+                    SettingsTextField(placeholder: L("Name for the copy"), text: $copyName, icon: "textformat")
                 } else {
                     Text("Replacing saves the incoming content as the next version. History is kept.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
         case .new?, nil:
@@ -160,32 +185,32 @@ struct TemplateImportSheet: View {
         return parsed.author?.isSigned == true && !TemplateSigner.status(of: parsed).isValidSignature
     }
 
-    private var primaryAction: AgentSheetFooter.Action {
+    private var primaryAction: SettingsSheetFooter.Action {
         guard let parsed, let disposition else {
-            return AgentSheetFooter.Action(label: "Import", isEnabled: false, handler: {})
+            return SettingsSheetFooter.Action(label: "Import", isEnabled: false, handler: {})
         }
         if signatureBlocks {
-            return AgentSheetFooter.Action(label: "Import", isEnabled: false, handler: {})
+            return SettingsSheetFooter.Action(label: "Import", isEnabled: false, handler: {})
         }
         switch disposition {
         case .alreadyPresent:
-            return AgentSheetFooter.Action(label: "Done") { onImported(store.latest(id: parsed.id) ?? parsed) }
+            return SettingsSheetFooter.Action(label: "Done") { onImported(store.latest(id: parsed.id) ?? parsed, []) }
         case .update:
-            return AgentSheetFooter.Action(label: "Import Update", handler: performImport)
+            return SettingsSheetFooter.Action(label: "Import Update", handler: performImport)
         case .new where parsed.kind == expectedKind:
-            return AgentSheetFooter.Action(label: importLabel, handler: performImport)
+            return SettingsSheetFooter.Action(label: importLabel, handler: performImport)
         case .conflict:
             let name = copyName.trimmingCharacters(in: .whitespacesAndNewlines)
-            return AgentSheetFooter.Action(
+            return SettingsSheetFooter.Action(
                 label: keepBoth ? "Import Copy" : "Replace",
                 isEnabled: !keepBoth || !name.isEmpty,
                 isDestructive: !keepBoth,
                 handler: performImport)
         case .signerMismatch:
             let name = copyName.trimmingCharacters(in: .whitespacesAndNewlines)
-            return AgentSheetFooter.Action(label: "Import Copy", isEnabled: !name.isEmpty, handler: performImport)
+            return SettingsSheetFooter.Action(label: "Import Copy", isEnabled: !name.isEmpty, handler: performImport)
         case .new, .older:
-            return AgentSheetFooter.Action(label: "Import", handler: performImport)
+            return SettingsSheetFooter.Action(label: "Import", handler: performImport)
         }
     }
 
@@ -195,7 +220,10 @@ struct TemplateImportSheet: View {
             let template = try Template.parse(text)
             if let expectedKind, template.kind != expectedKind {
                 parsed = nil
-                parseError = TemplateError.wrongKind(expected: expectedKind, got: template.kind.rawValue).localizedDescription
+                onCancel()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    TemplateImportRouter.present(text: text)
+                }
                 return
             }
             parsed = template
@@ -209,6 +237,7 @@ struct TemplateImportSheet: View {
     private func performImport() {
         guard let parsed else { return }
         do {
+            let bundled = try parsed.bundled.filter { try TemplateBundleImport.importBundled($0, into: store) }
             let name = copyName.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolution: TemplateStore.ConflictResolution? = {
                 switch disposition {
@@ -218,7 +247,7 @@ struct TemplateImportSheet: View {
                 }
             }()
             let saved = try store.importTemplate(parsed, resolution: resolution)
-            onImported(saved)
+            onImported(saved, bundled)
         } catch {
             parseError = error.localizedDescription
         }
@@ -228,16 +257,35 @@ struct TemplateImportSheet: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon).foregroundColor(tint)
             Text(text)
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.08)))
+        .settingsChrome(.tinted(tint))
     }
 
     private func errorBox(_ message: String) -> some View {
-        note("xmark.octagon.fill", message, tint: theme.errorColor)
+        note("xmark.octagon.fill", message, tint: theme.status.error.foreground)
+    }
+}
+
+/// Bundled workflow templates land in the library with their agent. A
+/// copy already here at the same or a higher version is reused; a higher
+/// incoming version is stored (installed workflows then offer the update);
+/// a same-version content conflict keeps the local copy, which the agent's
+/// reference resolves to.
+enum TemplateBundleImport {
+    /// True when the copy was stored.
+    @MainActor @discardableResult
+    static func importBundled(_ bundled: Template, into store: TemplateStore) throws -> Bool {
+        switch store.disposition(for: bundled) {
+        case .new, .update:
+            try store.importTemplate(bundled)
+            return true
+        case .alreadyPresent, .older, .conflict, .signerMismatch:
+            return false
+        }
     }
 }

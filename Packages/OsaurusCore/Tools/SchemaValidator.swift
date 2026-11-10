@@ -216,7 +216,15 @@ public struct SchemaValidator {
             case "object":
                 guard value is [String: Any] else { return typeMismatch("object", key: key) }
             case "array":
-                guard isArrayLike(value) else { return typeMismatch("array", key: key) }
+                guard isArrayLike(value) else {
+                    guard value is String else { return typeMismatch("array", key: key) }
+                    let label = key.map { " '\($0)'" } ?? ""
+                    return .fail(
+                        "Property\(label) must be an array, not a string. "
+                            + "Send the items as a JSON array itself, not as text.",
+                        field: key
+                    )
+                }
             default:
                 break
             }

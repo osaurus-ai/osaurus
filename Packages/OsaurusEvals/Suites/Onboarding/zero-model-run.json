@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.zero-model-run",
+  "domain": "onboarding",
+  "label": "onboarding • every path's buttons reach the first task with no generation",
+  "query": "zero_model_run",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "zero_model_run"
+    }
+  }
+}

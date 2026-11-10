@@ -11,25 +11,13 @@
 import AppKit
 
 enum AttachmentThumbnailLayout {
-    /// Aspect-ratio clamp range. An image more extreme than 1:2 / 2:1 is
-    /// laid out as if it were exactly that extreme — preventing slivers
-    /// and runaway widths in attachment rows.
-    static let aspectRange: ClosedRange<CGFloat> = 0.5 ... 2.0
-
-    /// Thumbnail render size for `image`, with `longAxis` fixed and the
-    /// short axis derived from the (clamped) aspect ratio. The image
-    /// renders without cropping; the short axis lands in
-    /// `longAxis/2 ... longAxis`.
-    static func size(for image: NSImage, longAxis: CGFloat) -> CGSize {
+    /// All images share a height; width follows the original aspect ratio.
+    /// Wide images stay fully visible in the horizontally scrolling row.
+    static func size(for image: NSImage, height: CGFloat) -> CGSize {
         let s = image.size
-        guard s.width > 0, s.height > 0 else {
-            return CGSize(width: longAxis, height: longAxis)
+        guard s.width.isFinite, s.height.isFinite, s.width > 0, s.height > 0 else {
+            return CGSize(width: height, height: height)
         }
-        let aspect = min(max(s.width / s.height, aspectRange.lowerBound), aspectRange.upperBound)
-        if aspect >= 1 {
-            return CGSize(width: longAxis, height: longAxis / aspect)
-        } else {
-            return CGSize(width: longAxis * aspect, height: longAxis)
-        }
+        return CGSize(width: height * s.width / s.height, height: height)
     }
 }

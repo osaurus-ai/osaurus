@@ -2,8 +2,10 @@
 //  PhoneChatHandoff.swift
 //  osaurus
 //
-//  Settings → Mobile → Continue Phone Chats on This Mac: when the
-//  user worked on a chat from their paired iPhone while away from the Mac,
+//  Sharing → Devices → Continue iPhone Chats on This Mac: when the user
+//  had this Mac answer a chat from their iPhone (a sync hosted run, see
+//  `SyncHostRunner`, or a run from a phone still on the 6-digit pairing)
+//  while away from the Mac,
 //  that chat comes to the front as they return (the screen unlocks, or the
 //  mouse or keyboard moves after a while untouched). On by default: it only
 //  acts when the phone was used during the absence, so someone at the desk,
@@ -92,8 +94,8 @@ final class PhoneChatHandoff {
 
     private init() {}
 
-    /// A run from the paired phone touched `sessionId` (started, continued
-    /// or finished).
+    /// A run the iPhone asked for touched `sessionId` (started, continued or
+    /// finished).
     func notePhoneActivity(sessionId: UUID) {
         guard Self.isEnabled else { return }
         tracker.notePhoneActivity(sessionId, at: Date())
@@ -104,8 +106,8 @@ final class PhoneChatHandoff {
         startTimer()
     }
 
-    /// For a phone run on one of the Mac's own chats: `keyNonce` is the
-    /// caller's access key, which must be the paired phone's.
+    /// For a paired phone's run on one of the Mac's own chats: `keyNonce`
+    /// is the caller's access key, which must be the paired phone's.
     func notePhoneRun(sessionId: UUID, keyNonce: String?) {
         guard let keyNonce, MobilePairingService.shared.isPairedKey(nonce: keyNonce) else { return }
         notePhoneActivity(sessionId: sessionId)
@@ -153,8 +155,8 @@ final class PhoneChatHandoff {
     /// the front window, else in a new one; the app comes forward with it.
     private func reveal(_ sessionId: UUID) {
         if BackgroundTaskManager.shared.taskState(for: sessionId) != nil {
-            // A chat the phone started is a hosted run: reveal the live task
-            // rather than a second copy loaded from disk.
+            // Still running for the phone: reveal the live task rather than
+            // a second copy loaded from disk.
             ChatWindowManager.shared.revealTask(sessionId)
         } else if let session = ChatSessionsManager.shared.session(for: sessionId) {
             ChatWindowManager.shared.openHistorySession(session)

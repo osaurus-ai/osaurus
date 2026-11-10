@@ -40,23 +40,29 @@ struct ConfigAppBehaviorEnumTests {
         let sectionNames = Set(ConfigSectionID.allNames)
         for removed in [
             "voice", "computer_use", "sandbox", "privacy_filter", "image_generation",
-            "server", "chat", "app",
+            "server",
         ] {
             #expect(!sectionNames.contains(removed), "`\(removed)` crept back into the schema")
         }
         let schema = ConfigSchemaReference.text
         for removedKey in [
             "toast_position", "font_size_multiplier", "cloud_vision_consent",
-            "expose_to_network", "disk_cache_enabled", "core_model", "hide_dock_icon",
-            "model_exposure",
+            "expose_to_network", "disk_cache_enabled", "hide_dock_icon",
+            "model_exposure", "max_tool_attempts",
         ] {
             #expect(!schema.contains(removedKey), "`\(removedKey)` crept back into the schema")
         }
+        // Sampling stays per agent (`agents[].generation`), never global.
+        let modelDefaults = ConfigManifest.knownKeys["model_defaults"] ?? []
+        #expect(!modelDefaults.contains("top_p"), "`top_p` crept into model_defaults")
         // The per-agent capability toggles stay declarative.
         #expect(schema.contains("computer_use_enabled"))
         #expect(schema.contains("browser_use_enabled"))
-        // The 16-section roster after scope reduction 2, plus harness_runtimes.
-        #expect(ConfigSectionID.allNames.count == 17, "\(ConfigSectionID.allNames)")
+        // The 20-section roster: scope reduction 2, `schedules` and
+        // `watchers` folded into `events`, then the small `model_defaults`,
+        // `chat`, and `app` sections, plus `harness_runtimes` and `configurator`.
+        #expect(ConfigSectionID.allNames.count == 20, "\(ConfigSectionID.allNames)")
+        #expect(!sectionNames.contains("schedules") && !sectionNames.contains("watchers"))
     }
 }
 

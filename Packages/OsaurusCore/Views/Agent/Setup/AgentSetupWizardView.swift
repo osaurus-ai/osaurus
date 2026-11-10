@@ -58,6 +58,7 @@ struct AgentSetupWizardView: View {
         case knowledge
         case tools
         case permissions
+        case workflows
         case review
 
         var title: String {
@@ -67,6 +68,7 @@ struct AgentSetupWizardView: View {
             case .knowledge: return L("Knowledge")
             case .tools: return L("Tools")
             case .permissions: return L("Permissions")
+            case .workflows: return L("Workflows")
             case .review: return L("Review")
             }
         }
@@ -78,6 +80,7 @@ struct AgentSetupWizardView: View {
             case .knowledge: return "books.vertical"
             case .tools: return "wrench.and.screwdriver"
             case .permissions: return "lock.shield"
+            case .workflows: return "flowchart"
             case .review: return "checkmark.seal"
             }
         }
@@ -102,7 +105,7 @@ struct AgentSetupWizardView: View {
                 case .knowledge: return item.kind == .knowledgeCollection
                 case .tools: return item.kind == .mcpServer || item.kind == .plugin
                 case .permissions: return item.kind == .systemPermission
-                case .review: return false
+                case .workflows, .review: return false
                 }
             }
         }
@@ -122,6 +125,10 @@ struct AgentSetupWizardView: View {
     /// provider never tears the wizard (and, in draft mode, the unsaved
     /// agent) down.
     @State private var showAddProvider = false
+    /// Template workflows this agent calls. Installed before the agent.
+    @State private var bundlePlan: AgentBundlePlan?
+    @State private var workflowSetup: WorkflowBundleSetupRequest?
+    @State private var oneModelForAll = true
 
     private var template: AgentTemplate? {
         if case .draft(_, let template) = subject { return template }
@@ -154,21 +161,20 @@ struct AgentSetupWizardView: View {
                             ProgressView()
                         }
                     }
-                    .padding(24)
+                    .padding(theme.space.s24)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(minWidth: 0, maxWidth: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.primaryBackground)
+            .background(theme.surface.overlay)
             footer
         }
         .fittedSheetFrame(width: 820, height: 560)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1))
+        .settingsSheetSurface()
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.xlarge).stroke(theme.border.subtle, lineWidth: theme.stroke.default))
         .opacity(hasAppeared ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: hasAppeared)
+        .animation(theme.motion.quick, value: hasAppeared)
         .onAppear {
             hasAppeared = true
             if case .draft(let agent, _) = subject, draft == nil { draft = agent }
@@ -195,6 +201,17 @@ struct AgentSetupWizardView: View {
             }
             .environment(\.theme, theme)
         }
+        .sheet(item: $workflowSetup) { request in
+            WorkflowBundleSetupView(
+                subjects: request.subjects, onClose: { workflowSetup = nil },
+                onLeave: { tab in
+                    workflowSetup = nil
+                    leave(to: tab)
+                },
+                onFinished: { _ in refresh(rebuildSteps: false) }
+            )
+            .environment(\.theme, theme)
+        }
     }
 
     /// Hand the wizard off to another tab without losing it. The subject,
@@ -216,14 +233,14 @@ struct AgentSetupWizardView: View {
     @ViewBuilder
     private var header: some View {
         if let template {
-            AgentSheetHeader(
+            SettingsSheetHeader(
                 icon: "square.on.square.dashed",
                 title: "Create Agent from Template",
                 subtitleText: L("Based on the \(template.name) template"),
                 onClose: onClose
             )
         } else {
-            AgentSheetHeader(
+            SettingsSheetHeader(
                 icon: "checklist",
                 title: "Set Up Agent",
                 subtitleText: agent?.name,
@@ -236,6 +253,11 @@ struct AgentSetupWizardView: View {
 
     private var stepRail: some View {
         SetupStepRail(steps: steps, current: $current, glowing: glowingStep, title: \.title) { step in
+            if step == .workflows, let bundlePlan {
+                if !bundlePlan.pending.isEmpty { return .required }
+                return bundlePlan.rows.allSatisfy { if case .installed = $0.state { true } else { false } }
+                    ? .done : .optional
+            }
             guard step != .review, let report else { return .none }
             let remaining = step.items(in: report)
             if remaining.isEmpty { return .done }
@@ -246,12 +268,12 @@ struct AgentSetupWizardView: View {
     // MARK: - Footer
 
     private var footer: some View {
-        AgentSheetFooter(
-            primary: AgentSheetFooter.Action(
-                label: isLast ? (subject.isDraft ? "Create Agent" : "Finish") : "Next",
+        SettingsSheetFooter(
+            primary: SettingsSheetFooter.Action(
+                label: isLast ? (subject.isDraft ? "Create agent" : "Finish") : "Next",
                 handler: { if isLast { finish() } else { advance() } }
             ),
-            secondary: AgentSheetFooter.Action(
+            secondary: SettingsSheetFooter.Action(
                 label: currentIndex == 0 ? (subject.isDraft ? "Cancel" : "Later") : "Back",
                 handler: { if currentIndex == 0 { onClose() } else { goBack() } }
             ),
@@ -262,12 +284,12 @@ struct AgentSetupWizardView: View {
 
     private func advance() {
         guard currentIndex + 1 < steps.count else { return }
-        withAnimation(.easeInOut(duration: 0.18)) { current = steps[currentIndex + 1] }
+        withAnimation(theme.motion.quick) { current = steps[currentIndex + 1] }
     }
 
     private func goBack() {
         guard currentIndex > 0 else { return }
-        withAnimation(.easeInOut(duration: 0.18)) { current = steps[currentIndex - 1] }
+        withAnimation(theme.motion.quick) { current = steps[currentIndex - 1] }
     }
 
     /// Create (draft) or finish (saved). Refused with guidance while a
@@ -281,7 +303,16 @@ struct AgentSetupWizardView: View {
             warn(blocker.detail, glowing: step)
             return
         }
+        if let first = bundlePlan?.pending.first {
+            warn(L("Set up \(first.name) before creating the agent."), glowing: .workflows)
+            return
+        }
         var final = agent
+        if let bundlePlan {
+            var ids = final.settings.enabledWorkflowIDs
+            for id in bundlePlan.enabledWorkflowIDs where !ids.contains(id) { ids.append(id) }
+            final.settings.enabledWorkflowIDs = ids
+        }
         // A `preferred` template whose model is still missing falls back to
         // the default model here, explicitly, after the user saw the step.
         if subject.isDraft, let pinned = final.defaultModel, !pinned.isEmpty,
@@ -313,7 +344,7 @@ struct AgentSetupWizardView: View {
     }
 
     private func warn(_ text: String, glowing step: Step) {
-        withAnimation(.easeOut(duration: 0.15)) { footerWarning = text }
+        withAnimation(theme.motion.quick) { footerWarning = text }
         glowClearTask?.cancel()
         glowingStep = nil
         glowingStep = step
@@ -337,7 +368,7 @@ struct AgentSetupWizardView: View {
             change(&working)
             AgentManager.shared.update(working)
         }
-        withAnimation(.easeOut(duration: 0.15)) { footerWarning = nil }
+        withAnimation(theme.motion.quick) { footerWarning = nil }
         refresh(rebuildSteps: false)
     }
 
@@ -351,8 +382,13 @@ struct AgentSetupWizardView: View {
             fresh = Self.downgradeModelToAdvisory(fresh, requested: template.agent.model.valueOrNil)
         }
         report = fresh
+        if let template, !template.workflowReferences.isEmpty {
+            bundlePlan = AgentBundlePlan.make(for: template)
+        }
         if rebuildSteps {
-            steps = Step.steps(for: fresh)
+            var fresh = Step.steps(for: fresh)
+            if bundlePlan != nil { fresh.insert(.workflows, at: fresh.count - 1) }
+            steps = fresh
             current = steps.first ?? .review
         }
     }
@@ -392,14 +428,7 @@ struct AgentSetupWizardView: View {
     private func stepContent(agent: Agent, report: SetupReport) -> some View {
         let items = current.items(in: report)
         VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 10) {
-                Image(systemName: current.icon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text(current.title)
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-            }
+            SettingsDetailHeader(icon: current.icon, title: current.title)
             switch current {
             case .model:
                 ModelStep(
@@ -414,6 +443,17 @@ struct AgentSetupWizardView: View {
                 PermissionsStep(
                     items: items, doneText: L("Every permission this agent needs is granted."),
                     onChanged: { refresh(rebuildSteps: false) })
+            case .workflows:
+                if let bundlePlan {
+                    BundledWorkflowsStep(
+                        plan: bundlePlan, agentModel: agent.defaultModel, oneModelForAll: $oneModelForAll,
+                        onSetUp: {
+                            let subjects = bundlePlan.setupSubjects(
+                                oneModel: oneModelForAll ? agent.defaultModel : nil)
+                            guard !subjects.isEmpty else { return }
+                            workflowSetup = WorkflowBundleSetupRequest(subjects: subjects)
+                        })
+                }
             case .review:
                 ReviewStep(
                     agent: agent, report: report, isDraft: subject.isDraft,
@@ -438,8 +478,6 @@ private struct ModelStep: View {
     /// so it can be resumed.
     let onBrowseModels: () -> Void
 
-    @State private var showPicker = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if items.isEmpty {
@@ -462,59 +500,18 @@ private struct ModelStep: View {
     /// Same dropdown as the Create Agent sheet's Default Model field.
     private var modelField: some View {
         VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Default Model")
-            Button {
-                showPicker.toggle()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "cube.fill")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(agent.defaultModel == nil ? theme.tertiaryText : theme.accentColor)
-                    if let model = agent.defaultModel, !model.isEmpty {
-                        Text(model.split(separator: "/").last.map(String.init) ?? model)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(items.isEmpty ? theme.primaryText : theme.warningColor)
-                            .lineLimit(1)
-                    } else {
-                        Text("Default (from global settings)", bundle: .module)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.placeholderText)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1))
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .popover(isPresented: $showPicker, arrowEdge: .bottom) {
-                ModelPickerView(
-                    options: pickerCache.items,
-                    selectedModel: Binding(
-                        get: { agent.defaultModel },
-                        set: { newModel in
-                            mutate { $0.defaultModel = newModel }
-                            showPicker = false
-                        }),
-                    agentId: nil,
-                    footerActions: [
-                        ModelPickerFooterAction(
-                            id: "add-provider", title: L("Add a provider"), icon: "cloud"
-                        ) { onAddProvider() },
-                        ModelPickerFooterAction(
-                            id: "download-model", title: L("Download a model"), icon: "arrow.down.circle"
-                        ) { onBrowseModels() },
-                    ],
-                    onDismiss: { showPicker = false }
-                )
-            }
+            SettingsFieldLabel("Default Model")
+            ModelSearchablePicker(
+                items: pickerCache.items,
+                selection: Binding(
+                    get: { agent.defaultModel.flatMap { $0.isEmpty ? nil : $0 } },
+                    set: { newModel in mutate { $0.defaultModel = newModel } }),
+                noneTitle: L("Default (from global settings)"),
+                actions: [
+                    .init(id: "add-provider", title: L("Add a provider"), icon: "cloud", handler: onAddProvider),
+                    .init(id: "download-model", title: L("Download a model"), icon: "arrow.down.circle", handler: onBrowseModels),
+                ]
+            )
         }
     }
 }
@@ -535,8 +532,8 @@ private struct FolderStep: View {
                 StepIssueList(items: items)
                 if let hint = agent.workingFolderPath {
                     Text("Hint from the agent's author: \(hint)", bundle: .module)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(2)
                         .truncationMode(.middle)
                 }
@@ -607,26 +604,29 @@ private struct KnowledgeStep: View {
             }
             if collections.isEmpty {
                 Text("No knowledge collections exist on this Mac yet.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    AgentSheetSectionLabel("Grant Collections")
+                    SettingsFieldLabel("Grant Collections")
                         .frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(collections) { collection in
                         let granted = agent.settings.knowledgeCollectionIds.contains(collection.id)
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(collection.name).font(.system(size: 12, weight: .medium)).foregroundColor(theme.primaryText)
-                                Text(collection.folderPath).font(.system(size: 10)).foregroundColor(theme.tertiaryText).lineLimit(1).truncationMode(.middle)
+                                Text(collection.name).font(SettingsFont.compactLabel).foregroundColor(
+                                    theme.text.primary
+                                )
+                                Text(collection.folderPath).font(SettingsFont.footnote).foregroundColor(
+                                    theme.text.tertiary
+                                ).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer(minLength: 12)
                             Toggle("", isOn: Binding(get: { granted }, set: { on in setGrant(collection.id, on) }))
-                                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                                .labelsHidden()
+                                .settingsSwitch()
                         }
-                        .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.6)))
+                        .padding(theme.space.s8)
+                        .settingsChrome(.inset)
                         .frame(maxWidth: .infinity)
                     }
                 }
@@ -696,11 +696,8 @@ private struct ToolsStep: View {
                 if !missingNames.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(missingNames, id: \.self) { name in
-                            Text(name)
-                                .font(.system(size: 10, design: .monospaced))
-                                .padding(.horizontal, 6).padding(.vertical, 3)
-                                .background(Capsule().fill(theme.tertiaryBackground))
-                                .foregroundColor(theme.secondaryText)
+                            StatusChip(name, tone: .neutral)
+                                .foregroundColor(theme.text.secondary)
                         }
                     }
                 }
@@ -739,8 +736,8 @@ private struct ReviewStep: View {
         VStack(alignment: .leading, spacing: 16) {
             if isDraft {
                 VStack(alignment: .leading, spacing: 6) {
-                    AgentSheetSectionLabel("Agent Name")
-                    StyledTextField(placeholder: L("e.g., Invoice Bot"), text: $name, icon: "textformat")
+                    SettingsFieldLabel("Agent Name")
+                    SettingsTextField(placeholder: L("e.g., Invoice Bot"), text: $name, icon: "textformat")
                         .onChange(of: name) { _, newValue in onRename(newValue) }
                 }
                 summary
@@ -757,15 +754,18 @@ private struct ReviewStep: View {
                         : "Some items still block this agent. Go back to fix them, or choose Later to keep the agent as is.",
                     bundle: .module
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .textStyle(.caption)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 AgentSetupChecklistView(report: report)
             } else {
-                Text("Nothing blocks this agent. The notes below are worth a look but do not stop it from running.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "Nothing blocks this agent. The notes below are worth a look but do not stop it from running.",
+                    bundle: .module
+                )
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 AgentSetupChecklistView(report: report)
             }
         }
@@ -774,7 +774,7 @@ private struct ReviewStep: View {
 
     private var summary: some View {
         VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("What Will Be Created")
+            SettingsFieldLabel("What Will Be Created")
             VStack(alignment: .leading, spacing: 4) {
                 row("cube", agent.defaultModel.map { $0.split(separator: "/").last.map(String.init) ?? $0 } ?? L("Default Model"))
                 if agent.toolSelectionMode == .manual {
@@ -788,16 +788,139 @@ private struct ReviewStep: View {
                 if agent.memoryEnabled { row("brain", L("Memory on")) }
                 if let path = agent.workingFolderPath, !path.isEmpty { row("folder", path) }
             }
-            .padding(12)
+            .padding(theme.space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(theme.tertiaryBackground.opacity(0.6)))
+            .settingsChrome(.inset)
         }
     }
 
     private func row(_ icon: String, _ text: String) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: icon).font(.system(size: 11)).foregroundColor(theme.tertiaryText).frame(width: 14)
-            Text(text).font(.system(size: 12)).foregroundColor(theme.secondaryText).lineLimit(1).truncationMode(.middle)
+            Image(systemName: icon).glyphSize(11).foregroundColor(theme.text.tertiary).frame(width: 14)
+            Text(text).font(SettingsFont.caption).foregroundColor(theme.text.secondary).lineLimit(1).truncationMode(
+                .middle
+            )
+        }
+    }
+}
+
+// MARK: - Workflows
+
+struct WorkflowBundleSetupRequest: Identifiable {
+    let id = UUID()
+    let subjects: [WorkflowSetupSubject]
+}
+
+/// The workflows the template's agent calls. They are set up together in
+/// one pass before the agent is created; requirements several of them share
+/// are asked once.
+private struct BundledWorkflowsStep: View {
+    @Environment(\.theme) private var theme
+    let plan: AgentBundlePlan
+    let agentModel: String?
+    @Binding var oneModelForAll: Bool
+    let onSetUp: () -> Void
+
+    private var needsWork: Bool {
+        plan.rows.contains {
+            switch $0.state {
+            case .notInstalled, .updateAvailable: return true
+            case .installed, .missingTemplate: return false
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if plan.pending.isEmpty {
+                StepDoneBanner(text: L("Every workflow this agent calls is installed."))
+            } else {
+                Text("Set up these workflows in one pass. The agent is created with them turned on.", bundle: .module)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
+            }
+            ForEach(plan.rows) { row in
+                HStack(spacing: 10) {
+                    Image(systemName: icon(row.state))
+                        .foregroundColor(color(row.state))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.name)
+                            .font(SettingsFont.rowTitle)
+                            .foregroundColor(theme.text.primary)
+                        Text(status(row))
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
+                    }
+                    Spacer()
+                }
+                .padding(theme.space.s8)
+                .settingsChrome(.inset)
+            }
+            if needsWork {
+                Button(action: onSetUp) {
+                    Text(plan.pending.isEmpty ? "Update Workflows…" : "Set Up Workflows…", bundle: .module)
+                }
+                .assignedSettingsButtonStyle(.primary)
+            }
+            if plan.rows.contains(where: { $0.template?.requirements.models.isEmpty == false }) {
+                Toggle(isOn: $oneModelForAll) {
+                    Text(
+                        agentModel.map { L("Use \($0) for every workflow model slot") }
+                            ?? L("Use one model for every workflow model slot (pick the agent's model first)"))
+                        .font(SettingsFont.caption)
+                }
+                .settingsCheckbox()
+                .disabled(agentModel == nil)
+            }
+            sharedRequirements
+        }
+    }
+
+    @ViewBuilder
+    private var sharedRequirements: some View {
+        let shared = plan.sharedRequirements
+        let lines = [
+            (L("Secrets"), shared.secrets), (L("MCP Servers"), shared.mcpServers), (L("Plugins"), shared.plugins),
+            (L("Permissions"), shared.permissions),
+        ].filter { !$0.1.isEmpty }
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Needed across these workflows", bundle: .module)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
+                ForEach(lines, id: \.0) { line in
+                    Text("\(line.0): \(line.1.joined(separator: ", "))")
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
+                }
+            }
+        }
+    }
+
+    private func status(_ row: AgentBundlePlan.Row) -> String {
+        switch row.state {
+        case .installed: return L("Installed. The agent uses the copy on this Mac.")
+        case .updateAvailable(_, let local):
+            return L("Installed at version \(local); the template pins version \(row.reference.minVersion).")
+        case .notInstalled: return L("Not installed yet.")
+        case .missingTemplate: return L("Not included in this template. The agent is created without it.")
+        }
+    }
+
+    private func icon(_ state: AgentBundlePlan.Row.State) -> String {
+        switch state {
+        case .installed: return "checkmark.circle.fill"
+        case .updateAvailable: return "arrow.up.circle"
+        case .notInstalled: return "circle.dashed"
+        case .missingTemplate: return "exclamationmark.triangle"
+        }
+    }
+
+    private func color(_ state: AgentBundlePlan.Row.State) -> Color {
+        switch state {
+        case .installed: return theme.status.success.foreground
+        case .updateAvailable, .missingTemplate: return theme.status.warning.foreground
+        case .notInstalled: return theme.text.secondary
         }
     }
 }

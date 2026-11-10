@@ -81,7 +81,7 @@ public struct AgentImportResult: Codable, Sendable {
 /// owning agent's `AgentScheduleSettings` and applies the clamp ladder; the
 /// `scheduledBy` field distinguishes a self-scheduled run (`.agent`) from
 /// a user edit in the Next Run panel (`.user`) so the audit trail in
-/// `_changelog` + `agent_next_run.scheduled_by` reads correctly (spec §9.5).
+/// `_changelog` + the wake's `scheduled_by` reads correctly (spec §9.5).
 public struct AgentScheduleRequest: Codable, Sendable {
     public var scheduledAt: Date
     public var instructions: String
@@ -123,7 +123,7 @@ public enum AgentScheduleClampReason: String, Codable, Sendable, CaseIterable {
 
 /// Returned by `bridge.scheduleNextRun(...)`.
 public struct AgentScheduleResult: Codable, Sendable {
-    /// What we actually persisted into `agent_next_run`. `nil` when the
+    /// The wake that was actually armed. `nil` when the
     /// schedule was rejected outright (e.g. `daily_cap` exhausted).
     public var entry: NextRunEntry?
     /// True iff the bridge moved `scheduledAt` to satisfy a clamp.
@@ -277,10 +277,9 @@ public protocol AgentRuntimeBridge: Sendable {
     /// quiet_hours, daily_cap) against the supplied bounds and persist
     /// the result.
     ///
-    /// `bounds` is passed in (rather than read inside the bridge) because
-    /// `AgentManager` is `@MainActor` isolated and the bridge runs on a
-    /// background serial queue — the tool layer resolves the bounds on
-    /// MainActor before crossing into the bridge.
+    /// The slot is the agent's owned schedule automation, so the slot
+    /// methods run on the main actor. `bounds` is resolved by the caller.
+    @MainActor
     @discardableResult
     func scheduleNextRun(
         agentId: UUID,
@@ -288,15 +287,17 @@ public protocol AgentRuntimeBridge: Sendable {
         bounds: AgentScheduleSettings
     ) throws -> AgentScheduleResult
 
-    /// Clear the agent's next-run slot, if any. Returns whether a row
-    /// was actually deleted. Idempotent.
+    /// Disarm the agent's next-run slot, if any. Returns whether one was
+    /// pending. Idempotent.
+    @MainActor
     @discardableResult
     func cancelNextRun(agentId: UUID) throws -> Bool
 
     /// Read the current next-run slot, if any.
+    @MainActor
     func nextRun(agentId: UUID) throws -> NextRunEntry?
 
-    /// Pause / unpause the agent — short-circuits the scheduler.
+    /// Pause / unpause the agent — a paused agent's wake waits.
     func pauseAgent(
         agentId: UUID,
         until: Date,

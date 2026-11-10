@@ -57,27 +57,27 @@ struct HeadlessLoadIntentTests {
 
     // MARK: - The trap
 
-    @Test("Run Now stays interactive even though it is a schedule")
-    func runNowIsNotBackground() throws {
-        let src = try Self.source("Managers/ScheduleManager.swift")
+    @Test("Fire Now stays interactive even though it is a schedule")
+    func fireNowIsNotBackground() throws {
+        // Fire Now and the timer both submit a schedule occurrence that reaches
+        // the same executor with the SAME `source: .schedule`. Only the explicit
+        // intent tells them apart. If someone "simplifies" this by inferring
+        // intent from `source`, Fire Now silently stops being able to load its
+        // model whenever another model is resident — and it will look like a
+        // hang, not a refusal. Each adapter's `fireNow` sets it.
+        let schedule = try Self.source("Services/Event/ScheduleEventSource.swift")
+        #expect(schedule.contains("trigger: .manual, loadIntent: .interactive"))
+        #expect(schedule.contains("loadIntent: .background"))
+        let webhook = try Self.source("Services/Event/WebhookEventSource.swift")
+        #expect(webhook.contains("trigger: .manual, loadIntent: .interactive"))
 
-        // `runNow` and the cron fire call the SAME `executeSchedule` with the SAME
-        // `source: .schedule`. Only the explicit intent tells them apart. If someone
-        // "simplifies" this by inferring intent from `source`, the Run Now button
-        // silently stops being able to load its model whenever another model is
-        // resident — and it will look like a hang, not a refusal.
-        #expect(src.contains("executeSchedule(schedule, loadIntent: .interactive)"))
-        #expect(src.contains("executeSchedule(schedule, loadIntent: .background"))
-        #expect(
-            !src.contains("executeSchedule(schedule)\n"),
-            "every executeSchedule call must state its intent explicitly"
-        )
-
-        // Same shared-builder trap in the Next Run panel: the automatic wake and the
-        // panel's own "Run now" button both go through `makeDispatchRequest`.
-        let scheduler = try Self.source("Managers/NextRunScheduler.swift")
-        #expect(scheduler.contains("makeDispatchRequest(for: entry, loadIntent: .background)"))
+        // Same trap in the Next Run panel: a self-scheduled wake and the panel's
+        // own "Run now" button both fire the agent's wake automation, so the
+        // dispatch takes the occurrence's intent instead of fixing one.
+        let wakes = try Self.source("Services/Event/SelfScheduleAutomations.swift")
+        #expect(wakes.contains("loadIntent: occurrence.loadIntent"))
         let panel = try Self.source("Views/Agent/NextRunPanelView.swift")
+        #expect(panel.contains("EventManager.shared.fireNow(wake.id)"))
         #expect(
             !panel.contains("loadIntent: .background"),
             "the Next Run panel button is a human pressing it — it must not be background"
@@ -86,8 +86,30 @@ struct HeadlessLoadIntentTests {
 
     @Test("Every autonomous trigger is background")
     func autonomousTriggersAreBackground() throws {
-        let watcher = try Self.source("Managers/WatcherManager.swift")
-        #expect(watcher.contains("loadIntent: .background"))
+        // A folder's first Fire Now pass is the only interactive folder run.
+        let folder = try Self.source("Services/Event/FolderEventSource.swift")
+        #expect(folder.contains("loadIntent: trigger == .manual && iteration == 1 ? .interactive : .background"))
+        let webhook = try Self.source("Services/Event/WebhookEventSource.swift")
+        #expect(webhook.contains("isExternal: true, loadIntent: .background"))
+        // Every channel kind (Email included) reaches agents through the relay.
+        let relay = try Self.source("Services/AgentChannel/AgentChannelInboundRelay.swift")
+        #expect(relay.contains("externalSurface: true,\n                loadIntent: .background"))
+    }
+
+    @Test("An event's intent reaches the dispatch unchanged")
+    @MainActor
+    func eventIntentReachesTheDispatch() {
+        let action = AgentEventAction(target: .local(UUID()), instructions: "digest")
+        let event = OsaurusEvent(
+            name: "Digest", source: .schedule(ScheduleSourceConfig(frequency: .daily(hour: 8, minute: 0))),
+            action: .agent(action))
+        for intent in [ModelLoadIntent.background, .interactive] {
+            let occurrence = EventOccurrence(eventId: event.id, payload: .object([:]), loadIntent: intent)
+            let request = AgentTurnWorker.dispatchRequest(event: event, action: action, occurrence: occurrence)
+            #expect(request.loadIntent == intent)
+            #expect(request.source == .automation)
+            #expect(request.automationKind == .schedule)
+        }
     }
 
     // MARK: - The session's provenance must survive to the engine
@@ -106,7 +128,11 @@ struct HeadlessLoadIntentTests {
             !chatView.contains("ChatEngine(source: .chatUI)"),
             "the engine must take the session's real source, not a hardcoded .chatUI"
         )
-        #expect(chatView.contains("chatEngineFactory(source.inferenceSource)"))
+        #expect(chatView.contains("chatEngineFactory(runtimeSource.inferenceSource)"))
+        for kind in [EventSourceKind.schedule, .folder, .webhook] {
+            #expect(SessionSource.automation.runtimeSource(automationKind: kind) == kind.sessionSource)
+            #expect(SessionSource.automation.runtimeSource(automationKind: kind).inferenceSource != .chatUI)
+        }
     }
 
     @Test("Autonomous sources map to a provenance that is not chatUI")

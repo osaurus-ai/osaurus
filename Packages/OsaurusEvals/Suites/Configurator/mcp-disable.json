@@ -1,0 +1,41 @@
+{
+  "id": "configurator.mcp-disable",
+  "domain": "configurator",
+  "label": "configurator • disable an MCP server (enabled: false patch)",
+  "query": "Disable the MCP server named \"Acme Tools\" for now.",
+  "notes": "\"Disable\" maps to an mcp_servers entry carrying `enabled: false` (merge semantics: the entry patches the existing server by name). A REAL enabled server is seeded under the referenced name (autoConnect off, non-routable URL — never dials) so the disable is an actual change: with an empty store an honest inspect-first model correctly reports \"no such server\" and the case punished exactly the read-first pattern the delete rubrics reward. (Before the runner's registry sweep existed, this case only passed by accident — it patched the \"Acme Tools\" server LEAKED by mcp-add.)",
+  "fixtures": {
+    "seedMCPServers": [
+      {
+        "id": "4e7b2a9c-6d13-4f85-a920-3c8e5b7d1f64",
+        "name": "Acme Tools"
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "acme"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "false"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

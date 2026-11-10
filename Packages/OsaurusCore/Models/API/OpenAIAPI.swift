@@ -743,10 +743,11 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// keeps going when its connection drops, and the phone rejoins it by
     /// this id (docs/MOBILE_PROTOCOL.md §6.4). Owner callers only.
     var osaurus_run_id: String? = nil
-    /// Osaurus Connect: this run is a turn of a voice call on the phone. The
-    /// reply is spoken, so the run asks the model for a short, plain answer,
-    /// placed after the conversation and never saved with it
-    /// (docs/MOBILE_PROTOCOL.md §6.5). Owner callers only.
+    /// Osaurus Connect: this run is a turn of a voice call on the phone. It
+    /// keeps the call's turns lean (no web search for local models, the
+    /// call's warm model kept). The phone sends its own spoken-reply note as
+    /// a system message; the Mac adds none (docs/MOBILE_PROTOCOL.md §6.5).
+    /// Owner callers only.
     var osaurus_voice_call: Bool? = nil
     /// Osaurus Connect: how the Privacy Filter treats this voice-call turn,
     /// as the user chose when the call started: `off` sends it as written,
@@ -754,6 +755,14 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// the owner on the Secure Channel
     /// (docs/MOBILE_PROTOCOL.md §6.5).
     var osaurus_privacy: String? = nil
+    /// Shared-agent runs: `"host"` means the caller sends only its new
+    /// message with `session_id`, and the host's transcript of that
+    /// conversation is the history (docs/MOBILE_PROTOCOL.md §21.3). Absent:
+    /// the caller replays the conversation, as before.
+    var osaurus_history: String? = nil
+    /// Shared-agent runs: a colleague's agent identifying itself, signed by
+    /// its agent key (docs/MOBILE_PROTOCOL.md §21.5).
+    var osaurus_caller: OsaurusCallerDeclaration? = nil
     /// Deterministic-sampling seed (OpenAI v1.x). When set, identical
     /// requests should yield identical completions on the same backend.
     var seed: Int? = nil
@@ -854,6 +863,13 @@ struct ChatCompletionRequest: Codable, Sendable {
         get { inferenceContext.remoteAgentProviderId }
         set { inferenceContext.remoteAgentProviderId = newValue }
     }
+    /// Local-only, Mode 2: the local agent on whose behalf the remote agent
+    /// runs, so the request carries an `osaurus_caller` signed by that
+    /// agent. Not decoded from OpenAI JSON, not sent to providers.
+    var remoteAgentCallerId: UUID? {
+        get { inferenceContext.remoteAgentCallerId }
+        set { inferenceContext.remoteAgentCallerId = newValue }
+    }
     /// Local-only: when true, model-load and prefill progress are not surfaced
     /// through `InferenceProgressManager` (background warm-up requests).
     var suppressProgressUI: Bool {
@@ -936,6 +952,7 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// never encoded into a request forwarded to a provider.
     private enum OsaurusCodingKeys: String, CodingKey {
         case osaurus_session_id, osaurus_create_session, osaurus_run_id, osaurus_voice_call, osaurus_privacy
+        case osaurus_history, osaurus_caller
     }
 
     /// vLLM / SGLang / vmlx-py carry template switches in `chat_template_kwargs`.
@@ -1093,6 +1110,8 @@ extension ChatCompletionRequest {
         osaurus_run_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_run_id)
         osaurus_voice_call = try osaurus.decodeIfPresent(Bool.self, forKey: .osaurus_voice_call)
         osaurus_privacy = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_privacy)
+        osaurus_history = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_history)
+        osaurus_caller = try? osaurus.decodeIfPresent(OsaurusCallerDeclaration.self, forKey: .osaurus_caller)
     }
 }
 
@@ -1100,9 +1119,21 @@ extension ChatCompletionRequest {
 /// and request-local constrained decoding rather than dropping unknown fields.
 struct ResponseFormat: Codable, Sendable, Equatable {
     let type: String
+    /// Set only for `type == "json_schema"`: API callers asking the local
+    /// runtime for constrained decoding, and workflow inference nodes
+    /// forwarding their output schema to a cloud provider.
     var json_schema: ResponseJSONSchema? = nil
+
+    /// The strict provider-wire form of a workflow node schema (see
+    /// `StructuredOutputSchema.strictWire`).
+    static func jsonSchema(_ schema: JSONValue, name: String = StructuredOutputSchema.defaultName) -> ResponseFormat {
+        ResponseFormat(
+            type: "json_schema",
+            json_schema: ResponseJSONSchema(name: name, schema: StructuredOutputSchema.strictWire(schema), strict: true))
+    }
 }
 
+/// OpenAI `response_format.json_schema` body.
 struct ResponseJSONSchema: Codable, Sendable, Equatable {
     let name: String
     var description: String? = nil
@@ -1708,10 +1739,4 @@ extension Tool {
         }
         return JSONCanonicalization.normalizeObject(value)
     }
-}
-
-// Typed access preserves unknown template variables without coercing strings.
-extension JSONValue {
-    var boolValue: Bool? { if case .bool(let value) = self { return value }; return nil }
-    var stringValue: String? { if case .string(let value) = self { return value }; return nil }
 }

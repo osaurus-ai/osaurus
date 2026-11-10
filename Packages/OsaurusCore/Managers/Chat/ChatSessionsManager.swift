@@ -28,32 +28,13 @@ final class ChatSessionsManager: ObservableObject {
     /// toucher.
     private(set) static var isInstantiated = false
 
-    /// Launch-prewarm entry point: create `shared` with the database queue
-    /// warmed. The first toucher of `shared` pays a synchronous
-    /// `loadAll()` on the main actor, and when that toucher is the
-    /// speculative ChatView prewarm, `queue.sync` inside the database can
-    /// park the launch main thread behind whatever the serial queue is
-    /// busy with (post-open maintenance, a checkpoint, a large write).
-    /// Draining the queue once off the main actor first means init's load
-    /// runs against an idle queue. The sync-load-in-init contract for real
-    /// windows is unchanged — this only reorders who pays first.
-    ///
-    /// Same readiness gate as `prewarmChatView`: with encrypted storage and
-    /// the key not yet resident, `ensureOpen` returns before scheduling any
-    /// open, and nothing later reloads a manager created empty — the first
-    /// real window would show an empty sidebar. Skipping is safe; the first
-    /// window creates `shared` on demand once the key is resident.
+    /// Launch-prewarm entry point: open the sync core off the main actor,
+    /// then create `shared`, so init's synchronous `loadAll()` doesn't pay
+    /// the open (Keychain read, database open) on the launch main thread.
     static func prewarmShared() async {
         guard !isInstantiated else { return }
-        guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
-        if ChatHistoryDatabase.shared.isOpenNonBlocking {
-            let db = ChatHistoryDatabase.shared
-            // `isOpen` is a `queue.sync` no-op: it waits behind whatever the
-            // serial queue is busy with without paying a full metadata decode
-            // that init would only repeat.
-            _ = await Task.detached(priority: .userInitiated) {
-                db.isOpen
-            }.value
+        if !SyncService.shared.isOpen {
+            await Task.detached(priority: .userInitiated) { _ = try? SyncService.shared.open() }.value
         }
         _ = ChatSessionsManager.shared
     }
@@ -89,14 +70,33 @@ final class ChatSessionsManager: ObservableObject {
                 }
                 .store(in: &cancellables)
 
-            // The initial load can also be deferred because the background
-            // prewarm was still mid-open (ChatSessionStore.ensureOpen no
-            // longer waits behind an in-flight open on the main thread).
-            // Reload once the database reports open.
-            NotificationCenter.default.publisher(for: ChatHistoryDatabase.didOpenNotification)
+            // The initial load can also be deferred because the sync core
+            // was still opening off the main thread. Reload once it's open.
+            NotificationCenter.default.publisher(for: SyncService.didOpenNotification)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
                     ChatSessionStore.flushPendingSaves()
+                    self?.refresh()
+                }
+                .store(in: &cancellables)
+
+            SyncInboundApplier.shared.start()
+            SyncLegacyImporter.shared.startIfNeeded()
+            SyncStatusModel.shared.start()
+            SyncWalletLink.start()
+            SyncAgentDirectory.shared.start()
+            SyncHostRunner.shared.start()
+            SyncAttentionFeed.shared.start()
+            SyncManageFeed.shared.start()
+            SyncManageDetail.shared.start()
+            SyncServedChats.shared.start()
+            SyncHostedRunMonitor.shared.start()
+            SyncReachabilityPrompt.shared.start()
+
+            // Pairing, recovery, rotation or sign-out replaced what's stored.
+            NotificationCenter.default.publisher(for: SyncService.didReplaceIdentityNotification)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
                     self?.refresh()
                 }
                 .store(in: &cancellables)
@@ -153,7 +153,11 @@ final class ChatSessionsManager: ObservableObject {
         // never by the local agent whose tab hosted them. Host-side rows
         // served FOR a teammate (`source == .workspace`) stay under the
         // local shared agent, tagged with the caller.
-        let local = sessions.filter { !$0.isWorkspaceAgentChat }
+        // Chats another Mac hosts or served list under that Mac's agent instead.
+        let me = SyncService.shared.core?.deviceKey()
+        let local = sessions.filter {
+            !$0.isWorkspaceAgentChat && ($0.hostDevice == nil || $0.hostDevice == me) && $0.servedElsewhere(me: me) == nil
+        }
         // When Default agent is selected, show ALL sessions
         if agentId == nil || agentId == Agent.defaultId {
             return local
@@ -167,6 +171,12 @@ final class ChatSessionsManager: ObservableObject {
     func sessions(forRemoteAgentAddress address: String) -> [ChatSessionData] {
         let lowered = address.lowercased()
         return sessions.filter { $0.isWorkspaceAgentChat && $0.workspace?.agentAddress == lowered }
+    }
+
+    /// History with `agentId`, an agent the Mac `device` runs: the user's
+    /// chats it hosts and the ones it served for other people.
+    func sessions(forHost device: String, agentId: UUID) -> [ChatSessionData] {
+        sessions.filter { ($0.hostDevice == device || $0.servedBy == device) && $0.agentId == agentId }
     }
 
     /// Save a session (updates the in-memory list without full disk reload)
@@ -192,6 +202,7 @@ final class ChatSessionsManager: ObservableObject {
             currentSessionId = nil
         }
         sessions.removeAll { $0.id == id }
+        AttentionProducers.conversationDeleted(id)
         // Drop the session's file history and collect its now-unreferenced
         // snapshot blobs.
         Task { await FileChangeJournal.shared.purgeSession(id.uuidString) }
@@ -223,6 +234,7 @@ final class ChatSessionsManager: ObservableObject {
         }
         sessions.removeAll { idSet.contains($0.id) }
         for id in ids {
+            AttentionProducers.conversationDeleted(id)
             Task { await FileChangeJournal.shared.purgeSession(id.uuidString) }
             Task { await HarnessSessionManager.shared.close(chatId: id) }
         }
@@ -258,9 +270,9 @@ final class ChatSessionsManager: ObservableObject {
         ChatSessionStore.renameTitleAsync(id: id, title: title, updatedAt: session.updatedAt)
         // A registry-shared live instance saves itself in full
         // on turn finalize; sync its title or that save clobbers the rename.
-        // (The window-attached case is synced by the sidebar callback; this
-        // covers a live session no window is viewing.)
+        // Open tabs save in full when their window closes, so they follow too.
         LiveChatSessionRegistry.shared.registeredSession(for: id)?.title = title
+        for live in ChatWindowManager.shared.sessions(forSessionId: id) { live.title = title }
         (retainedTaskManager ?? BackgroundTaskManager.sharedIfInitialized)?
             .synchronizeCanonicalTitle(id, title: title)
         upsertInMemory(session)
@@ -302,7 +314,7 @@ final class ChatSessionsManager: ObservableObject {
     /// phone's list. Retitles them once from what was asked; the transcript
     /// is read off the main thread, and `updatedAt` is left alone.
     func retitleLegacyPhoneChats() {
-        let legacyPrefix = "\(MobilePairingService.legacyKeyLabel) → "
+        let legacyPrefix = "Osaurus Connect → "
         let stale = sessions.filter {
             $0.title.hasPrefix(legacyPrefix) && RemoteSessionContinuation.isFromPairedPhone($0)
         }.map(\.id)
@@ -334,6 +346,7 @@ final class ChatSessionsManager: ObservableObject {
         ChatSessionStore.setArchivedAsync(id: id, archived: archived)
         // Same live-instance sync as `rename` — see the note there.
         LiveChatSessionRegistry.shared.registeredSession(for: id)?.archived = archived
+        for live in ChatWindowManager.shared.sessions(forSessionId: id) { live.archived = archived }
         upsertInMemory(session)
     }
 
@@ -351,6 +364,7 @@ final class ChatSessionsManager: ObservableObject {
         ChatSessionStore.setPinnedAsync(id: id, pinned: pinned)
         // Same live-instance sync as `rename` — see the note there.
         LiveChatSessionRegistry.shared.registeredSession(for: id)?.pinned = pinned
+        for live in ChatWindowManager.shared.sessions(forSessionId: id) { live.pinned = pinned }
         upsertInMemory(session)
     }
 
@@ -412,6 +426,11 @@ final class ChatSessionsManager: ObservableObject {
         sessions.first { $0.id == id }
     }
 
+    /// Takes metadata another device changed into the list.
+    func applyRemote(_ changed: [ChatSessionData]) {
+        for session in changed { upsertInMemory(session) }
+    }
+
     // MARK: - Private
 
     /// Insert or replace a session in the in-memory array, maintaining updatedAt descending order.
@@ -421,7 +440,13 @@ final class ChatSessionsManager: ObservableObject {
     /// state with the session absent — subscribers that race the mutation
     /// (the willSet-timing hazard documented on
     /// `ChatWindowState.observeSessionsManager`) otherwise capture the gap.
+    ///
+    /// The list holds metadata only, like `ChatSessionStore.loadAll()`: a
+    /// saved transcript would otherwise stay resident here for every chat
+    /// touched this launch. Full sessions come from `ChatSessionStore.load`.
     private func upsertInMemory(_ session: ChatSessionData) {
+        var session = session
+        session.turns = []
         var updated = sessions
         if let index = updated.firstIndex(where: { $0.id == session.id }) {
             updated.remove(at: index)

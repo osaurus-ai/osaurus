@@ -1,15 +1,16 @@
 import AppKit
 import SwiftUI
 
-private enum ChatPickerLayout {
-    static let rowHeight = PickerCardMetrics.rowHeight
-    static let rowSpacing = PickerCardMetrics.rowSpacing
+@MainActor private enum ChatPickerLayout {
+    static var rowHeight: CGFloat { ModelPickerInspectionStyle.rowHeight(ThemeManager.shared.currentTheme) }
+    static var rowSpacing: CGFloat { ModelPickerInspectionStyle.metric("elements.layout.rowGap", PickerCardMetrics.rowSpacing, ThemeManager.shared.currentTheme) }
     static let columnWidth: CGFloat = 240
     static let optionsColumnWidth: CGFloat = 200
-    static let columnSpacing: CGFloat = 20
-    static let padding = PickerCardMetrics.padding
+    static var columnSpacing: CGFloat { ModelPickerInspectionStyle.metric("elements.layout.columnGap", 20, ThemeManager.shared.currentTheme) }
+    static let providerIconSize: CGFloat = 16
+    static var padding: CGFloat { ModelPickerInspectionStyle.metric("padding", PickerCardMetrics.padding, ThemeManager.shared.currentTheme) }
     /// Vertical gap between option sections in the third column.
-    static let sectionSpacing = PickerCardMetrics.sectionSpacing
+    static var sectionSpacing: CGFloat { ModelPickerInspectionStyle.metric("elements.layout.sectionGap", PickerCardMetrics.sectionSpacing, ThemeManager.shared.currentTheme) }
     /// Height of a section sub-heading (e.g. "Reasoning Effort") in the
     /// options column, including its bottom gap.
     static let sectionTitleHeight = PickerCardMetrics.sectionTitleHeight
@@ -200,7 +201,7 @@ struct ChatPickerOptionsSnapshot: Equatable {
 
     /// Estimated rendered height of the column body (below the column
     /// heading), for the card frame.
-    var estimatedHeight: CGFloat {
+    @MainActor var estimatedHeight: CGFloat {
         var total: CGFloat = 0
         for (index, section) in sections.enumerated() {
             if index > 0 { total += ChatPickerLayout.sectionSpacing }
@@ -242,6 +243,7 @@ struct ChatModelPickerCard: View {
     let onSizeChange: (CGSize) -> Void
 
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var inspectorEnabled
     @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.anchoredCardMetrics) private var cardMetrics
     @State private var browsedProviderID: String?
@@ -393,7 +395,7 @@ struct ChatModelPickerCard: View {
     var body: some View {
         columns
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .pickerCardSurface()
+            .pickerCardSurface(assignmentFamily: 26)
             .contentShape(Rectangle())
             .onAppear {
                 keyboardNavigation = NSApp.currentEvent?.type == .keyDown
@@ -434,11 +436,12 @@ struct ChatModelPickerCard: View {
                                 max(0, geometry.size.width - twoColumnWidth))
             HStack(alignment: .top, spacing: 0) {
                 providerColumn.frame(width: columnWidth)
-                Color.clear.frame(width: ChatPickerLayout.columnSpacing).accessibilityHidden(true)
+                Color.clear.frame(width: ChatPickerLayout.columnSpacing).nativeCatalogTarget(["component.library.26.elements.layout.columnGap"], "Between picker columns").accessibilityHidden(true)
                 modelColumn.frame(width: columnWidth)
                 optionsSlot(width: slotWidth)
             }
             .padding(ChatPickerLayout.padding)
+            .nativeCatalogTarget(["component.library.26.elements.container.padding"], "Picker inner padding")
             .onChange(of: slotWidth, initial: true) { _, width in
                 visibleOptionsWidth = width
                 if width == 0, currentOptions == nil { retainedOptions = nil }
@@ -448,7 +451,7 @@ struct ChatModelPickerCard: View {
 
     private func optionsSlot(width: CGFloat) -> some View {
         HStack(alignment: .top, spacing: 0) {
-            Color.clear.frame(width: ChatPickerLayout.columnSpacing).accessibilityHidden(true)
+            Color.clear.frame(width: ChatPickerLayout.columnSpacing).nativeCatalogTarget(["component.library.26.elements.layout.columnGap"], "Between picker columns").accessibilityHidden(true)
             Group {
                 if let snapshot = currentOptions ?? retainedOptions {
                     optionsColumn(snapshot)
@@ -489,11 +492,13 @@ struct ChatModelPickerCard: View {
     }
 
     private func heading(_ title: String) -> some View {
-        PickerCardHeading(title)
+        PickerCardHeading(title: title, assignmentFamily: 26) { EmptyView() }
+            .padding(.bottom, ModelPickerInspectionStyle.metric("elements.layout.headingGap", 8, theme))
+            .nativeCatalogTarget(["component.library.26.elements.heading.heading", "component.library.26.elements.body.foreground", "component.library.26.elements.layout.headingGap"], "\(title) heading → content")
     }
 
     private var providerColumn: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             heading(L("Provider"))
             ScrollViewReader { proxy in
                 ScrollView {
@@ -531,13 +536,26 @@ struct ChatModelPickerCard: View {
     }
 
     private var modelColumn: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             heading(L("Model"))
             if (provider?.models.count ?? 0) > 10 {
+                #if OSAURUS_DESIGN_SYSTEM
+                SearchField(text: $search, placeholder: "Find a model", fillsAvailableWidth: true,
+                    onFocusChange: { focused in
+                        if focused { focus = "search" }
+                        else if focus == "search" { focus = nil }
+                    })
+                    .nativeCatalogTarget(["background", "border", "foreground", "placeholder", "text", "radius", "paddingX", "paddingY", "borderWidth"].map { "component.library.26.elements.input." + $0 }, "Model search field")
+                    .padding(.bottom, ModelPickerInspectionStyle.metric("elements.layout.searchResultsGap", 8, theme))
+                    .nativeCatalogTarget(["component.library.26.elements.layout.searchResultsGap"], "Search field → results")
+                    .accessibilityLabel(L("Find a model"))
+                #else
                 TextField(L("Find a model"), text: $search)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel(L("Find a model"))
                     .focused($focus, equals: "search")
+                    .padding(.bottom, theme.space.s8)
+                #endif
             }
             ScrollViewReader { proxy in
                 ScrollView {
@@ -574,7 +592,7 @@ struct ChatModelPickerCard: View {
                                         favorites.toggle(model.favoriteKey)
                                     } label: {
                                         Image(systemName: saved ? "star.fill" : "star")
-                                            .font(.system(size: 13))
+                                            .glyphSize(13)
                                             .frame(width: 28, height: ChatPickerLayout.rowHeight)
                                             .contentShape(Rectangle())
                                     }
@@ -586,11 +604,19 @@ struct ChatModelPickerCard: View {
                                         if keyboardNavigation && focus == "favorite:\(model.id)" {
                                             VStack {
                                                 Spacer()
-                                                Rectangle().fill(theme.secondaryText).frame(height: 1).padding(.horizontal, 6)
+                                                Rectangle().fill(theme.text.secondary).frame(height: 1).padding(
+                                                    .horizontal,
+                                                    6
+                                                )
                                             }
                                         }
                                     }
-                                    .onKeyPress(.return) { favorites.toggle(model.favoriteKey); return .handled }
+                                    .onKeyPress(.return) {
+                                        #if OSAURUS_DESIGN_SYSTEM
+                                        guard inspectorEnabled else { return .ignored }
+                                        #endif
+                                        favorites.toggle(model.favoriteKey); return .handled
+                                    }
                                     .accessibilityLabel("\(saved ? L("Remove from favorites") : L("Add to favorites")): \(model.displayName)")
                                     .help(saved ? L("Remove from favorites") : L("Add to favorites"))
                                 }
@@ -599,10 +625,15 @@ struct ChatModelPickerCard: View {
                             .help(model.displayName)
                         }
                         if models.isEmpty && harnessOptions.isEmpty {
-                            Text(search.isEmpty ? L("Choose a provider to browse models.") : L("No matching models. Try another name."))
-                                .foregroundStyle(theme.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(.vertical, 12)
+                            Text(
+                                search.isEmpty
+                                    ? L("Choose a provider to browse models.")
+                                    : L("No matching models. Try another name.")
+                            )
+                            .modelPickerTextStyle(.bodySmall, property: "text")
+                            .modelPickerInk("secondary", fallback: theme.text.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.vertical, 12)
                         }
                         if let provider, provider.isLocal || provider.isOsaurusCloud {
                             footerButton(L("More models"), key: "more", icon: "arrow.forward") {
@@ -639,13 +670,14 @@ struct ChatModelPickerCard: View {
         // A lone titled section names the column itself instead of nesting
         // under a generic heading.
         let promotedTitle = snapshot.sections.count == 1 ? snapshot.sections.first?.title : nil
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 0) {
             heading(promotedTitle ?? L("Model options"))
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: ChatPickerLayout.sectionSpacing) {
                         ForEach(snapshot.sections) { section in
                             optionsSection(section, in: snapshot, showsTitle: promotedTitle == nil)
+                                .nativeCatalogTarget(["component.library.26.elements.layout.sectionGap"], "Between option sections")
                         }
                     }
                 }
@@ -664,7 +696,7 @@ struct ChatModelPickerCard: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if showsTitle, let title = section.title {
-                PickerCardSectionTitle(title)
+                PickerCardSectionTitle(title: title, assignmentFamily: 26) { EmptyView() }
             }
             VStack(spacing: ChatPickerLayout.rowSpacing) {
                 ForEach(section.rows) { row in
@@ -679,7 +711,7 @@ struct ChatModelPickerCard: View {
                 }
             }
             if let footnote = section.footnote {
-                PickerCardFootnote(text: footnote)
+                PickerCardFootnote(text: footnote, assignmentFamily: 26)
                     .padding(.top, 6)
             }
             if let reset = section.reset {
@@ -721,7 +753,7 @@ struct ChatModelPickerCard: View {
     }
 
     private func footerButton(_ title: String, key: String, icon: String, action: @escaping () -> Void) -> some View {
-        PickerCardTextLink(title: title, icon: icon, focused: keyboardNavigation && focus == key, action: action)
+        PickerCardTextLink(title: title, icon: icon, focused: keyboardNavigation && focus == key, assignmentFamily: 26, action: action)
             .focused($focus, equals: key)
     }
 
@@ -737,22 +769,22 @@ struct ChatModelPickerCard: View {
     @ViewBuilder private func providerIcon(_ provider: ChatModelPickerProvider) -> some View {
         if case .harness(let kind) = provider.kind {
             if kind == .claudeCode {
-                Image("provider-logo-anthropic", bundle: .module).resizable().scaledToFit().frame(width: 16, height: 16)
+                Image("provider-logo-anthropic", bundle: .module).resizable().scaledToFit().frame(width: ChatPickerLayout.providerIconSize, height: ChatPickerLayout.providerIconSize)
             } else {
-                Image(systemName: "terminal").frame(width: 16)
+                Image(systemName: "terminal").frame(width: ChatPickerLayout.providerIconSize)
             }
         } else if provider.isLocal {
-            Image(systemName: "desktopcomputer").frame(width: 16)
+            Image(systemName: "desktopcomputer").frame(width: ChatPickerLayout.providerIconSize)
         } else if provider.isOsaurusCloud {
-            Image("osaurus-logo", bundle: .module).resizable().renderingMode(.template).scaledToFit().frame(width: 16, height: 16)
+            Image("osaurus-logo", bundle: .module).resizable().renderingMode(.template).scaledToFit().frame(width: ChatPickerLayout.providerIconSize, height: ChatPickerLayout.providerIconSize)
         } else {
             let name = provider.title.lowercased()
             if name.contains("openai") || name.contains("chatgpt") {
-                Image("provider-logo-openai", bundle: .module).resizable().scaledToFit().frame(width: 16, height: 16)
+                Image("provider-logo-openai", bundle: .module).resizable().scaledToFit().frame(width: ChatPickerLayout.providerIconSize, height: ChatPickerLayout.providerIconSize)
             } else if name.contains("claude") || name.contains("anthropic") {
-                Image("provider-logo-anthropic", bundle: .module).resizable().scaledToFit().frame(width: 16, height: 16)
+                Image("provider-logo-anthropic", bundle: .module).resizable().scaledToFit().frame(width: ChatPickerLayout.providerIconSize, height: ChatPickerLayout.providerIconSize)
             } else {
-                Image(systemName: "network").frame(width: 16)
+                Image(systemName: "network").frame(width: ChatPickerLayout.providerIconSize)
             }
         }
     }
@@ -801,48 +833,55 @@ private struct ChatPickerRow<Icon: View>: View {
     var trailingSymbol: String? = nil
     let action: () -> Void
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var inspectorEnabled
     @State private var hovered = false
 
-    private var subduedTextColor: Color { theme.isDark ? theme.tertiaryText : theme.secondaryText }
+    private var subduedTextColor: Color { theme.isDark ? theme.text.tertiary : theme.text.secondary }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: ModelPickerInspectionStyle.metric("elements.row.gap", 8, theme)) {
                 icon().accessibilityHidden(true)
                 Text(title)
-                    .font(theme.font(size: CGFloat(theme.smallBodySize)))
-                    .foregroundStyle(muted && !hovered && !focused ? subduedTextColor : theme.primaryText)
+                    .modelPickerTextStyle(.bodySmall, property: "elements.row.label")
+                    .modelPickerInk("elements.row.foreground", fallback: muted && !hovered && !focused ? subduedTextColor : theme.text.primary, muted: muted && !hovered && !focused)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
                 if explore && (hovered || focused) {
                     Text("Explore", bundle: .module)
-                        .font(theme.font(size: 11))
+                        .modelPickerTextStyle(.footnote, property: "elements.row.caption")
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(theme.primaryBackground, in: Capsule())
+                        .background(theme.surface.canvas, in: Capsule())
                 } else if selected {
-                    Image(systemName: "checkmark").font(.system(size: 11, weight: .medium))
+                    Image(systemName: "checkmark").glyphSize(11, weight: .medium)
                         .accessibilityHidden(true)
                 } else if let trailingSymbol {
-                    Image(systemName: trailingSymbol).font(.system(size: 11)).accessibilityHidden(true)
+                    Image(systemName: trailingSymbol).glyphSize(11).accessibilityHidden(true)
                 }
             }
-            .foregroundStyle(muted && !hovered && !focused ? theme.tertiaryText : theme.primaryText)
-            .pickerCardRowChrome(highlighted: selected || hovered || focused)
+            .modelPickerInk("elements.row.accent", fallback: muted && !hovered && !focused ? theme.text.tertiary : theme.text.primary, muted: muted && !hovered && !focused)
+            .modelPickerRowChrome(selected: selected, hovered: hovered, focused: focused)
             .overlay {
                 if focused {
                     VStack {
                         Spacer()
-                        Rectangle().fill(theme.secondaryText).frame(height: 1).padding(.horizontal, 12)
+                        Rectangle().fill(theme.text.secondary).frame(height: 1).padding(.horizontal, 12)
                     }
                 }
             }
         }
-        .buttonStyle(.plain)
+        .nativeCatalogTarget(["radius", "padding", "height", "background", "selected", "hover", "foreground", "label", "gap"].map { "component.library.26.elements.row." + $0 } + ["component.library.26.elements.layout.rowGap"], "Row \(title)")
+        .assignedBasePlainButtonStyle()
         .focusable()
         .focusEffectDisabled()
         .onHover { hovered = $0 }
-        .onKeyPress(.return) { action(); return .handled }
+        .onKeyPress(.return) {
+            #if OSAURUS_DESIGN_SYSTEM
+            guard inspectorEnabled else { return .ignored }
+            #endif
+            action(); return .handled
+        }
         .accessibilityValue(selected ? L("Selected") : "")
         .help(title)
     }

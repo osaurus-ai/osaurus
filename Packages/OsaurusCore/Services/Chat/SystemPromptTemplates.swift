@@ -488,7 +488,7 @@ public enum SystemPromptTemplates {
 
         \(pluginDependenciesBullet)
         - `secrets`: names whose values come from Keychain — registration fails up front if a declared secret has no value yet.
-        - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is forced to `false`.
+        - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is not honored; host inference follows the agent's own setting.
         4. **Write the scripts.** Parameters arrive as `$PARAM_{NAME}` (uppercased) env vars, secrets as `$NAME` env vars; print JSON to stdout, errors to stderr, exit non-zero on failure.
         5. **Register and verify.** Call `sandbox_plugin_register(plugin_id: "{service}")` — it installs deps, runs setup, and makes the tools available immediately (and persists them). Call one to confirm; on failure read stderr, fix, and re-register. Then tell the user what's now available.
 

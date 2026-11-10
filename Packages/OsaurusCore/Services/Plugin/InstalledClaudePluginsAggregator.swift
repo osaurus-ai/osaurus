@@ -47,7 +47,7 @@ public enum ClaudePluginArtifactKind: CaseIterable, Sendable {
     // SwiftUI files), so internal visibility is sufficient.
     func tint(_ theme: any ThemeProtocol) -> Color {
         switch self {
-        case .skill: return theme.accentColor
+        case .skill: return theme.action.primary.default.background
         case .schedule: return .orange
         case .command: return .blue
         case .mcp: return .purple
@@ -302,6 +302,7 @@ extension SlashCommandKind {
         case .template: return "Template"
         case .action: return "Action"
         case .skill: return "Skill"
+        case .workflow: return "Workflow"
         }
     }
 }
@@ -442,7 +443,7 @@ public final class InstalledClaudePluginsAggregator: ObservableObject {
     @Published public private(set) var isCheckingForUpdates: Bool = false
 
     private let skillManager: SkillManager
-    private let scheduleManager: ScheduleManager
+    private let eventManager: EventManager
     private let slashCommands: SlashCommandRegistry
     private let mcpManager: MCPProviderManager
 
@@ -452,12 +453,12 @@ public final class InstalledClaudePluginsAggregator: ObservableObject {
 
     public init(
         skillManager: SkillManager = .shared,
-        scheduleManager: ScheduleManager = .shared,
+        eventManager: EventManager = .shared,
         slashCommands: SlashCommandRegistry = .shared,
         mcpManager: MCPProviderManager = .shared
     ) {
         self.skillManager = skillManager
-        self.scheduleManager = scheduleManager
+        self.eventManager = eventManager
         self.slashCommands = slashCommands
         self.mcpManager = mcpManager
         Task { @MainActor [weak self] in
@@ -472,7 +473,7 @@ public final class InstalledClaudePluginsAggregator: ObservableObject {
         let result = Self.buildPlugins(
             snapshots: ClaudePluginManifestStore.all(),
             skills: skillManager.skills,
-            schedules: scheduleManager.schedules,
+            schedules: eventManager.events.filter { $0.sourceKind == .schedule },
             commands: slashCommands.customCommands,
             providers: mcpManager.configuration.providers,
             availableVersions: availableVersions
@@ -494,7 +495,7 @@ public final class InstalledClaudePluginsAggregator: ObservableObject {
     public nonisolated static func buildPlugins(
         snapshots: [ClaudePluginManifestSnapshot],
         skills: [Skill],
-        schedules: [Schedule],
+        schedules: [OsaurusEvent],
         commands: [SlashCommand],
         providers: [MCPProvider],
         availableVersions: [String: String] = [:]
@@ -542,7 +543,7 @@ public final class InstalledClaudePluginsAggregator: ObservableObject {
             }
         }
         for schedule in schedules {
-            let pluginId = schedule.parameters[ScheduleManager.pluginIdParameterKey]
+            let pluginId = schedule.parameters[OsaurusEvent.pluginIdParameterKey]
             bump(pluginId, \.schedule)
             if let pluginId,
                 ClaudePluginInstalled.isClaudePluginId(pluginId)
@@ -551,11 +552,11 @@ public final class InstalledClaudePluginsAggregator: ObservableObject {
                     InstalledClaudeSchedule(
                         id: schedule.id,
                         name: schedule.name,
-                        frequencyText: schedule.frequency.displayDescription,
+                        frequencyText: schedule.sourceSummary,
                         nextRunText: schedule.nextRunDescription,
                         isEnabled: schedule.isEnabled,
-                        instructions: schedule.instructions,
-                        folderPath: schedule.folderPath,
+                        instructions: schedule.action.agent?.instructions ?? "",
+                        folderPath: schedule.action.agent?.folderPath,
                         lastRunAt: schedule.lastRunAt
                     )
                 )

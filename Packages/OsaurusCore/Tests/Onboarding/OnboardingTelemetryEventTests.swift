@@ -54,7 +54,7 @@ struct OnboardingTelemetryEventTests {
     /// `distribution` dimension (asserted separately below) so the shape
     /// assertions stay focused on each event's own props.
     private func business(_ props: [String: Any]) -> [String: Any] {
-        props.filter { $0.key != "total_memory_gb" && $0.key != "distribution" }
+        props.filter { $0.key != "total_memory_gb" && $0.key != "build_channel" && $0.key != "distribution" }
     }
 
     @Test func started_emits_onboarding_started_with_distribution_only() {
@@ -80,7 +80,7 @@ struct OnboardingTelemetryEventTests {
         OnboardingTelemetry.stepViewed(.welcome, distribution: .full, service: service)
         OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false, distribution: .full, service: service)
         OnboardingTelemetry.stepSkipped(.configureAI, distribution: .full, service: service)
-        OnboardingTelemetry.completed(lastStep: .createAgent, via: .finishButton, distribution: .full, service: service)
+        OnboardingTelemetry.completed(lastStep: .welcome, via: .finishButton, distribution: .full, service: service)
 
         #expect(rec.events.count == 5)
         #expect(rec.events.allSatisfy { $0.props["distribution"] as? String == "full" })
@@ -208,17 +208,16 @@ struct OnboardingTelemetryEventTests {
         #expect(event.props["via"] as? String == "finish_button")
     }
 
-    /// The early-close path carries `close_button`, distinguishing a
-    /// drop-off from a genuine finish on the same `onboarding_completed`
-    /// event.
-    @Test func completed_via_close_button_is_distinct() {
+    /// Skip setup carries `skip_button`, distinguishing a drop-off from a
+    /// genuine finish on the same `onboarding_completed` event.
+    @Test func completed_via_skip_button_is_distinct() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        OnboardingTelemetry.completed(lastStep: .createAgent, via: .closeButton, service: service)
+        OnboardingTelemetry.completed(lastStep: .welcome, via: .skipButton, service: service)
 
         let event = rec.events[0]
-        #expect(event.props["last_step"] as? String == "create_agent")
-        #expect(event.props["via"] as? String == "close_button")
+        #expect(event.props["last_step"] as? String == "welcome")
+        #expect(event.props["via"] as? String == "skip_button")
     }
 }

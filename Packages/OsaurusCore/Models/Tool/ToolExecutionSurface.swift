@@ -63,12 +63,17 @@ public enum ToolExecutionSurface: String, Sendable, Equatable, CaseIterable {
     /// - `hasFolderRoot`: `ChatExecutionContext.currentFolderRoot` is bound.
     /// - `pathArgument`: the routed path argument (`path`, or `destination`
     ///   for `file_copy`), when the model supplied one.
+    /// - `hasWorkflowSandbox`: `ChatExecutionContext.workflowSandbox` is
+    ///   bound, i.e. a workflow with shell or Python steps is running: its
+    ///   shell steps always execute in its sandbox environment.
     static func forContextRoutedTool(
         name: String,
         pathArgument: String?,
         hasSandboxBridge: Bool,
-        hasFolderRoot: Bool
+        hasFolderRoot: Bool,
+        hasWorkflowSandbox: Bool = false
     ) -> ToolExecutionSurface {
+        if hasWorkflowSandbox, name == "shell_run" { return .sandboxVM }
         guard hasSandboxBridge else { return .nativeHost }
         // Pure VM mode: no host root, so every workspace tool serves the VM.
         guard hasFolderRoot else { return .sandboxVM }
@@ -90,31 +95,15 @@ public enum ToolExecutionSurface: String, Sendable, Equatable, CaseIterable {
 
     // MARK: - Presentation
 
-    public var title: String {
-        switch self {
-        case .sandboxVM: L("Sandbox VM")
-        case .nativeHost: L("Native · this Mac")
-        case .remoteServer: L("Remote MCP server")
-        }
-    }
-
     /// One sentence a user can base an approval on.
     public var consentDetail: String {
         switch self {
         case .sandboxVM:
-            L("Runs inside the isolated Linux sandbox. It cannot change files, processes, or apps on this Mac.")
+            L("Runs inside the isolated Linux sandbox. It sees only the sandbox's own folders, not your other files, processes, or apps on this Mac.")
         case .nativeHost:
             L("Runs directly on this Mac with your normal access. Approving can change files, processes, or apps on your host.")
         case .remoteServer:
             L("Runs on a remote MCP server over the network — not on this Mac and not in the sandbox.")
-        }
-    }
-
-    public var symbolName: String {
-        switch self {
-        case .sandboxVM: "shippingbox.fill"
-        case .nativeHost: "desktopcomputer"
-        case .remoteServer: "network"
         }
     }
 }

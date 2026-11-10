@@ -37,6 +37,7 @@ public enum StorageDatabaseCatalog {
     public static func databaseTargets() -> [DatabaseTarget] {
         var targets: [DatabaseTarget] = [
             .init(label: "chat history", path: OsaurusPaths.chatHistoryDatabaseFile().path),
+            .init(label: "file history", path: OsaurusPaths.fileHistoryDatabaseFile().path),
             .init(label: "agent channels", path: OsaurusPaths.agentChannelMessagesDatabaseFile().path),
             .init(label: "memory", path: OsaurusPaths.memoryDatabaseFile().path),
             .init(label: "methods", path: OsaurusPaths.methodsDatabaseFile().path),
@@ -55,6 +56,15 @@ public enum StorageDatabaseCatalog {
             // opener, so it must follow the key on rotation and be part of
             // plaintext export like the other core stores.
             .init(label: "activity log", path: OsaurusPaths.activityLogDatabaseFile().path),
+            // Workflow run records hold node inputs and outputs (client
+            // data), so they follow the key like chat history.
+            .init(label: "workflow runs", path: OsaurusPaths.workflowRunsDatabaseFile().path),
+            // Task history and the automation run ledger hold instructions
+            // and results, so they follow the key and export too.
+            .init(label: "tasks", path: OsaurusPaths.tasksDatabaseFile().path),
+            .init(label: "automation runs", path: OsaurusPaths.eventRunsDatabaseFile().path),
+            // Configuration snapshots name agents, folders, and request text.
+            .init(label: "configuration history", path: OsaurusPaths.configHistoryDatabaseFile().path),
         ]
         // Plugin DBs — one per installed plugin. We can discover them
         // by walking `Tools/<pluginId>/data/data.db`.

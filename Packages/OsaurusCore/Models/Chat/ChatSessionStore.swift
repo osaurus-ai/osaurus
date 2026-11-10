@@ -2,8 +2,8 @@
 //  ChatSessionStore.swift
 //  osaurus
 //
-//  Persistence facade for `ChatSessionData`. Delegates to the SQLite-backed
-//  `ChatHistoryDatabase`.
+//  Persistence facade for `ChatSessionData`. Delegates to
+//  `ConversationStores.current`, the sync-backed `SyncConversationStore`.
 //
 
 import Combine
@@ -17,20 +17,24 @@ final class ChatPersistenceStatus: ObservableObject {
 
 @MainActor
 enum ChatSessionStore {
+    /// The store every call below goes to.
+    private static var store: ConversationStore { ConversationStores.current }
+
     // MARK: - Public API
 
     /// Load all sessions sorted by updatedAt (most recent first).
     /// Only metadata is loaded (turns are empty). Use `load(id:)` for full session data.
     static func loadAll() -> [ChatSessionData] {
         ensureOpen()
-        var sessions = ChatHistoryDatabase.shared.loadAllMetadata()
+        var sessions = store.loadAllMetadata()
         // Overlay writes still deferred behind a closed/rotating DB so a
         // notification-driven refresh can't drop a chat the user just
         // created: the disk snapshot doesn't have the row yet, but the
         // pending queue does. Sessions already on disk keep their pending
         // (newer) snapshot; brand-new ones are inserted in recency order.
         guard !pendingSaves.isEmpty else { return sessions }
-        for (id, pending) in pendingSaves {
+        for (id, var pending) in pendingSaves {
+            pending.turns = []
             if let index = sessions.firstIndex(where: { $0.id == id }) {
                 sessions[index] = pending
             } else {
@@ -44,30 +48,16 @@ enum ChatSessionStore {
     static func load(id: UUID) -> ChatSessionData? {
         ensureOpen()
         if let pending = pendingSaves[id] { return pending }
-        guard let session = ChatHistoryDatabase.shared.loadSession(id: id) else { return nil }
-        let recovered = recoverTranscriptTurnsIfNeeded(session)
-        // When turns were re-derived from the Memory transcript (the #1737
-        // orphaned-conversation case), persist them back once so later
-        // loads/exports read full rows instead of re-deriving every time.
-        // Best-effort and only when the DB is already open — never force a
-        // Keychain touch on the load path.
-        if session.turns.isEmpty, !recovered.turns.isEmpty, didOpen {
-            do {
-                try ChatHistoryDatabase.shared.saveSession(recovered)
-            } catch {
-                print("[ChatSessionStore] Failed to heal recovered turns for \(id): \(error)")
-            }
-        }
-        return recovered
+        return store.loadSession(id: id)
     }
 
     /// Metadata rows (turns empty) for the given ids, in one query. Writes
-    /// still deferred behind a closed database are overlaid so a chat saved
+    /// still waiting for the store to open are overlaid so a chat saved
     /// moments ago is not reported missing. Ids with no row are absent.
     static func loadMetadata(ids: [UUID]) -> [ChatSessionData] {
         ensureOpen()
         var byId: [UUID: ChatSessionData] = [:]
-        for row in ChatHistoryDatabase.shared.loadMetadata(ids: ids) {
+        for row in store.loadMetadata(ids: ids) {
             byId[row.id] = row
         }
         for id in ids {
@@ -79,37 +69,27 @@ enum ChatSessionStore {
         return ids.compactMap { byId[$0] }
     }
 
-    /// `load(id:)` with the database read off the main actor, for callers
-    /// on the interactive path (waking a hibernated tab) that must not park
-    /// the main thread behind the history queue. Same pending-save overlay
-    /// and transcript recovery as the synchronous load.
+    /// `load(id:)` with the store read off the main actor, for callers on
+    /// the interactive path (waking a hibernated tab) that must not park the
+    /// main thread behind the store's queue. Same pending-save overlay as the
+    /// synchronous load.
     static func loadAsync(id: UUID) async -> ChatSessionData? {
         ensureOpen()
         if let pending = pendingSaves[id] { return pending }
         guard didOpen else { return nil }
-        let db = ChatHistoryDatabase.shared
-        guard let session = await Task.detached(priority: .userInitiated, operation: { db.loadSession(id: id) }).value
-        else { return nil }
-        let recovered = recoverTranscriptTurnsIfNeeded(session)
-        if session.turns.isEmpty, !recovered.turns.isEmpty, didOpen {
-            do {
-                try ChatHistoryDatabase.shared.saveSession(recovered)
-            } catch {
-                print("[ChatSessionStore] Failed to heal recovered turns for \(id): \(error)")
-            }
-        }
-        return recovered
+        let db = store
+        return await Task.detached(priority: .userInitiated, operation: { db.loadSession(id: id) }).value
     }
 
     /// Session ids whose message bodies contain `text` (case-insensitive
     /// substring). Backs the sidebar's full-text search; returns an empty set
-    /// for a blank query or while the database is deferred/closed. The scan
-    /// itself runs off the main actor so typing in the search field never
-    /// blocks on the database's serial queue.
+    /// for a blank query or while the store isn't open. The scan itself runs
+    /// off the main actor so typing in the search field never blocks on the
+    /// store's serial queue.
     static func sessionIds(withContentContaining text: String) async -> Set<UUID> {
         ensureOpen()
         guard didOpen else { return [] }
-        let db = ChatHistoryDatabase.shared
+        let db = store
         return await Task.detached(priority: .userInitiated) {
             db.sessionIds(withContentContaining: text)
         }.value
@@ -119,30 +99,31 @@ enum ChatSessionStore {
     static func save(_ session: ChatSessionData) {
         guard !pendingDeletes.contains(session.id) else { return }
         ensureOpen()
-        // When the chat-history DB is deferred (storage key not yet resident or
-        // a key rotation is in flight), `ensureOpen()` leaves `didOpen` false.
-        // Writing now throws `.notOpen` and silently drops the turns — the
-        // #1737 regression where finished conversations couldn't be continued or
-        // exported. Queue instead and re-flush once storage becomes ready.
+        // While the sync core is still opening off the main thread (or failed
+        // to open), `ensureOpen()` leaves `didOpen` false. Writing now throws
+        // `.notOpen` and silently drops the turns — the #1737 regression where
+        // finished conversations couldn't be continued or exported. Queue
+        // instead and re-flush once the store opens.
         guard didOpen else {
             pendingSaves[session.id] = session
             return
         }
         do {
-            try ChatHistoryDatabase.shared.saveSession(session)
+            try store.saveSession(session)
         } catch {
             print("[ChatSessionStore] Failed to save session \(session.id): \(error)")
         }
     }
 
-    /// Non-blocking variant of `save`. Hands the write to the database's serial
+    /// Non-blocking variant of `save`. Hands the write to the store's serial
     /// queue and returns immediately so a main-actor caller never stalls on the
-    /// encode + transaction. Falls back to the same deferred-save queue when the
-    /// DB isn't open yet, so no write is lost across a key rotation.
+    /// encode and write. Falls back to the same deferred-save queue when the
+    /// store isn't open yet, so no write is lost while it opens.
     private static var saveVersions: [UUID: UUID] = [:]
     private static var retryTask: Task<Void, Never>?
 
-    static func saveAsync(_ session: ChatSessionData) {
+    /// `retrying`: the snapshot of a save that failed, tried again (`retryUnsaved`).
+    static func saveAsync(_ session: ChatSessionData, retrying: Bool = false) {
         guard !pendingDeletes.contains(session.id) else { return }
         let version = UUID()
         saveVersions[session.id] = version
@@ -153,25 +134,27 @@ enum ChatSessionStore {
             scheduleSaveRetry()
             return
         }
-        ChatHistoryDatabase.shared.saveSessionAsync(
-            session,
-            onSaved: {
-                Task { @MainActor in
-                    guard saveVersions[session.id] == version else { return }
-                    pendingSaves.removeValue(forKey: session.id)
-                    saveVersions.removeValue(forKey: session.id)
-                    ChatPersistenceStatus.shared.unsaved.remove(session.id)
-                }
-            },
-            onDropped: { dropped in
-                Task { @MainActor in
-                    guard saveVersions[session.id] == version else { return }
-                    requeueDroppedAsyncSave(dropped)
-                    ChatPersistenceStatus.shared.unsaved.insert(session.id)
-                    scheduleSaveRetry()
-                }
+        let onSaved: @Sendable () -> Void = {
+            Task { @MainActor in
+                guard saveVersions[session.id] == version else { return }
+                pendingSaves.removeValue(forKey: session.id)
+                saveVersions.removeValue(forKey: session.id)
+                ChatPersistenceStatus.shared.unsaved.remove(session.id)
             }
-        )
+        }
+        let onDropped: @Sendable (ChatSessionData) -> Void = { dropped in
+            Task { @MainActor in
+                guard saveVersions[session.id] == version else { return }
+                requeueDroppedAsyncSave(dropped)
+                ChatPersistenceStatus.shared.unsaved.insert(session.id)
+                scheduleSaveRetry()
+            }
+        }
+        if retrying {
+            store.retrySessionSaveAsync(session, onSaved: onSaved, onDropped: onDropped)
+        } else {
+            store.saveSessionAsync(session, onSaved: onSaved, onDropped: onDropped)
+        }
     }
 
     private static func scheduleSaveRetry() {
@@ -201,12 +184,12 @@ enum ChatSessionStore {
         guard didOpen else { return }
         for id in ChatPersistenceStatus.shared.unsaved {
             if let data = pendingSaves[id] {
-                saveAsync(data)
+                saveAsync(data, retrying: true)
             }
         }
     }
 
-    /// Re-queue an async save whose write found the DB closed at dequeue
+    /// Re-queue an async save whose write found the store closed at dequeue
     /// time. Skips ids deleted meanwhile and never clobbers a newer pending
     /// snapshot of the same session.
     private static func requeueDroppedAsyncSave(_ session: ChatSessionData) {
@@ -218,24 +201,24 @@ enum ChatSessionStore {
     }
 
     /// Title-only async update for the auto-title path. Never routes through
-    /// `saveSession`, whose incremental turn upsert would interpret a
-    /// metadata-only session copy (empty `turns`) as "delete every turn".
+    /// `saveSession`, so a metadata-only session copy (empty `turns`) can't
+    /// write its other, possibly stale, fields over the stored session.
     ///
-    /// The pending snapshot (if any) is always retitled, not only while the DB
-    /// is deferred: `saveAsync` keeps a session in `pendingSaves` until its
-    /// write is acknowledged, and `load(id:)` serves that overlay first. A
-    /// rename that only reached SQLite would otherwise read back stale until
-    /// the acknowledgement lands — and a later retry of the stale snapshot
-    /// would clobber the rename on disk. While the DB is deferred and nothing
-    /// is queued, the rename is dropped, matching `saveAsync`'s best-effort
-    /// contract (the preview title simply stands).
+    /// The pending snapshot (if any) is always retitled, not only while the
+    /// store is closed: `saveAsync` keeps a session in `pendingSaves` until
+    /// its write is acknowledged, and `load(id:)` serves that overlay first. A
+    /// rename that only reached the store would otherwise read back stale
+    /// until the acknowledgement lands — and a later retry of the stale
+    /// snapshot would clobber the rename. While the store is closed and
+    /// nothing is queued, the rename is dropped, matching `saveAsync`'s
+    /// best-effort contract (the preview title simply stands).
     static func renameTitleAsync(id: UUID, title: String, updatedAt: Date? = nil) {
         guard !pendingDeletes.contains(id) else { return }
         pendingSaves[id]?.title = title
         if let updatedAt { pendingSaves[id]?.updatedAt = updatedAt }
         ensureOpen()
         guard didOpen else { return }
-        ChatHistoryDatabase.shared.updateSessionTitleAsync(
+        store.updateSessionTitleAsync(
             id: id,
             title: title,
             updatedAt: updatedAt
@@ -243,15 +226,15 @@ enum ChatSessionStore {
     }
 
     /// Flag-only async updates for the sidebar's archive/pin toggles. Same
-    /// contract as `renameTitleAsync`: a targeted UPDATE that can never touch
-    /// turn rows, handed to the database's serial queue, with the in-flight
+    /// contract as `renameTitleAsync`: a targeted update that never touches
+    /// messages, handed to the store's serial queue, with the in-flight
     /// pending snapshot patched to match.
     static func setArchivedAsync(id: UUID, archived: Bool) {
         guard !pendingDeletes.contains(id) else { return }
         pendingSaves[id]?.archived = archived
         ensureOpen()
         guard didOpen else { return }
-        ChatHistoryDatabase.shared.updateSessionArchivedAsync(id: id, archived: archived)
+        store.updateSessionArchivedAsync(id: id, archived: archived)
     }
 
     static func setPinnedAsync(id: UUID, pinned: Bool) {
@@ -259,7 +242,7 @@ enum ChatSessionStore {
         pendingSaves[id]?.pinned = pinned
         ensureOpen()
         guard didOpen else { return }
-        ChatHistoryDatabase.shared.updateSessionPinnedAsync(id: id, pinned: pinned)
+        store.updateSessionPinnedAsync(id: id, pinned: pinned)
     }
 
     /// Project-membership-only async update. Targeted (never `saveSession`)
@@ -269,29 +252,29 @@ enum ChatSessionStore {
         pendingSaves[id]?.projectId = projectId
         ensureOpen()
         guard didOpen else { return }
-        ChatHistoryDatabase.shared.updateSessionProjectAsync(id: id, projectId: projectId)
+        store.updateSessionProjectAsync(id: id, projectId: projectId)
     }
 
-    /// Detach every session from a deleted project. Deferred-DB best-effort,
-    /// matching `setProjectAsync`; pending snapshots are patched in place.
+    /// Detach every session from a deleted project. Best-effort while the
+    /// store is closed, matching `setProjectAsync`; pending snapshots are patched in place.
     static func clearProjectAsync(projectId: UUID) {
         for (id, session) in pendingSaves where session.projectId == projectId {
             pendingSaves[id]?.projectId = nil
         }
         ensureOpen()
         guard didOpen else { return }
-        ChatHistoryDatabase.shared.clearProjectAsync(projectId: projectId)
+        store.clearProjectAsync(projectId: projectId)
     }
 
-    /// Sessions whose writes were deferred because the chat-history DB wasn't
-    /// open yet. Keyed by id so repeated saves of the same session collapse to
+    /// Sessions whose writes were deferred because the store wasn't open
+    /// yet. Keyed by id so repeated saves of the same session collapse to
     /// the latest snapshot. Drained by `flushPendingSaves()`.
     private static var pendingSaves: [UUID: ChatSessionData] = [:]
     private static var pendingDeletes: Set<UUID> = []
 
-    /// Re-attempt any saves that were deferred while the chat-history DB was
-    /// closed. Call when storage becomes ready (e.g. on the rotation-complete
-    /// notification). No-op when nothing is pending or the DB is still deferred.
+    /// Re-attempt any saves that were deferred while the store was closed.
+    /// Call once it opens (`SyncService.didOpenNotification`). No-op when
+    /// nothing is pending or the store is still closed.
     static func flushPendingSaves() {
         guard !pendingSaves.isEmpty || !pendingDeletes.isEmpty else { return }
         ensureOpen()
@@ -303,7 +286,7 @@ enum ChatSessionStore {
         for (id, session) in drained {
             guard !pendingDeletes.contains(id) else { continue }
             do {
-                try ChatHistoryDatabase.shared.saveSession(session)
+                try store.saveSession(session)
                 saveVersions.removeValue(forKey: id)
                 ChatPersistenceStatus.shared.unsaved.remove(id)
             } catch {
@@ -329,7 +312,7 @@ enum ChatSessionStore {
             return
         }
         do {
-            try ChatHistoryDatabase.shared.deleteSession(id: id)
+            try store.deleteSession(id: id)
             pendingDeletes.remove(id)
         } catch {
             pendingDeletes.insert(id)
@@ -338,11 +321,11 @@ enum ChatSessionStore {
         removeArtifacts(for: id)
     }
 
-    /// Bulk delete for the per-agent wipe. Unlike `delete(id:)`, the DB rows
-    /// are removed behind one background hop on the database queue and the
-    /// artifact directories are removed off the main thread, so wiping a
-    /// large history can't trip the app-hang watchdog. `completion` is
-    /// invoked on the main actor once the database batch has finished.
+    /// Bulk delete for the per-agent wipe. Unlike `delete(id:)`, the
+    /// conversations are removed behind one background hop on the store's
+    /// queue and the artifact directories are removed off the main thread, so
+    /// wiping a large history can't trip the app-hang watchdog. `completion`
+    /// is invoked on the main actor once the batch has finished.
     static func deleteBatch(ids: [UUID], completion: (@MainActor @Sendable () -> Void)? = nil) {
         guard !ids.isEmpty else {
             completion?()
@@ -363,12 +346,12 @@ enum ChatSessionStore {
             completion?()
             return
         }
-        ChatHistoryDatabase.shared.deleteSessionsAsync(
+        store.deleteSessionsAsync(
             ids: ids,
             onDropped: { dropped in
-                // Same launch-race recovery as `delete(id:)`: the database
-                // closed between enqueue and dequeue (key rotation), so
-                // requeue the ids for the next readiness signal.
+                // Same launch-race recovery as `delete(id:)`: the store
+                // closed between enqueue and dequeue (a reopen or sign-out),
+                // so requeue the ids for the next open.
                 Task { @MainActor in pendingDeletes.formUnion(dropped) }
             },
             completion: {
@@ -383,7 +366,7 @@ enum ChatSessionStore {
         pendingDeletes.removeAll()
         for id in drained {
             do {
-                try ChatHistoryDatabase.shared.deleteSession(id: id)
+                try store.deleteSession(id: id)
             } catch {
                 pendingDeletes.insert(id)
                 print("[ChatSessionStore] Failed to flush deferred delete \(id): \(error)")
@@ -402,160 +385,37 @@ enum ChatSessionStore {
 
     private static var didOpen = false
 
-    /// Warm the chat-history database off the main thread so the first
-    /// window's synchronous `loadAll()` finds it already open. The launch
-    /// path (`presentInitialWindow` → `ChatWindowState.init` →
-    /// `ChatSessionsManager.shared` → `loadAll`) otherwise pays the encrypted
-    /// SQLite open (Keychain read + WAL open + migrations) on the main
-    /// thread and trips the app-hang watchdog on slow disks.
-    ///
-    /// `ChatHistoryDatabase.open()` is idempotent and serialized on its own
-    /// queue, so racing the main-thread `ensureOpen()` is safe — whichever
-    /// runs second no-ops.
+    /// Opens the sync core off the main thread so the first window's
+    /// synchronous `loadAll()` finds it ready.
     nonisolated static func preloadInBackground() {
-        Task.detached(priority: .userInitiated) {
-            guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
-            StorageMutationGate.blockingAwaitNotMutating()
-            do {
-                try ChatHistoryDatabase.shared.open()
-            } catch {
-                print("[ChatSessionStore] Background chat-history prewarm failed: \(error)")
-            }
-        }
+        SyncService.shared.openInBackground()
     }
 
-    /// Open the database (idempotent) on first call. Safe to invoke from any
-    /// session-touching code path.
-    ///
-    /// Gates on `StorageMutationGate.blockingAwaitNotMutating()` so
-    /// SQLCipher never tries to open a half-rekeyed file while a key
-    /// rotation is in flight. Normally a no-op fast path.
+    /// Opens the store on first use. The sync core opens off the main thread
+    /// (Keychain and database work); `ChatSessionsManager` reloads on
+    /// `SyncService.didOpenNotification`. Tests open synchronously.
     private static func ensureOpen() {
         guard !didOpen else { return }
-        // Do not synchronously prewarm here. This runs on MainActor, and
-        // Sentry APPLE-MACOS-40/41/42 showed Keychain decrypt/read can hang
-        // the UI when a cold cache reaches this path. In plaintext mode
-        // (the default) no key is required, so readiness is always true.
-        guard StorageKeyManager.shared.isStorageReadyForWrites else {
-            print("[ChatSessionStore] Chat history unavailable: storage key is not already unlocked")
-            return
-        }
-        // Never park the main thread waiting on a key rotation. Opening chat
-        // history isn't launch-critical (`loadAllMetadata` returns [] until the
-        // DB is open), and blocking here on a launch/rotation race tripped the
-        // app-hang watchdog. Defer when a rotation is in flight on the main
-        // thread; `ChatSessionsManager` reloads on the rotation-complete
-        // notification. Off-main callers still block as before.
-        if Thread.isMainThread, StorageMutationGate.isRotationInFlight {
-            print("[ChatSessionStore] Deferring chat-history open: key rotation in flight")
-            return
-        }
-        // `isStorageReadyForWrites` is policy-based and clears for a plaintext
-        // posture, but the on-disk file can still be encrypted when the launch
-        // migration that converges it hasn't landed yet. Opening it then routes
-        // through `currentKey()`'s synchronous Keychain read on the main thread
-        // and trips the app-hang watchdog. Defer when the open would need a key
-        // we don't already hold; convergence + `ChatSessionsManager`'s reload
-        // bring sessions in once the file is plaintext or the key is resident.
-        if Thread.isMainThread,
-            OsaurusStorageOpener.wouldBlockOnUncachedKey(
-                for: OsaurusPaths.chatHistoryDatabaseFile().path
-            )
-        {
-            print("[ChatSessionStore] Deferring chat-history open: storage key not yet resident")
-            return
-        }
-        // Never run (or wait behind) the actual open on the main thread.
-        // `open()` is serialized on the database's own queue, so even when
-        // the background prewarm is already mid-open, `queue.sync` here
-        // parks the main thread for the whole slow open (file open + WAL +
-        // migrations on a cold/slow disk — seen as launch hangs in the
-        // field). Defer instead: `loadAll` returns [] until the DB is open,
-        // and `ChatSessionsManager` reloads on
-        // `ChatHistoryDatabase.didOpenNotification`.
-        // Skipped under tests: suites drive `ensureOpen` from the main
-        // thread and expect a synchronous open, and the background prewarm
-        // this kicks would race the storage-converge suites.
-        if Thread.isMainThread, !RuntimeEnvironment.isUnderTests,
-            !ChatHistoryDatabase.shared.isOpenNonBlocking
-        {
-            print("[ChatSessionStore] Deferring chat-history open: not yet open, staying off main")
-            preloadInBackground()
-            return
-        }
-        StorageMutationGate.blockingAwaitNotMutating()
-        do {
-            #if DEBUG
+        #if DEBUG
             if _forceNextOpenFailureForTesting {
                 _forceNextOpenFailureForTesting = false
-                throw ChatHistoryDatabaseError.failedToOpen("forced test failure")
+                return
             }
-            #endif
-            try ChatHistoryDatabase.shared.open()
+        #endif
+        if store.isOpenNonBlocking {
             didOpen = true
-        } catch {
-            print("[ChatSessionStore] Failed to open chat-history database: \(error)")
             return
         }
-    }
-
-    static func recoverTranscriptTurnsIfNeeded(
-        _ session: ChatSessionData,
-        memoryDatabase: MemoryDatabase = .shared
-    ) -> ChatSessionData {
-        guard session.turns.isEmpty else { return session }
-        // Keep launch/load paths non-invasive: transcript fallback never opens
-        // Memory on behalf of chat history, because that may touch Keychain.
-        guard memoryDatabase.isOpen else { return session }
-
+        if Thread.isMainThread, !RuntimeEnvironment.isUnderTests {
+            SyncService.shared.openInBackground()
+            return
+        }
         do {
-            let transcript = try memoryDatabase.loadTranscriptForConversation(
-                conversationId: session.id.uuidString
-            )
-            let recoveredTurns = transcript.compactMap(chatTurnData(from:))
-            guard !recoveredTurns.isEmpty else { return session }
-
-            var recovered = session
-            // Pure transform — write-back is the caller's job (`load` heals the
-            // chat-history row once when the DB is open) so this stays usable
-            // from read-only/non-open contexts without mutating storage.
-            recovered.turns = recoveredTurns
-            return recovered
+            try store.open()
+            didOpen = true
         } catch {
-            print("[ChatSessionStore] Transcript recovery failed for session \(session.id): \(error)")
-            return session
+            print("[ChatSessionStore] Failed to open conversation store: \(error)")
         }
-    }
-
-    private static func chatTurnData(from transcriptTurn: TranscriptTurn) -> ChatTurnData? {
-        let trimmedContent = transcriptTurn.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedContent.isEmpty else { return nil }
-        guard let role = MessageRole(rawValue: transcriptTurn.role) else { return nil }
-
-        return ChatTurnData(
-            role: role,
-            content: transcriptTurn.content,
-            createdAt: transcriptDate(from: transcriptTurn.createdAt)
-        )
-    }
-
-    private static func transcriptDate(from raw: String) -> Date? {
-        guard !raw.isEmpty else { return nil }
-
-        let iso8601Formatter = ISO8601DateFormatter()
-        if let date = iso8601Formatter.date(from: raw) {
-            return date
-        }
-        iso8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = iso8601Formatter.date(from: raw) {
-            return date
-        }
-
-        let sqliteFormatter = DateFormatter()
-        sqliteFormatter.locale = Locale(identifier: "en_US_POSIX")
-        sqliteFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-        sqliteFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return sqliteFormatter.date(from: raw)
     }
 
     #if DEBUG
@@ -572,10 +432,11 @@ enum ChatSessionStore {
             pendingSaves.removeAll()
             pendingDeletes.removeAll()
             ChatHistoryDatabase.shared.close()
+            SyncConversationStore.shared._resetForTesting()
+            SyncService.shared._resetForTesting()
         }
 
-        /// Mark the store as already open so save/load skip `ensureOpen()`'s
-        /// Keychain-gated path. Pair with `ChatHistoryDatabase.shared.openInMemory()`.
+        /// Mark the store as already open so save/load skip `ensureOpen()`.
         static func _markStorageOpenForTesting() { didOpen = true }
 
         /// Seed the deferred-save queue as if a save had been dropped while the

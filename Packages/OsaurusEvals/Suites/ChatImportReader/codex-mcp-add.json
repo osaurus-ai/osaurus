@@ -1,0 +1,19 @@
+{
+  "id": "chat_import_reader.codex-mcp-add",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • a pasted `codex mcp add` stdio command",
+  "query": "Set up context7:\ncodex mcp add context7 -- npx -y @upstash/context7-mcp",
+  "notes": "Stdio server after `--`. Command `npx` with args `-y @upstash/context7-mcp`, all written in the message.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "your message",
+          "text": "Set up context7:\ncodex mcp add context7 -- npx -y @upstash/context7-mcp"
+        }
+      ],
+      "items": [{ "kind": "mcp_server", "name": "context7" }]
+    }
+  }
+}

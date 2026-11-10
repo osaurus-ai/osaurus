@@ -13,7 +13,23 @@ enum StreamingMarkdownBalancer {
     /// only the last paragraph after the final fence is rebalanced, because finished
     /// paragraphs already have their final form.
     static func balance(_ text: String) -> String {
-        guard let tailStart = trailingProseStart(in: text) else { return text }
+        var scan = FenceScan()
+        return balance(text, scan: &scan)
+    }
+
+    /// Fence state through the last newline-terminated line of a previous
+    /// text. When the next text extends that text, the scan resumes there
+    /// instead of walking the whole message again.
+    struct FenceScan {
+        fileprivate var scannedPrefix = ""
+        fileprivate var openFence: CodeFence?
+        fileprivate var tailStartUTF8 = 0
+    }
+
+    /// `balance(text)`, resuming the fence scan from `scan` when `text`
+    /// starts with the text it last scanned.
+    static func balance(_ text: String, scan: inout FenceScan) -> String {
+        guard let tailStart = trailingProseStart(in: text, scan: &scan) else { return text }
         let prefix = String(text[..<tailStart])
         return prefix + balanceTrailingParagraph(String(text[tailStart...]))
     }
@@ -22,10 +38,19 @@ enum StreamingMarkdownBalancer {
     /// inside an open fence (its content is code in progress, leave it alone).
     /// Uses the same fence rules as `parseBlocks`, so a longer fence holding
     /// shorter fence lines stays one code region.
-    private static func trailingProseStart(in text: String) -> String.Index? {
+    private static func trailingProseStart(in text: String, scan: inout FenceScan) -> String.Index? {
         var openFence: CodeFence?
         var tailStart = text.startIndex
         var lineStart = text.startIndex
+        let utf8 = text.utf8
+        if !scan.scannedPrefix.isEmpty, utf8HasPrefix(text, scan.scannedPrefix) {
+            openFence = scan.openFence
+            tailStart = utf8.index(utf8.startIndex, offsetBy: scan.tailStartUTF8)
+            lineStart = utf8.index(utf8.startIndex, offsetBy: scan.scannedPrefix.utf8.count)
+        }
+        // Grapheme clusters always break after "\n", so the start of the line
+        // after a newline stays a valid resume point however the text grows.
+        var committed: (end: String.Index, fence: CodeFence?, tail: String.Index)?
         while lineStart < text.endIndex {
             let lineEnd = text[lineStart...].firstIndex(of: "\n") ?? text.endIndex
             let line = text[lineStart ..< lineEnd]
@@ -38,7 +63,15 @@ enum StreamingMarkdownBalancer {
             } else if let fence = parseCodeFenceOpener(line) {
                 openFence = fence
             }
+            if lineEnd < text.endIndex { committed = (next, openFence, tailStart) }
             lineStart = next
+        }
+        if let committed {
+            scan.scannedPrefix = String(text[..<committed.end])
+            scan.openFence = committed.fence
+            scan.tailStartUTF8 = utf8.distance(from: utf8.startIndex, to: committed.tail)
+        } else if !utf8HasPrefix(text, scan.scannedPrefix) {
+            scan = FenceScan()
         }
         return openFence == nil ? tailStart : nil
     }
@@ -196,6 +229,21 @@ enum StreamingMarkdownBalancer {
         }
         return count % 2 == 1
     }
+}
+
+/// Byte-wise prefix test. `memcmp` over contiguous UTF-8 when both strings
+/// are native, which streamed text is.
+func utf8HasPrefix(_ text: String, _ prefix: String) -> Bool {
+    let count = prefix.utf8.count
+    guard count <= text.utf8.count else { return false }
+    if count == 0 { return true }
+    let fast = text.utf8.withContiguousStorageIfAvailable { a in
+        prefix.utf8.withContiguousStorageIfAvailable { b in
+            memcmp(a.baseAddress!, b.baseAddress!, count) == 0
+        }
+    }
+    if let fast, let result = fast { return result }
+    return text.utf8.starts(with: prefix.utf8)
 }
 
 private extension String {

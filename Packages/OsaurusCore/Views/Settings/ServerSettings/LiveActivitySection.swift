@@ -32,16 +32,13 @@ struct LiveActivitySection: View {
         ) {
             BatchDiagnosticsView(snapshot: snapshot)
 
-            SettingsDivider()
             inferenceActivityReadout
 
             if !effectiveGeneration.isEmpty {
-                SettingsDivider()
                 effectiveSamplerReadout
             }
 
             if !lastMTP.isEmpty {
-                SettingsDivider()
                 mtpRuntimeReadout
             }
         }
@@ -52,28 +49,28 @@ struct LiveActivitySection: View {
     private var inferenceActivityReadout: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(L("Inference now"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             if inferenceActivities.isEmpty {
                 Text(L("Idle — no active or queued inference"))
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             ForEach(inferenceActivities) { activity in
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(activity.modelName)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(
                             "\(activity.phase.displayName) · \(activity.source.displayName) · "
                                 + "\(Self.shortID(activity.id))"
                         )
-                        .font(.system(size: 10).monospacedDigit())
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote.monospacedDigit())
+                        .foregroundColor(theme.text.tertiary)
                         .textSelection(.enabled)
                     }
                     Spacer(minLength: 8)
@@ -110,19 +107,19 @@ struct LiveActivitySection: View {
     private var effectiveSamplerReadout: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(L("Sampler last used"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             ForEach(effectiveGeneration.keys.sorted(), id: \.self) { model in
                 if let effective = effectiveGeneration[model] {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(Self.describe(effective))
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription.monospacedDigit())
+                            .foregroundColor(theme.text.tertiary)
                             .textSelection(.enabled)
                     }
                 }
@@ -143,19 +140,19 @@ struct LiveActivitySection: View {
     private var mtpRuntimeReadout: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(L("Speculative decoding last run"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
             ForEach(lastMTP.keys.sorted(), id: \.self) { model in
                 if let stats = lastMTP[model] {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(Self.describeMTP(stats))
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription.monospacedDigit())
+                            .foregroundColor(theme.text.tertiary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }

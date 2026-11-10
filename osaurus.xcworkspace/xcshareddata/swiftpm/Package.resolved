@@ -1,5 +1,5 @@
 {
-  "originHash": "be633ec85f018c65adb922e74af4eaacfec877286b09d6c0f401ae7718874df8",
+  "originHash": "8c2cfa705d7a010fd4c1d419a7f70103e2de856275713a6c756dc7171ac7e349",
   "pins": [
     {
       "identity": "aachartkit-swift",
@@ -32,8 +32,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/apple/containerization.git",
       "state": {
-        "revision": "5427fd21ded4b84034126caef5b3182900b4776d",
-        "version": "0.41.0"
+        "revision": "baf212e5a8e432e539beee325050aa26443a154d",
+        "version": "0.54.0"
       }
     },
     {
@@ -97,6 +97,15 @@
       "state": {
         "revision": "2e90323a4543c1aaca01bc6e28e4c744c13811a2",
         "version": "2.4.3"
+      }
+    },
+    {
+      "identity": "rive-ios",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/rive-app/rive-ios",
+      "state": {
+        "revision": "ec9ae3662d260ce92ac31b471d500d323d3d2bcf",
+        "version": "6.29.0"
       }
     },
     {

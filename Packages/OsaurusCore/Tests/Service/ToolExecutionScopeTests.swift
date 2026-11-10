@@ -141,6 +141,7 @@ struct ToolExecutionScopeWiringTests {
         #expect(src.contains("$toolExecutionScope"))
         // …and both authorization and the next request schema must grow.
         #expect(src.contains("toolScope.activate(newTools)"))
-        #expect(src.contains("let iterationToolSpecs = toolScope.modelVisibleSpecs"))
+        #expect(src.contains("let iterationToolSpecs ="))
+        #expect(src.contains(": toolScope.modelVisibleSpecs"))
     }
 }

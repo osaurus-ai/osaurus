@@ -49,7 +49,7 @@ enum AgentTemplatesIntroStage: Int, CaseIterable, Identifiable {
         case .save:
             return L("Save it as a template. Only the setup travels. Your files, keys, and chats stay on your Mac.")
         case .share:
-            return L("Send the template as a JSON file, or keep it in your library so the Orchestrator can use it.")
+            return L("Send the template as a link or a JSON file, or keep it in your library so the Orchestrator can use it.")
         case .reuse:
             return L("Anyone can turn it back into an agent. Osaurus asks only for what their Mac is missing.")
         }
@@ -86,24 +86,15 @@ struct AgentTemplatesIntroCard: View {
             diagram
                 .frame(maxWidth: .infinity)
         }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(theme.cardBackground)
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.card)
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(theme.primaryBorder.opacity(0.4), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
         )
         .overlay(alignment: .topTrailing) {
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(theme.secondaryText)
-                    .frame(width: 22, height: 22)
-                    .background(Circle().fill(theme.secondaryBackground))
-            }
-            .buttonStyle(.plain)
-            .padding(10)
+            SettingsIconButton("xmark", help: "Dismiss", size: .compact, action: onDismiss)
+            .padding(theme.space.s8)
             .help(L("Hide this explainer"))
             .accessibilityLabel(Text(L("Hide this explainer")))
         }
@@ -116,15 +107,15 @@ struct AgentTemplatesIntroCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "square.on.square.dashed")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.accentColor)
+                    .glyphSize(13, weight: .semibold)
+                    .foregroundStyle(theme.text.link)
                 Text(L("What is a template?"))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(theme.primaryText)
+                    .font(SettingsFont.cardTitle)
+                    .foregroundStyle(theme.text.primary)
             }
             Text(L("A portable copy of how an agent is set up, ready to share or reuse."))
-                .font(.system(size: 12))
-                .foregroundStyle(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundStyle(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -132,17 +123,17 @@ struct AgentTemplatesIntroCard: View {
                     stepRow(candidate)
                 }
             }
-            .padding(.top, 2)
+            .padding(.top, theme.space.s2)
 
             // Caption in its own slot, so the rows above keep their height
             // and consecutive captions never draw over each other.
             Text(stage.caption)
-                .font(.system(size: 11.5))
-                .foregroundStyle(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundStyle(theme.text.secondary)
                 .lineSpacing(1)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, minHeight: 50, alignment: .topLeading)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, theme.space.s8)
                 .id(stage)
                 .transition(.opacity)
         }
@@ -159,43 +150,40 @@ struct AgentTemplatesIntroCard: View {
             HStack(alignment: .center, spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(selected ? theme.accentColor : theme.secondaryText.opacity(0.18))
+                        .fill(selected ? theme.action.primary.default.background : theme.surface.pressed)
                         .frame(width: 16, height: 16)
                     Text(verbatim: "\(candidate.rawValue + 1)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(selected ? Color.white : theme.secondaryText)
+                        .font(SettingsFont.chip)
+                        .foregroundStyle(selected ? theme.action.primary.default.foreground : theme.text.secondary)
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(candidate.title)
-                        .font(.system(size: 12, weight: selected ? .semibold : .medium))
-                        .foregroundStyle(selected ? theme.primaryText : theme.secondaryText)
+                        .textStyle(.caption, weight: selected ? 600 : 500)
+                        .foregroundStyle(selected ? theme.text.primary : theme.text.secondary)
                     // Progress line under the active title, remounted per
                     // stage so it restarts on every jump. Present but
                     // clear on the others, so every row is the same height.
                     IntroStepProgress(
                         running: selected && !reduceMotion,
                         duration: candidate.holdDuration,
-                        color: selected ? theme.accentColor.opacity(0.45) : Color.clear,
-                        track: selected ? theme.secondaryText.opacity(0.14) : Color.clear
+                        color: selected ? theme.border.strong : Color.clear,
+                        track: selected ? theme.surface.hover : Color.clear
                     )
                     .frame(height: 2)
                     .id(selected ? stage.rawValue : -1)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.vertical, 5)
-            .padding(.horizontal, 8)
+            .padding(.vertical, theme.space.s6)
+            .padding(.horizontal, theme.space.s8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? theme.accentColor.opacity(0.08) : Color.clear)
-            )
+            .settingsChrome(selected ? .selected : nil)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
         .accessibilityAddTraits(selected ? [.isSelected] : [])
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stage)
+        .animation(theme.motion.quick, value: stage)
     }
 
     // MARK: - Diagram
@@ -218,14 +206,7 @@ struct AgentTemplatesIntroCard: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.55 : 0.7))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(theme.primaryBorder.opacity(0.35), lineWidth: 1)
-        )
+        .settingsChrome(.surface)
         .contentShape(Rectangle())
         .onTapGesture { advance(to: stage.next) }
         .accessibilityElement(children: .ignore)
@@ -234,7 +215,7 @@ struct AgentTemplatesIntroCard: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityHint(Text(L("Shows the next step")))
         // Keep the close button clear of the diagram corner.
-        .padding(.trailing, 20)
+        .padding(.trailing, theme.space.s16)
     }
 
     // MARK: - Behaviour
@@ -243,7 +224,7 @@ struct AgentTemplatesIntroCard: View {
         if reduceMotion {
             stage = target
         } else {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.82)) {
+            withAnimation(theme.motion.springAnimation) {
                 stage = target
             }
         }
@@ -262,6 +243,7 @@ struct AgentTemplatesIntroCard: View {
 // MARK: - Step progress
 
 private struct IntroStepProgress: View {
+    @Environment(\.theme) private var theme
     let running: Bool
     let duration: Duration
     let color: Color
@@ -281,7 +263,7 @@ private struct IntroStepProgress: View {
         .onAppear {
             guard running else { return }
             let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
-            withAnimation(.linear(duration: seconds)) { fraction = 1 }
+            withAnimation(theme.motion.timed(duration: seconds)) { fraction = 1 }
         }
     }
 }
@@ -324,7 +306,7 @@ private struct AgentTemplatesIntroCanvas: View {
     }
 
     private static let channels: [Channel] = [
-        Channel(id: 0, label: L("Your Library"), glyph: "tray.full"),
+        Channel(id: 0, label: L("Share Link"), glyph: "link"),
         Channel(id: 1, label: L("JSON file"), glyph: "doc.text"),
         Channel(id: 2, label: L("Orchestrator"), glyph: "sparkles"),
     ]
@@ -367,7 +349,7 @@ private struct AgentTemplatesIntroCanvas: View {
     }
 
     private var animation: Animation? {
-        reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.82)
+        theme.motion.springAnimation
     }
 
     var body: some View {
@@ -415,7 +397,7 @@ private struct AgentTemplatesIntroCanvas: View {
         return card(
             title: L("Invoice Bot"),
             glyph: "person.crop.circle.fill",
-            tint: theme.accentColor,
+            tint: theme.action.primary.default.background,
             rowState: { row in
                 if stage == .agent { return phase > row.id ? .checked : .hidden }
                 return .checked
@@ -435,17 +417,17 @@ private struct AgentTemplatesIntroCanvas: View {
         let visible = stage == .save && phase >= 2
         return HStack(spacing: 7) {
             Image(systemName: "lock.fill")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(theme.successColor)
+                .glyphSize(10, weight: .bold)
+                .foregroundStyle(theme.status.success.foreground)
             Text(L("Files, keys, and chats stay on your Mac"))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(theme.primaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundStyle(theme.text.primary)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, theme.space.s12)
         .frame(height: 26)
-        .background(Capsule().fill(theme.successColor.opacity(0.14)))
-        .overlay(Capsule().stroke(theme.successColor.opacity(0.45), lineWidth: 1))
+        .background(Capsule().fill(theme.status.success.background))
+        .overlay(Capsule().stroke(theme.status.success.border, lineWidth: theme.stroke.default))
         .opacity(visible ? 1 : 0)
         .position(x: Layout.center.x, y: visible ? Layout.stayPillY : Layout.stayPillY - 30)
     }
@@ -499,50 +481,45 @@ private struct AgentTemplatesIntroCanvas: View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: channel?.glyph ?? "square.on.square.dashed")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(channel == nil ? theme.accentColor : theme.infoColor)
+                    .glyphSize(11, weight: .semibold)
+                    .foregroundStyle(channel == nil ? theme.text.link : theme.status.info.foreground)
                     .contentTransition(.symbolEffect(.replace))
                 Text(channel?.label ?? L("Template"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.primaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundStyle(theme.text.primary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, theme.space.s12)
             .frame(height: 28)
             VStack(spacing: 5) {
                 ForEach(Self.rows) { row in
                     HStack(spacing: 7) {
                         Image(systemName: row.glyph)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(theme.secondaryText)
+                            .glyphSize(10, weight: .semibold)
+                            .foregroundStyle(theme.text.secondary)
                             .frame(width: 14)
                         Text(row.label)
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(theme.secondaryText)
+                            .font(SettingsFont.chip)
+                            .foregroundStyle(theme.text.secondary)
                             .lineLimit(1)
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, theme.space.s8)
                     .frame(height: 22)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(theme.secondaryBackground.opacity(0.8))
-                    )
+                    .settingsChrome(.inset)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.bottom, theme.space.s8)
         }
         .frame(width: Layout.copyWidth, height: Layout.copyHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(theme.cardBackground)
-        )
+        .settingsChrome(.surface)
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(theme.accentColor.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [6, 4]))
         )
-        .shadow(color: Color.black.opacity(theme.isDark ? 0.35 : 0.12), radius: 8, y: 4)
+        .themeElevation(theme.elevation.raised)
     }
 
     // MARK: Scene 4: another Mac
@@ -550,25 +527,25 @@ private struct AgentTemplatesIntroCanvas: View {
     private var laptop: some View {
         let visible = stage == .reuse
         return ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.successColor.opacity(0.06))
+            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                .fill(theme.status.success.background)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(theme.successColor.opacity(0.5), lineWidth: 1.5)
+                    RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                        .stroke(theme.status.success.border, lineWidth: theme.stroke.default)
                 )
                 .frame(width: Layout.screenSize.width, height: Layout.screenSize.height)
                 .position(Layout.screenCenter)
             Capsule()
-                .fill(theme.successColor.opacity(0.5))
+                .fill(theme.status.success.foreground)
                 .frame(width: 120, height: 6)
                 .position(x: Layout.center.x, y: Layout.baseY)
             HStack(spacing: 5) {
                 Image(systemName: "laptopcomputer")
-                    .font(.system(size: 11, weight: .semibold))
+                    .glyphSize(11, weight: .semibold)
                 Text(L("Another Mac"))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(SettingsFont.smallLabel)
             }
-            .foregroundStyle(theme.secondaryText)
+            .foregroundStyle(theme.text.secondary)
             .position(x: Layout.center.x, y: Layout.laptopLabelY)
         }
         .scaleEffect(visible ? 1 : 0.94)
@@ -582,7 +559,7 @@ private struct AgentTemplatesIntroCanvas: View {
         return card(
             title: L("Invoice Bot"),
             glyph: "person.crop.circle.fill",
-            tint: theme.successColor,
+            tint: theme.status.success.foreground,
             rowState: { row in
                 guard Self.localChoiceRows.contains(row.id) else { return .checked }
                 return phase >= 2 ? .checked : .asking
@@ -606,32 +583,30 @@ private struct AgentTemplatesIntroCanvas: View {
         VStack(spacing: 0) {
             HStack(spacing: 7) {
                 Image(systemName: glyph)
-                    .font(.system(size: 13, weight: .semibold))
+                    .glyphSize(13, weight: .semibold)
                     .foregroundStyle(tint)
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundStyle(theme.text.primary)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, theme.space.s12)
             .frame(height: Layout.headerHeight)
             VStack(spacing: Layout.rowGap) {
                 ForEach(Self.rows) { row in
                     settingRow(row, state: rowState(row))
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 8)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.bottom, theme.space.s8)
         }
         .frame(width: Layout.cardWidth, height: Layout.cardHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(theme.cardBackground)
-        )
+        .settingsChrome(.surface)
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(tint.opacity(0.5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .stroke(tint.opacity(0.5), lineWidth: theme.stroke.default)
         )
-        .shadow(color: Color.black.opacity(theme.isDark ? 0.35 : 0.12), radius: 8, y: 4)
+        .themeElevation(theme.elevation.raised)
     }
 
     private func settingRow(_ row: Row, state: RowState) -> some View {
@@ -639,30 +614,23 @@ private struct AgentTemplatesIntroCanvas: View {
         let asking = state == .asking
         return HStack(spacing: 8) {
             Image(systemName: row.glyph)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(asking ? theme.warningColor : theme.accentColor)
+                .glyphSize(11, weight: .semibold)
+                .foregroundStyle(asking ? theme.status.warning.foreground : theme.text.link)
                 .frame(width: 14)
             Text(row.label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(theme.primaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundStyle(theme.text.primary)
                 .lineLimit(1)
             Spacer(minLength: 0)
             Image(systemName: asking ? "questionmark.circle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(asking ? theme.warningColor : theme.successColor)
+                .glyphSize(12, weight: .semibold)
+                .foregroundStyle(asking ? theme.status.warning.foreground : theme.status.success.foreground)
                 .contentTransition(.symbolEffect(.replace))
                 .scaleEffect(shown ? 1 : 0.4)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, theme.space.s8)
         .frame(height: Layout.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(asking ? theme.warningColor.opacity(0.10) : theme.secondaryBackground.opacity(0.9))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(asking ? theme.warningColor.opacity(0.5) : Color.clear, lineWidth: 1)
-        )
+        .settingsChrome(asking ? .status(.warning) : .inset)
         .opacity(shown ? 1 : 0)
         .offset(x: shown ? 0 : -10)
     }

@@ -34,12 +34,16 @@ struct SearchService {
         let tokens: [String]
         let normalized: String
         let lowercased: String
+        fileprivate let tokenBytes: [[UInt8]]
+        fileprivate let normalizedBytes: [UInt8]
 
         init(_ query: String) {
             let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
             self.tokens = SearchService.tokenize(trimmed)
             self.normalized = SearchService.normalizeForSearch(trimmed)
             self.lowercased = trimmed.lowercased()
+            self.tokenBytes = tokens.map { Array($0.utf8) }
+            self.normalizedBytes = Array(normalized.utf8)
         }
     }
 
@@ -58,21 +62,47 @@ struct SearchService {
     /// in `matches`/`tokenizedMatch`.
     static func matches(_ query: PreparedQuery, in target: String, allowFuzzy: Bool = true) -> Bool {
         guard !query.tokens.isEmpty else { return true }
-
-        let targetTokens = tokenize(target)
-        let normalizedTarget = normalizeForSearch(target)
-
-        let tokenized = query.tokens.allSatisfy { queryToken in
-            targetTokens.contains { $0.contains(queryToken) } || normalizedTarget.contains(queryToken)
-        }
-        if tokenized { return true }
-
-        if normalizedTarget.contains(query.normalized) {
-            return true
-        }
-
+        if matches(query, in: PreparedTarget(target)) { return true }
         guard allowFuzzy else { return false }
         return fuzzyMatch(lowercasedQuery: query.lowercased, inLowercased: target.lowercased())
+    }
+
+    /// Target-side work for `matches`, for targets searched many times.
+    struct PreparedTarget {
+        let tokens: [[UInt8]]
+        let normalized: [UInt8]
+
+        init(_ target: String) {
+            self.tokens = SearchService.tokenize(target).map { Array($0.utf8) }
+            self.normalized = Array(SearchService.normalizeForSearch(target).utf8)
+        }
+    }
+
+    /// Token or normalized-substring match against a prepared target; no
+    /// fuzzy subsequence. Both sides are already lowercased, so matching
+    /// compares UTF-8 bytes.
+    static func matches(_ query: PreparedQuery, in target: PreparedTarget) -> Bool {
+        guard !query.tokens.isEmpty else { return true }
+        let tokenized = query.tokenBytes.allSatisfy { queryToken in
+            target.tokens.contains { contains($0, queryToken) } || contains(target.normalized, queryToken)
+        }
+        return tokenized || contains(target.normalized, query.normalizedBytes)
+    }
+
+    /// Whether `needle` appears contiguously in `haystack`.
+    static func contains<Element: Equatable>(_ haystack: [Element], _ needle: [Element]) -> Bool {
+        guard let first = needle.first else { return true }
+        guard haystack.count >= needle.count else { return false }
+        var start = 0
+        while start <= haystack.count - needle.count {
+            if haystack[start] == first {
+                var offset = 1
+                while offset < needle.count, haystack[start + offset] == needle[offset] { offset += 1 }
+                if offset == needle.count { return true }
+            }
+            start += 1
+        }
+        return false
     }
 
     /// Returns true if all query tokens are found in target (order independent).
