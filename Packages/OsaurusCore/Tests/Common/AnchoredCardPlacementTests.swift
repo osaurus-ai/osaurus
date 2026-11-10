@@ -8,6 +8,21 @@ struct AnchoredCardPlacementTests {
     private let display = CGRect(x: 0, y: 0, width: 1440, height: 900)
     private let cardSize = CGSize(width: 532, height: 440)
 
+    @Test func usageCardOpensBesideRailAndStaysInsideWindow() {
+        let window = CGRect(x: 100, y: 100, width: 800, height: 600)
+        let result = AnchoredCardPlacement.frame(
+            anchor: CGRect(x: 106, y: 144, width: 32, height: 32),
+            size: CGSize(width: 240, height: 240), visibleFrame: display,
+            containerFrame: window, besideAnchor: true)
+        #expect(result == CGRect(x: 146, y: 144, width: 240, height: 240))
+        let constrained = AnchoredCardPlacement.frame(
+            anchor: CGRect(x: 106, y: 680, width: 32, height: 32),
+            size: CGSize(width: 240, height: 240), visibleFrame: display,
+            containerFrame: window, besideAnchor: true)
+        #expect(window.contains(constrained))
+        #expect(constrained.maxY == 688)
+    }
+
     @Test func opensAboveTheAnchorWithAnEightPointGap() {
         let result = AnchoredCardPlacement.frame(
             anchor: CGRect(x: 200, y: 100, width: 160, height: 28),

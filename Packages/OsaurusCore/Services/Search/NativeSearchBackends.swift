@@ -277,12 +277,32 @@ struct BingScrapeBackend: SearchBackend {
                 hits.append(
                     SearchHit(
                         title: SearchHTML.stripHTML(String(html[titleR])),
-                        url: SearchHTML.decodeHTMLEntities(String(html[urlR])),
+                        url: unwrapClickURL(SearchHTML.decodeHTMLEntities(String(html[urlR]))),
                         snippet: snippet,
                         engine: "bing_html"
                     ))
             }
         }
         return hits
+    }
+
+    /// Bing links each result through `https://www.bing.com/ck/a?…&u=a1…`,
+    /// where `u` is `a1` and the base64url of the result's address. Fetching
+    /// the wrapper returns Bing's redirect page, not the result.
+    static func unwrapClickURL(_ raw: String) -> String {
+        guard let components = URLComponents(string: raw),
+            components.host?.lowercased().hasSuffix("bing.com") == true, components.path == "/ck/a",
+            let wrapped = components.queryItems?.first(where: { $0.name == "u" })?.value,
+            wrapped.hasPrefix("a1")
+        else { return raw }
+        var base64 = String(wrapped.dropFirst(2))
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        guard let data = Data(base64Encoded: base64),
+            let target = String(data: data, encoding: .utf8),
+            let scheme = URL(string: target)?.scheme?.lowercased(), scheme == "https" || scheme == "http"
+        else { return raw }
+        return target
     }
 }

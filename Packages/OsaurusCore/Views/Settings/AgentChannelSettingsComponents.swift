@@ -22,6 +22,7 @@ extension AgentChannelKind {
         case .telegram: "Telegram"
         case .imessage: "iMessage"
         case .whatsapp: "WhatsApp"
+        case .email: "Email"
         case .n8n: "n8n"
         case .customHTTP: "Custom HTTP"
         }
@@ -34,24 +35,12 @@ extension AgentChannelKind {
         case .telegram: "paperplane.fill"
         case .imessage: "message.fill"
         case .whatsapp: "phone.bubble.fill"
+        case .email: "envelope.fill"
         case .n8n: "arrow.triangle.branch"
         case .customHTTP: "curlybraces"
         }
     }
 
-    /// Two-stop brand gradient for the card and sheet icon tiles, mirroring
-    /// the provider-preset gradients used across the Providers tab.
-    var brandGradient: [Color] {
-        switch self {
-        case .discord: [Color(hex: "5865F2"), Color(hex: "4051D3")]
-        case .slack: [Color(hex: "611F69"), Color(hex: "4A154B")]
-        case .telegram: [Color(hex: "2AABEE"), Color(hex: "1E96C8")]
-        case .imessage: [Color(hex: "34C759"), Color(hex: "248A3D")]
-        case .whatsapp: [Color(hex: "25D366"), Color(hex: "128C7E")]
-        case .n8n: [Color(hex: "EA4B71"), Color(hex: "C2385A")]
-        case .customHTTP: [Color(hex: "64748B"), Color(hex: "475569")]
-        }
-    }
 }
 
 // MARK: - Status Tone Colors
@@ -59,10 +48,10 @@ extension AgentChannelKind {
 extension AgentChannelStatusTone {
     func color(_ theme: ThemeProtocol) -> Color {
         switch self {
-        case .neutral: return theme.tertiaryText
-        case .success: return theme.successColor
-        case .warning: return theme.warningColor
-        case .error: return theme.errorColor
+        case .neutral: return theme.text.tertiary
+        case .success: return theme.status.success.foreground
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
         }
     }
 }
@@ -78,18 +67,7 @@ struct AgentChannelStatusBadge: View {
 
     var body: some View {
         let color = presentation.tone.color(themeManager.currentTheme)
-        HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-            Text(presentation.label)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(color)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(color.opacity(0.12)))
+        StatusChip(presentation.label, tint: color, showsDot: true)
     }
 }
 
@@ -102,11 +80,10 @@ struct AgentChannelCardEnabledToggle {
     var onChange: (Bool) -> Void
 }
 
-/// Full-width card for one channel (native integration or custom connection).
-/// The whole card is a button that opens the channel's configuration sheet,
-/// mirroring `ProviderRowCard`.
+/// One channel (native integration or custom connection) as a library row
+/// that opens the channel's configuration sheet.
 struct AgentChannelCard: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let icon: String
     let gradient: [Color]
@@ -114,132 +91,84 @@ struct AgentChannelCard: View {
     let subtitle: String
     var subtitleIsMonospaced = false
     var badge: AgentChannelStatusPresentation?
-    /// Optional third line, e.g. which agent(s) answer this channel.
+    /// Optional second line, e.g. which agent(s) answer this channel.
     var detail: String?
     var anchorId: String?
-    /// Optional on/off switch rendered before the chevron. Used by stored
-    /// connections (n8n) so enabling and disabling never requires opening
-    /// the sheet.
+    /// Optional on/off switch before the chevron, so stored connections (n8n)
+    /// can be enabled and disabled without opening the sheet.
     var enabledToggle: AgentChannelCardEnabledToggle?
     let action: () -> Void
 
-    @State private var isHovered = false
-
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(
-                            LinearGradient(
-                                colors: gradient,
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 42, height: 42)
-
-                    Image(systemName: icon)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text(title)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-
-                        if let badge {
-                            AgentChannelStatusBadge(presentation: badge)
-                        }
-                    }
-                    Text(subtitle)
-                        .font(.system(size: 12, design: subtitleIsMonospaced ? .monospaced : .default))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-
-                    if let detail {
-                        Label {
-                            Text(detail)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        } icon: {
-                            Image(systemName: "person.crop.circle")
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                if let enabledToggle {
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { enabledToggle.isOn },
-                            set: { enabledToggle.onChange($0) }
-                        )
-                    )
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                    .labelsHidden()
-                    .help(
-                        enabledToggle.isOn
-                            ? L("Channel enabled — turn off to refuse every request with 403")
-                            : L("Channel disabled — turn on to accept requests again")
-                    )
-                    .settingsLandingAnchor(enabledToggle.anchorId)
-                }
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+        LibraryRow(
+            title: title,
+            subtitle: [subtitle, detail].compactMap { $0 }.joined(separator: "\n"),
+            monospacedSubtitle: subtitleIsMonospaced,
+            showsChevron: true,
+            anchorId: anchorId,
+            action: action
+        ) {
+            SettingsIconTile(icon: icon, size: 32, gradient: gradient)
+        } badges: {
+            if let badge {
+                AgentChannelStatusBadge(presentation: badge)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 12))
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                isHovered ? theme.accentColor.opacity(0.4) : theme.cardBorder,
-                                lineWidth: 1
-                            )
+        } trailing: {
+            if let enabledToggle {
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { enabledToggle.isOn },
+                        set: { enabledToggle.onChange($0) }
                     )
-            )
-            .scaleEffect(isHovered ? 1.01 : 1.0)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                isHovered = hovering
+                )
+                .settingsSwitch()
+                .help(
+                    enabledToggle.isOn
+                        ? L("Channel enabled — turn off to refuse every request with 403")
+                        : L("Channel disabled — turn on to accept requests again")
+                )
+                .settingsLandingAnchor(enabledToggle.anchorId)
             }
         }
-        .settingsLandingAnchor(anchorId)
     }
 }
 
 // MARK: - Setup Scaffold
 
+private struct ChannelSheetIsEditingKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Set when a channel sheet opens on a connection that is already set
+    /// up: its sections read as tabs, Status first, with no Back / Continue.
+    var channelSheetIsEditing: Bool {
+        get { self[ChannelSheetIsEditingKey.self] }
+        set { self[ChannelSheetIsEditingKey.self] = newValue }
+    }
+}
+
+/// A new account's sheet before its token or mail account is in: only the
+/// first section is open, and the footer's one action creates the account.
+struct AgentChannelPendingAccount {
+    var actionTitle: String
+    var isWorking: Bool
+    var canConnect: Bool
+    var connect: () -> Void
+}
+
 /// Shared chrome for channel configuration sheets: brand-tile header with a
 /// close (and optional back) button, a persistent section rail on the left,
 /// one focused section of content at a time on the right, and a pinned
-/// footer bar with Back / Continue navigation around the caller's actions.
+/// footer bar around the caller's actions.
 ///
-/// The same surface serves first-time setup (walk the sections in order with
-/// Continue) and later edits (every section is always one click away).
+/// First-time setup walks the numbered sections with Back / Continue. A
+/// connection that is already set up opens as tabs instead, Status first.
 struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: View, FooterTrailing: View>: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.channelSheetIsEditing) private var isEditingEnvironment
 
     let icon: String
     let gradient: [Color]
@@ -251,6 +180,8 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
     /// Shown as a back chevron in the header when the sheet is hosted inside
     /// the unified Add Channel picker.
     var onBack: (() -> Void)?
+    /// Set while a new account waits for its token or mail account.
+    var pendingAccount: AgentChannelPendingAccount?
     private let contentBuilder: (String) -> Content
     let statusBar: StatusBar
     let footerLeading: FooterLeading
@@ -265,6 +196,7 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
         selection: Binding<String>,
         sectionStatus: @escaping (String) -> AgentChannelSetupSectionStatus,
         onBack: (() -> Void)? = nil,
+        pendingAccount: AgentChannelPendingAccount? = nil,
         @ViewBuilder content: @escaping (String) -> Content,
         @ViewBuilder statusBar: () -> StatusBar,
         @ViewBuilder footerLeading: () -> FooterLeading,
@@ -278,6 +210,7 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
         self._selection = selection
         self.sectionStatus = sectionStatus
         self.onBack = onBack
+        self.pendingAccount = pendingAccount
         self.contentBuilder = content
         self.statusBar = statusBar()
         self.footerLeading = footerLeading()
@@ -285,6 +218,23 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
     }
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    private var isEditing: Bool { isEditingEnvironment && pendingAccount == nil }
+
+    private static var verifyId: String { AgentChannelProviderSetupSection.verify.rawValue }
+
+    /// Tabs put Status (the live check) first and drop the step captions'
+    /// "do this next" reading.
+    private var displayedSections: [AgentChannelSetupSection] {
+        guard isEditing, let verify = sections.first(where: { $0.id == Self.verifyId }) else { return sections }
+        let status = AgentChannelSetupSection(
+            id: verify.id, title: L("Status"), icon: "waveform.path.ecg", caption: L("Health and live check"))
+        return [status] + sections.filter { $0.id != Self.verifyId }
+    }
+
+    private func isLocked(_ section: AgentChannelSetupSection) -> Bool {
+        pendingAccount != nil && section.id != sections.first?.id
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -294,12 +244,12 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
                 sectionRail
 
                 Rectangle()
-                    .fill(theme.primaryBorder)
+                    .fill(theme.border.subtle)
                     .frame(width: 1)
 
                 ScrollView {
                     contentBuilder(selection)
-                        .padding(24)
+                        .padding(theme.space.s24)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .id(selection)
                 }
@@ -308,11 +258,11 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
             footerBar
         }
         .fittedSheetFrame(width: 800, height: 640)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(theme.surface.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(theme.primaryBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge)
+                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
         )
         .environment(\.theme, themeManager.currentTheme)
     }
@@ -322,17 +272,17 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
             if let onBack {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(12, weight: .semibold)
+                        .foregroundColor(theme.text.secondary)
                         .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.tertiaryBackground))
+                        .background(Circle().fill(theme.surface.hover))
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(Text("Back to channel choices", bundle: .module))
             }
 
             ZStack {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(
                         LinearGradient(
                             colors: gradient,
@@ -341,88 +291,99 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
                         )
                     )
                 Image(systemName: icon)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.white)
+                    .glyphSize(17, weight: .semibold)
+                    .foregroundColor(FixedPalette.onMedia)
             }
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.detailTitle)
+                    .foregroundColor(theme.text.primary)
 
                 Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
             }
 
             Spacer()
 
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
+            SettingsIconButton("xmark", help: "Close", size: .compact) { dismiss() }
+                .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(theme.secondaryBackground)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
+        .background(theme.surface.subtle)
     }
 
     private var sectionRail: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+            ForEach(Array(displayedSections.enumerated()), id: \.element.id) { index, section in
                 railRow(section, number: index + 1)
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(width: 192, alignment: .topLeading)
-        .background(theme.secondaryBackground.opacity(0.5))
+        .background(theme.surface.subtle)
     }
 
     private func railRow(_ section: AgentChannelSetupSection, number: Int) -> some View {
         let status = sectionStatus(section.id)
         let isSelected = selection == section.id
+        let locked = isLocked(section)
         return Button {
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 selection = section.id
             }
         } label: {
             HStack(spacing: 9) {
-                railIndicator(status, number: number)
+                Group {
+                    if isEditing {
+                        tabIndicator(section, status: status, isSelected: isSelected)
+                    } else {
+                        railIndicator(status, number: number)
+                    }
+                }
+                .frame(width: 20, height: 20)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(section.title)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                        .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
                         .lineLimit(1)
 
                     if let caption = section.caption {
                         Text(caption)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                     }
                 }
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? theme.accentColor.opacity(0.1) : Color.clear)
-            )
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
+            .settingsChrome(isSelected ? .selected : nil)
+            .opacity(locked ? 0.45 : 1)
         }
         .buttonStyle(PlainButtonStyle())
+        .disabled(locked)
+        .help(locked ? Text("Connect first", bundle: .module) : Text(verbatim: ""))
+    }
+
+    /// A tab's icon; a warning mark when the section needs attention.
+    private func tabIndicator(
+        _ section: AgentChannelSetupSection, status: AgentChannelSetupSectionStatus, isSelected: Bool
+    ) -> some View {
+        Image(systemName: status == .attention ? "exclamationmark.triangle.fill" : section.icon)
+            .glyphSize(11, weight: .semibold)
+            .foregroundColor(
+                status == .attention
+                    ? theme.status.warning.foreground : isSelected ? theme.text.primary : theme.text.tertiary
+            )
     }
 
     @ViewBuilder
@@ -430,29 +391,28 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
         ZStack {
             Circle()
                 .fill(indicatorFill(status))
-                .frame(width: 20, height: 20)
             switch status {
             case .complete:
                 Image(systemName: "checkmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(theme.successColor)
+                    .glyphSize(9, weight: .bold)
+                    .foregroundColor(theme.status.success.foreground)
             case .attention:
                 Image(systemName: "exclamationmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(theme.warningColor)
+                    .glyphSize(9, weight: .bold)
+                    .foregroundColor(theme.status.warning.foreground)
             case .pending:
                 Text("\(number)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.chip)
+                    .foregroundColor(theme.text.secondary)
             }
         }
     }
 
     private func indicatorFill(_ status: AgentChannelSetupSectionStatus) -> Color {
         switch status {
-        case .complete: return theme.successColor.opacity(0.14)
-        case .attention: return theme.warningColor.opacity(0.16)
-        case .pending: return theme.tertiaryBackground
+        case .complete: return theme.status.success.background
+        case .attention: return theme.status.warning.background
+        case .pending: return theme.surface.hover
         }
     }
 
@@ -460,51 +420,78 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
         VStack(alignment: .leading, spacing: 10) {
             statusBar
 
-            HStack(spacing: 10) {
-                footerLeading
+            if let pendingAccount {
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text("Cancel", bundle: .module)
+                    }
+                    .buttonStyle(.settings())
+                    AgentChannelSheetActionButton(
+                        title: pendingAccount.actionTitle,
+                        busyTitle: L("Connecting..."),
+                        isBusy: pendingAccount.isWorking,
+                        isPrimary: true,
+                        action: pendingAccount.connect
+                    )
+                    .disabled(!pendingAccount.canConnect || pendingAccount.isWorking)
+                    .keyboardShortcut(.defaultAction)
+                }
+            } else {
+                navigationFooter
+            }
+        }
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
+        .background(
+            theme.surface.subtle
+                .overlay(
+                    Rectangle()
+                        .fill(theme.border.subtle)
+                        .frame(height: 1),
+                    alignment: .top
+                )
+        )
+    }
 
-                Spacer()
+    private var navigationFooter: some View {
+        HStack(spacing: 10) {
+            footerLeading
 
+            Spacer()
+
+            if !isEditing {
                 if let previous = AgentChannelSetupFlow.previous(before: selection, in: sections) {
                     Button {
-                        withAnimation(.easeOut(duration: 0.15)) {
+                        withAnimation(theme.motion.quick) {
                             selection = previous
                         }
                     } label: {
                         Text("Back", bundle: .module)
                     }
-                    .buttonStyle(SettingsButtonStyle())
+                    .assignedSettingsButtonStyle()
                 }
 
                 if let next = AgentChannelSetupFlow.next(after: selection, in: sections) {
                     Button {
-                        withAnimation(.easeOut(duration: 0.15)) {
+                        withAnimation(theme.motion.quick) {
                             selection = next
                         }
                     } label: {
                         HStack(spacing: 5) {
                             Text("Continue", bundle: .module)
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
+                                .glyphSize(10, weight: .semibold)
                         }
                     }
-                    .buttonStyle(SettingsButtonStyle())
+                    .assignedSettingsButtonStyle()
                 }
-
-                footerTrailing
             }
+
+            footerTrailing
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1),
-                    alignment: .top
-                )
-        )
     }
 }
 
@@ -532,7 +519,7 @@ struct AgentChannelSheetActionButton: View {
                 Text(LocalizedStringKey(isBusy ? busyTitle : title), bundle: .module)
             }
         }
-        .buttonStyle(SettingsButtonStyle(isPrimary: isPrimary, isDestructive: isDestructive))
+        .assignedSettingsButtonStyle(isDestructive ? .destructive : (isPrimary ? .primary : .secondary))
     }
 }
 
@@ -540,7 +527,7 @@ struct AgentChannelSheetActionButton: View {
 
 /// Collapsed-by-default section for rarely used options, so channel sheets
 /// stay focused on the fields most users need. Now the shared
-/// `SettingsAdvancedDisclosure` (SettingsKit.swift); kept as a name so the
+/// `SettingsAdvancedDisclosure` (DesignSystem); kept as a name so the
 /// channel sheets read the same as before.
 typealias AgentChannelAdvancedSection = SettingsAdvancedDisclosure
 
@@ -570,18 +557,16 @@ struct AgentChannelSecretField: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text(LocalizedStringKey(label), bundle: .module)
-                    .textCase(.uppercase)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.tertiary)
 
                 if let requirementHint {
                     Text(verbatim: "·")
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                     Text(LocalizedStringKey(requirementHint), bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
 
                 Spacer()
@@ -589,50 +574,31 @@ struct AgentChannelSecretField: View {
                 if saved {
                     HStack(spacing: 4) {
                         Image(systemName: "lock.fill")
-                            .font(.system(size: 9))
+                            .glyphSize(9)
                         Text("Stored in Keychain", bundle: .module)
-                            .font(.system(size: 10))
+                            .font(SettingsFont.footnote)
                     }
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
 
                     Button(action: onRemove) {
                         Text("Remove", bundle: .module)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.errorColor)
+                            .font(SettingsFont.chip)
+                            .foregroundColor(theme.status.error.foreground)
                     }
                     .buttonStyle(PlainButtonStyle())
                 } else {
                     Text("Not saved", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
 
-            SecureField(text: $text, prompt: promptText) {
-                Text(LocalizedStringKey(label), bundle: .module)
-            }
-            .textFieldStyle(.plain)
-            .labelsHidden()
-            .font(.system(size: 13, design: .monospaced))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
+            SettingsTextField(placeholder: promptText, text: $text, monospaced: true, isSecure: true)
         }
     }
 
-    private var promptText: Text {
-        if saved {
-            return Text("Leave blank to keep current", bundle: .module)
-        }
-        return Text(LocalizedStringKey(placeholder), bundle: .module)
+    private var promptText: String {
+        saved ? L("Leave blank to keep current") : LCached(placeholder)
     }
 }
 
@@ -641,8 +607,6 @@ struct AgentChannelSecretField: View {
 /// Small bold heading for a group of fields inside a setup section, used
 /// where the rail already conveys progress so no step number is needed.
 struct AgentChannelSectionHeading: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
     let title: String
     /// Optional one-line explanation under the heading.
     var detail: String?
@@ -653,46 +617,12 @@ struct AgentChannelSectionHeading: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-
-            if let detail {
-                Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
+        SettingsSectionHeader(title: title, subtitle: detail)
     }
 }
 
 // MARK: - Auto-Reply Off Notice
 
-/// Inline warning shown under the "Reply Automatically" toggle when inbound
-/// dispatch is enabled but auto-reply is off: incoming messages still run the
-/// agent, but the reply stays local. Since channel-triggered runs cannot
-/// publish through channel tools, this is the only reply path, so surfacing
-/// the misconfiguration here prevents silently dropped replies.
-struct AgentChannelAutoReplyOffNotice: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    var body: some View {
-        Label {
-            Text(
-                "Replies will stay in Osaurus. Incoming messages still run the agent, but its responses are not posted back until Reply Automatically is on.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 10))
-        }
-        .foregroundColor(themeManager.currentTheme.warningColor)
-    }
-}
 
 /// Inline warning shown under the dispatch routing controls when the
 /// responding agent's applicable plugin tools exceed the channel preload
@@ -722,13 +652,13 @@ struct AgentChannelPluginPreloadOverflowNotice: View {
                     "This agent has \(overflow) more plugin tools than channel messages preload. The extra tools may not respond over this channel. Narrow the agent's tool selection to make every tool available.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
+                .font(SettingsFont.rowDescription)
                 .fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
+                    .glyphSize(10)
             }
-            .foregroundColor(themeManager.currentTheme.warningColor)
+            .foregroundColor(themeManager.currentTheme.status.warning.foreground)
         }
     }
 }
@@ -755,26 +685,20 @@ struct AgentChannelCopyableCommand: View {
         VStack(alignment: .leading, spacing: 4) {
             if let caption, lineLimit > 1 {
                 Text(LocalizedStringKey(caption), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
             HStack(alignment: lineLimit > 1 ? .top : .center, spacing: 8) {
                 Text(command)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(lineLimit)
                     .truncationMode(lineLimit > 1 ? .tail : .middle)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, theme.space.s8)
+                    .padding(.vertical, theme.space.s6)
                     .frame(maxWidth: lineLimit > 1 ? .infinity : nil, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                    .settingsChrome(.control)
                 Button {
                     #if os(macOS)
                         NSPasteboard.general.clearContents()
@@ -783,16 +707,16 @@ struct AgentChannelCopyableCommand: View {
                     onCopied?()
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .font(.system(size: 10, weight: .medium))
+                        .glyphSize(10, weight: .medium)
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(theme.accentColor)
+                .foregroundColor(theme.text.link)
                 .help(Text("Copy", bundle: .module))
 
                 if let caption, lineLimit == 1 {
                     Text(LocalizedStringKey(caption), bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if lineLimit == 1 {
@@ -821,11 +745,11 @@ struct AgentChannelSetupLink: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "link.circle.fill")
-                    .font(.system(size: 11))
+                    .glyphSize(11)
                 Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
             }
-            .foregroundColor(themeManager.currentTheme.accentColor)
+            .foregroundColor(themeManager.currentTheme.text.link)
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -847,39 +771,20 @@ struct AgentChannelMultilineSettingsField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
 
-            ZStack(alignment: .topLeading) {
-                if text.isEmpty && !placeholder.isEmpty {
-                    Text(LocalizedStringKey(placeholder), bundle: .module)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.placeholderText)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 10)
-                        .allowsHitTesting(false)
-                }
-
-                TextEditor(text: $text)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .scrollContentBackground(.hidden)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 6)
-            }
-            .frame(minHeight: 52)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
+            SettingsTextEditor(
+                text: $text,
+                placeholder: placeholder.isEmpty
+                    ? nil : String(localized: String.LocalizationValue(placeholder), bundle: .module),
+                minHeight: 52,
+                monospaced: true
             )
 
             Text(LocalizedStringKey(help), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -905,17 +810,17 @@ struct AgentChannelInlineStatusMessage: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     private var tint: Color {
-        isError ? theme.warningColor : theme.successColor
+        isError ? theme.status.warning.foreground : theme.status.success.foreground
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .glyphSize(13, weight: .semibold)
                     .foregroundColor(tint)
                 Text(message)
-                    .font(.system(size: 12))
+                    .font(SettingsFont.caption)
                     .foregroundColor(tint)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
@@ -924,24 +829,21 @@ struct AgentChannelInlineStatusMessage: View {
             ForEach(details, id: \.self) { detail in
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(.top, 2)
+                        .glyphSize(10, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
+                        .padding(.top, theme.space.s2)
                     Text(detail)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
-                .padding(.leading, 21)
+                .padding(.leading, theme.space.s24)
             }
         }
-        .padding(10)
+        .padding(theme.space.s8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(tint.opacity(0.08))
-        )
+        .settingsChrome(.tinted(tint))
         .task(id: message) {
             guard onAutoClear != nil, !isError, details.isEmpty else { return }
             try? await Task.sleep(for: Self.autoClearDelay)
@@ -965,32 +867,7 @@ struct AgentChannelSelectorSearchField: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundColor(theme.primaryText)
-            if !text.isEmpty {
-                Button {
-                    text = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
-        )
+        SearchField(text: $text, placeholder: LocalizedStringKey(placeholder), fillsAvailableWidth: true)
     }
 }
 
@@ -1023,10 +900,10 @@ struct AgentChannelSelectorListCard<
         VStack(spacing: 0) {
             if shaped.isEmpty {
                 Text(emptyText)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
+                    .padding(.vertical, theme.space.s16)
             } else {
                 ScrollView {
                     // Deliberately non-lazy: on macOS, LazyVStack cells inside
@@ -1051,11 +928,7 @@ struct AgentChannelSelectorListCard<
                 .frame(maxHeight: maxHeight)
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
-        )
+        .settingsChrome(.surface)
     }
 
     @ViewBuilder
@@ -1066,7 +939,7 @@ struct AgentChannelSelectorListCard<
         ForEach(items) { item in
             row(item)
             if dividerAfterLast || item.id != items.last?.id {
-                Divider().foregroundColor(theme.cardBorder)
+                Divider().foregroundColor(theme.border.default)
             }
         }
     }
@@ -1074,16 +947,14 @@ struct AgentChannelSelectorListCard<
     private func groupLabel(_ label: Text) -> some View {
         HStack {
             label
-                .textCase(.uppercase)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.5)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.tertiary)
             Spacer()
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
-        .background(theme.tertiaryBackground.opacity(0.5))
+        .padding(.horizontal, theme.space.s8)
+        .padding(.top, theme.space.s8)
+        .padding(.bottom, theme.space.s4)
+        .background(theme.surface.hover)
     }
 
     private var truncationNotice: some View {
@@ -1097,10 +968,10 @@ struct AgentChannelSelectorListCard<
                 Text("\(shaped.hiddenCount) more not shown — search to find them.", bundle: .module)
             }
         }
-        .font(.system(size: 10))
-        .foregroundColor(theme.tertiaryText)
+        .font(SettingsFont.footnote)
+        .foregroundColor(theme.text.tertiary)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
+        .padding(.vertical, theme.space.s8)
     }
 }
 
@@ -1110,35 +981,15 @@ struct AgentChannelSelectorListCard<
 /// Selected state is unmistakable: filled checkmark, accent tint, and an
 /// accent-tinted capsule instead of the neutral one.
 struct AgentChannelSelectorToggle: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
     /// Title, already localized by the caller.
     let title: String
     let selected: Bool
     var enabled: Bool = true
     let action: () -> Void
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 10, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(selected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground)
-            )
-            .contentShape(Capsule())
-        }
-        .buttonStyle(PlainButtonStyle())
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.45)
+        FilterChip(title, icon: selected ? "checkmark.circle.fill" : "circle", isSelected: selected, action: action)
+            .disabled(!enabled)
+            .opacity(enabled ? 1 : 0.45)
     }
 }

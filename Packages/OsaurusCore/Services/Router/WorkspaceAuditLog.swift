@@ -40,6 +40,17 @@ enum WorkspaceAuditEventKind: String, Codable, CaseIterable, Sendable {
     case runRejected = "run.rejected"
     case scopeDenied = "scope.denied"
     case taskCancelled = "task.cancelled"
+    // Owner approvals for a teammate's tool call, and the owner speaking in
+    // a teammate's conversation (host side).
+    case approvalRequested = "approval.requested"
+    case approvalGranted = "approval.granted"
+    case approvalDenied = "approval.denied"
+    case approvalTimedOut = "approval.timeout"
+    case participantMessage = "participant.message"
+    // A teammate's run started one of the owner's workflows (host side).
+    case workflowRunStarted = "workflow.run.started"
+    case workflowRunFinished = "workflow.run.finished"
+    case workflowRunRefused = "workflow.run.refused"
     // Runs THIS instance started on a teammate's shared agent (client side:
     // spawn / schedule / watcher / channel dispatch over the relay).
     case outboundRunStarted = "run.outbound_started"
@@ -69,6 +80,7 @@ enum WorkspaceAuditEventKind: String, Codable, CaseIterable, Sendable {
     enum Category: String, CaseIterable, Sendable {
         case access
         case runs
+        case approvals
         case denials
         case administration
     }
@@ -78,9 +90,12 @@ enum WorkspaceAuditEventKind: String, Codable, CaseIterable, Sendable {
         case .attestationGranted, .keyMinted, .keyRevoked:
             return .access
         case .runStarted, .runFinished, .runStoppedByOwner, .taskCancelled,
-            .outboundRunStarted, .outboundRunFinished:
+            .outboundRunStarted, .outboundRunFinished, .participantMessage,
+            .workflowRunStarted, .workflowRunFinished:
             return .runs
-        case .attestationDenied, .runRejected, .scopeDenied, .outboundRunRefused:
+        case .approvalRequested, .approvalGranted, .approvalDenied, .approvalTimedOut:
+            return .approvals
+        case .attestationDenied, .runRejected, .scopeDenied, .outboundRunRefused, .workflowRunRefused:
             return .denials
         case .workspaceCreated, .workspaceRenamed, .workspaceDeleted, .workspaceReactivated, .workspaceLeft,
             .inviteCreated, .inviteRevoked, .memberRemoved, .memberRoleChanged,
@@ -627,6 +642,97 @@ actor WorkspaceAuditLog {
         )
     }
 
+    // MARK: Owner approvals and owner messages (host side)
+
+    /// One step of an owner approval for a shared-agent caller's tool call:
+    /// requested, then granted / denied / timed out. Tool name only.
+    func recordApproval(
+        _ event: WorkspaceAuditEventKind,
+        workspaceId: String,
+        caller: Participant,
+        agentAddress: String?,
+        agentName: String,
+        approvalId: UUID,
+        toolName: String,
+        details extra: [String: String] = [:]
+    ) {
+        var details = extra
+        details["tool"] = toolName
+        if let handle = caller.atHandle { details["caller_handle"] = handle }
+        details["caller_kind"] = caller.kind.rawValue
+        if let address = caller.agentAddress { details["caller_agent_address"] = address }
+        if let name = caller.agentName { details["caller_agent_name"] = name }
+        if caller.identityUnverified == true { details["caller_identity"] = "unverified" }
+        let actor: WorkspaceAuditActor =
+            event == .approvalRequested
+            ? WorkspaceAuditActor(wallet: caller.wallet, name: caller.handle.map { "@" + $0 })
+            : .me()
+        append(
+            event,
+            workspaceId: workspaceId,
+            actor: actor,
+            agentAddress: agentAddress,
+            agentName: agentName,
+            target: approvalId.uuidString,
+            details: details
+        )
+    }
+
+    /// A teammate's run on a shared agent started, finished, or was refused
+    /// one of the owner's workflows. Workflow name and outcome only; never
+    /// the input or output.
+    func recordWorkflowRun(
+        _ event: WorkspaceAuditEventKind,
+        workspaceId: String,
+        caller: Participant,
+        agentAddress: String?,
+        agentName: String?,
+        workflowName: String,
+        runId: UUID?,
+        details extra: [String: String] = [:]
+    ) {
+        var details = extra
+        details["workflow"] = workflowName
+        details["caller_kind"] = caller.kind.rawValue
+        if let handle = caller.atHandle { details["caller_handle"] = handle }
+        if let address = caller.agentAddress { details["caller_agent_address"] = address }
+        if let name = caller.agentName { details["caller_agent_name"] = name }
+        append(
+            event,
+            workspaceId: workspaceId,
+            actor: WorkspaceAuditActor(wallet: caller.wallet, name: caller.handle.map { "@" + $0 }),
+            agentAddress: agentAddress,
+            agentName: agentName,
+            target: runId?.uuidString,
+            details: details
+        )
+    }
+
+    /// The owner wrote in a teammate's conversation. Never the text.
+    func recordParticipantMessage(
+        workspaceId: String,
+        agentAddress: String?,
+        agentName: String?,
+        conversation: String,
+        caller: Participant?
+    ) {
+        var details: [String: String] = [:]
+        if let caller {
+            details["caller_kind"] = caller.kind.rawValue
+            if let handle = caller.atHandle { details["caller_handle"] = handle }
+            if let wallet = caller.wallet { details["caller_wallet"] = wallet }
+        }
+        append(
+            .participantMessage,
+            workspaceId: workspaceId,
+            actor: .me(),
+            agentAddress: agentAddress,
+            agentName: agentName,
+            target: conversation,
+            details: details
+        )
+    }
+
     // MARK: - Typed recorders (owner actions from this app)
 
     func recordOwnerAction(
@@ -665,6 +771,7 @@ actor WorkspaceAuditLog {
         case .badWalletSignature: return "bad_wallet_signature"
         case .agentNotFound: return "agent_not_found"
         case .notShared: return "not_shared"
+        case .workspaceSuspended: return "workspace_suspended"
         case .rosterUnavailable: return "roster_unavailable"
         case .mintFailed: return "mint_failed"
         }

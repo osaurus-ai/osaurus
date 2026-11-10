@@ -201,17 +201,6 @@ public final class ModelManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Model Deprecation
-
-    struct DeprecationNotice: Identifiable {
-        let id: String
-        let oldId: String
-        let newId: String
-    }
-
-    /// Maps deprecated model IDs to their recommended OsaurusAI replacements.
-    nonisolated static let deprecatedModelReplacements: [String: String] = [:]
-
     // MARK: - Published Properties
     @Published var availableModels: [MLXModel] = []
     @Published var isLoadingModels: Bool = false
@@ -231,7 +220,6 @@ public final class ModelManager: NSObject, ObservableObject {
     var ownsModelUpdatePolling = false
     var modelUpdatePollingTask: Task<Void, Never>?
     let automaticModelUpdateSweep = ModelUpdateSweep()
-    @Published var deprecationNotices: [DeprecationNotice] = []
 
     /// True while a refresh of the OsaurusAI org listing is in flight. Drives
     /// the spinner on the Recommended tab's refresh button.
@@ -333,26 +321,10 @@ public final class ModelManager: NSObject, ObservableObject {
 
         isLoadingModels = false
 
-        checkForDeprecatedModels()
-
         let allModels = availableModels + suggestedModels
         Task { [downloadService] in
             await downloadService.topUpCompletedModels(allModels)
         }
-    }
-
-    /// Scans locally installed models for deprecated entries and populates deprecation notices.
-    func checkForDeprecatedModels() {
-        deprecationNotices = Self.deprecatedModelReplacements.compactMap { oldId, newId in
-            let probe = MLXModel(id: oldId, name: "", description: "", downloadURL: "")
-            guard probe.isDownloaded else { return nil }
-            return DeprecationNotice(id: oldId, oldId: oldId, newId: newId)
-        }
-    }
-
-    /// Returns the replacement model ID if the given model is deprecated, nil otherwise.
-    nonisolated static func replacementForDeprecatedModel(_ modelId: String) -> String? {
-        deprecatedModelReplacements[modelId]
     }
 
     /// Re-evaluate download states for all known models against the current
@@ -376,7 +348,6 @@ public final class ModelManager: NSObject, ObservableObject {
                 with: localModels,
                 refreshLocalInstallationMetadata: true
             )
-            self.checkForDeprecatedModels()
             self.refreshTotalDownloadedSize()
         }
     }
@@ -871,8 +842,8 @@ extension ModelManager {
     }
 
     /// Fully curated models with descriptions we control.
-    /// Order is a fallback only — `ModelDownloadView.filteredSuggestedModels`
-    /// sorts by curated-first → top-pick → `releasedAt` desc → name.
+    /// Order is a fallback only — `LanguageModelCatalog.makeLists` sorts by
+    /// top-pick → `releasedAt` desc → name.
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
         // MARK: Gemma 4 — multimodal
         //
@@ -1561,6 +1532,21 @@ extension ModelManager {
         guard let tag = pipelineTag?.lowercased(), !tag.isEmpty else { return true }
         return chatCapablePipelineTags.contains(tag)
     }
+
+    /// Decision bundles are downloadable local models, but never chat models.
+    /// Require the publisher's task declaration and decision artifacts rather
+    /// than inferring the task from a repo name or its chat-capable backbone.
+    nonisolated static func isDecisionCatalogEligible(
+        id: String, pipelineTag: String?, tags: [String]?, files: [String]?
+    ) -> Bool {
+        guard !panelOwnedOrgIds.contains(id.lowercased()), !isGGUFRepo(id: id, tags: tags),
+            pipelineTag?.lowercased() == "zero-shot-classification",
+            tags?.contains(where: { $0.lowercased() == "decision-model" }) == true,
+            let files
+        else { return false }
+        return Set(["jang_config.json", "decision/decision_config.json", "decision/readout.safetensors"])
+            .isSubset(of: Set(files))
+    }
 }
 
 // MARK: - Installed models helpers for services
@@ -1690,10 +1676,11 @@ extension ModelManager {
 // MARK: - Hugging Face discovery helpers
 
 extension ModelManager {
-    fileprivate struct HFModel: Decodable, Sendable {
+    struct HFModel: Decodable, Sendable {
         let id: String
         let tags: [String]?
         let pipeline_tag: String?
+        let siblings: [HuggingFaceService.RepoFile]?
         let lastModified: String?
         let downloads: Int?
     }
@@ -1925,8 +1912,11 @@ extension ModelManager {
     /// The use-case pill is inferred where the HF metadata supports it
     /// (multimodal tags → Vision) so auto-fetched cards aren't all blank
     /// next to curated ones.
-    nonisolated fileprivate static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
+    nonisolated static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
         let modelType = inferModelType(from: hf.tags)
+        let isDecision = Self.isDecisionCatalogEligible(
+            id: hf.id, pipelineTag: hf.pipeline_tag, tags: hf.tags, files: hf.siblings?.map(\.rfilename)
+        )
         let isMultimodal =
             modelType.map { VLMDetection.isVLM(modelType: $0) } ?? false
             || (hf.pipeline_tag?.lowercased() == "image-text-to-text")
@@ -1938,7 +1928,8 @@ extension ModelManager {
             modelType: modelType,
             releasedAt: parseHFTimestamp(hf.lastModified),
             downloads: hf.downloads,
-            useCase: isMultimodal ? .vision : nil
+            useCase: isMultimodal && !isDecision ? .vision : nil,
+            isDecision: isDecision
         )
     }
 
@@ -1957,12 +1948,15 @@ extension ModelManager {
         let fetched = (try? await Self.requestHFModels(at: url)) ?? []
         guard !fetched.isEmpty else { return }
 
-        // Drop repos that other Settings panels own (rampart PII guard,
-        // embeddings, image/speech pipelines) before they can become chat
-        // cards. Curated entries never pass through this gate — they merge
-        // from `curatedSuggestedModels` directly.
+        // Other panels own guards, embeddings and image/speech pipelines.
+        // Decision bundles share this downloader, but carry their task so
+        // chat selectors continue to exclude them. Curated entries merge
+        // separately and never pass through this discovery gate.
         let raw = fetched.filter {
             Self.isChatCatalogEligible(id: $0.id, pipelineTag: $0.pipeline_tag, tags: $0.tags)
+                || Self.isDecisionCatalogEligible(
+                    id: $0.id, pipelineTag: $0.pipeline_tag, tags: $0.tags, files: $0.siblings?.map(\.rfilename)
+                )
         }
         guard !raw.isEmpty else { return }
 

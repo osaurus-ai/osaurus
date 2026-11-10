@@ -807,6 +807,10 @@ public struct EvalReport: Sendable, Codable {
             lines.append("")
             lines.append(contentsOf: contextLines)
         }
+        if let stateCalls = StateCallScorecard(rows: cases) {
+            lines.append("")
+            lines.append(contentsOf: stateCalls.formatLines())
+        }
         return lines.joined(separator: "\n")
     }
 

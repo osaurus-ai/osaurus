@@ -12,24 +12,61 @@ import Foundation
 struct PiRPCAdapter: HarnessAdapter {
     let runtime: HarnessRuntime
 
-    /// Deferred to the agent's own tool policy at call time.
-    func tokenToolScope(context: HarnessLaunchContext) -> Set<String>? { nil }
+    /// The Architect's fixed surface; anyone else defers to the agent's own
+    /// tool policy at call time.
+    func tokenToolScope(context: HarnessLaunchContext) -> Set<String>? {
+        context.isArchitect ? HarnessGrantStore.architectToolNames : nil
+    }
 
     /// Pi has no per-agent config-write switch, so the token is read-only for
     /// Osaurus's configuration.
     func tokenAllowsConfigWrites(context: HarnessLaunchContext) -> Bool { false }
 
+    /// Registers the token's Osaurus tools as Pi tools (Pi has no MCP).
+    static var extensionURL: URL? {
+        Bundle.module.url(forResource: "osaurus-pi-extension", withExtension: "ts", subdirectory: "Harness")
+            ?? Bundle.module.url(forResource: "osaurus-pi-extension", withExtension: "ts")
+    }
+
     func launchPlan(context: HarnessLaunchContext, token: String?) throws -> HarnessLaunchPlan {
         var temporaryFiles: [URL] = []
+        var extraArguments: [String] = []
+        var promptParts: [String] = []
+        if let systemPrompt = context.systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !systemPrompt.isEmpty
+        {
+            promptParts.append(systemPrompt)
+        }
+
+        if context.isArchitect {
+            // Only the drafting tools: a coding agent's file and shell tools
+            // have nothing to do with the draft.
+            extraArguments.append("--no-builtin-tools")
+            if context.serverReachable, let extensionURL = Self.extensionURL {
+                extraArguments += ["-e", extensionURL.path]
+            } else {
+                promptParts.append(
+                    ClaudeCodeConfiguration.architectToolsUnavailableNote(
+                        reason: context.serverReachable ? .notEnabled : .serverNotRunning
+                    )
+                )
+            }
+        }
+
         var systemPromptFile: URL?
-        if runtime.wantsSystemPromptFile {
+        if runtime.wantsSystemPromptFile || !promptParts.isEmpty {
             let url = try HarnessScratch.writePrivateFile(
                 named: "system-prompt-\(UUID().uuidString).md",
-                contents: context.systemPrompt ?? "",
+                contents: promptParts.joined(separator: "\n\n"),
                 in: HarnessScratch.privateDirectory(chatId: context.chatId)
             )
             temporaryFiles.append(url)
             systemPromptFile = url
+            // Without the placeholder the instructions would never arrive;
+            // Pi reads a file path given to `--append-system-prompt`.
+            if !runtime.wantsSystemPromptFile {
+                extraArguments += ["--append-system-prompt", url.path]
+            }
         }
 
         var environment = runtime.environment
@@ -45,7 +82,7 @@ struct PiRPCAdapter: HarnessAdapter {
                     agentId: context.agentId,
                     workingDirectory: context.workingDirectory,
                     systemPromptFile: systemPromptFile
-                ),
+                ) + extraArguments,
                 environment: environment,
                 removingEnvironment: HarnessEnvironment.alwaysRemoved,
                 workingDirectory: context.workingDirectory,

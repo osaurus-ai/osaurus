@@ -418,7 +418,7 @@ struct SecretArgumentExecutionSeamTests {
         #expect(!material.forRecording.contains(secret))
         #expect(material.forRecording.contains("[REDACTED]"))
 
-        try await AgentSecretsKeychain._withInMemoryStoreForTesting {
+        try await CredentialStore._withIsolatedStoreForTesting {
             let agentId = UUID()
             let tool = SandboxSecretSetTool(agentId: agentId.uuidString)
             // Execution seam receives the unredacted payload.
@@ -428,10 +428,9 @@ struct SecretArgumentExecutionSeamTests {
             #expect(payload["ok"] as? Bool == true)
             let stored = payload["result"] as? [String: Any]
             #expect(stored?["stored"] as? Bool == true)
-            // Keychain (in-memory under this harness) holds the real secret.
-            #expect(
-                AgentSecretsKeychain.getSecret(id: "EVAL_API_TOKEN", agentId: agentId) == secret
-            )
+            // The agent's own key (in-memory under this harness) holds the real secret.
+            #expect(SandboxCredentials.value("EVAL_API_TOKEN", agentId: agentId) == secret)
+            #expect(CredentialStore.current.value("EVAL_API_TOKEN", scope: .global) == nil)
             // Recorded material still must not contain it.
             #expect(!material.forRecording.contains(secret))
         }
@@ -500,22 +499,22 @@ struct SecretSetStoreHonestyTests {
     }
 
     /// The in-memory store must behave like the real one for the pipeline
-    /// pieces around it: save → getFilteredSecrets (exec env injection) and
-    /// deleteAllSecrets (per-case eval cleanup) purging only that agent.
+    /// pieces around it: seed → legacyFilteredSecrets (the env fallback) and
+    /// a purge that removes only that agent's items.
     @Test func inMemoryStoreRoundtripAndScopedPurge() {
         AgentSecretsKeychain._withInMemoryStoreForTesting {
             let agent = UUID()
             let bystander = UUID()
-            AgentSecretsKeychain.saveSecret("tok-a", id: "EVAL_API_TOKEN", agentId: agent)
-            AgentSecretsKeychain.saveSecret("tok-b", id: "OTHER", agentId: bystander)
+            AgentSecretsKeychain._testSeedSecret("tok-a", id: "EVAL_API_TOKEN", agentId: agent)
+            AgentSecretsKeychain._testSeedSecret("tok-b", id: "OTHER", agentId: bystander)
 
             #expect(
-                AgentSecretsKeychain.getFilteredSecrets(agentId: agent)
+                AgentSecretsKeychain.legacyFilteredSecrets(agentId: agent)
                     == ["EVAL_API_TOKEN": "tok-a"]
             )
 
-            AgentSecretsKeychain.deleteAllSecrets(agentId: agent)
-            #expect(AgentSecretsKeychain.getFilteredSecrets(agentId: agent).isEmpty)
+            AgentSecretsKeychain._testRemoveAll(agentId: agent)
+            #expect(AgentSecretsKeychain.legacyFilteredSecrets(agentId: agent).isEmpty)
             // The other agent's secret survives the purge.
             #expect(
                 AgentSecretsKeychain.getSecret(id: "OTHER", agentId: bystander) == "tok-b"
@@ -523,27 +522,24 @@ struct SecretSetStoreHonestyTests {
         }
     }
 
-    /// Runs only in the keychain-free lane (`OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`
-    /// without the in-memory store): there `saveSecret` deterministically
-    /// returns false, and the envelope must be ok:false with an actionable
+    /// A Keychain write that fails must give ok:false with an actionable
     /// message — never `stored:true`.
-    @Test(
-        .enabled(
-            if: ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] == "1"
-                && ProcessInfo.processInfo.environment["OSAURUS_AGENT_SECRETS_IN_MEMORY"] != "1"
-        )
-    )
+    @Test
     func failedWriteIsATypedFailureNotStoredTrue() async throws {
+        let store = CredentialStore.makeIsolated()
+        store.failsSecretWritesForTesting = true
         let tool = SandboxSecretSetTool(agentId: UUID().uuidString)
-        let payload = try await execute(
-            tool,
-            [
-                "key": "EVAL_API_TOKEN",
-                "description": "d",
-                "instructions": "i",
-                "value": "tok-roundtrip-42",
-            ]
-        )
+        let payload = try await CredentialStore.$taskLocalStore.withValue(store) {
+            try await execute(
+                tool,
+                [
+                    "key": "EVAL_API_TOKEN",
+                    "description": "d",
+                    "instructions": "i",
+                    "value": "tok-roundtrip-42",
+                ]
+            )
+        }
         #expect(payload["ok"] as? Bool == false)
         let message = payload["message"] as? String ?? ""
         #expect(message.contains("NOT be available"))

@@ -17,11 +17,11 @@ import Testing
 struct SettingsSearchIndexTests {
 
     @Test func everyEntryTargetsAVisibleTab() {
-        let visible = Set(ManagementTab.visibleCases)
+        let visible = Set(ManagementTab.visibleCases).union(ManagementTab.mainWindowCases)
         for entry in SettingsSearchIndex.entries {
             #expect(
                 visible.contains(entry.tab),
-                "\(entry.id) targets \(entry.tab.rawValue), which is not in the sidebar"
+                "\(entry.id) targets \(entry.tab.rawValue), which is neither in the sidebar nor a main-window surface"
             )
         }
     }
@@ -68,12 +68,37 @@ struct SettingsSearchIndexTests {
                     ToolsTab(rawValue: subTab) != nil,
                     "\(entry.id): \(subTab) is not a ToolsTab raw value"
                 )
+            case .automations:
+                #expect(
+                    AutomationsPage(rawValue: subTab) != nil,
+                    "\(entry.id): \(subTab) is not an AutomationsPage raw value"
+                )
+            case .keys:
+                #expect(
+                    KeysTab(rawValue: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a KeysTab raw value"
+                )
+            case .workspaces:
+                #expect(
+                    WorkspaceDetailView.Tab(subTab: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a WorkspaceDetailView tab"
+                )
             case .agents:
                 // Routed by `AgentsView.routeSettingsLanding` from the landing
                 // id; the subTab must still be a real detail tab raw value.
                 #expect(
                     AgentDetailTabRoute.resolve(subTab) != nil,
                     "\(entry.id): \(subTab) is not an agent detail tab raw value"
+                )
+            case .models:
+                #expect(
+                    LocalModelKind(rawValue: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a LocalModelKind raw value"
+                )
+            case .workflows:
+                #expect(
+                    ChatWindowState.WorkflowsDestination(subTab: subTab) != nil,
+                    "\(entry.id): \(subTab) is not a Workflows window tab or page"
                 )
             default:
                 Issue.record(
@@ -104,21 +129,25 @@ struct SettingsSearchIndexTests {
     }
 
     @Test func searchFindsRelocatedStorageEntries() {
-        // The standalone Storage tab is gone: everything storage-shaped now
-        // lives on the General tab (Models on This Mac in the open; Models
-        // Directory, encryption and file history under Advanced).
+        // The standalone Storage tab is gone: model folders and sources live
+        // on Local Models → Sources, encryption and file history on Privacy &
+        // Security → Data & Storage. General holds none of them.
         let directoryHits = SettingsSearchIndex.search("models directory")
-        #expect(directoryHits.contains { $0.id == "storage.location" && $0.tab == .settings })
+        #expect(directoryHits.contains { $0.id == "storage.location" && $0.tab == .models })
 
         let externalHits = SettingsSearchIndex.search("lm studio")
-        #expect(externalHits.contains { $0.id == "storage.externalModels" && $0.tab == .settings })
+        #expect(externalHits.contains { $0.id == "storage.externalModels" && $0.tab == .models })
 
+        let storage = PrivacyTab.storage.rawValue
         let encryptionHits = SettingsSearchIndex.search("sqlcipher")
-        #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .settings })
+        #expect(encryptionHits.contains { $0.id == "storage.encryption" && $0.tab == .privacy && $0.subTab == storage })
 
         let historyHits = SettingsSearchIndex.search("file history")
-        #expect(historyHits.contains { $0.id == "storage.fileHistory.retention" && $0.tab == .settings })
-        #expect(!historyHits.contains { $0.tab == .privacy })
+        #expect(
+            historyHits.contains {
+                $0.id == "storage.fileHistory.retention" && $0.tab == .privacy && $0.subTab == storage
+            })
+        #expect(!SettingsSearchIndex.entries.contains { $0.id.hasPrefix("storage.") && $0.tab == .settings })
     }
 
     @Test func searchFindsRelocatedCLIAndToolPermissionEntries() {
@@ -174,7 +203,6 @@ struct SettingsSearchIndexTests {
                 "\(row.id) points at a retired Privacy sub-tab"
             )
         }
-        #expect(!SettingsSearchIndex.entries.contains { $0.tab == .privacy && $0.subTab == "storage" })
         // The Rules sub-tab's five sections are all reachable from search.
         for id in [
             "privacy.rules.detectionPatterns", "privacy.rules.regions", "privacy.rules.presets",
@@ -295,7 +323,7 @@ struct SettingsSearchIndexTests {
             .appendingPathComponent("Views")
         let privacyRoot = viewsRoot.deletingLastPathComponent()
             .appendingPathComponent("PrivacyFilter")
-        let indexed = Set(SettingsSearchIndex.entries.map(\.id))
+        let indexed = Set(SettingsSearchIndex.catalog.map(\.id))
         var missing: [String] = []
         for root in [viewsRoot, privacyRoot] {
             guard let enumerator = FileManager.default.enumerator(

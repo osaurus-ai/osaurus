@@ -20,8 +20,6 @@ struct ClaudeMarketplaceDetailView: View {
     let onBack: () -> Void
     let onInstall: () async throws -> Void
 
-    @State private var hasAppeared = false
-
     @State private var isInstalling = false
     @State private var errorMessage: String?
     @State private var showError = false
@@ -40,7 +38,7 @@ struct ClaudeMarketplaceDetailView: View {
 
     private var categoryKey: String { ClaudeMarketplaceService.categoryKey(for: entry) }
     /// Calm app accent for the icon + primary action.
-    private var accent: Color { theme.accentColor }
+    private var accent: Color { theme.action.primary.default.background }
     /// Muted per-category tint, used only for the small category badge.
     private var categoryColor: Color { ClaudeMarketplacePalette.color(for: categoryKey) }
 
@@ -63,25 +61,15 @@ struct ClaudeMarketplaceDetailView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            detailHeaderBar
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    heroHeader.padding(.bottom, 8)
-                    trustSection
-                    componentsSection
-                    externalLinksSection
-                }
-                .padding(24)
-            }
+        SettingsPage {
+            detailHeader
+        } content: {
+            heroMetadata
+            trustSection
+            componentsSection
+            externalLinksSection
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .opacity(hasAppeared ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: hasAppeared)
-        .onAppear {
-            withAnimation { hasAppeared = true }
-        }
+        .settingsBackDestination("Plugins") { onBack() }
         .themedAlert(
             "Installation Failed",
             isPresented: $showError,
@@ -90,153 +78,67 @@ struct ClaudeMarketplaceDetailView: View {
         )
     }
 
-    // MARK: - Header bar
+    // MARK: - Header
 
-    private var detailHeaderBar: some View {
-        HStack(spacing: 12) {
-            Button(action: onBack) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Plugins", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(PlainButtonStyle())
-            Spacer()
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 14)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1),
-                    alignment: .bottom
-                )
+    private var detailHeader: some View {
+        SettingsPageHeader(
+            title: displayName,
+            verbatimTitle: true,
+            subtitle: entry.description,
+            verbatimSubtitle: true,
+            leading: {
+                SettingsIconTile(icon: "puzzlepiece.extension.fill", size: 32, tint: accent)
+            },
+            status: {
+                StatusChip(ClaudeMarketplaceCategory(id: categoryKey, count: 0).displayName, tint: categoryColor)
+            },
+            primary: { installControl }
         )
     }
 
-    // MARK: - Hero
-
-    private var heroHeader: some View {
-        HStack(spacing: 20) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(
-                        LinearGradient(
-                            colors: [accent.opacity(0.2), accent.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(accent.opacity(0.3), lineWidth: 2)
-                Image(systemName: "puzzlepiece.extension.fill")
-                    .font(.system(size: 28))
-                    .foregroundColor(accent)
+    private var heroMetadata: some View {
+        HStack(spacing: theme.space.s12) {
+            if let author = entry.author?.name, !author.isEmpty {
+                heroStatBadge(icon: "person", text: author, color: theme.text.tertiary)
             }
-            .frame(width: 72, height: 72)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Text(displayName)
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundColor(theme.primaryText)
-                    Text(ClaudeMarketplaceCategory(id: categoryKey, count: 0).displayName)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(categoryColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(categoryColor.opacity(0.14)))
-                }
-
-                if let description = entry.description, !description.isEmpty {
-                    Text(description)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                HStack(spacing: 12) {
-                    if let author = entry.author?.name, !author.isEmpty {
-                        heroStatBadge(icon: "person", text: author, color: theme.tertiaryText)
-                    }
-                    if let license = entry.license, !license.isEmpty {
-                        heroStatBadge(icon: "doc.text", text: license, color: theme.tertiaryText)
-                    }
-                    if let summary = componentSummary, !summary.isEmpty {
-                        heroStatBadge(
-                            icon: "shippingbox.fill",
-                            text: componentCountText(summary),
-                            color: theme.accentColor
-                        )
-                    }
-                    heroStatBadge(
-                        icon: trustStatusIcon,
-                        text: trustPreview.statusTitle,
-                        color: trustStatusColor
-                    )
-                }
+            if let license = entry.license, !license.isEmpty {
+                heroStatBadge(icon: "doc.text", text: license, color: theme.text.tertiary)
             }
-
-            Spacer(minLength: 0)
-
-            installControl
+            if let summary = componentSummary, !summary.isEmpty {
+                heroStatBadge(
+                    icon: "shippingbox.fill",
+                    text: componentCountText(summary),
+                    color: theme.action.primary.default.background
+                )
+            }
+            heroStatBadge(
+                icon: trustStatusIcon,
+                text: trustPreview.statusTitle,
+                color: trustStatusColor
+            )
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.secondaryBackground)
-        )
     }
 
     @ViewBuilder
     private var installControl: some View {
         if trustPreview.importabilityStatus == .blocked {
-            HStack(spacing: 5) {
-                Image(systemName: "minus.circle").font(.system(size: 12))
-                Text("Not importable", bundle: .module).font(.system(size: 13, weight: .semibold))
-            }
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryText.opacity(0.10))
-            )
-        } else if isInstalling {
-            ProgressView()
-                .scaleEffect(0.9)
-                .frame(width: 100, height: 36)
+            StatusChip(L("Not importable"), tone: .neutral)
         } else {
-            Button(action: install) {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.down.circle.fill").font(.system(size: 12))
-                    Text("Install", bundle: .module).font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(trustPreview.importabilityStatus == .requiresReview ? theme.warningColor : .white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(
-                            trustPreview.importabilityStatus == .requiresReview
-                                ? theme.warningColor.opacity(0.12)
-                                : accent
-                        )
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
+            SettingsButton(
+                trustPreview.importabilityStatus == .requiresReview ? .secondary : .primary,
+                "Install",
+                icon: "arrow.down.circle.fill",
+                isLoading: isInstalling,
+                action: install
+            )
         }
     }
 
     private func heroStatBadge(icon: String, text: String, color: Color) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 10))
+            Image(systemName: icon).glyphSize(10)
             Text(text)
-                .font(.system(size: 11, weight: .medium))
+                .font(SettingsFont.smallLabel)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -259,36 +161,36 @@ struct ClaudeMarketplaceDetailView: View {
     private var trustStatusColor: Color {
         switch trustPreview.importabilityStatus {
         case .importable:
-            return theme.successColor
+            return theme.status.success.foreground
         case .requiresReview:
-            return theme.warningColor
+            return theme.status.warning.foreground
         case .blocked:
-            return theme.tertiaryText
+            return theme.text.tertiary
         }
     }
 
     private var trustSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(title: "Trust preview", icon: "shield.lefthalf.filled")
+            sectionHeader(title: "Trust preview")
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: trustStatusIcon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .glyphSize(13, weight: .semibold)
                     .foregroundColor(trustStatusColor)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(trustPreview.statusTitle)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     Text(trustPreview.reason)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(10)
+            .padding(theme.space.s8)
             .background(
-                RoundedRectangle(cornerRadius: 8).fill(trustStatusColor.opacity(0.10))
+                RoundedRectangle(cornerRadius: theme.radius.medium).fill(trustStatusColor.opacity(0.10))
             )
 
             VStack(spacing: 8) {
@@ -321,33 +223,26 @@ struct ClaudeMarketplaceDetailView: View {
                         trustCapabilityBadge(indicator)
                     }
                 }
-                .padding(.top, 2)
+                .padding(.top, theme.space.s2)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.card)
     }
 
     private func trustRow(icon: String, title: LocalizedStringKey, value: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(11, weight: .medium)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 16)
             Text(title, bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: 54, alignment: .leading)
             Text(value)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 0)
@@ -360,11 +255,11 @@ struct ClaudeMarketplaceDetailView: View {
         let color: Color =
             switch indicator.severity {
             case .normal:
-                theme.infoColor
+                theme.status.info.foreground
             case .sensitive:
-                theme.warningColor
+                theme.status.warning.foreground
             case .unsupported:
-                theme.tertiaryText
+                theme.text.tertiary
             }
         let text =
             if let count = indicator.count {
@@ -372,12 +267,7 @@ struct ClaudeMarketplaceDetailView: View {
             } else {
                 indicator.label
             }
-        return Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.12)))
+        return StatusChip(text, tint: color)
     }
 
     // MARK: - Components
@@ -385,7 +275,7 @@ struct ClaudeMarketplaceDetailView: View {
     @ViewBuilder
     private var componentsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(title: "Components", icon: "shippingbox.fill")
+            sectionHeader(title: "Components")
             if let summary = componentSummary {
                 if summary.isEmpty {
                     notImportablePanel
@@ -396,15 +286,8 @@ struct ClaudeMarketplaceDetailView: View {
                 unclassifiedPanel
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.card)
     }
 
     @ViewBuilder
@@ -464,15 +347,15 @@ struct ClaudeMarketplaceDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "info.circle")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(13, weight: .medium)
+                    .foregroundColor(theme.text.tertiary)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title, bundle: .module)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                     Text(message, bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
@@ -488,24 +371,19 @@ struct ClaudeMarketplaceDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: kind.icon)
-                    .font(.system(size: 12, weight: .medium))
+                    .glyphSize(12, weight: .medium)
                     .foregroundColor(kind.tint(theme))
                 Text(kind.titlePlural)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text("\(count)")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.smallLabel.monospacedDigit())
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
             }
             FlowLayout(spacing: 6) {
                 ForEach(names, id: \.self) { name in
-                    Text(name)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(kind.tint(theme).opacity(0.12)))
+                    StatusChip(name, tint: kind.tint(theme))
                 }
             }
         }
@@ -519,7 +397,7 @@ struct ClaudeMarketplaceDetailView: View {
         let repoURL = entry.repository.flatMap { URL(string: $0) }
         if homepageURL != nil || repoURL != nil {
             VStack(alignment: .leading, spacing: 10) {
-                sectionHeader(title: "External links", icon: "link")
+                sectionHeader(title: "External links")
                 VStack(spacing: 6) {
                     if let repoURL {
                         linkRow(
@@ -533,15 +411,8 @@ struct ClaudeMarketplaceDetailView: View {
                     }
                 }
             }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .padding(theme.space.s16)
+            .settingsChrome(.card)
         }
     }
 
@@ -551,37 +422,26 @@ struct ClaudeMarketplaceDetailView: View {
             label: {
                 HStack(spacing: 8) {
                     Image(systemName: icon)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(12)
+                        .foregroundColor(theme.text.link)
                     Text(title, bundle: .module)
-                        .font(.system(size: 12.5))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.primary)
                     Spacer()
                     Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(11)
+                        .foregroundColor(theme.text.tertiary)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.primaryBackground.opacity(0.45))
-                )
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s8)
+                .settingsChrome(.inset)
             }
         )
         .buttonStyle(PlainButtonStyle())
     }
 
-    private func sectionHeader(title: LocalizedStringKey, icon: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-            Text(title, bundle: .module)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Spacer()
-        }
+    private func sectionHeader(title: String) -> some View {
+        SettingsSectionHeader(title: title)
     }
 
     // MARK: - Actions

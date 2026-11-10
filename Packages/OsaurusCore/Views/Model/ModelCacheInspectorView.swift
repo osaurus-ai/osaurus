@@ -26,30 +26,11 @@ struct ModelCacheInspectorView: View {
             // Header
             HStack {
                 HStack(spacing: 8) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(theme.accentColor.opacity(0.15))
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [theme.accentColor.opacity(0.1), Color.clear],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                        Image(systemName: "cube.box.fill")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                    }
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(theme.accentColor.opacity(0.2), lineWidth: 1)
-                    )
+                    SettingsIconTile(icon: "cube.box.fill", size: 28)
 
                     Text("Loaded Models", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.cardTitle)
+                        .foregroundColor(theme.text.primary)
                 }
 
                 Spacer()
@@ -60,18 +41,7 @@ struct ModelCacheInspectorView: View {
             }
 
             if items.isEmpty && imageItem == nil {
-                // Empty state
-                VStack(spacing: 8) {
-                    Image(systemName: "tray")
-                        .font(.system(size: 24, weight: .light))
-                        .foregroundColor(theme.tertiaryText)
-
-                    Text("No models currently cached.", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
+                SettingsEmptyState(inline: "tray", title: "No models currently cached.")
             } else {
                 VStack(spacing: 8) {
                     ForEach(items, id: \.name) { item in
@@ -97,8 +67,8 @@ struct ModelCacheInspectorView: View {
 
             if let unloadFailure {
                 Label(unloadFailure, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.errorColor)
+                    .textStyle(.footnote, weight: 500)
+                    .foregroundColor(theme.status.error.foreground)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("model-cache-unload-failure")
             }
@@ -107,7 +77,9 @@ struct ModelCacheInspectorView: View {
             Rectangle()
                 .fill(
                     LinearGradient(
-                        colors: [theme.cardBorder.opacity(0.3), theme.cardBorder, theme.cardBorder.opacity(0.3)],
+                        colors: [
+                            theme.border.subtle, theme.border.default, theme.border.subtle,
+                        ],
                         startPoint: .leading,
                         endPoint: .trailing
                     )
@@ -133,8 +105,8 @@ struct ModelCacheInspectorView: View {
                 // Model count badge
                 if loadedModelCount > 0 {
                     Text("\(loadedModelCount) model\(loadedModelCount == 1 ? "" : "s")", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
                 }
             }
         }
@@ -203,13 +175,13 @@ private struct RefreshButton: View {
         Button(action: action) {
             ZStack {
                 Circle()
-                    .fill(theme.buttonBackground.opacity(isHovered ? 0.95 : 0.7))
+                    .fill((isHovered ? theme.action.secondary.hover.background : theme.action.secondary.default.background))
 
                 if isHovered {
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [theme.accentColor.opacity(0.1), Color.clear],
+                                colors: [theme.surface.hover, Color.clear],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -217,11 +189,11 @@ private struct RefreshButton: View {
                 }
 
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                    .glyphSize(11, weight: .semibold)
+                    .foregroundColor(isHovered ? theme.text.link : theme.text.secondary)
                     .rotationEffect(.degrees(isRefreshing ? 360 : 0))
                     .animation(
-                        isRefreshing ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default,
+                        isRefreshing ? theme.motion.loop(duration: 0.8) : theme.motion.standard,
                         value: isRefreshing
                     )
             }
@@ -229,22 +201,15 @@ private struct RefreshButton: View {
             .overlay(
                 Circle()
                     .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.1),
-                                theme.buttonBorder.opacity(isHovered ? 0.3 : 0.15),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
+                        isHovered ? theme.border.default : theme.border.subtle,
+                        lineWidth: theme.stroke.default
                     )
             )
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(isRefreshing)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
@@ -260,125 +225,40 @@ private struct ModelCacheRow: View {
     let onUnload: () -> Void
 
     @State private var isHovered = false
-    @State private var isUnloadHovered = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(item.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
 
                     if item.isCurrent {
-                        HStack(spacing: 3) {
-                            Circle()
-                                .fill(theme.successColor)
-                                .frame(width: 5, height: 5)
-                            Text("Active", bundle: .module)
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(theme.successColor)
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .fill(theme.successColor.opacity(0.12))
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(theme.successColor.opacity(0.25), lineWidth: 1)
-                        )
+                        StatusChip(L("Active"), tone: .success, showsDot: true)
                     }
                 }
 
                 Text(formatBytes(item.bytes))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             Spacer()
 
             // Unload button
             Button(action: onUnload) {
-                HStack(spacing: 5) {
-                    if isUnloading {
-                        ProgressView()
-                            .controlSize(.mini)
-                    }
-                    Text(isUnloading ? "Unloading…" : "Unload", bundle: .module)
-                }
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(
-                    isUnloading
-                        ? theme.secondaryText
-                        : (isUnloadHovered ? theme.errorColor : theme.secondaryText)
-                )
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(theme.buttonBackground.opacity(isUnloadHovered ? 0.95 : 0.7))
-
-                        if isUnloadHovered {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(theme.errorColor.opacity(0.08))
-                        }
-                    }
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(
-                            isUnloadHovered ? theme.errorColor.opacity(0.3) : theme.buttonBorder.opacity(0.5),
-                            lineWidth: 1
-                        )
-                )
+                Text(isUnloading ? "Unloading…" : "Unload", bundle: .module)
             }
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.secondary, isLoading: isUnloading, size: .compact)
             .disabled(isUnloading)
             .accessibilityIdentifier("model-cache-unload-\(item.name)")
-            .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.15)) {
-                    isUnloadHovered = hovering
-                }
-            }
         }
-        .padding(10)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(theme.cardBackground.opacity(isHovered ? 0.95 : 0.8))
-
-                if isHovered {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [theme.accentColor.opacity(0.04), Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-            }
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(isHovered ? 0.15 : 0.08),
-                            theme.cardBorder.opacity(isHovered ? 0.4 : 0.3),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.surface)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
@@ -403,94 +283,40 @@ private struct ImageModelCacheRow: View {
     let onUnload: () -> Void
 
     @State private var isHovered = false
-    @State private var isUnloadHovered = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(item.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
 
-                    HStack(spacing: 3) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 8, weight: .semibold))
-                        Text("Image", bundle: .module)
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(theme.accentColor.opacity(0.12)))
-                    .overlay(
-                        Capsule().strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1)
-                    )
+                    StatusChip(L("Image"), tone: .accent, icon: "photo")
+                        .overlay(
+                            Capsule().strokeBorder(theme.border.strong, lineWidth: theme.stroke.default)
+                        )
                 }
 
                 Text(formatBytes(item.bytes))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.chip)
+                    .foregroundColor(theme.text.secondary)
             }
 
             Spacer()
 
             Button(action: onUnload) {
-                HStack(spacing: 5) {
-                    if isUnloading {
-                        ProgressView()
-                            .controlSize(.mini)
-                    }
-                    Text(isUnloading ? "Unloading…" : "Unload", bundle: .module)
-                }
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(
-                    isUnloading
-                        ? theme.secondaryText
-                        : (isUnloadHovered ? theme.errorColor : theme.secondaryText)
-                )
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(theme.buttonBackground.opacity(isUnloadHovered ? 0.95 : 0.7))
-
-                        if isUnloadHovered {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(theme.errorColor.opacity(0.08))
-                        }
-                    }
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(
-                            isUnloadHovered ? theme.errorColor.opacity(0.3) : theme.buttonBorder.opacity(0.5),
-                            lineWidth: 1
-                        )
-                )
+                Text(isUnloading ? "Unloading…" : "Unload", bundle: .module)
             }
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.secondary, isLoading: isUnloading, size: .compact)
             .disabled(isUnloading)
             .accessibilityIdentifier("image-model-cache-unload-\(item.name)")
-            .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.15)) {
-                    isUnloadHovered = hovering
-                }
-            }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground.opacity(isHovered ? 0.95 : 0.8))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(theme.cardBorder.opacity(isHovered ? 0.4 : 0.3), lineWidth: 1)
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.surface)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
@@ -523,45 +349,40 @@ private struct ClearAllButton: View {
                         .frame(width: 12, height: 12)
                 } else {
                     Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
+                        .glyphSize(11, weight: .medium)
                 }
                 Text("Clear All", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
             }
-            .foregroundColor(isHovered ? .white : theme.errorColor)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .foregroundColor(isHovered ? .white : theme.status.error.foreground)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s6)
             .background(
                 ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isHovered ? theme.errorColor : theme.errorColor.opacity(0.1))
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .fill(isHovered ? theme.status.error.foreground : theme.status.error.background)
                 }
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                isHovered ? Color.white.opacity(0.2) : theme.errorColor.opacity(0.3),
-                                theme.errorColor.opacity(isHovered ? 0.4 : 0.15),
+                                theme.status.error.border,
+                                (isHovered ? theme.status.error.border : theme.status.error.background),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 1
+                        lineWidth: theme.stroke.default
                     )
             )
-            .shadow(
-                color: isHovered ? theme.errorColor.opacity(0.3) : .clear,
-                radius: 4,
-                x: 0,
-                y: 2
-            )
+            .themeElevation(isHovered ? theme.elevation.raised : .none)
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(isClearing)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }

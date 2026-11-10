@@ -4,53 +4,30 @@
 //
 //  Reusable onboarding design-kit components built on `OnboardingPalette` /
 //  `OnboardingTypography` / `OnboardingLayout` (see OnboardingDesign.swift):
-//  the window shell, pill buttons, glass circle buttons, panels, selectable
-//  cards, chips, badge, checkbox row, and the shared dialog scaffold. All
-//  dark-only, matching the Figma onboarding kit.
+//  pill buttons, glass circle buttons, glass panels, selectable cards,
+//  chips, badge, checkbox row, the chapter indicator, and the shared dialog
+//  scaffold. Colors follow the app theme.
 //
 
 import SwiftUI
-
-// MARK: - Window shell
-
-/// Full-window layout for one onboarding step: 40pt padding, fixed 400pt
-/// left column (bottom-aligned, 56pt trailing inset), 40pt gap, flexible
-/// right panel slot. Back/Close overlay buttons are rendered by the parent
-/// (`OnboardingView`) so they stay pixel-stable across step transitions.
-struct OnboardingStepLayout<Left: View, Right: View>: View {
-    @ViewBuilder let left: () -> Left
-    @ViewBuilder let right: () -> Right
-
-    var body: some View {
-        HStack(alignment: .top, spacing: OnboardingLayout.columnGap) {
-            VStack(alignment: .leading, spacing: 0) {
-                Spacer(minLength: 0)
-                left()
-            }
-            .padding(.trailing, OnboardingLayout.leftColumnTrailingInset)
-            .frame(width: OnboardingLayout.leftColumnWidth)
-            .frame(maxHeight: .infinity, alignment: .bottomLeading)
-
-            right()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(OnboardingLayout.contentPadding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
 
 // MARK: - Right panel
 
 /// Rounded-16 right panel with a faint white fill and an optional vertical
 /// gradient tint (screen 2 uses the green create tint fading out by ~75%).
 struct OnboardingRightPanel<Content: View>: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+
     var gradientTint: Color? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
+        Group {
+
         ZStack {
-            RoundedRectangle(cornerRadius: OnboardingLayout.panelRadius, style: .continuous)
-                .fill(OnboardingPalette.fill3)
+            OnboardingGlass(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.panelRadius, theme))
 
             if let tint = gradientTint {
                 LinearGradient(
@@ -63,7 +40,7 @@ struct OnboardingRightPanel<Content: View>: View {
                 )
                 .clipShape(
                     RoundedRectangle(
-                        cornerRadius: OnboardingLayout.panelRadius,
+                        cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.panelRadius, theme),
                         style: .continuous
                     )
                 )
@@ -71,17 +48,22 @@ struct OnboardingRightPanel<Content: View>: View {
 
             content()
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Pill buttons
 
 /// Capsule button in the kit's three fills and two sizes.
 struct OnboardingPillButton: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     enum Style {
         /// White `#f5f5f5` fill, near-black label — the screen's main CTA.
         case primary
-        /// Faint white fill, light label — secondary actions ("Set up later").
+        /// Faint white fill, light label — secondary actions ("Cancel").
         case secondary
         /// No fill — text-only actions ("Change model").
         case text
@@ -107,22 +89,36 @@ struct OnboardingPillButton: View {
     @State private var isHovered = false
 
     var body: some View {
+        #if OSAURUS_DESIGN_SYSTEM
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
+                if let leadingSymbol { Image(systemName: leadingSymbol).glyphSize(symbolSize, weight: .semibold) }
+                Text(title, bundle: .module).lineLimit(1)
+                if let trailingSymbol { Image(systemName: trailingSymbol).glyphSize(symbolSize, weight: .semibold) }
+            }
+        }.assignedSettingsButtonStyle(style == .primary ? .primary : style == .secondary ? .secondary : .tertiary,
+            size: size == .large ? .regular : .compact)
+        .disabled(!isEnabled)
+        #else
+
+        Group {
+
+        Button(action: action) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingPillButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 6, theme))) {
                 if let symbol = leadingSymbol {
                     Image(systemName: symbol)
-                        .font(.system(size: symbolSize, weight: .semibold))
+                        .glyphSize(symbolSize, weight: .semibold)
                 }
                 Text(title, bundle: .module)
-                    .font(labelFont)
+                    .catalogTypography(.body, theme: theme, fallback: labelFont)
                     .lineLimit(1)
                 if let symbol = trailingSymbol {
                     Image(systemName: symbol)
-                        .font(.system(size: symbolSize, weight: .semibold))
+                        .glyphSize(symbolSize, weight: .semibold)
                         // "Get started →" nudge: the arrow leans into the hover.
                         .offset(x: isHovered ? 3 : 0)
                 }
-            }
+            }.catalogLayoutTarget("component.library.55.elements.layout.onboardingPillButton.body.horizontalGap")
             .foregroundColor(labelColor)
             .padding(.horizontal, size == .large ? 20 : 12)
             .padding(.vertical, size == .large ? 12 : 8)
@@ -133,9 +129,13 @@ struct OnboardingPillButton: View {
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.4)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+            withAnimation(theme.motion.quick) { isHovered = hovering }
         }
-    }
+    
+        }.environment(\.theme, theme)
+
+        #endif
+}
 
     private var labelFont: Font {
         size == .large ? OnboardingTypography.cta : OnboardingTypography.chip
@@ -145,8 +145,8 @@ struct OnboardingPillButton: View {
 
     private var labelColor: Color {
         switch style {
-        case .primary: return OnboardingPalette.vibrantLabel
-        case .secondary, .text: return OnboardingPalette.labelPrimary
+        case .primary: return theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.vibrantLabel)
+        case .secondary, .text: return theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary)
         }
     }
 
@@ -155,12 +155,12 @@ struct OnboardingPillButton: View {
         switch style {
         case .primary:
             Capsule().fill(
-                isHovered ? OnboardingPalette.labelWhite : OnboardingPalette.vibrantFill
+                isHovered ? theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelWhite) : theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.vibrantFill)
             )
         case .secondary:
-            Capsule().fill(isHovered ? OnboardingPalette.fill8 : OnboardingPalette.fill5)
+            Capsule().fill(isHovered ? theme.assignedColor("component.library.55.hover", fallback: OnboardingPalette.fill8) : theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
         case .text:
-            Capsule().fill(isHovered ? OnboardingPalette.fill5 : Color.clear)
+            Capsule().fill(isHovered ? theme.assignedColor("component.library.55.hover", fallback: OnboardingPalette.fill5) : Color.clear)
         }
     }
 }
@@ -170,6 +170,9 @@ struct OnboardingPillButton: View {
 /// 24pt circular Back/Close affordance floating over the window corners —
 /// dark fill with a subtle light rim, per the Figma glass buttons.
 struct OnboardingCircleIconButton: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     /// SF Symbol name (`xmark` / `arrow.left`).
     let systemName: String
     let action: () -> Void
@@ -178,68 +181,94 @@ struct OnboardingCircleIconButton: View {
     @State private var isHovered = false
 
     var body: some View {
+        Group {
+
         Button(action: action) {
             ZStack {
-                Circle().fill(Color.black.opacity(isHovered ? 0.55 : 0.35))
+                Circle().fill(.ultraThinMaterial)
+                Circle().fill(theme.assignedColor("component.library.55.background", fallback: isHovered ? OnboardingPalette.fill10 : OnboardingPalette.fill3))
                 Circle().strokeBorder(
-                    Color.white.opacity(isHovered ? 0.5 : 0.3),
-                    lineWidth: 0.5
+                    theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.glassRim(isHovered ? 0.5 : 0.3)),
+                    lineWidth: theme.hairline
                 )
                 Image(systemName: systemName)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(OnboardingPalette.vibrantFill)
+                    .glyphSize(10, weight: .semibold)
+                    .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
             }
-            .frame(
-                width: OnboardingLayout.glassButtonDiameter,
-                height: OnboardingLayout.glassButtonDiameter
-            )
+            // The onboarding chrome's own height, not the catalog's control
+            // height: Back, the chapter indicator, and Skip setup share one
+            // row, and a taller Back shifted the row when it appeared.
+            .frame(width: OnboardingLayout.glassButtonDiameter, height: OnboardingLayout.glassButtonDiameter)
             .contentShape(Circle())
         }
         .buttonStyle(OnboardingPressableButtonStyle(pressedScale: 0.9))
         .accessibilityLabel(Text(accessibilityLabelKey, bundle: .module))
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+            withAnimation(theme.motion.quick) { isHovered = hovering }
+        }
+    
+        }.environment(\.theme, theme)
+}
+}
+
+/// "Skip setup" on the same glass as the circle buttons, at their height.
+struct OnboardingGlassTextButton: View {
+    @Environment(\.theme) private var theme
+    let title: LocalizedStringKey
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title, bundle: .module)
+                .font(OnboardingTypography.chapter)
+                .foregroundColor(OnboardingPalette.labelPrimary)
+                .padding(.horizontal, theme.space.s12)
+                .frame(height: OnboardingLayout.glassButtonDiameter)
+                .background {
+                    ZStack {
+                        Capsule().fill(.ultraThinMaterial)
+                        Capsule().fill(isHovered ? OnboardingPalette.fill10 : OnboardingPalette.fill3)
+                        Capsule().strokeBorder(OnboardingPalette.glassRim(isHovered ? 0.5 : 0.3), lineWidth: theme.hairline)
+                    }
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(OnboardingPressableButtonStyle(pressedScale: 0.95))
+        .onHover { hovering in
+            withAnimation(theme.motion.quick) { isHovered = hovering }
         }
     }
 }
 
-// MARK: - Checkbox row
+// MARK: - Switch row
 
-/// 12pt blue checkbox + 10pt label — the usage-data opt-in on screen 1.
-struct OnboardingCheckboxRow: View {
+/// An optional preference on glass: a title, a caption saying what it
+/// means, and a trailing switch. A switch, not a checkbox, so it never
+/// reads as a box to tick before continuing.
+struct OnboardingSwitchRow: View {
+    @Environment(\.theme) private var theme
     @Binding var isOn: Bool
-    let label: LocalizedStringKey
+    let title: LocalizedStringKey
+    let caption: LocalizedStringKey
 
     var body: some View {
-        Button {
-            withAnimation(OnboardingMotion.bouncy) { isOn.toggle() }
-        } label: {
-            HStack(spacing: 6) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(isOn ? OnboardingPalette.accentBlue : Color.clear)
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .strokeBorder(
-                            isOn ? OnboardingPalette.accentBlue : OnboardingPalette.fill10,
-                            lineWidth: 1
-                        )
-                    if isOn {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(.white)
-                            .transition(.scale(scale: 0.4).combined(with: .opacity))
-                    }
-                }
-                .frame(width: 12, height: 12)
-
-                Text(label, bundle: .module)
-                    .font(OnboardingTypography.footnote)
+        HStack(alignment: .center, spacing: theme.space.s12) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text(title, bundle: .module)
+                    .font(OnboardingTypography.optionTitle)
+                    .foregroundColor(OnboardingPalette.labelPrimary)
+                Text(caption, bundle: .module)
+                    .font(OnboardingTypography.cardCaption)
                     .foregroundColor(OnboardingPalette.labelSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .contentShape(Rectangle())
+            Spacer(minLength: 0)
+            Toggle(isOn: $isOn) { Text(title, bundle: .module) }
+                .settingsSwitch()
         }
-        .buttonStyle(OnboardingPressableButtonStyle())
-        .accessibilityAddTraits(isOn ? [.isSelected] : [])
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -249,6 +278,9 @@ struct OnboardingCheckboxRow: View {
 /// 8pt inner gap (Figma Config/Cards). The selected card gets a `dinoGreen`
 /// border, a bold accent icon, and a slightly stronger fill.
 struct OnboardingSelectableCard: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     /// SF Symbol shown before the title.
     let symbol: String
     let title: LocalizedStringKey
@@ -261,39 +293,41 @@ struct OnboardingSelectableCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        Group {
+
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingSelectableCard.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingSelectableCard.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
                     Image(systemName: symbol)
-                        .font(.system(size: 15, weight: isSelected ? .bold : .regular))
+                        .glyphSize(15, weight: isSelected ? .bold : .regular)
                         .foregroundColor(
-                            isSelected ? accent : OnboardingPalette.labelPrimary
+                            isSelected ? accent : theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary)
                         )
                         .symbolEffect(.bounce, value: isSelected)
                     Text(title, bundle: .module)
-                        .font(OnboardingTypography.cardTitleRegular)
-                        .foregroundColor(OnboardingPalette.labelPrimary)
-                }
+                        .catalogTypography(.heading, theme: theme, fallback: OnboardingTypography.cardTitleRegular)
+                        .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
+                }.catalogLayoutTarget("component.library.55.elements.layout.onboardingSelectableCard.body.horizontalGap")
                 Text(caption, bundle: .module)
-                    .font(OnboardingTypography.cardCaption)
-                    .foregroundColor(OnboardingPalette.labelSecondary)
+                    .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                    .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                     .fixedSize(horizontal: false, vertical: true)
-            }
+            }.catalogLayoutTarget("component.library.55.elements.layout.onboardingSelectableCard.body.verticalGap")
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingSelectableCard.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingSelectableCard.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 16, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingSelectableCard.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.onboardingSelectableCard.body.padding.vertical")
             .background(
-                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
                     .fill(fillColor)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
                     .strokeBorder(
-                        isSelected ? accent : OnboardingPalette.fill8,
-                        lineWidth: 1
+                        isSelected ? accent : theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill8),
+                        lineWidth: theme.stroke.default
                     )
             )
             .contentShape(
-                RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
             )
             // Selection pop: the chosen card springs slightly proud of its
             // neighbors (the caller drives this change with a bouncy spring).
@@ -302,52 +336,74 @@ struct OnboardingSelectableCard: View {
         .buttonStyle(OnboardingPressableButtonStyle())
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+            withAnimation(theme.motion.quick) { isHovered = hovering }
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     private var fillColor: Color {
-        if isSelected { return OnboardingPalette.fill5 }
-        return isHovered ? OnboardingPalette.fill3 : OnboardingPalette.fill2
+        if isSelected { return theme.assignedColor("component.library.55.selected", fallback: OnboardingPalette.fill5) }
+        return isHovered ? theme.assignedColor("component.library.55.hover", fallback: OnboardingPalette.fill3) : theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill2)
     }
 }
 
 // MARK: - Chips & badge
 
-/// Cyan-on-blue-tint "Picked for your Mac" badge.
+/// Cyan-on-blue-tint "Picked for your Mac" badge, or `tint` on its own
+/// wash (the recommended path's dino green).
 struct OnboardingPickedBadge: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     let text: LocalizedStringKey
+    var tint: Color? = nil
 
     var body: some View {
+        Group {
+
         Text(text, bundle: .module)
-            .font(OnboardingTypography.badge)
-            .foregroundColor(OnboardingPalette.accentCyan)
-            .padding(.horizontal, 8)
+            .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.badge)
+            .foregroundColor(tint ?? theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.accentCyan))
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingPickedBadge.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 8, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingPickedBadge.body.paddingX")
             .padding(.vertical, 3)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(OnboardingPalette.accentBlue.opacity(0.22))
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill((tint ?? theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.accentBlue)).opacity(0.22))
             )
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 /// White-10% capsule meta chip ("Download : 8.05 GB").
 struct OnboardingMetaChip: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+
     /// Pre-localized text (composed with formatted sizes).
     let text: String
 
     var body: some View {
+        Group {
+
         Text(text)
-            .font(OnboardingTypography.cardCaption)
-            .foregroundColor(OnboardingPalette.labelPrimary)
-            .padding(.horizontal, 8)
+            .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+            .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingMetaChip.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 8, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingMetaChip.body.paddingX")
             .padding(.vertical, 3)
-            .background(Capsule().fill(OnboardingPalette.fill10))
-    }
+            .background(Capsule().fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill10)))
+    
+        }.environment(\.theme, theme)
+}
 }
 
 /// Provider chip: 16pt logo + 13pt label, radius-8 card fill.
 struct OnboardingProviderChip<Logo: View>: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     @ViewBuilder let logo: () -> Logo
     /// Provider display name (proper noun — never localized).
     let label: String
@@ -356,31 +412,35 @@ struct OnboardingProviderChip<Logo: View>: View {
     @State private var isHovered = false
 
     var body: some View {
+        Group {
+
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingProviderChip.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
                 logo()
                     .frame(width: 16, height: 16)
                 Text(label)
-                    .font(OnboardingTypography.chip)
-                    .foregroundColor(OnboardingPalette.labelPrimary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+                    .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.chip)
+                    .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
+            }.catalogLayoutTarget("component.library.55.elements.layout.onboardingProviderChip.body.horizontalGap")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingProviderChip.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingProviderChip.body.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingProviderChip.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 8, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingProviderChip.body.paddingY")
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHovered ? OnboardingPalette.fill8 : OnboardingPalette.fill5)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(isHovered ? theme.assignedColor("component.library.55.hover", fallback: OnboardingPalette.fill8) : theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(OnboardingPalette.fill10, lineWidth: 1)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill10), lineWidth: theme.stroke.default)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
         }
         .buttonStyle(OnboardingPressableButtonStyle())
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+            withAnimation(theme.motion.quick) { isHovered = hovering }
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Option row
@@ -388,6 +448,9 @@ struct OnboardingProviderChip<Logo: View>: View {
 /// Full-width connect-option row inside the provider drill-in: 13pt semibold
 /// title + 12pt caption, with an optional green verified check trailing.
 struct OnboardingOptionRow: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     let title: LocalizedStringKey
     let caption: LocalizedStringKey
     var isVerified: Bool = false
@@ -396,37 +459,41 @@ struct OnboardingOptionRow: View {
     @State private var isHovered = false
 
     var body: some View {
+        Group {
+
         Button(action: action) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingOptionRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
+                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingOptionRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 3, theme))) {
                     Text(title, bundle: .module)
-                        .font(OnboardingTypography.optionTitle)
-                        .foregroundColor(OnboardingPalette.labelPrimary)
+                        .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.optionTitle)
+                        .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                     Text(caption, bundle: .module)
-                        .font(OnboardingTypography.cardCaption)
-                        .foregroundColor(OnboardingPalette.labelSecondary)
-                }
+                        .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
+                        .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
+                }.catalogLayoutTarget("component.library.55.elements.layout.onboardingOptionRow.body.verticalGap")
                 Spacer(minLength: 0)
                 if isVerified {
                     Image(systemName: "checkmark.circle")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(OnboardingPalette.dinoGreen)
+                        .glyphSize(14, weight: .semibold)
+                        .foregroundColor(theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.dinoGreen))
                 }
-            }
+            }.catalogLayoutTarget("component.library.55.elements.layout.onboardingOptionRow.body.horizontalGap")
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingOptionRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 16, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingOptionRow.body.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingOptionRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingOptionRow.body.paddingY")
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHovered ? OnboardingPalette.fill8 : OnboardingPalette.fill5)
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .fill(isHovered ? theme.assignedColor("component.library.55.hover", fallback: OnboardingPalette.fill8) : theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
             )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
         }
         .buttonStyle(OnboardingPressableButtonStyle())
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+            withAnimation(theme.motion.quick) { isHovered = hovering }
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Dialog scaffold
@@ -442,6 +509,9 @@ struct OnboardingDialog<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
 
     /// Spring-up entrance (scale + rise + fade); a plain fade under Reduce
     /// Motion.
@@ -453,8 +523,10 @@ struct OnboardingDialog<Content: View>: View {
     }
 
     var body: some View {
+        Group {
+
         ZStack {
-            Color.black.opacity(0.5)
+            OnboardingPalette.scrim(0.5)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -465,25 +537,25 @@ struct OnboardingDialog<Content: View>: View {
                 .frame(width: width)
                 .background(
                     RoundedRectangle(
-                        cornerRadius: OnboardingLayout.panelRadius,
+                        cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.panelRadius, theme),
                         style: .continuous
                     )
-                    .fill(OnboardingPalette.dialogSurface)
+                    .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.dialogSurface))
                 )
                 .overlay(
                     RoundedRectangle(
-                        cornerRadius: OnboardingLayout.panelRadius,
+                        cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.panelRadius, theme),
                         style: .continuous
                     )
-                    .strokeBorder(OnboardingPalette.fill8, lineWidth: 1)
+                    .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill8), lineWidth: theme.stroke.default)
                 )
                 .overlay(alignment: .topTrailing) {
                     if isDismissable {
                         OnboardingCircleIconButton(systemName: "xmark", action: onClose)
-                            .padding(12)
+                            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingDialog.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingDialog.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingDialog.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.onboardingDialog.body.padding.vertical")
                     }
                 }
-                .shadow(color: Color.black.opacity(0.4), radius: 30, y: 14)
+                .themeElevation(theme.elevation.overlay)
                 // Springs up from slightly smaller and lower while the scrim
                 // simply fades — the host drives this with a bouncy spring.
                 .transition(dialogTransition)
@@ -492,56 +564,173 @@ struct OnboardingDialog<Content: View>: View {
         .onExitCommand {
             if isDismissable { onClose() }
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 /// Square logo card (glyph over a small caption) used in the provider
 /// drill-in and connect dialog headers.
 struct OnboardingLogoCard<Logo: View>: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     @ViewBuilder let logo: () -> Logo
     /// Provider display name (proper noun — never localized).
     let caption: String
     var logoSize: CGFloat = 28
 
     var body: some View {
-        VStack(spacing: 8) {
+        Group {
+
+        VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingLogoCard.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
             logo()
                 .frame(width: logoSize, height: logoSize)
             Text(caption)
-                .font(OnboardingTypography.footnote)
-                .foregroundColor(OnboardingPalette.labelSecondary)
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
+                .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.footnote)
+                .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
+        }.catalogLayoutTarget("component.library.55.elements.layout.onboardingLogoCard.body.verticalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingLogoCard.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 22, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingLogoCard.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingLogoCard.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 14, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingLogoCard.body.paddingY")
         .background(
-            RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
-                .fill(OnboardingPalette.fill5)
+            RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
+                .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: OnboardingLayout.cardRadius, style: .continuous)
-                .strokeBorder(OnboardingPalette.fill8, lineWidth: 1)
+            RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
+                .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill8), lineWidth: theme.stroke.default)
         )
-    }
+    
+        }.environment(\.theme, theme)
+}
 }
 
 // MARK: - Progress bar
 
 /// Slim cyan progress bar on a faint track (the downloading state's bar).
 struct OnboardingProgressBar: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     /// 0...1
     let progress: Double
 
     var body: some View {
+        Group {
+
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(OnboardingPalette.fill10)
+                Capsule().fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill10))
                 Capsule()
-                    .fill(OnboardingPalette.accentCyan)
+                    .fill(theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.accentCyan))
                     .frame(width: max(6, proxy.size.width * min(max(progress, 0), 1)))
             }
         }
         .frame(height: 6)
-        .animation(.linear(duration: 0.3), value: progress)
+        .animation(theme.motion.standard, value: progress)
+    
+        }.environment(\.theme, theme)
+}
+}
+
+// MARK: - Glass
+
+/// Frosted glass over the landscape: the system material (it follows the
+/// window's light or dark appearance), a faint theme ink wash, and a thin
+/// specular rim.
+struct OnboardingGlass: View {
+    @Environment(\.theme) private var theme
+    var cornerRadius: CGFloat
+    var material: Material = .regularMaterial
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        ZStack {
+            shape.fill(material)
+            shape.fill(OnboardingPalette.fill2)
+            shape.strokeBorder(OnboardingPalette.glassRim(theme.isDark ? 0.14 : 0.5), lineWidth: theme.hairline)
+        }
+        .themeElevation(theme.elevation.raised)
+    }
+}
+
+// MARK: - Chapter indicator
+
+/// The chapters of the first run. The onboarding window holds the first
+/// two; the walkthrough in chat holds Team: picking a teammate and its
+/// first task.
+enum OnboardingChapter: Int, CaseIterable {
+    case welcome, model, team
+
+    var title: LocalizedStringKey {
+        switch self {
+        case .welcome: return "Welcome"
+        case .model: return "Model"
+        case .team: return "Team"
+        }
+    }
+
+    /// The walkthrough step's chapter.
+    static func of(_ step: OnboardingPanel.Step?) -> OnboardingChapter {
+        switch step {
+        case .brain: return .model
+        case .team, .firstTask, nil: return .team
+        }
+    }
+}
+
+/// "Welcome — Model — Team" on the same glass as Skip setup and at its
+/// height, so the top row reads as one set of chrome. Drawn like the setup
+/// card's stepper in chat: finished chapters checked, the current one a
+/// filled ring, the next ones open rings, joined by hairlines.
+struct OnboardingChapterIndicator: View {
+    @Environment(\.theme) private var theme
+    let current: OnboardingChapter
+    var chapters: [OnboardingChapter] = OnboardingChapter.allCases
+
+    var body: some View {
+        HStack(spacing: theme.space.s6) {
+            ForEach(Array(chapters.enumerated()), id: \.element.rawValue) { index, chapter in
+                if index > 0 {
+                    Capsule()
+                        .fill(
+                            chapter.rawValue <= current.rawValue
+                                ? OnboardingPalette.labelSecondary : OnboardingPalette.glassRim(0.3)
+                        )
+                        .frame(width: theme.space.s12, height: theme.hairline)
+                }
+                segment(chapter)
+            }
+        }
+        .padding(.horizontal, theme.space.s12)
+        .frame(height: OnboardingLayout.glassButtonDiameter)
+        .background {
+            ZStack {
+                Capsule().fill(.ultraThinMaterial)
+                Capsule().fill(OnboardingPalette.fill3)
+                Capsule().strokeBorder(OnboardingPalette.glassRim(0.3), lineWidth: theme.hairline)
+            }
+        }
+        .animation(theme.motion.standard, value: current)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            Text(
+                "Setup chapter \((chapters.firstIndex(of: current) ?? current.rawValue) + 1) of \(chapters.count): \(Text(current.title, bundle: .module))",
+                bundle: .module))
+    }
+
+    private func segment(_ chapter: OnboardingChapter) -> some View {
+        let isCurrent = chapter == current
+        let isDone = chapter.rawValue < current.rawValue
+        let symbol = isDone ? "checkmark.circle.fill" : isCurrent ? "circle.inset.filled" : "circle"
+        let label = isCurrent ? OnboardingPalette.labelPrimary : OnboardingPalette.labelSecondary
+        // One text run, so the ring sits on the word's baseline and both
+        // center in the capsule together; every state is the same width.
+        return (Text(Image(systemName: symbol)).foregroundColor(isDone ? OnboardingPalette.dinoGreen : label)
+            + Text(verbatim: " ")
+            + Text(chapter.title, bundle: .module).foregroundColor(label))
+            .font(OnboardingTypography.chapter)
+            .fixedSize()
     }
 }
 
@@ -550,21 +739,29 @@ struct OnboardingProgressBar: View {
 /// Committed asset-catalog logo image for a provider chip / card, falling
 /// back to an SF Symbol when the preset has no committed logo asset.
 struct OnboardingProviderLogo: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+
     let preset: ProviderPreset
     var size: CGFloat = 16
 
     var body: some View {
+        Group {
+
         if let asset = Self.assetName(for: preset) {
             Image(asset, bundle: .module)
                 .resizable()
                 .renderingMode(.template)
                 .aspectRatio(contentMode: .fit)
-                .foregroundColor(OnboardingPalette.labelPrimary)
+                .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                 .frame(width: size, height: size)
         } else {
-            ProviderIcon(preset: preset, size: size, color: OnboardingPalette.labelPrimary)
+            ProviderIcon(preset: preset, size: size, color: theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
         }
-    }
+    
+        }.environment(\.theme, theme)
+}
 
     /// Imageset name for the five Figma-exported logos; `nil` falls back to
     /// the generic `ProviderIcon` symbol.

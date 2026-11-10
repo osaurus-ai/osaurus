@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.plan-from-state",
+  "domain": "onboarding",
+  "label": "onboarding • the plan starts from the app's state",
+  "query": "plan_from_state",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "plan_from_state"
+    }
+  }
+}

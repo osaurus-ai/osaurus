@@ -369,10 +369,11 @@ extension EvalRunner {
                 }
             }
             for secret in sandboxFixture.seedSecrets ?? [] {
-                _ = AgentSecretsKeychain.saveSecret(
-                    secret.value,
-                    id: secret.key,
-                    agentId: evalAgentId
+                CredentialStore.current.save(
+                    secret.key,
+                    scope: .agent(evalAgentId),
+                    value: secret.value,
+                    origin: .sandboxPrompt
                 )
             }
         }
@@ -1226,8 +1227,8 @@ extension EvalRunner {
         }
     }
 
-    /// Post-case sandbox teardown: delete the eval agent's keychain
-    /// secrets, uninstall + unregister any plugin the case created
+    /// Post-case sandbox teardown: delete the eval agent's credentials,
+    /// uninstall + unregister any plugin the case created
     /// (diffed against the pre-run library snapshot), and unprovision
     /// the agent (Linux user, VM home dir via the host mount, plugin
     /// state, background jobs). The container intentionally stays
@@ -1237,7 +1238,7 @@ extension EvalRunner {
         agentId: UUID,
         pluginIdsBeforeRun: Set<String>
     ) async {
-        AgentSecretsKeychain.deleteAllSecrets(agentId: agentId)
+        CredentialStore.current.deleteAll(agentId: agentId)
 
         let createdPluginIds = Set(SandboxPluginLibrary.shared.plugins.map(\.id))
             .subtracting(pluginIdsBeforeRun)
@@ -1268,7 +1269,7 @@ extension EvalRunner {
     // MARK: - Telemetry
 
     /// Fold the transcript into per-tool usage counters for the report.
-    private static func toolUsageStats(_ transcript: AgentLoopTranscript) -> [ToolUsageStat]? {
+    static func toolUsageStats(_ transcript: AgentLoopTranscript) -> [ToolUsageStat]? {
         guard !transcript.toolCalls.isEmpty else { return nil }
         var calls: [String: Int] = [:]
         var errors: [String: Int] = [:]

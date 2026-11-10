@@ -88,8 +88,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Default: 32 MiB (generous for multimodal chat completions).
     public var maxRequestBodyBytes: Int
 
-    /// Tighter ceiling for `POST /pair`, which is unauthenticated and
-    /// only ever carries a small JSON envelope. A 64 KiB cap is several
+    /// Tighter ceiling for the pairing routes (`/pair-invite`,
+    /// `/secure/session`), which are unauthenticated and
+    /// only ever carry a small JSON envelope. A 64 KiB cap is several
     /// orders of magnitude more than a real pairing request needs.
     public var maxPairingBodyBytes: Int
 
@@ -367,18 +368,19 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
     }
 
     public var description: String {
+        let reloadCost = L("The next message reloads the model first, which can take a while for large models.")
         switch self {
         case .immediately:
-            return L("Unloads model memory when the last generation finishes.")
+            return L("Unloads model memory when the last generation finishes.") + " " + reloadCost
         case .afterSeconds(30):
             return L(
                 "Unloads after 30 seconds without a request, or when the last chat window using the model closes. Active requests finish first."
-            )
+            ) + " " + reloadCost
         case .afterSeconds(let seconds):
             return String(
                 format: L("Unloads after %d minutes without a request, or when the last chat window using the model closes. Active requests finish first."),
                 max(1, seconds / 60)
-            )
+            ) + " " + reloadCost
         case .never:
             return L("Keeps model memory resident until manual unload, model switch, memory cleanup, or quit.")
         }

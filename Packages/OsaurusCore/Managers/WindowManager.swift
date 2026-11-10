@@ -391,6 +391,10 @@ public final class WindowManager: NSObject, ObservableObject {
                 defer: false
             )
             window.isReleasedWhenClosed = false
+            // Transparent so `WindowMaterialView` can blur what is behind the
+            // window (behindWindow blending).
+            window.isOpaque = false
+            window.backgroundColor = .clear
         }
 
         // Opt out of AppKit snapshot state restoration. Window positions

@@ -2,18 +2,18 @@
 //  SchedulerDatabase.swift
 //  osaurus
 //
-//  Cross-agent scheduler state for the Agent DB + Self-Scheduling feature.
-//  Owns three tables (`agent_next_run`, `agent_runs`, `agent_pause`) per
-//  spec §4.2. One file at `~/.osaurus/scheduler.sqlite`, not per-agent —
-//  the scheduler tick reads across all agents every second and the
-//  Activity dashboard is naturally cross-agent. Encrypted via the same
-//  vendored SQLCipher + `StorageKeyManager` setup the rest of the
-//  Osaurus stack uses, so prompts / instructions / error messages in
-//  this file are protected at rest.
+//  Cross-agent pause state for the Agent DB + Self-Scheduling feature
+//  (`agent_pause`, spec §4.2). One file at `~/.osaurus/scheduler.sqlite`,
+//  encrypted via the same vendored SQLCipher + `StorageKeyManager` setup
+//  the rest of the Osaurus stack uses.
+//
+//  `agent_next_run` and `agent_runs` are legacy: wake-ups are agent-owned
+//  schedule automations and runs are tasks (docs/TASK_QUEUE.md). Both are
+//  read once for the import and then retired (`retireLegacyTable`), which
+//  leaves an empty copy for older builds.
 //
 //  Foreign keys to `agents(id)` are not declared because agents live in
-//  JSON files. The dispatcher does an "orphan" check on read and
-//  `deleteAllForAgent` cleans up when the user deletes an agent.
+//  JSON files. `deleteAllForAgent` cleans up when the user deletes an agent.
 //
 
 import CryptoKit
@@ -47,40 +47,39 @@ public enum NextRunPriority: String, Codable, Sendable, CaseIterable {
     case low
 }
 
-/// How the dispatcher should handle a scheduled run whose `scheduled_at`
-/// already drifted past `now + staleThreshold` (spec §9.2).
+/// How a self-scheduled wake whose time passed while the app was closed is
+/// handled (spec §9.2).
 public enum NextRunOnMiss: String, Codable, Sendable, CaseIterable {
-    /// Drop the run silently; log it in `agent_runs` as `cancelled`.
+    /// Drop the run; its task records the skip.
     case skip
     /// Run immediately with the original instruction, even if late.
     case runOnce = "run_once"
-    /// Run N times, once per missed interval. Rare; for ledger-type agents.
+    /// Run once per missed interval. A one-shot wake has one slot, so this
+    /// runs it once.
     case runCatchup = "run_catchup"
 }
 
-/// Who wrote the row into `agent_next_run`. The agent sees this on wake
-/// so it can react to user edits (spec §9.5).
+/// Who set the next-run slot. The agent sees this on wake so it can react
+/// to user edits (spec §9.5).
 public enum NextRunScheduledBy: String, Codable, Sendable, CaseIterable {
     case agent
     case user
     case system
 }
 
-/// The kind of event that woke the agent. Maps from `DispatchRequest.source`
-/// at run-start in `BackgroundTaskManager.dispatchChat`.
+/// What woke the agent, as the legacy `agent_runs` rows recorded it.
 public enum AgentRunTriggerKind: String, Codable, Sendable, CaseIterable {
-    /// Self-scheduled wake via `schedule_next_run` (the new next-run slot).
+    /// Self-scheduled wake via `schedule_next_run`.
     case schedule
-    /// User-authored recurring schedule from `ScheduleManager` (existing system).
     case recurringSchedule = "recurring_schedule"
-    /// File-system watcher from `WatcherManager` (existing system).
     case watcher
-    /// User-initiated chat from the UI.
+    case webhook
+    case email
+    case automation
     case user
 }
 
-/// Terminal status of an `agent_runs` row. Only `success` and `error`
-/// count against `daily_run_cap` (spec §16 Q3).
+/// Terminal status written into a run trace (and the legacy `agent_runs`).
 public enum AgentRunStatus: String, Codable, Sendable, CaseIterable {
     case running
     case success
@@ -89,15 +88,15 @@ public enum AgentRunStatus: String, Codable, Sendable, CaseIterable {
     case clamped
 }
 
-/// One row in `agent_next_run`. The "next run" slot is a single row per
-/// agent; writers (agent / user / system) overwrite each other,
-/// last-write-wins (spec §9.5).
+/// An agent's next self-scheduled wake. One per agent; writers (agent /
+/// user / system) overwrite each other, last-write-wins (spec §9.5). Lives
+/// on the agent-owned schedule automation (`SelfScheduleAutomations`).
 public struct NextRunEntry: Codable, Sendable, Equatable {
     public var agentId: UUID
     public var scheduledAt: Date
     public var instructions: String
     /// Names of saved views the dispatcher should prefetch before the
-    /// inference loop begins. Stored as JSON.
+    /// inference loop begins.
     public var contextViews: [String]
     public var priority: NextRunPriority
     public var onMiss: NextRunOnMiss
@@ -125,8 +124,7 @@ public struct NextRunEntry: Codable, Sendable, Equatable {
     }
 }
 
-/// One row in `agent_runs`. Append-only history; `recordRunStart` writes
-/// `status = running` and `recordRunEnd` flips it to a terminal value.
+/// One legacy `agent_runs` row, read once for the task import.
 public struct AgentRunRecord: Codable, Sendable, Equatable {
     public var id: UUID
     public var agentId: UUID
@@ -256,7 +254,7 @@ public final class SchedulerDatabase: @unchecked Sendable {
     private func openConnection() throws {
         let path = OsaurusPaths.schedulerDatabaseFile().path
         do {
-            db = try OsaurusStorageOpener.open(path: path)
+            db = try OsaurusStorageOpener.open(path: path, cacheTier: .cold)
         } catch let error as EncryptedSQLiteError {
             throw SchedulerDatabaseError.failedToOpen(error.localizedDescription)
         }
@@ -286,49 +284,6 @@ public final class SchedulerDatabase: @unchecked Sendable {
     private func migrateToV1() throws {
         try executeRaw(
             """
-                CREATE TABLE IF NOT EXISTS agent_next_run (
-                    agent_id          TEXT PRIMARY KEY,
-                    scheduled_at      INTEGER NOT NULL,
-                    instructions      TEXT NOT NULL,
-                    context_views     TEXT NOT NULL DEFAULT '[]',
-                    priority          TEXT NOT NULL DEFAULT 'normal',
-                    on_miss           TEXT NOT NULL DEFAULT 'skip',
-                    scheduled_by      TEXT NOT NULL,
-                    scheduled_at_wall INTEGER NOT NULL
-                )
-            """
-        )
-        try executeRaw(
-            "CREATE INDEX IF NOT EXISTS idx_next_run_scheduled_at ON agent_next_run(scheduled_at)"
-        )
-
-        try executeRaw(
-            """
-                CREATE TABLE IF NOT EXISTS agent_runs (
-                    id                TEXT PRIMARY KEY,
-                    agent_id          TEXT NOT NULL,
-                    trigger_kind      TEXT NOT NULL,
-                    trigger_payload   TEXT,
-                    instructions      TEXT NOT NULL,
-                    started_at        INTEGER NOT NULL,
-                    ended_at          INTEGER,
-                    status            TEXT NOT NULL,
-                    tokens_in         INTEGER,
-                    tokens_out        INTEGER,
-                    cost_usd          REAL,
-                    error             TEXT
-                )
-            """
-        )
-        try executeRaw(
-            "CREATE INDEX IF NOT EXISTS idx_runs_agent_started ON agent_runs(agent_id, started_at DESC)"
-        )
-        try executeRaw(
-            "CREATE INDEX IF NOT EXISTS idx_runs_started ON agent_runs(started_at DESC)"
-        )
-
-        try executeRaw(
-            """
                 CREATE TABLE IF NOT EXISTS agent_pause (
                     agent_id      TEXT PRIMARY KEY,
                     paused_until  INTEGER NOT NULL,
@@ -336,274 +291,174 @@ public final class SchedulerDatabase: @unchecked Sendable {
                 )
             """
         )
-
         try setSchemaVersion(1)
     }
 
-    // MARK: - agent_next_run
+    // MARK: - Legacy import
 
-    /// Insert or replace the single next-run slot for `agentId`. Last
-    /// write wins (spec §9.5). Returns the entry that was stored.
-    @discardableResult
-    public func upsertNextRun(_ entry: NextRunEntry) throws -> NextRunEntry {
-        let viewsJSON = Self.jsonEncode(entry.contextViews) ?? "[]"
+    private func tableExists(_ name: String) throws -> Bool {
+        var exists = false
         try prepareAndExecute(
-            """
-                INSERT INTO agent_next_run
-                    (agent_id, scheduled_at, instructions, context_views,
-                     priority, on_miss, scheduled_by, scheduled_at_wall)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                ON CONFLICT(agent_id) DO UPDATE SET
-                    scheduled_at      = excluded.scheduled_at,
-                    instructions      = excluded.instructions,
-                    context_views     = excluded.context_views,
-                    priority          = excluded.priority,
-                    on_miss           = excluded.on_miss,
-                    scheduled_by      = excluded.scheduled_by,
-                    scheduled_at_wall = excluded.scheduled_at_wall
-            """,
-            bind: { stmt in
-                Self.bindText(stmt, index: 1, value: entry.agentId.uuidString)
-                sqlite3_bind_int64(stmt, 2, Int64(entry.scheduledAt.timeIntervalSince1970))
-                Self.bindText(stmt, index: 3, value: entry.instructions)
-                Self.bindText(stmt, index: 4, value: viewsJSON)
-                Self.bindText(stmt, index: 5, value: entry.priority.rawValue)
-                Self.bindText(stmt, index: 6, value: entry.onMiss.rawValue)
-                Self.bindText(stmt, index: 7, value: entry.scheduledBy.rawValue)
-                sqlite3_bind_int64(stmt, 8, Int64(entry.scheduledAtWall.timeIntervalSince1970))
-            },
-            process: { stmt in
-                let step = sqlite3_step(stmt)
-                guard step == SQLITE_DONE else {
-                    throw SchedulerDatabaseError.failedToExecute(
-                        "upsertNextRun: step returned \(step)"
-                    )
-                }
-            }
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: name) },
+            process: { stmt in exists = sqlite3_step(stmt) == SQLITE_ROW }
         )
-        return entry
+        return exists
     }
 
-    public func nextRun(for agentId: UUID) throws -> NextRunEntry? {
-        var entry: NextRunEntry?
-        try prepareAndExecute(
-            """
-                SELECT scheduled_at, instructions, context_views,
-                       priority, on_miss, scheduled_by, scheduled_at_wall
-                FROM agent_next_run
-                WHERE agent_id = ?1
-            """,
-            bind: { stmt in Self.bindText(stmt, index: 1, value: agentId.uuidString) },
-            process: { stmt in
-                if sqlite3_step(stmt) == SQLITE_ROW {
-                    entry = Self.readNextRun(stmt: stmt, agentId: agentId)
-                }
-            }
-        )
-        return entry
-    }
-
-    /// All entries whose `scheduled_at <= now`, ordered by `scheduled_at ASC`.
-    /// The scheduler loop calls this on every tick (spec §9.1) with a
-    /// bounded `limit` for concurrency.
-    public func dueNextRuns(asOf now: Date, limit: Int) throws -> [NextRunEntry] {
+    /// Every slot left in the legacy `agent_next_run` table.
+    public func legacyNextRuns() throws -> [NextRunEntry] {
+        guard try tableExists("agent_next_run") else { return [] }
         var entries: [NextRunEntry] = []
         try prepareAndExecute(
             """
                 SELECT agent_id, scheduled_at, instructions, context_views,
                        priority, on_miss, scheduled_by, scheduled_at_wall
                 FROM agent_next_run
-                WHERE scheduled_at <= ?1
-                ORDER BY scheduled_at ASC
-                LIMIT ?2
             """,
-            bind: { stmt in
-                sqlite3_bind_int64(stmt, 1, Int64(now.timeIntervalSince1970))
-                sqlite3_bind_int(stmt, 2, Int32(max(limit, 1)))
-            },
+            bind: { _ in },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
                     let raw = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
                     guard let id = UUID(uuidString: raw) else { continue }
-                    entries.append(Self.readNextRun(stmt: stmt, agentId: id, agentIdColumn: 0))
+                    entries.append(Self.readNextRun(stmt: stmt, agentId: id))
                 }
             }
         )
         return entries
     }
 
-    public func clearNextRun(for agentId: UUID) throws {
+    /// The newest `limit` legacy `agent_runs` rows, newest first.
+    public func legacyRuns(limit: Int) throws -> [AgentRunRecord] {
+        guard try tableExists("agent_runs") else { return [] }
+        var records: [AgentRunRecord] = []
         try prepareAndExecute(
-            "DELETE FROM agent_next_run WHERE agent_id = ?1",
-            bind: { stmt in Self.bindText(stmt, index: 1, value: agentId.uuidString) },
-            process: { stmt in
-                let step = sqlite3_step(stmt)
-                guard step == SQLITE_DONE else {
-                    throw SchedulerDatabaseError.failedToExecute(
-                        "clearNextRun: step returned \(step)"
-                    )
-                }
-            }
-        )
-    }
-
-    // MARK: - agent_runs
-
-    /// Insert a `running` row and return its id. Pair with `recordRunEnd`
-    /// before the run finishes so the row reaches a terminal state.
-    @discardableResult
-    public func recordRunStart(
-        agentId: UUID,
-        triggerKind: AgentRunTriggerKind,
-        triggerPayload: String? = nil,
-        instructions: String,
-        startedAt: Date = Date(),
-        id: UUID = UUID()
-    ) throws -> UUID {
-        try prepareAndExecute(
-            """
-                INSERT INTO agent_runs
-                    (id, agent_id, trigger_kind, trigger_payload, instructions,
-                     started_at, status)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            """,
-            bind: { stmt in
-                Self.bindText(stmt, index: 1, value: id.uuidString)
-                Self.bindText(stmt, index: 2, value: agentId.uuidString)
-                Self.bindText(stmt, index: 3, value: triggerKind.rawValue)
-                Self.bindText(stmt, index: 4, value: triggerPayload)
-                Self.bindText(stmt, index: 5, value: instructions)
-                sqlite3_bind_int64(stmt, 6, Int64(startedAt.timeIntervalSince1970))
-                Self.bindText(stmt, index: 7, value: AgentRunStatus.running.rawValue)
-            },
-            process: { stmt in
-                let step = sqlite3_step(stmt)
-                guard step == SQLITE_DONE else {
-                    throw SchedulerDatabaseError.failedToExecute(
-                        "recordRunStart: step returned \(step)"
-                    )
-                }
-            }
-        )
-        return id
-    }
-
-    public func recordRunEnd(
-        runId: UUID,
-        status: AgentRunStatus,
-        endedAt: Date = Date(),
-        tokensIn: Int? = nil,
-        tokensOut: Int? = nil,
-        costUSD: Double? = nil,
-        error: String? = nil
-    ) throws {
-        try prepareAndExecute(
-            """
-                UPDATE agent_runs SET
-                    ended_at   = ?2,
-                    status     = ?3,
-                    tokens_in  = ?4,
-                    tokens_out = ?5,
-                    cost_usd   = ?6,
-                    error      = ?7
-                WHERE id = ?1
-            """,
-            bind: { stmt in
-                Self.bindText(stmt, index: 1, value: runId.uuidString)
-                sqlite3_bind_int64(stmt, 2, Int64(endedAt.timeIntervalSince1970))
-                Self.bindText(stmt, index: 3, value: status.rawValue)
-                Self.bindOptionalInt(stmt, index: 4, value: tokensIn)
-                Self.bindOptionalInt(stmt, index: 5, value: tokensOut)
-                Self.bindOptionalDouble(stmt, index: 6, value: costUSD)
-                Self.bindText(stmt, index: 7, value: error)
-            },
-            process: { stmt in
-                let step = sqlite3_step(stmt)
-                guard step == SQLITE_DONE else {
-                    throw SchedulerDatabaseError.failedToExecute(
-                        "recordRunEnd: step returned \(step)"
-                    )
-                }
-            }
-        )
-    }
-
-    /// Reverse-chrono runs for one agent, optionally bounded above by
-    /// `before`. The Activity tab consumes this.
-    public func runs(
-        agentId: UUID,
-        limit: Int = 100,
-        before: Date? = nil
-    ) throws -> [AgentRunRecord] {
-        var sql =
             """
                 SELECT id, trigger_kind, trigger_payload, instructions,
                        started_at, ended_at, status, tokens_in, tokens_out,
-                       cost_usd, error
+                       cost_usd, error, agent_id
                 FROM agent_runs
-                WHERE agent_id = ?1
-            """
-        if before != nil {
-            sql += " AND started_at < ?2"
-        }
-        sql += " ORDER BY started_at DESC LIMIT ?\(before == nil ? 2 : 3)"
-
-        var records: [AgentRunRecord] = []
-        try prepareAndExecute(
-            sql,
-            bind: { stmt in
-                Self.bindText(stmt, index: 1, value: agentId.uuidString)
-                var idx: Int32 = 2
-                if let before {
-                    sqlite3_bind_int64(stmt, idx, Int64(before.timeIntervalSince1970))
-                    idx += 1
-                }
-                sqlite3_bind_int(stmt, idx, Int32(max(limit, 1)))
-            },
+                ORDER BY started_at DESC LIMIT ?1
+            """,
+            bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(max(limit, 1))) },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    if let record = Self.readRun(stmt, agentId: agentId) {
-                        records.append(record)
-                    }
+                    let raw = sqlite3_column_text(stmt, 11).map { String(cString: $0) } ?? ""
+                    guard let agentId = UUID(uuidString: raw),
+                        let record = Self.readRun(stmt, agentId: agentId)
+                    else { continue }
+                    records.append(record)
                 }
             }
         )
         return records
     }
 
-    /// Count of runs in the rolling window ending `now` that we should
-    /// charge against `daily_run_cap`. Per spec §16 Q3, only `success`
-    /// and `error` runs count; clamped/cancelled scheduling attempts
-    /// don't burn budget.
-    public func successfulOrErroredRunCount(
-        agentId: UUID,
-        triggerKind: AgentRunTriggerKind,
-        in window: TimeInterval,
-        asOf now: Date = Date()
-    ) throws -> Int {
-        let since = now.addingTimeInterval(-window)
+    /// The legacy tables as older builds created them. Older builds only
+    /// create them in their v1 migration, which a v1 file never reruns.
+    static let legacySchemas: [String: String] = [
+        "agent_next_run": """
+            CREATE TABLE IF NOT EXISTS agent_next_run (
+                agent_id          TEXT PRIMARY KEY,
+                scheduled_at      INTEGER NOT NULL,
+                instructions      TEXT NOT NULL,
+                context_views     TEXT NOT NULL DEFAULT '[]',
+                priority          TEXT NOT NULL DEFAULT 'normal',
+                on_miss           TEXT NOT NULL DEFAULT 'skip',
+                scheduled_by      TEXT NOT NULL,
+                scheduled_at_wall INTEGER NOT NULL
+            )
+            """,
+        "agent_runs": """
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                id                TEXT PRIMARY KEY,
+                agent_id          TEXT NOT NULL,
+                trigger_kind      TEXT NOT NULL,
+                trigger_payload   TEXT,
+                instructions      TEXT NOT NULL,
+                started_at        INTEGER NOT NULL,
+                ended_at          INTEGER,
+                status            TEXT NOT NULL,
+                tokens_in         INTEGER,
+                tokens_out        INTEGER,
+                cost_usd          REAL,
+                error             TEXT
+            )
+            """,
+    ]
+
+    /// Retires a legacy table once its rows were imported: renamed, not
+    /// dropped, so the rows stay recoverable, and replaced by an empty
+    /// table so an older build after a downgrade still finds it. Rows that
+    /// build writes are imported again on the next upgrade.
+    public func retireLegacyTable(_ name: String) throws {
+        guard let schema = Self.legacySchemas[name], try tableExists(name) else { return }
+        guard try rowCount(name) > 0 else { return }
+        var target = "\(name)_legacy"
+        if try tableExists(target) { target += "_\(Int(Date().timeIntervalSince1970))" }
+        try queue.sync {
+            stmtCache.clear()
+            try executeRaw("BEGIN IMMEDIATE")
+            do {
+                try executeRaw("ALTER TABLE \(name) RENAME TO \(target)")
+                try executeRaw(schema)
+                try executeRaw("COMMIT")
+            } catch {
+                try? executeRaw("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    private func rowCount(_ table: String) throws -> Int {
         var count = 0
         try prepareAndExecute(
-            """
-                SELECT COUNT(*) FROM agent_runs
-                WHERE agent_id = ?1
-                  AND trigger_kind = ?2
-                  AND status IN ('success', 'error')
-                  AND started_at >= ?3
-            """,
-            bind: { stmt in
-                Self.bindText(stmt, index: 1, value: agentId.uuidString)
-                Self.bindText(stmt, index: 2, value: triggerKind.rawValue)
-                sqlite3_bind_int64(stmt, 3, Int64(since.timeIntervalSince1970))
-            },
-            process: { stmt in
-                if sqlite3_step(stmt) == SQLITE_ROW {
-                    count = Int(sqlite3_column_int(stmt, 0))
-                }
-            }
-        )
+            "SELECT COUNT(*) FROM \(table)", bind: { _ in },
+            process: { stmt in if sqlite3_step(stmt) == SQLITE_ROW { count = Int(sqlite3_column_int64(stmt, 0)) } })
         return count
     }
+
+    #if DEBUG
+        /// Test hook: rows in `table`, or nil when it does not exist.
+        func rowCountForTesting(_ table: String) throws -> Int? {
+            guard try tableExists(table) else { return nil }
+            return try rowCount(table)
+        }
+
+        /// Test hook: a legacy `agent_runs` table holding `runs`.
+        func seedLegacyRunsForTesting(_ runs: [AgentRunRecord]) throws {
+            try queue.sync { try executeRaw(Self.legacySchemas["agent_runs"]!) }
+            for run in runs {
+                try prepareAndExecute(
+                    """
+                        INSERT INTO agent_runs (id, agent_id, trigger_kind, instructions, started_at,
+                                                ended_at, status, tokens_in, error)
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    """,
+                    bind: { stmt in
+                        Self.bindText(stmt, index: 1, value: run.id.uuidString)
+                        Self.bindText(stmt, index: 2, value: run.agentId.uuidString)
+                        Self.bindText(stmt, index: 3, value: run.triggerKind.rawValue)
+                        Self.bindText(stmt, index: 4, value: run.instructions)
+                        sqlite3_bind_int64(stmt, 5, Int64(run.startedAt.timeIntervalSince1970))
+                        if let ended = run.endedAt {
+                            sqlite3_bind_int64(stmt, 6, Int64(ended.timeIntervalSince1970))
+                        } else {
+                            sqlite3_bind_null(stmt, 6)
+                        }
+                        Self.bindText(stmt, index: 7, value: run.status.rawValue)
+                        if let tokens = run.tokensIn {
+                            sqlite3_bind_int(stmt, 8, Int32(tokens))
+                        } else {
+                            sqlite3_bind_null(stmt, 8)
+                        }
+                        Self.bindText(stmt, index: 9, value: run.error)
+                    },
+                    process: { stmt in _ = sqlite3_step(stmt) }
+                )
+            }
+        }
+    #endif
 
     // MARK: - agent_pause
 
@@ -669,20 +524,9 @@ public final class SchedulerDatabase: @unchecked Sendable {
 
     // MARK: - Cleanup
 
-    /// Called when an agent is deleted (`AgentStore.delete`). Removes
-    /// every row across the three tables.
+    /// Called when an agent is deleted (`AgentStore.delete`).
     public func deleteAllForAgent(_ agentId: UUID) throws {
         try inTransaction { _ in
-            try self.transactionalStep(
-                "DELETE FROM agent_next_run WHERE agent_id = ?1"
-            ) { stmt in
-                Self.bindText(stmt, index: 1, value: agentId.uuidString)
-            }
-            try self.transactionalStep(
-                "DELETE FROM agent_runs WHERE agent_id = ?1"
-            ) { stmt in
-                Self.bindText(stmt, index: 1, value: agentId.uuidString)
-            }
             try self.transactionalStep(
                 "DELETE FROM agent_pause WHERE agent_id = ?1"
             ) { stmt in
@@ -693,22 +537,14 @@ public final class SchedulerDatabase: @unchecked Sendable {
 
     // MARK: - Row decoders
 
-    /// `agentId` is passed in explicitly because the row may have been
-    /// read with `agent_id` as either the first or a later column.
-    private static func readNextRun(
-        stmt: OpaquePointer,
-        agentId: UUID,
-        agentIdColumn: Int? = nil
-    ) -> NextRunEntry {
-        // Column layout shifts based on whether agent_id is selected.
-        let base = agentIdColumn == nil ? 0 : 1
-        let scheduledAt = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, Int32(base + 0))))
-        let instructions = sqlite3_column_text(stmt, Int32(base + 1)).map { String(cString: $0) } ?? ""
-        let viewsJSON = sqlite3_column_text(stmt, Int32(base + 2)).map { String(cString: $0) } ?? "[]"
-        let priority = sqlite3_column_text(stmt, Int32(base + 3)).map { String(cString: $0) } ?? "normal"
-        let onMiss = sqlite3_column_text(stmt, Int32(base + 4)).map { String(cString: $0) } ?? "skip"
-        let scheduledBy = sqlite3_column_text(stmt, Int32(base + 5)).map { String(cString: $0) } ?? "system"
-        let wall = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, Int32(base + 6))))
+    private static func readNextRun(stmt: OpaquePointer, agentId: UUID) -> NextRunEntry {
+        let scheduledAt = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 1)))
+        let instructions = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
+        let viewsJSON = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "[]"
+        let priority = sqlite3_column_text(stmt, 4).map { String(cString: $0) } ?? "normal"
+        let onMiss = sqlite3_column_text(stmt, 5).map { String(cString: $0) } ?? "skip"
+        let scheduledBy = sqlite3_column_text(stmt, 6).map { String(cString: $0) } ?? "system"
+        let wall = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 7)))
 
         let views = Self.jsonDecode([String].self, from: viewsJSON) ?? []
         return NextRunEntry(
@@ -768,29 +604,6 @@ public final class SchedulerDatabase: @unchecked Sendable {
         } else {
             sqlite3_bind_null(stmt, Int32(index))
         }
-    }
-
-    private static func bindOptionalInt(_ stmt: OpaquePointer, index: Int, value: Int?) {
-        if let value {
-            sqlite3_bind_int64(stmt, Int32(index), Int64(value))
-        } else {
-            sqlite3_bind_null(stmt, Int32(index))
-        }
-    }
-
-    private static func bindOptionalDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {
-        if let value {
-            sqlite3_bind_double(stmt, Int32(index), value)
-        } else {
-            sqlite3_bind_null(stmt, Int32(index))
-        }
-    }
-
-    private static func jsonEncode<T: Encodable>(_ value: T) -> String? {
-        guard let data = try? JSONEncoder().encode(value),
-            let str = String(data: data, encoding: .utf8)
-        else { return nil }
-        return str
     }
 
     private static func jsonDecode<T: Decodable>(_ type: T.Type, from json: String) -> T? {

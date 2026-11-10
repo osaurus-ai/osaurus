@@ -13,6 +13,7 @@
 import SwiftUI
 
 struct MemorySafetySection: View {
+    @Environment(\.theme) private var theme
     @Binding var draft: VMLXServerRuntimeSettings
 
     private var resolvedPlan: VMLXResolvedMemorySafetyPlan {
@@ -30,35 +31,31 @@ struct MemorySafetySection: View {
             blurb:
                 "Controls the load-time memory policy used by local vMLX models. Saving a changed profile unloads resident models so the next request reloads them with the new policy."
         ) {
-            SettingsField(
-                label: "Mode",
-                hint:
+            SettingsRow(
+                title: "Mode",
+                description:
                     "Safe Auto is the default. Strict can refuse before load when a request cannot fit the selected budget."
             ) {
-                Picker("", selection: memorySafetyModeBinding) {
+                SettingsMenuPicker(selection: memorySafetyModeBinding) {
                     ForEach(VMLXMemorySafetyMode.allCases, id: \.self) { mode in
                         Text(modeTitle(mode)).tag(mode)
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
             }
+            .settingsLandingAnchor("settings.server.memorySafetyMode")
 
-            SettingsField(
-                label: "Safety Level",
-                hint:
-                    "0 favors performance, 2 is Safe Auto, 3 is strict, and 4 removes automatic Osaurus caps."
-            ) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Slider(value: sliderBinding, in: 0 ... 4, step: 1)
-                    Text(sliderLabel)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
+            SettingsSlider(
+                title: "Safety Level",
+                valueText: sliderLabel,
+                description: "0 favors performance, 2 is Safe Auto, 3 is strict, and 4 removes automatic Osaurus caps.",
+                value: sliderBinding,
+                range: 0 ... 4,
+                step: 1
+            )
+            .settingsLandingAnchor("settings.server.memorySafetyLevel")
 
             SettingsToggle(
-                title: L("Keep Model in Memory"),
+                title: "Keep Model in Memory",
                 description:
                     "Keeps model weights resident while loaded when they fit the GPU ceiling and OS reserve. Other apps may slow down. Takes effect after reload; the idle unload timer is unchanged.",
                 isOn: $draft.memorySafety.keepModelInMemory
@@ -66,12 +63,10 @@ struct MemorySafetySection: View {
             .accessibilityIdentifier("server.memorySafety.keepModelInMemory")
             .settingsLandingAnchor("server.memorySafety.keepModelInMemory")
 
-            SettingsDivider()
-
-            SettingsSubsection(label: "Resolved Plan") {
+            SettingsFieldRow(label: "Resolved Plan") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(resolvedPlan.displaySummary)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(SettingsFont.monoSmall)
                         .textSelection(.enabled)
 
                     HStack(spacing: 12) {
@@ -87,27 +82,27 @@ struct MemorySafetySection: View {
                             "The load allocator cap sets a freed-buffer reuse target while loading. Inference uses a separate process-wide target based on loaded models and the active execution path. An explicit Allocator Cache Cap bounds the selected target in both phases. The pool can exceed that target until the next allocation trims it. These targets do not cap live weights, KV state, or physical RAM."
                         )
                     )
-                        .font(.system(size: 11))
+                        .font(SettingsFont.rowDescription)
                         .foregroundStyle(.secondary)
 
                     ForEach(resolvedPlan.warnings, id: \.self) { warning in
                         Text(warning)
-                            .font(.system(size: 11))
+                            .font(SettingsFont.rowDescription)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "Advanced Overrides") {
+            SettingsFieldRow(label: "Advanced Overrides") {
                 VStack(alignment: .leading, spacing: 12) {
                     SettingsToggle(
-                        title: L("Fail Closed When Estimate Is Unknown"),
+                        title: "Fail Closed When Estimate Is Unknown",
                         description:
                             "Strict diagnostic behavior for environments that prefer refusal over unknown memory risk.",
                         isOn: $draft.memorySafety.failClosedWhenEstimateUnknown
                     )
+                    .settingsLandingAnchor("settings.server.failClosedUnknownEstimate")
 
                     OptionalDoubleField(
                         label: "Custom Physical Memory Fraction",
@@ -117,6 +112,7 @@ struct MemorySafetySection: View {
                         clamp: 0.10 ... 1.00,
                         format: "%.2f"
                     )
+                    .settingsLandingAnchor("settings.server.physicalMemoryFraction")
 
                     OptionalIntField(
                         label: "Allocator Cache Cap (MB)",
@@ -126,6 +122,7 @@ struct MemorySafetySection: View {
                         value: allocatorCacheMB,
                         clamp: 1 ... 262144
                     )
+                    .settingsLandingAnchor("settings.server.allocatorCacheCap")
 
                     OptionalIntField(
                         label: "Max Concurrent Sequences",
@@ -134,6 +131,7 @@ struct MemorySafetySection: View {
                         value: $draft.memorySafety.customMaxConcurrentSequences,
                         clamp: 1 ... 32
                     )
+                    .settingsLandingAnchor("settings.server.maxConcurrentSequences")
                 }
             }
         }
@@ -211,18 +209,15 @@ struct MemorySafetySection: View {
     private func summaryPill(_ label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(SettingsFont.chip)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 11, design: .monospaced))
+                .font(SettingsFont.monoSmall)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(0.05))
-        )
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     private func capSummary(_ cap: ResidentCap) -> String {

@@ -22,7 +22,7 @@ struct StatusPanelView: View {
     var body: some View {
         ZStack {
             // Themed background
-            theme.primaryBackground
+            theme.surface.canvas
                 .ignoresSafeArea()
 
             VStack(spacing: 12) {
@@ -33,19 +33,20 @@ struct StatusPanelView: View {
                     onRetry: toggleServer,
                     badgeText: statusBadgeText,
                     badgeColor: statusBadgeColor,
+                    badgeKind: statusBadgeKind,
                     badgeAnimating: statusBadgeAnimating
                 )
 
                 BottomActionBar(portString: $portString)
             }
-            .padding(16)
+            .padding(theme.space.s16)
         }
         .frame(
             width: 320,
             height: 170
         )
         .environment(\.theme, themeManager.currentTheme)
-        .tint(theme.accentColor)
+        .tint(theme.action.primary.default.background)
         .onAppear {
             portString = String(server.port)
         }
@@ -89,13 +90,17 @@ struct StatusPanelView: View {
         }
     }
 
-    private var statusBadgeColor: Color {
+    private var statusBadgeKind: ThemeStatusKind? {
         switch server.serverHealth {
-        case .stopped: return .gray
-        case .starting, .restarting, .stopping: return theme.warningColor
-        case .running: return theme.successColor
-        case .error: return theme.errorColor
+        case .stopped: return nil
+        case .starting, .restarting, .stopping: return .warning
+        case .running: return .success
+        case .error: return .error
         }
+    }
+
+    private var statusBadgeColor: Color {
+        statusBadgeKind.map { theme.status[$0].foreground } ?? theme.text.tertiary
     }
 
     private var statusBadgeAnimating: Bool {
@@ -135,6 +140,7 @@ private struct TopStatusHeader: View {
     let onRetry: () -> Void
     let badgeText: String
     let badgeColor: Color
+    let badgeKind: ThemeStatusKind?
     let badgeAnimating: Bool
 
     private var appVersion: String {
@@ -149,8 +155,8 @@ private struct TopStatusHeader: View {
                 .antialiased(true)
                 .scaledToFit()
                 .frame(width: 40, height: 40)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous))
                 .onTapGesture {
                     AppDelegate.shared?.showManagementWindow(initialTab: .server)
                 }
@@ -160,12 +166,12 @@ private struct TopStatusHeader: View {
                 HStack(spacing: 8) {
                     HStack(spacing: 6) {
                         Text(appName)
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundColor(theme.primaryText)
+                            .font(SettingsFont.detailTitle)
+                            .foregroundColor(theme.text.primary)
 
                         Text(verbatim: appVersion)
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.caption)
+                            .foregroundColor(theme.text.tertiary)
                     }
 
                     Spacer()
@@ -180,21 +186,21 @@ private struct TopStatusHeader: View {
                             .localizedHelp("Server is running")
                     } else {
                         // Show full badge for transitional states
-                        StatusBadge(status: badgeText, color: badgeColor, isAnimating: badgeAnimating)
+                        StatusBadge(status: badgeText, kind: badgeKind, isAnimating: badgeAnimating)
                     }
                 }
 
                 if server.isRunning || server.isRestarting {
                     HStack(spacing: 6) {
                         Text(serverURL)
-                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .font(SettingsFont.monoSmall)
                             .minimumScaleFactor(0.8)
-                            .foregroundColor(theme.secondaryText)
+                            .foregroundColor(theme.text.secondary)
 
                         Button(action: copyURL) {
                             Image(systemName: "doc.on.doc")
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.tertiaryText)
+                                .glyphSize(10)
+                                .foregroundColor(theme.text.tertiary)
                         }
                         .buttonStyle(PlainButtonStyle())
                         .localizedHelp("Copy URL")
@@ -202,10 +208,10 @@ private struct TopStatusHeader: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
                     Text(statusLineText)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .font(SettingsFont.monoSmall)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .foregroundColor(theme.secondaryText)
+                        .foregroundColor(theme.text.secondary)
                         .help(statusLineText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -237,12 +243,12 @@ private struct StatusDot: View {
 
             // Pulse animation
             Circle()
-                .stroke(color.opacity(0.3), lineWidth: 2)
+                .stroke(color.opacity(0.3), lineWidth: theme.stroke.focus)
                 .frame(width: 14, height: 14)
                 .scaleEffect(isAnimating ? 1.8 : 1.0)
                 .opacity(isAnimating ? 0 : 0.6)
                 .animation(
-                    isAnimating ? .easeOut(duration: 1.2).repeatForever(autoreverses: false) : .default,
+                    isAnimating ? theme.motion.loop(.easeOut, duration: 1.2) : theme.motion.standard,
                     value: isAnimating
                 )
 
@@ -257,64 +263,19 @@ private struct StatusDot: View {
                     )
                 )
                 .frame(width: 10, height: 10)
-                .shadow(color: color.opacity(0.5), radius: 3, x: 0, y: 0)
         }
     }
 }
 
 // MARK: - Retry Button
 private struct RetryButton: View {
-    @Environment(\.theme) private var theme
     let action: () -> Void
-
-    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Retry", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(theme.errorColor)
-
-                    if isHovered {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.white.opacity(0.15))
-                    }
-                }
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [Color.white.opacity(isHovered ? 0.3 : 0.2), theme.errorColor.opacity(0.3)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.errorColor.opacity(isHovered ? 0.4 : 0.25),
-                radius: isHovered ? 6 : 3,
-                x: 0,
-                y: 2
-            )
+            Label(L("Retry"), systemImage: "arrow.clockwise")
         }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
+        .assignedSettingsButtonStyle(.destructive, size: .compact)
     }
 }
 
@@ -393,22 +354,22 @@ private struct VADToggleButton: View {
 
     private var iconColor: Color {
         guard canToggleVAD && isVADConfigured else {
-            return theme.tertiaryText
+            return theme.text.tertiary
         }
 
         // If VAD is disabled in settings, show as inactive (gray/tertiary)
         // unless it's running for some reason (state error?)
         if !isVADEnabledGlobally && vadService.state == .idle {
-            return theme.tertiaryText
+            return theme.text.tertiary
         }
 
         switch vadService.state {
         case .listening:
-            return theme.successColor
+            return theme.status.success.foreground
         case .error:
-            return theme.errorColor
+            return theme.status.error.foreground
         default:
-            return theme.primaryText
+            return theme.text.primary
         }
     }
 
@@ -441,7 +402,7 @@ private struct VADToggleButton: View {
             ZStack {
                 // Background
                 Circle()
-                    .fill(isActive ? iconColor.opacity(0.15) : theme.buttonBackground)
+                    .fill(isActive ? iconColor.opacity(0.15) : theme.action.secondary.default.background)
 
                 // Accent gradient when active
                 if isActive {
@@ -457,7 +418,7 @@ private struct VADToggleButton: View {
 
                 // Icon
                 Image(systemName: isActive ? "waveform.circle.fill" : "waveform.circle")
-                    .font(.system(size: 14))
+                    .glyphSize(14)
                     .foregroundColor(iconColor)
                     .scaleEffect(pulseAnimation && vadService.state == .listening ? 1.08 : 1.0)
             }
@@ -465,23 +426,11 @@ private struct VADToggleButton: View {
             .overlay(
                 Circle()
                     .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                isActive ? iconColor.opacity(0.4) : theme.glassEdgeLight.opacity(0.15),
-                                isActive ? iconColor.opacity(0.2) : theme.buttonBorder,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
+                        isActive ? iconColor.opacity(0.4) : theme.border.subtle,
+                        lineWidth: theme.stroke.default
                     )
             )
-            .shadow(
-                color: isActive ? iconColor.opacity(0.3) : .clear,
-                radius: 4,
-                x: 0,
-                y: 1
-            )
+            .themeElevation(isActive ? theme.elevation.raised : .none)
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(!canToggleVAD || !isVADConfigured)
@@ -528,11 +477,11 @@ private struct VADToggleButton: View {
         let currentState = state ?? vadService.state
         // Continuous decorative motion: keep the icon static under Reduce Motion.
         if currentState == .listening, !reduceMotion {
-            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+            withAnimation(theme.motion.loop(.easeInOut, duration: 1.0, autoreverses: true)) {
                 pulseAnimation = true
             }
         } else {
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(theme.motion.quick) {
                 pulseAnimation = false
             }
         }
@@ -541,74 +490,13 @@ private struct VADToggleButton: View {
 
 // MARK: - Ask AI Button
 private struct AskAIButton: View {
-    @Environment(\.theme) private var theme
     let action: () -> Void
-
-    @State private var isHovered = false
-    @State private var isPressed = false
 
     var body: some View {
         Button(action: action) {
             Text("Ask AI", bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(
-                    ZStack {
-                        // Base gradient
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-
-                        // Hover highlight
-                        if isHovered {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.white.opacity(0.12))
-                        }
-                    }
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(isHovered ? 0.35 : 0.2),
-                                    theme.accentColor.opacity(0.3),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                )
-                .shadow(
-                    color: theme.accentColor.opacity(isHovered ? 0.5 : 0.3),
-                    radius: isHovered ? 10 : 5,
-                    x: 0,
-                    y: isHovered ? 4 : 2
-                )
         }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(isPressed ? 0.96 : 1.0)
-        .animation(.easeOut(duration: 0.1), value: isPressed)
-        .animation(.easeOut(duration: 0.15), value: isHovered)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-        .onLongPressGesture(
-            minimumDuration: .infinity,
-            maximumDistance: .infinity,
-            pressing: { pressing in
-                isPressed = pressing
-            },
-            perform: {}
-        )
+        .assignedSettingsButtonStyle(.primary)
         .localizedHelp("Open AI Chat")
     }
 }

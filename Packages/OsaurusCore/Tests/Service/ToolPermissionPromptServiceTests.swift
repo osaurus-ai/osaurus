@@ -64,11 +64,13 @@ struct ToolPermissionPromptServiceTests {
 
     @Test("Return and Escape require the visible focused prompt in the active app")
     func keyboardShortcutRequiresFocusedPrompt() {
+        let armed = ToolPermissionPromptService.keyboardArmDelay
         #expect(
             ToolPermissionPromptService.shouldAcceptKeyboardShortcut(
                 isVisible: true,
                 isKeyWindow: true,
-                isAppActive: true
+                isAppActive: true,
+                shownFor: armed
             )
         )
 
@@ -82,8 +84,19 @@ struct ToolPermissionPromptServiceTests {
                 !ToolPermissionPromptService.shouldAcceptKeyboardShortcut(
                     isVisible: state.0,
                     isKeyWindow: state.1,
-                    isAppActive: state.2
+                    isAppActive: state.2,
+                    shownFor: armed
                 )
+            )
+        }
+    }
+
+    @Test("a Return typed just as the prompt takes focus does not allow it")
+    func keyboardShortcutWaitsUntilThePromptHasBeenSeen() {
+        for shownFor in [0, 0.1, ToolPermissionPromptService.keyboardArmDelay - 0.01] {
+            #expect(
+                !ToolPermissionPromptService.shouldAcceptKeyboardShortcut(
+                    isVisible: true, isKeyWindow: true, isAppActive: true, shownFor: shownFor)
             )
         }
     }
@@ -118,7 +131,9 @@ struct ToolPermissionPromptServiceTests {
 
         #expect(!source.contains("addGlobalMonitorForEvents"))
         #expect(source.contains("styleMask: [.titled, .fullSizeContentView]"))
-        #expect(source.contains("isKeyWindow: weakPanel?.isKeyWindow == true"))
+        #expect(source.contains("let isPanelKey = weakPanel?.isKeyWindow == true"))
+        #expect(source.contains("isKeyWindow: isPanelKey"))
+        #expect(source.contains("shownFor: Date().timeIntervalSince(shownAt)"))
         #expect(source.contains("keyWindow: NSApp.keyWindow?.screen"))
         // Per-request ownership: no shared window slot, no dead spawn picker.
         #expect(!source.contains("static var permissionWindow"))
@@ -157,6 +172,11 @@ private final class PromptPresenterProbe: @unchecked Sendable {
             try? await Task.sleep(for: .milliseconds(5))
         }
     }
+}
+
+private actor WaitEvents {
+    var values: [Bool] = []
+    func add(_ waiting: Bool) { values.append(waiting) }
 }
 
 @Suite("Tool permission prompt queue", .serialized)
@@ -346,6 +366,56 @@ struct ToolPermissionPromptQueueTests {
         let task = request(probe, "A", revalidate: { nil })
         await probe.waitForPresented(1)
         #expect(probe.presented.count == 1)
+        ToolPermissionPromptService.resolveForTesting(id: probe.presented[0].id, outcome: .denied)
+        #expect(await task.value == .denied)
+    }
+
+    @Test("the approval wait observer brackets the wait for allow, deny, and cancel")
+    @MainActor
+    func approvalWaitObserverBracketsTheWait() async {
+        ToolPermissionPromptService.resetForTesting()
+        defer { ToolPermissionPromptService.resetForTesting() }
+
+        for ending in ["allow", "deny", "cancel"] {
+            let probe = PromptPresenterProbe()
+            let events = WaitEvents()
+            let observer: @Sendable (Bool) async -> Void = { await events.add($0) }
+            let task = ChatExecutionContext.$approvalWaitObserver.withValue(observer) {
+                request(probe, ending)
+            }
+            await probe.waitForPresented(1)
+            #expect(await events.values == [true], "\(ending): waiting is reported while the card is open")
+            switch ending {
+            case "allow": ToolPermissionPromptService.resolveForTesting(id: probe.presented[0].id, outcome: .allowOnce)
+            case "deny": ToolPermissionPromptService.resolveForTesting(id: probe.presented[0].id, outcome: .denied)
+            default: task.cancel()
+            }
+            _ = await task.value
+            #expect(await events.values == [true, false], "\(ending)")
+        }
+    }
+
+    @Test("the presented sheet quotes the workflow step's reason")
+    @MainActor
+    func presentedSheetCarriesTheStepReason() async {
+        ToolPermissionPromptService.resetForTesting()
+        defer { ToolPermissionPromptService.resetForTesting() }
+        let probe = PromptPresenterProbe()
+
+        let task = ToolPermissionPromptService.$presentationOverrideForTests.withValue(probe.presenter) {
+            ChatExecutionContext.$currentWorkflowStepReason.withValue("Turn the report into CSV") {
+                Task { @MainActor in
+                    await ToolPermissionPromptService.requestApprovalOutcome(
+                        toolName: "shell_run", description: "Run a command in the sandbox.",
+                        descriptionIsForModel: true, argumentsJSON: #"{"command":"python3 convert.py"}"#)
+                }
+            }
+        }
+        await probe.waitForPresented(1)
+        let presentation = ToolPermissionPromptService.presentedPresentationForTesting
+        #expect(presentation?.title == "Run a Python script")
+        #expect(presentation?.reason == "Turn the report into CSV")
+        #expect(presentation?.summary == nil)
         ToolPermissionPromptService.resolveForTesting(id: probe.presented[0].id, outcome: .denied)
         #expect(await task.value == .denied)
     }

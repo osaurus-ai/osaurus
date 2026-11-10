@@ -46,7 +46,7 @@ struct PrivacyCustomRuleEditor: View {
     @State private var startMarker: String = ""
     @State private var endMarker: String = ""
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     /// The regex source the current state would produce, resolving the
     /// builder when in Simple mode. `nil` when inputs are incomplete.
@@ -93,7 +93,7 @@ struct PrivacyCustomRuleEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AgentSheetHeader(
+            SettingsSheetHeader(
                 icon: "wand.and.rays",
                 title: LocalizedStringKey(
                     initialRule == nil
@@ -106,7 +106,7 @@ struct PrivacyCustomRuleEditor: View {
             )
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     modeField
                     nameField
                     categoryField
@@ -120,17 +120,17 @@ struct PrivacyCustomRuleEditor: View {
                     }
                     testPanel
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 18)
+                .padding(.horizontal, theme.space.s24)
+                .padding(.vertical, theme.space.s16)
             }
 
-            AgentSheetFooter(
-                primary: AgentSheetFooter.Action(
+            SettingsSheetFooter(
+                primary: SettingsSheetFooter.Action(
                     label: "privacy.custom.editor.save",
                     isEnabled: isValid,
                     handler: commit
                 ),
-                secondary: AgentSheetFooter.Action(
+                secondary: SettingsSheetFooter.Action(
                     label: "privacy.custom.editor.cancel",
                     handler: onCancel
                 ),
@@ -138,15 +138,15 @@ struct PrivacyCustomRuleEditor: View {
             )
         }
         .frame(minWidth: 540, idealWidth: 580, minHeight: 520)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .onAppear(perform: hydrate)
     }
 
     // MARK: - Shared fields
 
     private var modeField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Mode")
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            SettingsFieldLabel("Mode")
             Picker(selection: $mode) {
                 Text("Simple", bundle: .module).tag(RuleKind.builder)
                 Text("Regex", bundle: .module).tag(RuleKind.regex)
@@ -159,9 +159,9 @@ struct PrivacyCustomRuleEditor: View {
     }
 
     private var nameField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("privacy.custom.editor.name")
-            StyledTextField(
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            SettingsFieldLabel("privacy.custom.editor.name")
+            SettingsTextField(
                 placeholder: L("privacy.customRule.placeholder.name"),
                 text: $name
             )
@@ -169,36 +169,33 @@ struct PrivacyCustomRuleEditor: View {
     }
 
     private var categoryField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("privacy.custom.editor.category")
-            Picker(selection: $category) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            SettingsFieldLabel("privacy.custom.editor.category")
+            SettingsMenuPicker(selection: $category) {
                 ForEach(EntityCategory.allCases, id: \.self) { c in
                     Text(LocalizedStringKey(c.localizationKey), bundle: .module)
                         .tag(c)
                 }
-            } label: {
-                EmptyView()
             }
-            .pickerStyle(.menu)
             Text(
                 "Hits are filed under this category and use its placeholder prefix in the review sheet.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
         }
     }
 
     private var labelField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Placeholder label (optional)")
-            StyledTextField(
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            SettingsFieldLabel("Placeholder label (optional)")
+            SettingsTextField(
                 placeholder: L("e.g. CUSTOMER"),
                 text: $placeholderLabel
             )
             Text(verbatim: labelHelpText)
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -212,27 +209,27 @@ struct PrivacyCustomRuleEditor: View {
 
     private var caseSensitiveField: some View {
         Toggle(isOn: $caseSensitive) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Case sensitive", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     "When off, ALICE, Alice, and alice all match.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
             }
         }
-        .toggleStyle(.switch)
+        .settingsSwitch(showsLabel: true)
     }
 
     // MARK: - Regex mode
 
     private var patternField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("privacy.custom.editor.pattern")
-            StyledTextField(
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            SettingsFieldLabel("privacy.custom.editor.pattern")
+            SettingsTextField(
                 placeholder: L("privacy.customRule.placeholder.pattern"),
                 text: $pattern,
                 axis: .vertical,
@@ -246,18 +243,15 @@ struct PrivacyCustomRuleEditor: View {
     // MARK: - Builder mode
 
     private var builderFields: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                AgentSheetSectionLabel("Match type")
-                Picker(selection: $matchType) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                SettingsFieldLabel("Match type")
+                SettingsMenuPicker(selection: $matchType) {
                     ForEach(RuleBuilder.MatchType.allCases, id: \.self) { t in
                         Text(LocalizedStringKey(matchTypeLabel(t)), bundle: .module)
                             .tag(t)
                     }
-                } label: {
-                    EmptyView()
                 }
-                .pickerStyle(.menu)
             }
 
             switch matchType {
@@ -272,9 +266,9 @@ struct PrivacyCustomRuleEditor: View {
     }
 
     private var termsField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Terms (one per line)")
-            StyledTextField(
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            SettingsFieldLabel("Terms (one per line)")
+            SettingsTextField(
                 placeholder: L("e.g. Project Apollo"),
                 text: $terms,
                 axis: .vertical,
@@ -284,64 +278,64 @@ struct PrivacyCustomRuleEditor: View {
                 "Each line is matched literally — no regex needed. Special characters are escaped for you.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var digitsFields: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Number of digits")
-            HStack(spacing: 10) {
-                StyledTextField(placeholder: L("min"), text: $digitsMin)
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            SettingsFieldLabel("Number of digits")
+            HStack(spacing: theme.space.s8) {
+                SettingsTextField(placeholder: L("min"), text: $digitsMin)
                     .frame(width: 90)
                 Text("to", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
-                StyledTextField(placeholder: L("max (blank = any)"), text: $digitsMax)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
+                SettingsTextField(placeholder: L("max (blank = any)"), text: $digitsMax)
                     .frame(width: 170)
             }
             Text(
                 "Matches a run of digits of this length, e.g. an account or ID number.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var markerFields: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Between markers")
-            HStack(spacing: 10) {
-                StyledTextField(placeholder: L("start, e.g. <secret>"), text: $startMarker)
-                StyledTextField(placeholder: L("end, e.g. </secret>"), text: $endMarker)
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            SettingsFieldLabel("Between markers")
+            HStack(spacing: theme.space.s8) {
+                SettingsTextField(placeholder: L("start, e.g. <secret>"), text: $startMarker)
+                SettingsTextField(placeholder: L("end, e.g. </secret>"), text: $endMarker)
             }
             Text(
                 "Redacts everything from the start marker to the end marker, inclusive.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var generatedPatternRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AgentSheetSectionLabel("Generated pattern")
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            SettingsFieldLabel("Generated pattern")
             if let p = effectivePattern {
                 Text(verbatim: p)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.code, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Add terms above to generate a pattern.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
             patternStatusRow
         }
@@ -359,36 +353,36 @@ struct PrivacyCustomRuleEditor: View {
                 "Enter a pattern to validate.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
         case .success:
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(theme.successColor)
+                    .foregroundColor(theme.status.success.foreground)
                 Text(
                     "Pattern compiles.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.successColor)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.status.success.foreground)
             }
         case .failure(let err):
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(theme.warningColor)
+                    .foregroundColor(theme.status.warning.foreground)
                 Text(verbatim: localizedCompileError(err))
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
     private var testPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            AgentSheetSectionLabel("privacy.custom.editor.test")
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            SettingsFieldLabel("privacy.custom.editor.test")
 
-            StyledTextField(
+            SettingsTextField(
                 placeholder: L("privacy.custom.editor.sample"),
                 text: $sample,
                 axis: .vertical,
@@ -413,24 +407,24 @@ struct PrivacyCustomRuleEditor: View {
                     "No matches in sample.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
             } else {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     ForEach(0 ..< min(matches.count, 3), id: \.self) { i in
                         let m = matches[i]
                         if let r = Range(m.range, in: sample) {
                             Text(verbatim: "→ \(sample[r])")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.successColor)
+                                .catalogTypography(.code, theme: theme, fallback: SettingsFont.monoSmall)
+                                .foregroundColor(theme.status.success.foreground)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
                     }
                     if matches.count > 3 {
                         Text(verbatim: "… +\(matches.count - 3)")
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                            .foregroundColor(theme.text.tertiary)
                     }
                 }
             }
@@ -439,8 +433,8 @@ struct PrivacyCustomRuleEditor: View {
                 "Type a sample to see live matches.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
         } else {
             EmptyView()
         }

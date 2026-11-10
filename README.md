@@ -76,7 +76,7 @@ osaurus status   # Check status
 
 ## Agents
 
-Agents are the core of Osaurus. Each one gets its own prompts, memory, and visual theme -- a research assistant, a coding partner, a file organizer, whatever you need. Tools and skills are automatically selected via RAG search based on the task at hand -- no manual configuration needed. Everything else in the harness exists to make agents smarter, faster, and more capable over time.
+Agents are the core of Osaurus. Each one gets its own prompts, memory, and avatar -- a research assistant, a coding partner, a file organizer, whatever you need. Tools and skills are automatically selected via RAG search based on the task at hand -- no manual configuration needed. Everything else in the harness exists to make agents smarter, faster, and more capable over time.
 
 Agents can also opt into a private local database and a single self-scheduled next run -- see [Agent DB & Self-Scheduling](docs/AGENT_DB.md). Local storage is plaintext by default (protected by FileVault) with opt-in SQLCipher encryption -- see [Storage](docs/STORAGE.md).
 
@@ -212,7 +212,9 @@ Document attachments keep structure where the file format exposes it: CSV/TSV ta
 
 **Skills & Methods** -- Skills import reusable AI capabilities from GitHub repos or files, compatible with [Agent Skills](https://agentskills.io/). Full Claude plugins (skills, scheduled agents, slash commands, MCP providers, and `CLAUDE.md` context) can be imported from any GitHub repo and managed as a single bundle. Methods are learned workflows that agents save and reuse over time. All are automatically selected via RAG search -- no manual configuration needed. See [Skills Guide](docs/SKILLS.md) and [Claude Plugins](docs/CLAUDE_PLUGINS.md).
 
-**Automation** -- Schedules run recurring tasks in the background. Watchers monitor folders and trigger agents on file changes.
+**Workflows & the Architect** -- A workflow is a fixed, typed graph of steps (model calls with schema-checked output, forms, sandboxed code, tools, HTTP with first-class pagination, waits, map fan-out, nested workflows, stored state) that an agent can call as a tool, the Orchestrator can run, or you can open as a tab. The built-in **Architect** agent designs one from a description, from an API's docs or an MCP server, from a chat that already did the work, or from a shared template; tests it; builds evals to pick the right model per step; and fixes repeated failures on request. Secrets and sign-ins live in the Keychain as shared connections and never travel with a template. See [Workflows](docs/WORKFLOWS.md).
+
+**Automations** -- Start a workflow, an agent, or a one-off model answer on a schedule, when files in a folder change, or when a webhook is called; a channel message starts an agent or a workflow. Every run, and every channel message that never reached one, is listed in History with the reason. See [Automations](docs/AUTOMATIONS.md).
 
 **Voice** -- On-device transcription via FluidAudio on Apple's Neural Engine. Voice input in chat, VAD mode with wake-word activation, and a global hotkey to transcribe into any app. No audio leaves your Mac. See [Voice Input Guide](docs/VOICE_INPUT.md).
 
@@ -282,7 +284,7 @@ ln -sf "/Applications/Osaurus.app/Contents/MacOS/osaurus" "$(brew --prefix)/bin/
 ┌─────────────────────────────────────────────────────┐
 │                   The Harness                       │
 ├──────────┬──────────┬────────────┬──────────────────┤
-│ Agents   │ Memory   │ Agent Loop │ Automation       │
+│ Agents   │ Memory   │ Agent Loop │ Automations      │
 ├──────────┴──────────┴────────────┴──────────────────┤
 │              MCP Server + Client                    │
 ├──────────┬──────────┬───────────┬───────────────────┤

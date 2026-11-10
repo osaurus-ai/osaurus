@@ -159,7 +159,8 @@ Telegram credential and allowlist settings so users do not need to hand-edit
 provider configuration files.
 
 Connection kinds are `discord`, `slack`, `telegram`, `imessage`, `whatsapp`,
-`n8n`, and `custom_http`. The `n8n` kind is a secret-verified generic inbound
+`email`, `n8n`, and `custom_http` (`email` is native only, with the reserved
+connection id `email`; see [Email Connection](#email)). The `n8n` kind is a secret-verified generic inbound
 webhook with pollable replies; see `docs/AGENT_CHANNELS_N8N.md` for its
 connection block, envelope contract, and topology notes.
 
@@ -230,12 +231,76 @@ tools. Each configured action must map to a standard Agent Channel action, and
 the runner enforces the same read/write gates as native adapters before it
 builds an HTTP request.
 
-## Proactive Publishing (Agent Destinations)
+### Inbound routing is automations; the channel sheet edits them
+
+A connection no longer names the agent that answers it. Which agent or
+workflow handles an incoming message is a `channel_message` **automation**
+(an *event* in code; `docs/AUTOMATIONS.md`): source `{ kind, connectionId, roomIds, aliases,
+requireMention, continueThreads }`, an action (agent + instructions, or
+workflow + input mapping), queueing, and a reply policy (`autoReply` for
+agents, `replyWithWorkflowOutput` for workflows). A connection can have any
+number of events.
+
+The user-facing home for this is the channel sheet's **Agents on this
+channel** section (`AgentsOnChannelSection`, in every native sheet and the
+n8n *Who answers?* step). It is built from `ChannelAgentRoster`
+(`Services/AgentChannel/ChannelAgentRoster.swift`), a pure model over the
+connection's events plus the effective posting bindings:
+
+- one **row** per agent or workflow target: `answers` (the *simple*
+  automation for that target — no aliases, empty filter, the only automation
+  for that target on the connection), the row's room scope, `answersEnabled`
+  (`isEnabled`), `repliesAutomatically` (`reply.replies(for:)`), and for
+  local agents a `posting` summary of the agent's bindings on the connection
+  (`off` / `askFirst` / `withoutAsking` / `mixed`, or `unavailable` when the
+  bot cannot post anywhere);
+- `customRules`: every non-simple automation, shown as "Custom routing:
+  N rules" with a link to Automations.
+
+Writes reuse existing APIs: **Add Agent** → `EventManager.create`
+(`ChannelAgentRoster.newAnswerEvent`, any-room, auto-reply on, named
+"<Agent> on <Channel>"); **Answers messages** → `setEnabled` (an automation
+is never deleted from here; a post-only agent gains a plain automation);
+**Replies automatically** → `update` of `reply.autoReply` /
+`replyWithWorkflowOutput`; **Posts on its own** →
+`AgentChannelConnectionManager.upsertBinding` for one stored binding per
+writable room (`ChannelAgentRoster.postingBindings`, ids `place-<conn>-<room>-
+<agent8>` so they never collide with automatic `auto-` ids; *Without asking*
+confirms first). **More options** opens the automation in Automations via
+`ManagementStateManager.pendingEventEditId`. The connection card's detail is
+"Answered by X, Y" (`AgentChannelConnectionCenterView.routingSummary`, agent
+and workflow names, de-duplicated); the agent's Channels tab shows the same
+roster per connection as a read-only **On channels** list
+(`ChannelAgentRoster.presenceDetail(for:)`) with **Edit in Channels**
+(`pendingChannelConnectionId`).
+
+- Every platform service (Discord, Slack, Telegram, iMessage, WhatsApp, Email,
+  n8n, custom HTTP) runs its own gates first — connection enabled, allowlists,
+  bots/self, dedupe — and then hands the message to
+  `EventManager.ingestChannelMessage`. `EventMatcher.rankChannelEvents` picks
+  the winning tier (alias match, then room-scoped, then any-room); every event
+  in that tier fires, each with its own mention gate.
+- Agent events run through `AgentChannelInboundRelay` (per-conversation
+  session, steering of a running turn, typing/acks, sanitized reply). Workflow
+  events go through the event queue and reply via `ChannelReplySink`.
+- A message no event claims is dropped with reason `no_event_configured`;
+  connection badges and card details read the same listener snapshot
+  (`EventManager.channelListeners(kind:connectionId:)`).
+- The legacy `inboundDispatch` block (`enabled`, `targetAgentId`/`target`,
+  `routes`, `requireMention`, `continueThreads`, `autoReplyEnabled`) is read
+  once by `EventMigration` and turned into one event for the default agent
+  plus one per route (stable ids, disabled when the block was disabled). It
+  is dropped from the platform file on its next save. Declarative
+  `channels.<platform>.inbound_*` keys are translated into the platform's
+  any-room event.
+
+## Proactive Publishing (Where It Can Post)
 
 Schema v2 of `agent-channels.json` adds a top-level `bindings` array: provider-
 neutral agent→destination routes that let an agent publish to a channel during
-a normal run (chat, schedule, watcher, or self-scheduled wake-up) without an
-inbound message trigger. A v1 file decodes with empty bindings, so existing
+a normal run (chat, a schedule or folder automation, or a self-scheduled
+wake-up) without an inbound message trigger. The UI calls a binding a *place*
+(Add Place / Customize Place). A v1 file decodes with empty bindings, so existing
 installs stay proactive-off by default.
 
 ```json
@@ -286,10 +351,16 @@ Key properties of the model:
   binding that reuses an automatic id also wins. Derived rows are labeled
   "Automatic" in the UI; switching one to auto-send goes through the same
   explicit acknowledgement as any autonomous binding.
-- Bindings are managed in two synchronized surfaces backed by the same store
-  and editor: per agent under the agent's own settings (Agents → agent →
-  Automation → Channel Posting, with the agent pinned in the editor) and
-  across all agents in Settings → Channels → Agent Posting. Each binding
+- Bindings are edited on the channel: Settings → Channels → the platform →
+  Agents on this channel → **Posts on its own** writes one stored binding per
+  room the bot may post in, all with the chosen mode (see "Inbound routing"
+  above). The built-in Default agent cannot answer messages but can be added
+  posts-only; its row's More options opens the per-room place editor in a
+  sheet (`AgentChannelDefaultAgentPostingSheet` hosting
+  `AgentChannelAgentDestinationsSection`), which is also the only UI that
+  still reaches the `draft` mode and per-binding guidance, sources, rate
+  policy and thread pinning. The agent's Channels tab is read-only
+  (**On channels**, Edit in Channels). Each binding
   names a single agent, a connection (native or custom), a room, an optional
   thread, operator-facing "when to use" guidance, the run sources it may be
   used from, an outbound mode, and a rate policy. New bindings get an
@@ -302,7 +373,7 @@ Key properties of the model:
   on unattended runs, and `autonomous` sends directly while still passing
   every host gate (write allowlists, rate policy, kill switch).
 - When an agent has at least one usable binding, its system prompt gains a
-  dynamic "Channel Destinations" section listing binding ids, labels, modes,
+  dynamic "Where It Can Post" section listing binding ids, labels, modes,
   and guidance for the current run source, and the narrow
   `agent_channel_publish(binding_id, content, intent_key, thread_id?)` tool is
   exposed. The model never supplies a raw connection or room for proactive
@@ -310,14 +381,16 @@ Key properties of the model:
   a thread itself, and a conflicting thread is refused.
 - **Run-source provenance gate (0.22.17+).** Bindings are usable only from
   run sources that map into the binding vocabulary (`chat`, `schedule`,
-  `watcher`, `self_schedule`). Runs triggered by plugins, HTTP, or an inbound
-  channel message map to none of these, so they get no Channel Destinations
-  section, no `agent_channel_publish` tool, and the publish service refuses
-  them with `run_source_not_allowed` even if the tool is somehow invoked. The
-  reply path for an inbound channel message is the relay's sanitized
-  auto-reply, gated by the connection's "Reply Automatically" toggle; with it
-  off the reply stays local and the inbound activity list records
-  `agent_replied` with reason `auto_reply_disabled`.
+  `watcher`, `self_schedule`). Schedule events run as `schedule` and folder
+  events as `watcher`. Runs triggered by plugins, HTTP, webhook events, or an
+  inbound channel message map to none of these, so they get no Where It
+  Can Post section, no `agent_channel_publish` tool, and the publish
+  service refuses them with `run_source_not_allowed` even if the tool is
+  somehow invoked. The reply path for an inbound channel message is the
+  relay's sanitized auto-reply, gated by the answering event's reply policy
+  ("Send the agent's reply without asking"); with it off the reply stays
+  local and the inbound activity list records `agent_replied` with reason
+  `auto_reply_disabled`.
 - Every publish flows through a durable outbound-intent ledger keyed by
   (agent, binding, `intent_key`). Replaying an intent key returns the prior
   result instead of sending again. Provider failures are classified:
@@ -512,8 +585,8 @@ non-secret IDs and policy:
   `reply_thread` can target.
 - `writeEnabled` must be true, and send/reply actions still require
   `confirm_send: true`.
-- `senderAllowlist` and `inboundDispatch` gate Discord polling before any
-  message reaches an agent. The first poll establishes a cursor and does not
+- `senderAllowlist` gates Discord polling, and only messages a
+  `channel_message` event claims reach an agent or workflow. The first poll establishes a cursor and does not
   replay historical messages.
 
 The Discord settings sheet fetches the bot's servers and selectable channels.
@@ -595,6 +668,68 @@ payloads through the same normalization, authorization, storage, and audit path
 used by signed webhook fixtures. Public Events API webhooks remain an
 advanced/future transport that still must use the same signature verifier
 before parsing user-visible content.
+
+<a id="email"></a>
+
+## Email Connection
+
+Email is a native channel kind (`AgentChannelKind.email`) with the reserved
+connection id `email` (`AgentChannelConnection.nativeEmailConnectionId`). It
+replaces the retired email automation trigger (see
+[AUTOMATIONS.md](AUTOMATIONS.md) for the migration) and reuses its mail
+accounts: `SourceConnection`s of type `.imap` or `.mailApp`, passwords in
+`SourceCredentialVault`.
+
+- **Configuration** is `email.json` (`EmailChannelConfiguration`, stored by
+  `EmailChannelConfigurationStore`): watched `accounts` (connection id,
+  mailboxes, unread-only, include body, body cap, poll interval, catch-up),
+  `senderAllowlist`, `receiveEnabled`, `writeEnabled`,
+  `draftUnsentReplies`, `defaultReadLimit`. Declaratively it is
+  `channels.email` (`read_allowlist` = rooms, `sender_allowlist`,
+  `write_enabled`, `default_read_limit`, `routing`); there is no
+  `bot_token_ref`, `write_allowlist` or `posting`, and the planner checks
+  each room against the existing mail accounts.
+- **Routing model.** Space = mail account id; room =
+  `<connection id>/<mailbox>` (`EmailChannelConfiguration.roomId`); thread
+  = the message's thread id, else its Message-ID; provider event id =
+  `email:<connection>:<Message-ID>`. The room is the readable allowlist,
+  so a watched mailbox is readable and nothing else is.
+- **Receive** (`EmailChannelTransportRuntime`): one `SourceRuntimeSupervisor`
+  poll scope per `emailchannel:<connection>:<mailbox>` over the
+  `MailboxFetcherFactory` fetchers, cursors in `event_source_state`. A
+  newly watched mailbox starts at its newest mail; at launch the cursor is
+  kept and the account's `catchUp` decides what the first tick delivers.
+  Account problems (`EmailFetchError.haltsChecks`) halt the scope until the
+  account or `email.json` changes or Check Now; Mail closed or Automation
+  denied waits without backoff. Health is per room
+  (`transportId(roomId:)`).
+- **Gates** (`EmailChannelService.ingest`): `authorizeInboundMessage` with
+  the sender allowlist (addresses or `@domain`, deny by default), automated
+  senders (`noreply`, `mailer-daemon`, `postmaster`, …) as bots and an IMAP
+  account's own address as self; `recordReceiveEvent` dedupes by provider
+  event id; then the remote safety gate and
+  `EventManager.ingestChannelMessage`. The run payload has `message.*` plus
+  `email.*` (`ChannelInboundMessage.extraPayload`).
+- **Reply** (`agent_channel_reply_thread` and automatic replies): to the
+  sender of the latest received message in the thread, never reply-all,
+  only when `writeEnabled` and the global write switch are on and
+  `confirm_send` is true. Mail app accounts call `MailService.reply(send:
+  true)`; IMAP accounts send through `SMTPClient` (Network.framework,
+  implicit TLS on 465, plain only to loopback, `AUTH PLAIN`/`LOGIN`, dot
+  stuffing) with a message from `EmailMessageBuilder` (`In-Reply-To`,
+  `References`, `Re:` subject). With `draftUnsentReplies`, a reply held
+  for approval on a Mail app account is saved as a Mail draft. Known gaps:
+  no STARTTLS, and SMTP replies are not appended to Sent.
+- **Actions**: `diagnostics`, `list_spaces`, `list_rooms`,
+  `read_messages`, `read_thread`, `search`, `reply_thread`. Proactive
+  `send_message`, edits, reactions and attachments are
+  `unsupportedKind`; Email is excluded from proactive posting and
+  auto-destinations.
+- **UI**: `EmailSettingsView` (Connect, Receiving, Routing, Sending,
+  Verify), opened from the Connection Center and Add Channel; catalog row
+  `agentChannels.email`.
+- **Tests**: `Email/EmailChannelServiceTests`,
+  `Email/EmailChannelTransportRuntimeTests`, `Email/SMTPClientTests`.
 
 ## Platform Presence
 
@@ -797,10 +932,15 @@ the channel database without bound.
 
 ## Inbox And Audit Workbench
 
-The Agent Channels connection center includes an Inbox & Audit workbench backed
-by `AgentChannelAuditWorkbenchService`. It can show recent redacted message
-snapshots, receive decisions, accepted/denied/duplicate counts, and a copyable
-redacted JSON export for the selected connection or all connections.
+`AgentChannelAuditWorkbenchService` backs two views. **Automations → History**
+(`AutomationHistoryView`) shows receive decisions that never reached an
+automation — denied, failed, and unclaimed (`unclaimed_message` rows written by
+`EventManager.ingestChannelMessage` with the `no_event_*` / `mention_required`
+reason) — next to automation runs, with received/denied/duplicate counts and a
+copyable redacted JSON export for one connection or all of them. Each
+connection's diagnostics (`AgentChannelInboundActivityListView`) shows its
+recent inbound stages and the newest redacted inbox messages. The Channels tab
+itself has only **Channels** and **Outbox**; the former Activity tab is gone.
 
 This workbench is diagnostic evidence, not an authorization layer. Adapters
 must still run provider verification, inbound authorization, replay checks,

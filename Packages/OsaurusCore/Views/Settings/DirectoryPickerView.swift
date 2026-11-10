@@ -19,82 +19,52 @@ struct DirectoryPickerView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(directoryDisplayText)
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.mono)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
 
                     if directoryPicker.hasValidDirectory {
                         Text("Custom directory selected", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
                     } else {
                         Text("Using default location", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                     }
                 }
 
                 Spacer()
 
-                // Action buttons with consistent styling
                 HStack(spacing: 6) {
-                    Button(action: {
+                    SettingsIconButton(
+                        "folder.badge.gearshape",
+                        help: "Select custom directory",
+                        size: .compact
+                    ) {
                         showFilePicker = true
-                    }) {
-                        Image(systemName: "folder.badge.gearshape")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.primaryText)
-                            .frame(width: 24, height: 24)
-                            .background(
-                                Circle()
-                                    .fill(theme.buttonBackground)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(theme.buttonBorder, lineWidth: 1)
-                                    )
-                            )
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .localizedHelp("Select custom directory")
 
                     if directoryPicker.hasValidDirectory {
-                        Button(action: {
+                        SettingsIconButton(
+                            "arrow.counterclockwise",
+                            help: "Reset to default directory",
+                            size: .compact
+                        ) {
                             directoryPicker.resetDirectory()
-                        }) {
-                            Image(systemName: "arrow.counterclockwise")
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.primaryText)
-                                .frame(width: 24, height: 24)
-                                .background(
-                                    Circle()
-                                        .fill(theme.buttonBackground)
-                                        .overlay(
-                                            Circle()
-                                                .stroke(theme.buttonBorder, lineWidth: 1)
-                                        )
-                                )
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .localizedHelp("Reset to default directory")
                     }
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(.control)
 
             // Help text
             Text("Models will be organized in subfolders by repository name", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
         }
         .fileImporter(
             isPresented: $showFilePicker,

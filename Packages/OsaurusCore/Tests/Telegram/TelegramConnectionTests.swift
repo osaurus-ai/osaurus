@@ -1440,7 +1440,7 @@ struct TelegramConnectionTests {
             let events = await activity.recent(connectionId: "telegram", limit: 20)
 
             // Authorized message travels received → stored, then dispatch is
-            // suppressed because no agent dispatch is configured.
+            // suppressed because no event listens to the connection.
             let acceptedStages = events
                 .filter { $0.providerEventId == "31" }
                 .map(\.stage)
@@ -1451,7 +1451,7 @@ struct TelegramConnectionTests {
             let suppressed = events.first {
                 $0.providerEventId == "31" && $0.stage == .dispatchSuppressed
             }
-            #expect(suppressed?.reason == "inbound_dispatch_not_configured")
+            #expect(suppressed?.reason == "no_event_configured")
 
             // Non-allowlisted room is rejected with the boundary reason.
             let rejectedStages = events

@@ -120,9 +120,10 @@ final class WorkspacesService: ObservableObject {
     /// URL instead of opening a real browser.
     var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
-    /// UserDefaults key for the per-agent workspace-billing map:
-    /// `[agentAddressLowercased: workspaceId]`. Read (nonisolated) by the router
-    /// request builder to attach `workspace_context`.
+    /// UserDefaults key for the per-agent workspace-billing map, keyed by the
+    /// agent's UUID (shape documented on `workspaceContext(forAgentId:)`).
+    /// Read (nonisolated) by the router request builder to attach
+    /// `workspace_context`.
     nonisolated static let agentBillingDefaultsKey = "ai.osaurus.teams.agentBilling"
 
     /// UserDefaults key for the per-agent pool-billing opt-out: `[agentUUIDString]`.
@@ -459,6 +460,7 @@ final class WorkspacesService: ObservableObject {
             // letting teammates ride out the rest of their attestations.
             await WorkspaceAgentAccessHost.shared.invalidateKeys(workspaceId: id)
             await self.refreshWorkspaces()
+            Task { await WorkflowShareService.shared.unshareAll(fromWorkspace: id) }
         }
     }
 
@@ -487,6 +489,17 @@ final class WorkspacesService: ObservableObject {
         deepLinkTab = tab
         Task { await selectWorkspace(id: workspaceId) }
         AppDelegate.shared?.showManagementWindow(initialTab: .workspaces)
+    }
+
+    /// A settings search result for a page inside a workspace: opens the
+    /// workspace already selected (or the only/first one) on that page.
+    /// Without any workspace the Workspaces list stays as is.
+    func openFromSearch(tab: WorkspaceDetailView.Tab) {
+        guard let target = selectedWorkspaceId ?? workspaces.first?.id else { return }
+        deepLinkTab = tab
+        if selectedWorkspaceId != target {
+            Task { await selectWorkspace(id: target) }
+        }
     }
 
     func selectWorkspace(id: String) async {
@@ -906,6 +919,13 @@ final class WorkspacesService: ObservableObject {
                 await self.refreshSelectedWorkspace()
             }
             await self.refreshWorkspaces()
+            // The registry doesn't know who's in a workspace: take what the
+            // departing member shared there out of its Workflows catalog.
+            if isSelfLeave {
+                Task { await WorkflowShareService.shared.unshareAll(fromWorkspace: workspaceId) }
+            } else if let wallet = removed?.walletAddress {
+                Task { await WorkflowShareService.shared.unshareAuthor(wallet, fromWorkspace: workspaceId) }
+            }
         }
     }
 
@@ -919,7 +939,8 @@ final class WorkspacesService: ObservableObject {
         agentAddress: String,
         agentKeyPath: AgentKeyPath,
         displayName: String,
-        description: String?
+        description: String?,
+        billWorkspaceCredits: Bool? = nil
     ) async -> Bool {
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 120 else {
@@ -949,10 +970,19 @@ final class WorkspacesService: ObservableObject {
             // the roster poll a while later. No-op when the agent already
             // bills a workspace or was explicitly opted out.
             if let local = AgentManager.shared.agent(byAddress: agentAddress) {
-                self.applyDefaultBilling(
-                    localAgents: [(id: local.id, address: agentAddress)],
-                    rosters: [(workspaceId: workspaceId, addresses: Set([agentAddress.lowercased()]))]
-                )
+                switch billWorkspaceCredits {
+                case .some(let bill):
+                    Self.applyShareBillingChoice(
+                        agentId: local.id, agentAddress: agentAddress,
+                        workspaceId: workspaceId, bill: bill, defaults: self.defaults
+                    )
+                    self.objectWillChange.send()
+                case .none:
+                    self.applyDefaultBilling(
+                        localAgents: [(id: local.id, address: agentAddress)],
+                        rosters: [(workspaceId: workspaceId, addresses: Set([agentAddress.lowercased()]))]
+                    )
+                }
             }
             let generation = self.selectionGeneration
             if let fetched = try? await self.client.workspaceAgents(id: workspaceId),
@@ -1292,6 +1322,45 @@ final class WorkspacesService: ObservableObject {
             agentId: agentId, agentAddress: agentAddress, workspaceId: workspaceId, defaults: defaults
         )
         setBillingOptOut(agentId: agentId, optedOut: workspaceId == nil, defaults: defaults)
+    }
+
+    /// What the share sheet's "Bill Workspace Credits" switch starts at: on
+    /// unless the agent already bills another workspace or its owner opted
+    /// out, which is exactly when `applyDefaultBilling` would bind it.
+    nonisolated static func shareBillingDefault(
+        agentId: UUID,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        if billingOptOutAgentIds(defaults: defaults).contains(agentId.uuidString) { return false }
+        let map = (defaults.dictionary(forKey: agentBillingDefaultsKey) as? [String: [String: String]]) ?? [:]
+        if let entry = map[agentId.uuidString], let current = billingEntryWorkspaceId(entry), !current.isEmpty {
+            return false
+        }
+        return true
+    }
+
+    /// Applies the share sheet's billing choice. On binds the agent to the
+    /// workspace it was shared into. Off records an opt-out only when the
+    /// agent bills nothing yet, so an existing binding to another workspace
+    /// is left alone.
+    nonisolated static func applyShareBillingChoice(
+        agentId: UUID,
+        agentAddress: String,
+        workspaceId: String,
+        bill: Bool,
+        defaults: UserDefaults = .standard
+    ) {
+        if bill {
+            recordBillingToggle(
+                agentId: agentId, agentAddress: agentAddress, workspaceId: workspaceId, defaults: defaults
+            )
+            return
+        }
+        let map = (defaults.dictionary(forKey: agentBillingDefaultsKey) as? [String: [String: String]]) ?? [:]
+        let currentlyBills = map[agentId.uuidString].flatMap(billingEntryWorkspaceId).map { !$0.isEmpty } ?? false
+        if !currentlyBills {
+            setBillingOptOut(agentId: agentId, optedOut: true, defaults: defaults)
+        }
     }
 
     /// Drops an agent's billing entry WITHOUT recording an opt-out (unshare,

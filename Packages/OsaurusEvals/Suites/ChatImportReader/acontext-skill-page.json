@@ -1,0 +1,19 @@
+{
+  "id": "chat_import_reader.acontext-skill-page",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • Acontext-style skill page without frontmatter",
+  "query": "Set up the Acontext skill from this page",
+  "notes": "Instructions written for an AI assistant but with no frontmatter. The reader must report one skill pointing at d1.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "https://docs.acontext.io/agent-skill",
+          "text": "# Acontext Skill for AI Agents\n\nGive this page to your AI assistant. It teaches the assistant how to store and recall project context with Acontext.\n\n## Instructions for the assistant\n\n1. Before starting a task, call `acontext search <topic>` to load saved context.\n2. After finishing, save a short summary with `acontext save --title <title>`.\n3. Never store passwords or API keys in context.\n\n## About Acontext\n\nAcontext is an open-source context store. Pricing starts free."
+        }
+      ],
+      "items": [{ "kind": "skill", "name": "acontext" }]
+    }
+  }
+}

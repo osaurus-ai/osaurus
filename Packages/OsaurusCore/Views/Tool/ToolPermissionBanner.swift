@@ -49,20 +49,20 @@ struct ToolPermissionBanner: View {
         HStack(spacing: 12) {
             ZStack {
                 Circle()
-                    .fill(theme.warningColor.opacity(0.15))
+                    .fill(theme.status.warning.background)
                     .frame(width: 36, height: 36)
                 Image(systemName: "lock.shield.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(theme.warningColor)
+                    .glyphSize(16)
+                    .foregroundColor(theme.status.warning.foreground)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                 Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
             }
 
             Spacer()
@@ -74,30 +74,20 @@ struct ToolPermissionBanner: View {
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: "gear")
-                        .font(.system(size: 11))
+                        .glyphSize(11)
                     Text("Open System Settings", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(SettingsFont.compactLabel)
                 }
-                .foregroundColor(theme.accentColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
+                .foregroundColor(theme.text.link)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
+                .settingsChrome(.selected)
             }
             .buttonStyle(PlainButtonStyle())
             .accessibilityLabel(Text("Open System Settings to grant permissions", bundle: .module))
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.warningColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.status(.warning))
         .accessibilityElement(children: .combine)
     }
 }

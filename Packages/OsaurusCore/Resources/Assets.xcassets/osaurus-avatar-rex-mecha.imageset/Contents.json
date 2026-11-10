@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "osaurus-avatar-rex-mecha.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

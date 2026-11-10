@@ -332,6 +332,58 @@ enum AgentChannelLiveProofReadiness {
         )
     }
 
+    static func email(_ diagnostics: EmailChannelDiagnostics) -> AgentChannelLiveProofReadinessReport {
+        var blockers: [String] = []
+        var manualProof: [String] = []
+        var notes: [String] = diagnostics.notes
+        let rooms = nonEmptyEntries(diagnostics.readableRoomIds)
+        let senderAllowlist = nonEmptyEntries(diagnostics.senderAllowlist)
+
+        if diagnostics.accountCount == 0 {
+            blockers.append("Add a mail account (Mail app or IMAP) in Email settings.")
+        }
+        if !diagnostics.receiveEnabled {
+            blockers.append("Turn on Receive Mail for local desktop receive proof.")
+        }
+        if rooms.isEmpty {
+            blockers.append("Watch at least one mailbox.")
+        }
+        if senderAllowlist.isEmpty {
+            blockers.append("Add at least one allowed sender address or @domain.")
+        }
+        if diagnostics.usesMailApp {
+            if diagnostics.mailRunning == false {
+                blockers.append("Open the Mail app; checks wait while it is closed.")
+            }
+            if diagnostics.automationDenied {
+                blockers.append(
+                    "Allow Osaurus to control Mail in System Settings → Privacy & Security → Automation.")
+            }
+        }
+        if diagnostics.writeEnabled {
+            for account in diagnostics.accountsWithoutSending {
+                blockers.append("Add an SMTP server to \(account) or turn sending off.")
+            }
+        }
+        appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+
+        if diagnostics.writeEnabled {
+            manualProof.append("Receive one email from an allowed sender and confirm the reply arrives in the same thread.")
+        } else {
+            notes.append("Email sending is off; live proof can cover receive and drafts only.")
+        }
+        manualProof.append("Confirm mail from a sender that is not allowed is recorded as denied, not answered.")
+        manualProof.append("Restart Osaurus and confirm no message is answered twice and the position is kept.")
+
+        return AgentChannelLiveProofReadinessReport(
+            kind: .email,
+            status: blockers.isEmpty ? .ready : .blocked,
+            blockers: blockers,
+            manualProof: manualProof,
+            notes: notes
+        )
+    }
+
     static func routeFeedback(source: AgentChannelFeedbackSource) -> AgentChannelFeedbackRouting {
         switch source {
         case .nativeAgentChannel(let kind):
@@ -367,6 +419,8 @@ enum AgentChannelLiveProofReadiness {
             return "iMessage"
         case .whatsapp:
             return "WhatsApp"
+        case .email:
+            return "Email"
         case .n8n:
             return "n8n"
         case .customHTTP:

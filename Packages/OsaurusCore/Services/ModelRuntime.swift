@@ -2624,7 +2624,7 @@ public actor ModelRuntime {
         lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
         // End of the residency episode once nothing is resident.
-        SwapPressureMonitor.shared.endEpisodeIfIdle(residentCount: modelCache.count)
+        SwapPressureMonitor.shared.endEpisodeIfIdle(residentCount: modelCache.count, unloaded: name)
         if didRemove {
             genLog.info("unload: model=\(name, privacy: .public) reason=\(reason.rawValue, privacy: .public)")
             if let retiredCacheCounters {
@@ -3997,12 +3997,19 @@ public actor ModelRuntime {
 
     static func memorySafetyRequestEstimateMessage(
         estimatedWorkingSetBytes: UInt64?,
-        resolvedLoadBudgetBytes: UInt64?
+        resolvedLoadBudgetBytes: UInt64?,
+        sandboxVMBytes: UInt64 = SandboxMemoryReservation.currentBytes
     ) -> String {
-        guard let estimatedWorkingSetBytes, let resolvedLoadBudgetBytes else {
-            return "The request exceeds the selected Memory Safety load budget."
-        }
         let bytesPerGB = Double(1 << 30)
+        let sandboxNote =
+            sandboxVMBytes > 0
+            ? String(
+                format: " The running sandbox VM holds ~%.1f GB of that budget; lower Sandbox → Memory or stop the sandbox to free it.",
+                Double(sandboxVMBytes) / bytesPerGB)
+            : ""
+        guard let estimatedWorkingSetBytes, let resolvedLoadBudgetBytes else {
+            return "The request exceeds the selected Memory Safety load budget." + sandboxNote
+        }
         let estimatedGB = Double(estimatedWorkingSetBytes) / bytesPerGB
         let budgetGB = Double(resolvedLoadBudgetBytes) / bytesPerGB
         return String(
@@ -4010,7 +4017,7 @@ public actor ModelRuntime {
                 "Estimated request working set ~%.1f GB exceeds the selected ~%.1f GB load budget.",
             estimatedGB,
             budgetGB
-        )
+        ) + sandboxNote
     }
 
     /// Shared verdict math for the pre-load advisory gate
@@ -6320,7 +6327,7 @@ public actor ModelRuntime {
         } ?? true
         let shouldReportModelLoad = needsPreparation && !parameters.suppressProgressUI
         if shouldReportModelLoad {
-            InferenceProgressManager.shared.modelLoadWillStartAsync()
+            InferenceProgressManager.shared.modelLoadWillStartAsync(sessionID: parameters.sessionId)
         }
         // Warm-up requests stay out of the global progress HUD but publish
         // their load phase to the per-model side channel for the chip tooltip.
@@ -6352,7 +6359,7 @@ public actor ModelRuntime {
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
-                InferenceProgressManager.shared.modelLoadDidFinishAsync()
+                InferenceProgressManager.shared.modelLoadDidFinishAsync(sessionID: parameters.sessionId)
             }
             if parameters.suppressProgressUI {
                 WarmupProgressHub.shared.finish(model: modelName)
@@ -6362,7 +6369,7 @@ public actor ModelRuntime {
             throw error
         }
         if shouldReportModelLoad {
-            InferenceProgressManager.shared.modelLoadDidFinishAsync()
+            InferenceProgressManager.shared.modelLoadDidFinishAsync(sessionID: parameters.sessionId)
         }
         trace?.mark("load_container_done")
 

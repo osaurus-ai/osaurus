@@ -686,7 +686,7 @@ struct FileChangeJournalTests {
         try write(baseline, "pre-chat version")
         let liveSig = try #require(FileObjectStore.liveSignature(at: live)?.signature)
         let baseSig = try #require(FileObjectStore.liveSignature(at: baseline)?.signature)
-        try env.db.upsertSandboxChange(
+        try env.legacyDB.seedSandboxChangeForTesting(
             SandboxWorkspaceChange(
                 sessionId: Self.session, agentName: agent, root: .agentHome,
                 relativePath: "legacy.txt", entryType: .file, kind: .modified,
@@ -694,12 +694,12 @@ struct FileChangeJournalTests {
                 firstChangedAt: Date(), lastChangedAt: Date()))
 
         let journal = FileChangeJournal(
-            database: env.db, storeRoot: env.storeRoot, hostRootProvider: env.provider,
-            legacyBaselinesRoot: baselines)
+            database: env.db, legacyDatabase: env.legacyDB, storeRoot: env.storeRoot,
+            hostRootProvider: env.provider, legacyBaselinesRoot: baselines)
         let sets = await journal.changeSets(for: Self.session)
         #expect(sets.count == 1)
         #expect(sets.first?.origin == .imported)
-        #expect(env.db.loadSandboxChanges(sessionId: Self.session).isEmpty)
+        #expect(env.legacyDB.loadSandboxChanges(sessionId: Self.session).isEmpty)
         #expect(!exists(baselines.appendingPathComponent(Self.session)))
 
         let summary = await journal.revert(.set(try #require(sets.first?.id)), sessionId: Self.session)
@@ -715,7 +715,7 @@ struct FileChangeJournalTests {
         let live = env.agentHome.appendingPathComponent("legacy.txt")
         try write(live, "agent version")
         let liveSig = try #require(FileObjectStore.liveSignature(at: live)?.signature)
-        try env.db.upsertSandboxChange(
+        try env.legacyDB.seedSandboxChangeForTesting(
             SandboxWorkspaceChange(
                 sessionId: Self.session, agentName: agent, root: .agentHome,
                 relativePath: "legacy.txt", entryType: .file, kind: .modified,
@@ -723,7 +723,8 @@ struct FileChangeJournalTests {
                 firstChangedAt: Date(), lastChangedAt: Date()))
 
         let journal = FileChangeJournal(
-            database: env.db, storeRoot: env.storeRoot, hostRootProvider: env.provider,
+            database: env.db, legacyDatabase: env.legacyDB, storeRoot: env.storeRoot,
+            hostRootProvider: env.provider,
             legacyBaselinesRoot: env.tmp.appendingPathComponent("no-baselines"))
         let sets = await journal.changeSets(for: Self.session)
         let entry = try #require(sets.first?.entries.first)
@@ -733,6 +734,84 @@ struct FileChangeJournalTests {
         let summary = await journal.revert(.set(try #require(sets.first?.id)), sessionId: Self.session)
         #expect(summary.failed == 1 && summary.restored == 0)
         #expect(read(live) == "agent version")
+    }
+
+    /// Change sets recorded in the chat-history database before file history
+    /// got its own are copied once; a purge afterwards doesn't bring them back.
+    @Test func legacyChangeSetsCopyOnceIntoFileHistoryDatabase() async throws {
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
+        let setId = UUID().uuidString
+        try env.legacyDB.executeForTesting(
+            """
+            INSERT INTO file_change_sets (id, session_id, tool_name, tool_call_id, origin, status, created_at)
+            VALUES ('\(setId)', '\(Self.session)', 'file_write', 'call-legacy', 'agent', 'applied', 1000);
+            INSERT INTO file_change_entries (id, set_id, session_id, ordinal, root_kind, root_id, path,
+                kind, state, after_type, after_sig, after_size)
+            VALUES ('\(UUID().uuidString)', '\(setId)', '\(Self.session)', 0, 'home', '\(agent)',
+                'old.txt', 'created', 'applied', 'file', 'sha256:abc', 3);
+            """
+        )
+
+        let sets = await env.journal.changeSets(for: Self.session)
+        #expect(sets.map(\.id.uuidString) == [setId])
+        #expect(sets.first?.entries.map(\.path) == ["old.txt"])
+        #expect(env.db.legacyImportDone)
+        #expect(await env.journal.changeSet(forToolCallId: "call-legacy", sessionId: Self.session)?.id.uuidString == setId)
+
+        await env.journal.purgeSession(Self.session)
+        #expect(await env.relaunched().changeSets(for: Self.session).isEmpty)
+    }
+
+    /// File history lives in its own database: closing and reopening it from
+    /// disk keeps every set, with no chat-history database anywhere.
+    @Test func fileHistorySurvivesRelaunchWithoutChatDatabase() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osu-file-history-disk-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = nil
+                StorageEncryptionPolicy.shared.invalidateCache()
+                StorageKeyManager.shared.wipeCache()
+                try? FileManager.default.removeItem(at: root)
+            }
+            try StorageEncryptionPolicy.shared.setDesiredMode(.plaintext)
+            StorageKeyManager.shared.wipeCache()
+
+            let env = try FileHistoryTestEnv.make()
+            defer { env.cleanup() }
+            let file = env.agentHome.appendingPathComponent("kept.txt")
+            try write(file, "before")
+
+            let first = FileHistoryDatabase()
+            try first.open()
+            let journal = FileChangeJournal(
+                database: first, storeRoot: env.storeRoot, hostRootProvider: env.provider)
+            let token = await journal.beginCapture(
+                sessionId: Self.session, toolName: "file_write",
+                targets: [.init(kind: .agentHome, rootId: agent, declaredPaths: ["kept.txt"])])
+            try write(file, "after")
+            let recorded = try #require(await journal.endCapture(token)).id.uuidString
+            first.close()
+
+            #expect(!FileManager.default.fileExists(atPath: OsaurusPaths.chatHistoryDatabaseFile().path))
+            #expect(FileManager.default.fileExists(atPath: OsaurusPaths.fileHistoryDatabaseFile().path))
+
+            let reopened = FileHistoryDatabase()
+            try reopened.open()
+            defer { reopened.close() }
+            let relaunched = FileChangeJournal(
+                database: reopened, storeRoot: env.storeRoot, hostRootProvider: env.provider)
+            let sets = await relaunched.changeSets(for: Self.session)
+            #expect(sets.map(\.id.uuidString) == [recorded])
+            #expect(sets.first?.entries.map(\.path) == ["kept.txt"])
+
+            let summary = await relaunched.revert(.set(try #require(sets.first?.id)), sessionId: Self.session)
+            #expect(summary.isClean, "\(summary)")
+            #expect(read(file) == "before")
+        }
     }
 
     /// A damaged blob (bytes no longer hash to the key) is refused before

@@ -38,7 +38,6 @@ struct OsaurusIDSection: View {
     /// is still `.unknown`. Drives the Retry row.
     @State private var unavailableMessage: String?
 
-    @FocusState private var handleFocused: Bool
 
     private var routerEnabled: Bool { OsaurusRouter.isEnabled }
 
@@ -59,7 +58,7 @@ struct OsaurusIDSection: View {
     }
 
     var body: some View {
-        IdentitySection(title: L("OSAURUS ID"), icon: "at") {
+        SettingsSection(title: "Public Profile") {
             content
         }
         .task {
@@ -132,47 +131,30 @@ struct OsaurusIDSection: View {
     // MARK: - Router off / loading / unreachable
 
     private var routerOffRow: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Osaurus ID needs Osaurus Router", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    "Your handle lives on the router, next to your credits and workspaces. Turn it on to claim one.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+        SettingsCallout(
+            icon: "network",
+            title: "Osaurus ID needs Osaurus Router",
+            message: "Your handle lives on the router, next to your credits and workspaces. Turn it on to claim one."
+        ) {
+            SettingsButton(.secondary, "Open Wallet & Credits", size: .compact) {
+                ManagementStateManager.shared.selectedTab = .credits
             }
-            Spacer()
-            Button(action: { ManagementStateManager.shared.selectedTab = .settings }) {
-                Text("Open Router settings", bundle: .module)
-            }
-            .buttonStyle(SecondaryButtonStyle(size: .compact))
         }
     }
 
     private var loadingRow: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text("Checking your Osaurus ID…", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
+        SettingsEmptyState(loading: "Checking your Osaurus ID…")
     }
 
     private func unreachableRow(_ message: String) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Couldn't reach Osaurus", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                 Text(message)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -180,7 +162,7 @@ struct OsaurusIDSection: View {
             Button(action: { Task { await load() } }) {
                 Text("Retry", bundle: .module)
             }
-            .buttonStyle(SecondaryButtonStyle(isLoading: service.isRefreshing, size: .compact))
+            .assignedSettingsButtonStyle(.secondary, isLoading: service.isRefreshing, size: .compact)
             .disabled(service.isRefreshing)
         }
     }
@@ -202,8 +184,8 @@ struct OsaurusIDSection: View {
                 "Your public handle across Osaurus. Workspaces, invites, and usage show it instead of your master address.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
@@ -211,7 +193,7 @@ struct OsaurusIDSection: View {
                 Button(action: requestClaim) {
                     Text("Claim", bundle: .module)
                 }
-                .buttonStyle(PrimaryButtonStyle(isLoading: service.isClaiming, size: .compact))
+                .assignedSettingsButtonStyle(.primary, isLoading: service.isClaiming, size: .compact)
                 .disabled(!canClaim)
                 .accessibilityIdentifier("identity.osaurusId.claim")
             }
@@ -220,8 +202,8 @@ struct OsaurusIDSection: View {
 
             if let claimError {
                 Text(claimError)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.errorColor)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.status.error.foreground)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
             }
@@ -230,40 +212,23 @@ struct OsaurusIDSection: View {
                 "Permanent and public. You can add a display name and bio after.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
         }
-        .animation(.easeOut(duration: 0.18), value: claimError)
-        .animation(.easeOut(duration: 0.18), value: availability)
+        .animation(theme.motion.quick, value: claimError)
+        .animation(theme.motion.quick, value: availability)
     }
 
     private var handleField: some View {
-        HStack(spacing: 4) {
-            Text(verbatim: "@")
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
-            TextField(text: sanitizedHandleBinding, prompt: Text(verbatim: "your-handle")) {
-                Text("Osaurus ID", bundle: .module)
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 13, weight: .medium, design: .monospaced))
-            .foregroundColor(theme.primaryText)
-            .focused($handleFocused)
-            .onSubmit { if canClaim { requestClaim() } }
-            .accessibilityIdentifier("identity.osaurusId.handle")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(handleFocused ? theme.accentColor.opacity(0.6) : theme.inputBorder, lineWidth: 1)
-                )
+        SettingsTextField(
+            placeholder: "your-handle",
+            text: sanitizedHandleBinding,
+            icon: "at",
+            monospaced: true,
+            onSubmit: { if canClaim { requestClaim() } }
         )
+        .accessibilityIdentifier("identity.osaurusId.handle")
         .frame(maxWidth: 320)
-        .onTapGesture { handleFocused = true }
     }
 
     /// Lowercases / strips as the user types so the field only ever holds a
@@ -283,18 +248,18 @@ struct OsaurusIDSection: View {
         Group {
             if trimmedHandle.isEmpty {
                 Text("3–20 characters: a–z, 0–9, and hyphens.", bundle: .module)
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
             } else if !isHandleValid {
                 Text(
                     "3–20 characters: a–z, 0–9, and hyphens. Must start and end with a letter or digit.",
                     bundle: .module
                 )
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(theme.text.tertiary)
             } else if isCheckingAvailability {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
                     Text("Checking availability…", bundle: .module)
-                        .foregroundColor(theme.secondaryText)
+                        .foregroundColor(theme.text.secondary)
                 }
             } else {
                 switch availability {
@@ -303,26 +268,26 @@ struct OsaurusIDSection: View {
                         String(format: L("@%@ is available"), trimmedHandle),
                         systemImage: "checkmark.circle.fill"
                     )
-                    .foregroundColor(theme.successColor)
+                    .foregroundColor(theme.status.success.foreground)
                 case .taken:
                     Label(
                         String(format: L("@%@ is already taken"), trimmedHandle),
                         systemImage: "xmark.circle.fill"
                     )
-                    .foregroundColor(theme.errorColor)
+                    .foregroundColor(theme.status.error.foreground)
                 case .reserved:
                     Label(L("That name is reserved"), systemImage: "lock.fill")
-                        .foregroundColor(theme.errorColor)
+                        .foregroundColor(theme.status.error.foreground)
                 case .invalid:
                     Label(L("That name isn't allowed"), systemImage: "xmark.circle.fill")
-                        .foregroundColor(theme.errorColor)
+                        .foregroundColor(theme.status.error.foreground)
                 case nil:
                     // Valid format, no verdict (yet): keep the height stable.
                     Text(verbatim: " ")
                 }
             }
         }
-        .font(.system(size: 11, weight: .medium))
+        .font(SettingsFont.smallLabel)
         .frame(height: 14, alignment: .leading)
     }
 
@@ -357,18 +322,18 @@ struct OsaurusIDSection: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(profile.handle)
-                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.mono)
+                        .foregroundColor(theme.text.primary)
                         .textSelection(.enabled)
                         .accessibilityIdentifier("identity.osaurusId.handleLabel")
                     if !isEditing {
                         Text(profile.effectiveName)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(profile.displayName.isEmpty ? theme.tertiaryText : theme.primaryText)
+                            .font(SettingsFont.rowTitle)
+                            .foregroundColor(profile.displayName.isEmpty ? theme.text.tertiary : theme.text.primary)
                         if !profile.bio.isEmpty {
                             Text(profile.bio)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.caption)
+                                .foregroundColor(theme.text.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -380,78 +345,64 @@ struct OsaurusIDSection: View {
                     Button(action: beginEditing) {
                         HStack(spacing: 4) {
                             Image(systemName: "pencil")
-                                .font(.system(size: 11, weight: .medium))
+                                .glyphSize(11, weight: .medium)
                             Text("Edit", bundle: .module)
                         }
                     }
-                    .buttonStyle(SecondaryButtonStyle(size: .compact))
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
                     .accessibilityIdentifier("identity.osaurusId.edit")
 
                     Button(action: { copy(profile.handle) }) {
                         HStack(spacing: 4) {
                             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 11, weight: .medium))
+                                .glyphSize(11, weight: .medium)
                             Text(copied ? L("Copied") : L("Copy"))
                         }
-                        .foregroundColor(copied ? theme.successColor : theme.primaryText)
+                        .foregroundColor(copied ? theme.status.success.foreground : theme.text.primary)
                     }
-                    .buttonStyle(SecondaryButtonStyle(size: .compact))
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
                 }
             }
 
             if isEditing {
                 editForm(profile)
             } else {
-                Divider().background(theme.secondaryBorder)
+                Divider().background(theme.border.default)
                 Text(
                     "Shown to teammates in workspaces, invites, and usage. The handle is permanent; the display name and bio are yours to change.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .animation(.easeOut(duration: 0.18), value: isEditing)
+        .animation(theme.motion.quick, value: isEditing)
     }
 
     private func editForm(_ profile: OsaurusIDProfile) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Display name", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                TextField(text: $draftDisplayName, prompt: Text(profile.osaurusID)) {
-                    Text("Display name", bundle: .module)
-                }
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .padding(8)
-                .background(inputChrome)
-                .onChange(of: draftDisplayName) { _, value in
-                    if value.count > OsaurusIDDisplayName.maxLength {
-                        draftDisplayName = String(value.prefix(OsaurusIDDisplayName.maxLength))
+            SettingsFieldRow(label: "Display Name") {
+                SettingsTextField(placeholder: profile.osaurusID, text: $draftDisplayName)
+                    .onChange(of: draftDisplayName) { _, value in
+                        if value.count > OsaurusIDDisplayName.maxLength {
+                            draftDisplayName = String(value.prefix(OsaurusIDDisplayName.maxLength))
+                        }
                     }
-                }
-                .accessibilityIdentifier("identity.osaurusId.displayName")
+                    .accessibilityIdentifier("identity.osaurusId.displayName")
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Bio", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
                     Spacer()
                     Text(verbatim: "\(draftBio.count)/\(OsaurusIDBio.maxLength)")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                 }
-                TextEditor(text: $draftBio)
-                    .font(.system(size: 12))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 56, maxHeight: 110)
-                    .padding(6)
-                    .background(inputChrome)
+                SettingsTextEditor(text: $draftBio, minHeight: 56, maxHeight: 110)
                     .onChange(of: draftBio) { _, value in
                         if value.count > OsaurusIDBio.maxLength {
                             draftBio = String(value.prefix(OsaurusIDBio.maxLength))
@@ -462,8 +413,8 @@ struct OsaurusIDSection: View {
 
             if let saveError {
                 Text(saveError)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.errorColor)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.status.error.foreground)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -472,26 +423,17 @@ struct OsaurusIDSection: View {
                 Button(action: cancelEditing) {
                     Text("Cancel", bundle: .module)
                 }
-                .buttonStyle(SecondaryButtonStyle(size: .compact))
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
                 .disabled(service.isSaving)
 
                 Button(action: { save(profile) }) {
                     Text("Save", bundle: .module)
                 }
-                .buttonStyle(PrimaryButtonStyle(isLoading: service.isSaving, size: .compact))
+                .assignedSettingsButtonStyle(.primary, isLoading: service.isSaving, size: .compact)
                 .disabled(service.isSaving)
                 .accessibilityIdentifier("identity.osaurusId.save")
             }
         }
-    }
-
-    private var inputChrome: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(theme.inputBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(theme.inputBorder, lineWidth: 1)
-            )
     }
 
     private func beginEditing() {

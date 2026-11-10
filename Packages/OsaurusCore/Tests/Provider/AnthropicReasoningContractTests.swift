@@ -220,6 +220,35 @@ struct AnthropicReasoningContractTests {
         #expect((payload["output_config"] as? [String: Any])?["effort"] as? String == "max")
     }
 
+    @Test func buildChatRequest_implicitCapRisesToTheModelsPublishedLimit() async {
+        let service = Self.makeService()
+        let providerId = await service.provider.id
+        AnthropicModelCatalog.replace(
+            providerId: providerId,
+            models: [
+                Self.model(
+                    "claude-sonnet-4-6", capabilities: Self.adaptiveAndManual,
+                    maxInputTokens: 200_000, maxTokens: 64_000)
+            ]
+        )
+        defer { AnthropicModelCatalog.remove(providerId: providerId) }
+
+        func cap(_ parameters: GenerationParameters, model: String = "claude-sonnet-4-6") async -> Int? {
+            await service.buildChatRequest(
+                messages: [ChatMessage(role: "user", content: "hi")],
+                parameters: parameters, model: model, stream: true, tools: nil, toolChoice: nil
+            ).toAnthropicRequest().max_tokens
+        }
+        #expect(await cap(GenerationParameters(temperature: nil, maxTokens: 16_384, maxTokensExplicit: false)) == 64_000)
+        #expect(
+            await cap(GenerationParameters(temperature: nil, maxTokens: 16_384, maxTokensExplicit: true)) == 16_384,
+            "a Max Tokens the user set wins")
+        #expect(
+            await cap(GenerationParameters(temperature: nil, maxTokens: 16_384, maxTokensExplicit: false), model: "claude-x")
+                == 16_384,
+            "a model the catalog doesn't know keeps the chat-wide budget")
+    }
+
     @Test func buildChatRequest_disableThinkingMapsToOff() async {
         let service = Self.makeService()
         let providerId = await service.provider.id
@@ -432,11 +461,13 @@ struct AnthropicReasoningContractTests {
         displayName: String = "",
         capabilities: AnthropicModelCapabilities?,
         maxInputTokens: Int? = nil,
+        maxTokens: Int? = nil,
         lifecycle: String? = "active"
     ) -> AnthropicModelInfo {
         AnthropicModelInfo(
             id: id, display_name: displayName, created_at: "2026-01-01T00:00:00Z",
-            capabilities: capabilities, max_input_tokens: maxInputTokens, lifecycle: lifecycle)
+            capabilities: capabilities, max_input_tokens: maxInputTokens, max_tokens: maxTokens,
+            lifecycle: lifecycle)
     }
 
     private static func makeService() -> RemoteProviderService {

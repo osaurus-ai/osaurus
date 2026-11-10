@@ -33,33 +33,32 @@ struct ChatGenerationMetricsPersistenceTests {
         #expect(turn.lastOutputAt == nil)
     }
 
-    @Test
-    func eachLateMetricTriggersIncrementalSaveAndCanBeCleared() throws {
-        let db = ChatHistoryDatabase()
-        try db.openInMemory()
-        defer { db.close() }
-        var session = ChatSessionData(title: "metrics", turns: [ChatTurnData(role: .assistant, content: "answer")])
-        try db.saveSession(session)
-        let originalHash = ChatHistoryDatabase.contentHash(for: session.turns[0])
-        session.turns[0].generationTokensPerSecond = 106.6
-        #expect(ChatHistoryDatabase.contentHash(for: session.turns[0]) != originalHash)
-        try db.saveSession(session)
-        #expect(db.loadSession(id: session.id)?.turns[0].generationTokensPerSecond == 106.6)
-        session.turns[0].modelLoadSeconds = 0
-        try db.saveSession(session)
-        #expect(db.loadSession(id: session.id)?.turns[0].modelLoadSeconds == 0)
-        session.turns[0].lastOutputAt = Date(timeIntervalSince1970: 1002)
-        try db.saveSession(session)
-        #expect(db.loadSession(id: session.id)?.turns[0].lastOutputAt == session.turns[0].lastOutputAt)
-        #expect(db.loadSession(id: session.id)?.turns[0].completedAt == nil)
-        session.turns[0].generationTokensPerSecond = nil
-        session.turns[0].modelLoadSeconds = nil
-        session.turns[0].lastOutputAt = nil
-        try db.saveSession(session)
-        let cleared = try #require(db.loadSession(id: session.id)?.turns[0])
-        #expect(cleared.generationTokensPerSecond == nil)
-        #expect(cleared.modelLoadSeconds == nil)
-        #expect(cleared.lastOutputAt == nil)
+    @Test @MainActor
+    func eachLateMetricIsSavedAndCanBeCleared() async throws {
+        try await ChatHistoryTestStorage.run {
+            let store = SyncConversationStore.shared
+            var session = ChatSessionData(
+                title: "metrics", turns: [ChatTurnData(role: .assistant, content: "answer")])
+            ChatSessionStore.save(session)
+            session.turns[0].generationTokensPerSecond = 106.6
+            try store.saveSession(session)
+            #expect(store.loadSession(id: session.id)?.turns[0].generationTokensPerSecond == 106.6)
+            session.turns[0].modelLoadSeconds = 0
+            try store.saveSession(session)
+            #expect(store.loadSession(id: session.id)?.turns[0].modelLoadSeconds == 0)
+            session.turns[0].lastOutputAt = Date(timeIntervalSince1970: 1002)
+            try store.saveSession(session)
+            #expect(store.loadSession(id: session.id)?.turns[0].lastOutputAt == session.turns[0].lastOutputAt)
+            #expect(store.loadSession(id: session.id)?.turns[0].completedAt == nil)
+            session.turns[0].generationTokensPerSecond = nil
+            session.turns[0].modelLoadSeconds = nil
+            session.turns[0].lastOutputAt = nil
+            try store.saveSession(session)
+            let cleared = try #require(store.loadSession(id: session.id)?.turns[0])
+            #expect(cleared.generationTokensPerSecond == nil)
+            #expect(cleared.modelLoadSeconds == nil)
+            #expect(cleared.lastOutputAt == nil)
+        }
     }
 
     @Test @MainActor

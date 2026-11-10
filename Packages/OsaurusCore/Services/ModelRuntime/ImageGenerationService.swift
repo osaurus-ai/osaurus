@@ -53,6 +53,8 @@ public actor ImageGenerationService {
         let cancel: @Sendable () -> Void
     }
     private var producerJobs: [String: ProducerJob] = [:]
+    /// Drive loops queued or running, including jobs without an id.
+    private var activeDrives = 0
 
     /// Bundle metadata lookup/peak estimate, gate instance and GPU cleanup are replaceable.
     /// The production service and FluxEngine stream/drain implementations are
@@ -143,6 +145,14 @@ public actor ImageGenerationService {
             }
         }
         return LoadedModelSummary(name: name, bytes: bytes)
+    }
+
+    /// Memory-pressure unload: releases the resident image model only when
+    /// no job is queued or running. Returns the unloaded bundle name.
+    public func unloadIfIdle() async -> String? {
+        guard activeDrives == 0, let name = loadedDirectoryName else { return nil }
+        await unload()
+        return name
     }
 
     public func unload() async {
@@ -317,6 +327,8 @@ public actor ImageGenerationService {
         let stop = FluxInterrupt()
         let cancellation = ImageJobCancellation { try await self.metalGate.enterImageGeneration() }
         let producer = Task {
+            self.activeDrives += 1
+            defer { self.activeDrives -= 1 }
             try await cancellation.enter()
             self.cleanupGPUCache()
             let epoch = MLXErrorRecovery.errorSequence()
@@ -400,14 +412,7 @@ public actor ImageGenerationService {
             capabilities: capabilities(kind: kind, canonical: local.canonicalName, entry: entry, limits: limits),
             blockedReasons: local.blockedReasons,
             totalBytes: local.totalBytes,
-            requestLimits: limits.map {
-                ImageRequestLimits(minimumSteps: $0.minimumSteps, maximumSteps: $0.maximumSteps,
-                    fixedSteps: $0.fixedSteps, dimensionMultiple: $0.dimensionMultiple,
-                    minimumDimension: $0.minDimension, maximumDimension: $0.maxDimension,
-                    maximumPixels: $0.maxPixels, maximumImages: $0.maximumImages,
-                    maximumSourceImages: $0.maxSourceImages, formats: $0.supportedFormats.map(\.rawValue),
-                    samplers: $0.samplers, schedulers: $0.schedulers)
-            },
+            requestLimits: local.canEnterNativeLoadPath ? limits.map(ImageRequestLimits.init) : nil,
             defaultWidth: flux3?.stamp.defaults.width,
             defaultHeight: flux3?.stamp.defaults.height
         )
@@ -456,6 +461,31 @@ public actor ImageGenerationService {
                 width: params.width, height: params.height, sourceCount: params.sourceImages.count)
         } catch {
             return .failure(Self.message(for: error))
+        }
+    }
+
+    /// Refuses a job whose estimated peak the Memory Safety plan blocks,
+    /// naming the setting that refused it. An advisory estimate (FLUX 3) only
+    /// logs: declared bundle limits and real allocation failures stay
+    /// authoritative.
+    nonisolated static func admitMemory(peakBytes: Int64, advisory: Bool = false) throws {
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: ServerRuntimeSettingsStore.snapshot(),
+            baseLoadConfiguration: .osaurusProduction,
+            host: MemoryStatus.snapshot(),
+            request: VMLXMemoryRequestEstimate(workingSetBytes: UInt64(max(0, peakBytes))))
+        if advisory {
+            if !plan.blockingIssues.isEmpty {
+                print(
+                    "[Flux3] advisory_memory_estimate_bytes=\(peakBytes) issues=\(plan.blockingIssues.count); continuing within stamped limits"
+                )
+            }
+            return
+        }
+        if let issue = plan.blockingIssues.first {
+            throw ImageGenerationError.memoryAdmission(
+                field: issue.field, estimatedBytes: peakBytes,
+                budgetBytes: plan.resolvedLoadBudgetBytes.map { Int64(clamping: $0) }, message: issue.message)
         }
     }
 
@@ -721,7 +751,9 @@ public actor ImageGenerationService {
             // the consumer task: it must retain and drain the engine producer.
             let observer = interrupt?.observeInterrupt(cancel)
             let task = Task {
+                self.activeDrives += 1
                 defer {
+                    self.activeDrives -= 1
                     if let observer { interrupt?.removeInterruptObserver(observer) }
                     if let jobID { self.producerJobs.removeValue(forKey: jobID) }
                 }
@@ -787,20 +819,9 @@ public actor ImageGenerationService {
                             }
                         }
                         if let peak = estimatedPeak {
-                            let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
-                                for: ServerRuntimeSettingsStore.snapshot(),
-                                baseLoadConfiguration: .osaurusProduction,
-                                host: MemoryStatus.snapshot(),
-                                request: VMLXMemoryRequestEstimate(workingSetBytes: UInt64(peak)))
                             let target = try resolvedTarget ?? self.resolveLoadTarget(requestedModel)
                             let advisory = ImageModelRequestPolicy(canonical: target.info.canonicalName).estimatesAreAdvisory
-                            if advisory, !plan.blockingIssues.isEmpty {
-                                print("[Flux3] advisory_memory_estimate_bytes=\(peak) issues=\(plan.blockingIssues.count); continuing within stamped limits")
-                            }
-                            if !advisory, let issue = plan.blockingIssues.first {
-                                throw ImageGenerationError.memoryAdmission(field: issue.field,
-                                    estimatedBytes: peak, message: issue.message)
-                            }
+                            try Self.admitMemory(peakBytes: peak, advisory: advisory)
                         }
                         continuation.yield(.loadingModel(model: requestedModel))
                         let prepared = try await self.ensureLoaded(requestedModel, expected: kind,

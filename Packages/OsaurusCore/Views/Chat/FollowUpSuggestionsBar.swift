@@ -3,15 +3,14 @@
 //  osaurus
 //
 //  Renders AI-suggested follow-up questions for the most recent completed
-//  turn as a stack of clickable rows below the assistant message. Tapping a
+//  turn as one card of clickable rows below the assistant message. Tapping a
 //  row submits it as the next user message. Purely presentational: the parent
 //  owns generation (`ChatSession.maybeGenerateFollowUps`) and the send
 //  callback (`ChatSession.sendFollowUp`). Renders nothing when there are no
 //  suggestions, so callers can mount it unconditionally.
 //
-//  Appearance is animated: the header and each row fade in and rise slightly,
-//  staggered top-to-bottom, so the section arrives gently rather than popping
-//  in. The animation uses `opacity`/`offset` only (render-time transforms), so
+//  Appearance is animated: the header, then the card, fade in and rise
+//  slightly, so the section arrives gently rather than popping in. The animation uses `opacity`/`offset` only (render-time transforms), so
 //  it never changes the row's measured height and can't fight the table's
 //  height cache.
 //
@@ -28,7 +27,8 @@ struct FollowUpSuggestionsBar: View {
     /// cell's `hasChartBeenDrawn` suppression.
     let animate: Bool
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(40, authoritative: true) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
     @State private var hoveredIndex: Int? = nil
@@ -43,42 +43,50 @@ struct FollowUpSuggestionsBar: View {
         _appeared = State(initialValue: !animate)
     }
 
-    /// Base fade/rise duration for each element.
-    private let revealDuration: Double = 0.32
-    /// Delay added per row so the reveal cascades down the list.
+    /// Delay between the header's reveal and the card's.
     private let perRowStagger: Double = 0.06
 
-    /// Fixed width reserved for the header icon, and the spacing after it.
-    /// Row text is indented by their sum so it lines up with the "Follow up"
-    /// label, which leaves that much left padding inside each row's hover
-    /// highlight (the highlight still spans the full row width).
-    private let iconColumnWidth: CGFloat = 15
-    private let iconLabelSpacing: CGFloat = 6
-    private var labelIndent: CGFloat { iconColumnWidth + iconLabelSpacing }
+    /// Inset of a row's text inside the card; the header lines up with it.
+    private var rowInset: CGFloat { theme.space.s12 }
+    private var cardRadius: CGFloat {
+        theme.assignedMetric(NativeComponentInspectionStyle.key(40, "radius"), fallback: theme.radius.medium)
+    }
+    private var hairline: CGFloat { NativeComponentInspectionStyle.metric(40, "borderWidth", 1 / max(displayScale, 1), theme) }
 
     var body: some View {
         if suggestions.isEmpty {
             EmptyView()
         } else {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 header
+                    .padding(.leading, rowInset)
                     .modifier(RevealModifier(appeared: appeared, animation: reveal(index: 0)))
 
-                ForEach(Array(suggestions.enumerated()), id: \.offset) { index, suggestion in
-                    if index > 0 {
-                        // Hidden beside the hovered row; its highlight is the edge.
-                        rowDivider(hidden: hoveredIndex == index || hoveredIndex == index - 1)
-                            .modifier(RevealModifier(appeared: appeared, animation: reveal(index: index)))
+                // One card: the rows share its surface and are told apart by
+                // hairlines, so a list of questions reads as one choice.
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(suggestions.enumerated()), id: \.offset) { index, suggestion in
+                        if index > 0 {
+                            rowDivider
+                        }
+                        suggestionRow(index: index, suggestion: suggestion)
                     }
-                    suggestionRow(index: index, suggestion: suggestion)
-                        // Rows start revealing just after the header, then cascade.
-                        .modifier(RevealModifier(appeared: appeared, animation: reveal(index: index + 1)))
                 }
+                .background(theme.assignedColor(NativeComponentInspectionStyle.key(40, "background"), fallback: .clear))
+                .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
+                        .strokeBorder(theme.border.subtle, lineWidth: hairline)
+                )
+                // The card arrives just after the header.
+                .modifier(RevealModifier(appeared: appeared, animation: reveal(index: 1)))
             }
             // No horizontal padding: the hosting cell already insets this view
             // by 16pt (matching the assistant markdown's leading/trailing), so
-            // the header and rows line up flush with the message text above.
-            .padding(.vertical, 8)
+            // the card lines up flush with the message text above.
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.40.elements.layout.followUpSuggestionsBar.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(40, "padding", 8, theme))).catalogLayoutTarget("component.library.40.elements.layout.followUpSuggestionsBar.body.paddingY")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
             // Reveal cascade starts as soon as the section mounts. `reveal`
             // collapses the motion to an instant for reduced-motion users.
             // Skipped entirely when `animate` is false (already revealed).
@@ -86,28 +94,25 @@ struct FollowUpSuggestionsBar: View {
         }
     }
 
-    /// Hairline separator between rows. A full-weight `Divider` reads too harsh
-    /// here, so this is a thin, low-opacity line. Exactly one device pixel: a
-    /// fixed 0.5pt line straddles two pixels on 1x displays (or at fractional
-    /// row offsets) and renders at half strength, so some rows looked muted.
-    private func rowDivider(hidden: Bool) -> some View {
-        theme.inputBorder
-            .opacity(hidden ? 0 : 0.35)
-            .frame(height: 1 / max(displayScale, 1))
-            .animation(.easeOut(duration: 0.15), value: hidden)
+    /// Exactly one device pixel: a fixed 0.5pt line straddles two pixels on
+    /// 1x displays (or at fractional row offsets) and renders at half
+    /// strength, so some rows looked muted.
+    private var rowDivider: some View {
+        theme.border.subtle
+            .frame(height: hairline)
     }
 
     private var header: some View {
-        HStack(spacing: iconLabelSpacing) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: "text.append")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(theme.secondaryText)
-                .frame(width: iconColumnWidth, alignment: .leading)
+                .glyphSize(11, weight: .semibold)
+                .foregroundStyle(theme.text.tertiary)
             Text("Follow up", bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(theme.secondaryText)
+                .componentInspectionText(40, role: .label, fallback: .label, weight: 600, theme: theme)
+                .foregroundStyle(theme.text.secondary)
         }
-        .padding(.bottom, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 
     private func suggestionRow(index: Int, suggestion: String) -> some View {
@@ -115,33 +120,28 @@ struct FollowUpSuggestionsBar: View {
         return Button {
             onSelect(suggestion)
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(40, "gap", 8, theme))) {
                 Text(suggestion)
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.primaryText)
+                    .componentInspectionText(40, role: .body, fallback: .bodySmall, theme: theme)
+                    .foregroundStyle(theme.text.primary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    // Align the text with the "Follow up" label; the hover
-                    // highlight keeps this much left padding.
-                    .padding(.leading, labelIndent)
-                Spacer(minLength: 8)
-                // Trailing affordance, revealed on hover, that slides in
-                // slightly from the right.
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                // Sends on click: quiet at rest, nudged forward on hover.
                 Image(systemName: "arrow.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.secondaryText)
-                    .opacity(isHovered ? 1 : 0)
-                    .offset(x: isHovered ? 0 : -4)
-                    .padding(.trailing, 12)
-            }
+                    .glyphSize(11, weight: .semibold)
+                    .foregroundStyle(isHovered ? theme.text.primary : theme.text.tertiary)
+                    .offset(x: isHovered ? 2 : 0)
+            }.catalogLayoutTarget("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.horizontalGap")
+            .padding(.horizontal, rowInset)
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(40, "padding", 10, theme))).catalogLayoutTarget("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.paddingY")
+            .frame(minHeight: NativeComponentInspectionStyle.metric(40, "height", 0, theme))
+            .background(isHovered ? theme.surface.hover : .clear)
             .contentShape(Rectangle())
-            .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
-        .background(
-            (isHovered ? theme.inputBackground : Color.clear)
-                .cornerRadius(6)
-        )
+        .fixedSize(horizontal: false, vertical: true)
+        .environment(\.theme, theme)
         .onHover { hovering in
             hoveredIndex = hovering ? index : (hoveredIndex == index ? nil : hoveredIndex)
             // Pointing-hand cursor over a tappable suggestion. push/pop stays
@@ -152,15 +152,15 @@ struct FollowUpSuggestionsBar: View {
                 NSCursor.pop()
             }
         }
-        .animation(.easeOut(duration: 0.15), value: hoveredIndex)
+        .animation(theme.motion.quick, value: hoveredIndex)
         .help(suggestion)
     }
 
     /// Per-element entrance animation. Reduced motion collapses the stagger and
     /// motion to an instant (no-op) transition.
     private func reveal(index: Int) -> Animation {
-        if reduceMotion { return .linear(duration: 0) }
-        return .easeOut(duration: revealDuration).delay(Double(index) * perRowStagger)
+        if reduceMotion { return theme.motion.quick }
+        return theme.motion.slow.delay(Double(index) * perRowStagger)
     }
 }
 
