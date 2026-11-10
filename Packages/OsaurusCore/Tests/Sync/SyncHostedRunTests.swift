@@ -674,4 +674,54 @@ extension ToolPermissionPromptQueueTests {
         #expect(await second.value == .denied)
         #expect(presented.withLock { $0 }.isEmpty, "no panel on the host")
     }
+
+    @Test("a caller-owned grant answered on the chatting device is committed before the run resumes")
+    @MainActor
+    func aSyncedAnswerCommitsTheCallerOwnedGrant() async throws {
+        ToolPermissionPromptService.resetForTesting()
+        defer { ToolPermissionPromptService.resetForTesting() }
+        let events = OSAllocatedUnfairLock(initialState: [String]())
+        let scope = "scope-\(UUID().uuidString)"
+        let request = {
+            Task { @MainActor in
+                await ToolPermissionPromptService.$presentationOverrideForTests.withValue({ _, name, _ in
+                    events.withLock { $0.append("presented \(name)") }
+                }) {
+                    await ChatExecutionContext.$syncReviewerScope.withValue(scope) {
+                        let outcome = await ToolPermissionPromptService.requestPolicyApprovalOutcome(
+                            toolName: "image",
+                            description: "Generate an image",
+                            argumentsJSON: #"{"prompt":"fox"}"#,
+                            offersRunLease: true,
+                            commitApproval: { outcome in events.withLock { $0.append("commit \(outcome)") } }
+                        )
+                        events.withLock { $0.append("resumed \(outcome)") }
+                        return outcome
+                    }
+                }
+            }
+        }
+        func heldPrompt() async throws -> ToolPermissionPromptService.SyncedPrompt {
+            let deadline = Date().addingTimeInterval(20)
+            while ToolPermissionPromptService.syncedPrompts(scope: scope).isEmpty {
+                guard Date() < deadline else { throw CancellationError() }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            return try #require(ToolPermissionPromptService.syncedPrompts(scope: scope).first)
+        }
+
+        let approved = request()
+        let held = try await heldPrompt()
+        #expect(held.offersRunLease)
+        #expect(ToolPermissionPromptService.resolveFromSyncedDevice(id: held.id, scope: scope, outcome: .alwaysAllow))
+        #expect(await approved.value == .alwaysAllow)
+        #expect(events.withLock { $0 } == ["commit alwaysAllow", "resumed alwaysAllow"])
+
+        events.withLock { $0.removeAll() }
+        let denied = request()
+        _ = try await heldPrompt()
+        ToolPermissionPromptService.denySyncedPrompts(scope: scope)
+        #expect(await denied.value == .denied)
+        #expect(events.withLock { $0 } == ["resumed denied"])
+    }
 }

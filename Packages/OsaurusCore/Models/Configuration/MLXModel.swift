@@ -49,6 +49,10 @@ struct MLXModel: Identifiable, Codable {
     /// auto-discovered ones, which suppresses the pill.
     let useCase: ModelUseCase?
 
+    /// Publisher-declared task for a not-yet-downloaded decision bundle.
+    /// Optional so persisted catalogs from earlier versions still decode.
+    private let catalogIsDecision: Bool?
+
     // When non-nil, pins the model to a specific directory (used by tests).
     // When nil, `localDirectory` resolves dynamically so that user-selected
     // storage path changes are always respected.
@@ -82,7 +86,8 @@ struct MLXModel: Identifiable, Codable {
         useCase: ModelUseCase? = nil,
         rootDirectory: URL? = nil,
         bundleDirectory: URL? = nil,
-        externalSource: String? = nil
+        externalSource: String? = nil,
+        isDecision: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -99,6 +104,7 @@ struct MLXModel: Identifiable, Codable {
         self.rootDirectory = rootDirectory
         self.bundleDirectory = bundleDirectory
         self.externalSource = externalSource
+        self.catalogIsDecision = isDecision ? true : nil
     }
 
     /// Returns a copy with `downloadSizeBytes` overridden. Used to fold in
@@ -122,7 +128,8 @@ struct MLXModel: Identifiable, Codable {
             useCase: useCase,
             rootDirectory: rootDirectory,
             bundleDirectory: bundleDirectory,
-            externalSource: externalSource
+            externalSource: externalSource,
+            isDecision: catalogIsDecision == true
         )
     }
 
@@ -173,7 +180,8 @@ struct MLXModel: Identifiable, Codable {
             useCase: useCase,
             rootDirectory: local.rootDirectory ?? rootDirectory,
             bundleDirectory: local.bundleDirectory ?? bundleDirectory,
-            externalSource: local.externalSource ?? externalSource
+            externalSource: local.externalSource ?? externalSource,
+            isDecision: catalogIsDecision == true || local.catalogIsDecision == true
         )
     }
 
@@ -238,7 +246,8 @@ struct MLXModel: Identifiable, Codable {
             useCase: useCase,
             rootDirectory: rootDirectory,
             bundleDirectory: bundleDirectory,
-            externalSource: externalSource
+            externalSource: externalSource,
+            isDecision: catalogIsDecision == true
         )
     }
 
@@ -296,7 +305,8 @@ struct MLXModel: Identifiable, Codable {
             useCase: useCase,
             rootDirectory: rootDirectory,
             bundleDirectory: bundleDirectory,
-            externalSource: externalSource
+            externalSource: externalSource,
+            isDecision: catalogIsDecision == true
         )
     }
 
@@ -319,7 +329,8 @@ struct MLXModel: Identifiable, Codable {
             useCase: useCase,
             rootDirectory: rootDirectory,
             bundleDirectory: bundleDirectory,
-            externalSource: externalSource
+            externalSource: externalSource,
+            isDecision: catalogIsDecision == true
         )
     }
 
@@ -650,12 +661,10 @@ struct MLXModel: Identifiable, Codable {
         return ModelFormatDetection.isMLXFormat(at: localDirectory)
     }
 
-    /// Whether this bundle is an embedding/encoder-only model (BERT family,
-    /// model2vec, etc.) that cannot generate chat completions. Detected from
-    /// the on-disk config.json; bundles that aren't on disk return false.
-    /// Used to keep embedding repos imported from the HF cache / LM Studio
-    /// out of chat surfaces while leaving them available to `/v1/embeddings`.
-    var isDecision: Bool { DecisionDetection.isDecision(at: localDirectory) }
+    /// A non-generative decision task declared by the publisher or local bundle.
+    /// Keep it out of chat selectors before, during and after downloading.
+    /// Runtime decision admission still validates the actual installed bundle.
+    var isDecision: Bool { catalogIsDecision == true || DecisionDetection.isDecision(at: localDirectory) }
 
     var isEmbedding: Bool {
         EmbeddingDetection.isEmbedding(at: localDirectory)

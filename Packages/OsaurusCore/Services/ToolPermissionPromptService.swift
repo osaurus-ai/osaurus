@@ -61,8 +61,8 @@ enum ToolPermissionPromptService {
         let argumentsJSON: String
         let knowledgeWritePreview: KnowledgeWritePreview?
         let perCallApprovalOnly: Bool
-        /// Whether the card offers "Allow for This Task". Only the generic
-        /// registry prompt has a run lease to grant into.
+        /// Whether the caller has a task lease to grant "Allow for This Task"
+        /// into. Policy callers without that owner leave this false.
         let offersRunLease: Bool
         /// Where the approved call will run (VM / this Mac / remote MCP
         /// server), shown on the card so consent is informed
@@ -81,6 +81,9 @@ enum ToolPermissionPromptService {
         /// The folders a workflow run's file tools are held to, read when the
         /// request was made.
         var workflowFacts: ToolApprovalPresentation.WorkflowFacts? = nil
+        /// A caller-owned approval must publish its new authority before the
+        /// next queued request revalidates. Nil preserves generic callers.
+        var commitApproval: (@MainActor @Sendable (ApprovalOutcome) -> Void)? = nil
 
         /// Only paired-phone cards reach the phone's `GET /approvals`, as in
         /// the computer-use and config queues: a card from a Mac chat is
@@ -338,6 +341,7 @@ enum ToolPermissionPromptService {
     private struct HeldPrompt {
         let scope: String
         let prompt: SyncedPrompt
+        let commitApproval: (@MainActor @Sendable (ApprovalOutcome) -> Void)?
     }
 
     private static var syncedHeld: [UUID: HeldPrompt] = [:]
@@ -353,7 +357,8 @@ enum ToolPermissionPromptService {
                 offersRunLease: request.offersRunLease && !request.perCallApprovalOnly,
                 surface: request.executionSurface?.rawValue,
                 requestedAt: Date()
-            )
+            ),
+            commitApproval: request.commitApproval
         )
         AttentionProducers.beginWaiting(itemId: id, step: L("Waiting for approval"))
         postSyncedChange(scope: scope)
@@ -513,6 +518,53 @@ enum ToolPermissionPromptService {
         }
     }
 
+    /// Full outcomes for a caller-owned policy that also owns a task lease.
+    /// The caller records run approval in that lease and persistent approval
+    /// in its policy store. This entry point never writes ToolRegistry.
+    /// Existing spawn callers keep the narrower entry point and no run button.
+    static func requestPolicyApprovalOutcome(
+        toolName: String,
+        description: String,
+        descriptionIsForModel: Bool = false,
+        argumentsJSON: String,
+        offersRunLease: Bool = false,
+        commitApproval: (@MainActor @Sendable (ApprovalOutcome) -> Void)? = nil,
+        revalidate: (@Sendable () async -> PolicyApprovalOutcome?)? = nil
+    ) async -> ApprovalOutcome {
+        if isHeadlessTestProcess { return .denied }
+        if Task.isCancelled { return .denied }
+
+        var mappedRevalidate: Revalidation?
+        if let hook = revalidate {
+            mappedRevalidate = { () async -> PromptResolution? in
+                guard let outcome = await hook() else { return nil }
+                return Self.resolution(for: outcome)
+            }
+        }
+        let resolution = await enqueue(
+            PromptRequest(
+                toolName: toolName,
+                description: description,
+                argumentsJSON: argumentsJSON,
+                knowledgeWritePreview: nil,
+                perCallApprovalOnly: false,
+                offersRunLease: offersRunLease,
+                executionSurface: nil,
+                requester: .current,
+                descriptionIsForModel: descriptionIsForModel,
+                stepReason: ChatExecutionContext.currentWorkflowStepReason,
+                commitApproval: commitApproval
+            ),
+            revalidate: mappedRevalidate
+        )
+        switch resolution {
+        case .denied: return .denied
+        case .allowOnce: return .allowOnce
+        case .allowForRun: return .allowForRun
+        case .alwaysAllow: return .alwaysAllow
+        }
+    }
+
     nonisolated private static func resolution(
         for outcome: PolicyApprovalOutcome
     ) -> PromptResolution {
@@ -657,10 +709,14 @@ enum ToolPermissionPromptService {
     private static func resolve(id: UUID, outcome: PromptResolution, attention: AttentionResolution? = nil) {
         if let held = syncedHeld.removeValue(forKey: id) {
             AttentionProducers.endWaiting(itemId: id)
-            continuations.removeValue(forKey: id)?.resume(returning: outcome)
+            if let continuation = continuations.removeValue(forKey: id) {
+                commit(outcome, to: held.commitApproval)
+                continuation.resume(returning: outcome)
+            }
             postSyncedChange(scope: held.scope)
             return
         }
+        let commitApproval = pendingRequest(id: id)?.commitApproval
         queue.removeAll { $0.id == id }
         if let current = slot, current.id == id {
             tearDown(current)
@@ -673,9 +729,24 @@ enum ToolPermissionPromptService {
                 with: attention ?? AttentionProducers.inline(attentionOutcome(for: outcome))
             )
             AttentionProducers.endWaiting(itemId: id)
+            commit(outcome, to: commitApproval)
             continuation.resume(returning: outcome)
         }
         pump()
+    }
+
+    /// Publish the caller-owned grant while this resolution still owns the
+    /// queue. Resuming first lets the next card read stale Ask.
+    private static func commit(
+        _ outcome: PromptResolution,
+        to commitApproval: (@MainActor @Sendable (ApprovalOutcome) -> Void)?
+    ) {
+        switch outcome {
+        case .denied: break
+        case .allowOnce: commitApproval?(.allowOnce)
+        case .allowForRun: commitApproval?(.allowForRun)
+        case .alwaysAllow: commitApproval?(.alwaysAllow)
+        }
     }
 
     private static func tearDown(_ slot: PresenterSlot) {
