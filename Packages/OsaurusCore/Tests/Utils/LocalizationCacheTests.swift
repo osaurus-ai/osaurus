@@ -55,29 +55,17 @@ struct LocalizationCacheTests {
         #expect(LCached(key) == L(String.LocalizationValue(key)))
     }
 
-    /// Model card labels rendered from `ModelRowView.body` and
-    /// `ModelCompatibility.displayName` (production hang APPLE-MACOS-2SZ).
-    private static let modelCardLabels = [
+    /// Fit verdicts from `ModelCompatibility.displayName`, rendered for every
+    /// row of the local models catalog (production hang APPLE-MACOS-2SZ).
+    private static let compatibilityLabels = [
         "Runs well",
         "Memory may be tight",
         "Not recommended",
         "Not enough information",
-        "Top Pick",
-        "Downloading",
-        "Paused",
-        "Downloaded",
-        "Not MLX",
-        "Download",
-        "Est. Memory",
-        "Versions",
-        "Params",
-        "LLM",
-        "VLM",
-        "Image",
     ]
 
-    @Test("LCached matches L for model card labels", arguments: modelCardLabels)
-    func matchesUncachedLookupForModelCards(key: String) {
+    @Test("LCached matches L for compatibility labels", arguments: compatibilityLabels)
+    func matchesUncachedLookupForCompatibility(key: String) {
         #expect(LCached(key) == L(String.LocalizationValue(key)))
     }
 
