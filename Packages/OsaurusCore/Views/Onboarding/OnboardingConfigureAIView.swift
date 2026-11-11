@@ -1361,7 +1361,7 @@ private struct OnboardingPathCard: View {
                     Image(systemName: symbol)
                         .glyphSize(17, weight: .semibold)
                         .foregroundColor(
-                            isHovered || isRecommended ? OnboardingPalette.dinoGreen : OnboardingPalette.labelPrimary)
+                            isHovered || isRecommended ? OnboardingPalette.dinoGreenText : OnboardingPalette.labelPrimary)
                 }
                 .frame(width: theme.space.s48, height: theme.space.s48)
 

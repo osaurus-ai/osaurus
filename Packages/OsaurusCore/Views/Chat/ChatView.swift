@@ -13582,7 +13582,9 @@ private struct MainNavigationRail: View {
     }
 
     private func destination(_ surface: ChatWindowState.MainSurface, symbol: String, label: String) -> some View {
-        SettingsIconButton(symbol, help: label, size: .regular, isActive: windowState.mainSurface == surface, role: .tertiary) {
+        let isSelected = windowState.mainSurface == surface
+        let chip = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+        return SettingsIconButton(symbol, help: label, size: .regular, isActive: isSelected, role: .tertiary) {
             if surface == .workflows, windowState.mainSurface == .workflows, windowState.showsWorkflowLibrary {
                 withAnimation(theme.motion.quick) { windowState.showWorkflowsHome() }
             } else {
@@ -13590,8 +13592,11 @@ private struct MainNavigationRail: View {
             }
         }
         .frame(width: 32, height: 32)
-        .background(windowState.mainSurface == surface ? theme.surface.selected : .clear,
-                    in: RoundedRectangle(cornerRadius: theme.radius.medium))
-        .accessibilityAddTraits(windowState.mainSurface == surface ? .isSelected : [])
+        // The rail sits on the sidebar surface, which light themes paint
+        // almost the same as `surface.selected`; the hairline keeps the
+        // selected chip visible there.
+        .background(isSelected ? theme.surface.selected : .clear, in: chip)
+        .overlay(chip.strokeBorder(isSelected ? theme.border.default : .clear, lineWidth: theme.stroke.default))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
