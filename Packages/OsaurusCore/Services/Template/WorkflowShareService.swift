@@ -239,6 +239,7 @@ public final class WorkflowShareService {
             workspaceIDs: workspaceIDs)
         outcome.listing = await followUp(listing, after: outcome, address: address, key: key)
         await ensureWatchToken(address: address, key: key)
+        FeatureTelemetry.templateShared(kind: template.kind.rawValue, visibility: visibility.rawValue)
         return outcome
     }
 
@@ -300,6 +301,9 @@ public final class WorkflowShareService {
             outcome.cascade = cascade
             outcome.listing = await followUp(listing, after: outcome, address: address, key: key)
             await ensureWatchToken(address: address, key: key)
+            FeatureTelemetry.templateShared(
+                kind: template.kind.rawValue, visibility: visibility.rawValue,
+                bundledPublished: Self.publishedCount(cascade))
             return outcome
         } catch WorkflowShareError.rateLimited {
             throw WorkflowShareError.rateLimited(publishedWorkflows: Self.publishedCount(cascade))

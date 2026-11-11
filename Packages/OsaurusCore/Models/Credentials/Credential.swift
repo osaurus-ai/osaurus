@@ -20,6 +20,11 @@ public enum CredentialScope: Hashable, Sendable {
         return nil
     }
 
+    /// Closed analytics token: `shared` or `agent`, never the agent id.
+    var telemetryToken: String {
+        agentId == nil ? "shared" : "agent"
+    }
+
     /// Keychain account prefix. Agent ids are lowercased so the account is
     /// stable regardless of how the UUID was formatted by the caller.
     var accountPrefix: String {

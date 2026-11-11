@@ -21,6 +21,8 @@ enum BrainChooserSheet {
             return
         }
         let state = ConfigureAIState()
+        state.telemetrySurface = "chat_sheet"
+        OnboardingTelemetry.brainChooserOpened()
         let width = OnboardingMetrics.windowWidth
         let height = OnboardingMetrics.windowHeight
         let window = NSWindow(
@@ -34,6 +36,7 @@ enum BrainChooserSheet {
             state: state,
             onComplete: {
                 OnboardingBrainPin.pin(state, forAgents: pinTargets())
+                FeatureTelemetry.recordOnboardingBrainSource(state.selectedBrainSource?.telemetryValue)
                 dismiss()
             },
             onClose: dismiss

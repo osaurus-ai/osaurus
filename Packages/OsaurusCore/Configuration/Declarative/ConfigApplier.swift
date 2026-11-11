@@ -86,7 +86,11 @@ enum ConfigApplier {
     ) async -> [ConfigApplyResult] {
         await ConfigApplySerialQueue.shared.acquire()
         if caller != nil { await ConfigHistoryRecorder.noticeDrift(.beforeApply) }
-        let results = await applyLocked(document: document, prune: prune, options: options)
+        let results = await TelemetryContext.$agentCreationOrigin.withValue(
+            TelemetryContext.agentCreationOrigin ?? FeatureTelemetry.agentCreationOrigin(for: caller)
+        ) {
+            await applyLocked(document: document, prune: prune, options: options)
+        }
         if let caller {
             await ConfigHistoryRecorder.recordApply(
                 results, caller: caller, approvalId: approvalId, requestText: requestText)

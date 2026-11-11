@@ -192,6 +192,7 @@ final class WorkspacesService: ObservableObject {
             })
         {
             endConfirmation()
+            FeatureTelemetry.workspaceCreated(via: "checkout")
             await WorkspaceAuditLog.shared.recordOwnerAction(
                 .workspaceCreated, workspaceId: created.id, details: ["name": name, "via": "checkout"]
             )
@@ -305,6 +306,7 @@ final class WorkspacesService: ObservableObject {
             switch result {
             case .ready(let detail):
                 outcome = .ready(detail)
+                FeatureTelemetry.workspaceCreated(via: "direct")
                 await WorkspaceAuditLog.shared.recordOwnerAction(
                     .workspaceCreated, workspaceId: detail.id, details: ["name": trimmedName]
                 )
@@ -381,6 +383,7 @@ final class WorkspacesService: ObservableObject {
             let detail = try await self.client.workspaceActivate(code: trimmedCode, name: trimmedName)
             created = detail
             self.pendingActivation = nil
+            FeatureTelemetry.workspaceCreated(via: "activation_code")
             await WorkspaceAuditLog.shared.recordOwnerAction(
                 .workspaceCreated, workspaceId: detail.id,
                 details: ["name": trimmedName, "via": "activation_code"]
@@ -411,6 +414,7 @@ final class WorkspacesService: ObservableObject {
             let detail = try await self.client.workspaceJoin(code: trimmed)
             joined = detail
             self.pendingJoin = nil
+            FeatureTelemetry.workspaceJoined()
             await WorkspaceAuditLog.shared.recordOwnerAction(
                 .joinRedeemed, workspaceId: detail.id,
                 details: ["role": detail.role]
@@ -961,6 +965,7 @@ final class WorkspacesService: ObservableObject {
                 proof: proof
             )
             _ = try await self.client.shareWorkspaceAgent(id: workspaceId, body: body)
+            FeatureTelemetry.workspaceAgentShared()
             await WorkspaceAuditLog.shared.recordOwnerAction(
                 .agentShared, workspaceId: workspaceId,
                 agentAddress: agentAddress, agentName: name

@@ -587,6 +587,7 @@ final class ChatWindowState: ObservableObject {
 
     func showMainSurface(_ surface: MainSurface) {
         if surface == .workflows {
+            if mainSurface != .workflows { FeatureTelemetry.workflowsOpened(page: workflowsPageToken) }
             showsWorkflowLibrary = true
         } else if activeTab?.workflowID != nil || agentId == Agent.architectId {
             if let recent = tabs.filter({ $0.workflowID == nil && $0.session.agentId != Agent.architectId })
@@ -597,6 +598,16 @@ final class ChatWindowState: ObservableObject {
             }
         }
         mainSurface = surface
+    }
+
+    /// Closed `workflows_opened` page token for the page the surface lands on.
+    private var workflowsPageToken: String {
+        switch workflowsPath.last {
+        case nil: return "home"
+        case .workflow?: return "workflow"
+        case .run?: return "run"
+        case .create?: return "new"
+        }
     }
 
     func showWorkflowDetail() {

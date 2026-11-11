@@ -172,6 +172,11 @@ final class ConfigureAIState: ObservableObject {
     /// the first `message_sent`.
     @Published var selectedBrainSource: BrainSource? = nil
 
+    /// Where this step is shown, for `brain_source_selected`: `onboarding`
+    /// (the onboarding window) or `chat_sheet` (Choose a Brain over the
+    /// first-run chat).
+    var telemetrySurface = "onboarding"
+
     /// The local model id to record as the active agent's default when the user
     /// finishes onboarding on the Local path. `nil` for the bring-your-own-key
     /// source (or none committed), so `finishOnboarding` only pins the model the
@@ -361,7 +366,7 @@ final class ConfigureAIState: ObservableObject {
         selectedModel = model
         diskSpaceWarning = nil
         selectedBrainSource = .local
-        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false)
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false, surface: telemetrySurface)
     }
 
     /// Parameter-count floor that marks the large-RAM upgrade lane (Gemma 12B,
@@ -702,7 +707,7 @@ final class ConfigureAIState: ObservableObject {
     /// background by `OnboardingView` and finalized at finish.
     func chooseOsaurusAndContinue(onComplete: () -> Void) {
         selectedBrainSource = .osaurus
-        OnboardingTelemetry.brainSourceSelected(.osaurus)
+        OnboardingTelemetry.brainSourceSelected(.osaurus, surface: telemetrySurface)
         onComplete()
     }
 
@@ -721,7 +726,7 @@ final class ConfigureAIState: ObservableObject {
         // (no payment, no network).
         selectedBrainSource = .local
         let needsDownload = selectedModel?.isDownloaded != true
-        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: needsDownload)
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: needsDownload, surface: telemetrySurface)
         if needsDownload {
             startLocalDownload()
             hasStartedLocalDownload = true
@@ -807,7 +812,7 @@ final class ConfigureAIState: ObservableObject {
 
     func chooseClaudeCodeAndContinue(onComplete: () -> Void) {
         selectedBrainSource = .claudeCode
-        OnboardingTelemetry.brainSourceSelected(.claudeCode)
+        OnboardingTelemetry.brainSourceSelected(.claudeCode, surface: telemetrySurface)
         onComplete()
     }
 
@@ -987,7 +992,7 @@ final class ConfigureAIState: ObservableObject {
         // provider type (closed enum) is the only identifying bit sent.
         if let preset = currentAPIProvider {
             selectedBrainSource = .providerKey(preset)
-            OnboardingTelemetry.brainSourceSelected(.providerKey(preset))
+            OnboardingTelemetry.brainSourceSelected(.providerKey(preset), surface: telemetrySurface)
         }
 
         // OpenAI Codex and xAI persist OAuth tokens via a service-provided

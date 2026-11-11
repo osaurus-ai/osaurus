@@ -72,9 +72,12 @@ public enum TeamSeeder {
     public static func seedFreshInstall(_ options: Options, defaults: UserDefaults = .standard) async -> [Agent] {
         guard !hasSeeded(defaults) else { return [] }
         let created = await create(options.teammates, bookmarkingGuardedFolders: false)
-        installDefaultWorkflows(options)
+        let workflows = installDefaultWorkflows(options)
         writePrivacyFilterIfMissing()
         defaults.set(true, forKey: seededDefaultsKey)
+        FeatureTelemetry.teamSeeded(
+            source: "fresh_install", teammates: created.count, workflows: workflows,
+            developerMac: options.developerMac)
         return created
     }
 
@@ -88,7 +91,10 @@ public enum TeamSeeder {
     /// gets a number, so an existing agent is never patched into a teammate.
     @discardableResult
     public static func createTeam(developerMac: Bool) async -> [Agent] {
-        await create(teammates(developerMac: developerMac))
+        let created = await create(teammates(developerMac: developerMac))
+        FeatureTelemetry.teamSeeded(
+            source: "starter_agents", teammates: created.count, workflows: 0, developerMac: developerMac)
+        return created
     }
 
     /// Creates `teammates` with each working folder at `workingFolder`, so
@@ -139,8 +145,10 @@ public enum TeamSeeder {
         }
         guard !entries.isEmpty else { return [] }
         document.agents = entries
-        _ = await ConfigApplier.apply(
-            document: document, prune: false, caller: .templateInstall(templateId: slugs.joined(separator: ", ")))
+        _ = await TelemetryContext.$agentCreationOrigin.withValue("team_seed") {
+            await ConfigApplier.apply(
+                document: document, prune: false, caller: .templateInstall(templateId: slugs.joined(separator: ", ")))
+        }
 
         var created: [Agent] = []
         for (teammate, name) in planned {
@@ -192,12 +200,15 @@ public enum TeamSeeder {
     }
 
     /// Installs the default workflows, off until asked: visible to the
-    /// Orchestrator, with no automation.
-    static func installDefaultWorkflows(_ options: Options) {
+    /// Orchestrator, with no automation. Returns how many installed.
+    @discardableResult
+    static func installDefaultWorkflows(_ options: Options) -> Int {
         let store = InstalledWorkflowStore.shared
+        var installedCount = 0
         for template in defaultWorkflowTemplates(options) {
             do {
                 let installed = try store.install(template, bindings: InstallBindings())
+                installedCount += 1
                 if !installed.orchestratorVisible {
                     try store.setOrchestratorVisible(true, id: installed.id)
                 }
@@ -205,6 +216,7 @@ public enum TeamSeeder {
                 print("[Osaurus] Default workflow \(template.name) did not install: \(error)")
             }
         }
+        return installedCount
     }
 
     /// The default workflows for this Mac, with the writer slot's locality

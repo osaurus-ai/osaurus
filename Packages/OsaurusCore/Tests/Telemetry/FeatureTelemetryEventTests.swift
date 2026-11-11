@@ -607,16 +607,171 @@ struct FeatureTelemetryEventTests {
         #expect(rec.events[2].props["source"] as? String == "dispatch")
     }
 
-    @Test func agentCreated_carries_only_agent_count() {
+    @Test func agentCreated_carries_agent_count_and_origin() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
         FeatureTelemetry.agentCreated(numberOfAgents: 4, service: service)
+        FeatureTelemetry.agentCreated(numberOfAgents: 9, origin: "team_seed", service: service)
 
         let event = rec.events[0]
         #expect(event.name == "agent_created")
         #expect(event.props["number_of_agents"] as? Int == 4)
-        #expect(business(event.props).count == 1)
+        #expect(event.props["origin"] as? String == "user")
+        #expect(business(event.props).count == 2)
+        #expect(rec.events[1].props["origin"] as? String == "team_seed")
+    }
+
+    @Test func agentCreationOrigin_maps_config_callers() {
+        #expect(FeatureTelemetry.agentCreationOrigin(for: .templateInstall(templateId: "x")) == "template_install")
+        #expect(FeatureTelemetry.agentCreationOrigin(for: .fileImport) == "import")
+        #expect(FeatureTelemetry.agentCreationOrigin(for: .configurator(sessionId: "s")) == "config")
+        #expect(FeatureTelemetry.agentCreationOrigin(for: .adminAPI) == "config")
+        #expect(FeatureTelemetry.agentCreationOrigin(for: nil) == "config")
+    }
+
+    // MARK: - message_sent source precedence
+
+    @Test func messageSourceToken_prefers_workflow_then_subagent_then_synced_device() {
+        func token(_ w: Bool, _ s: Bool, _ d: Bool) -> String {
+            FeatureTelemetry.messageSourceToken(base: .chatUI, inWorkflow: w, isSubagent: s, forSyncedDevice: d)
+        }
+        #expect(token(false, false, false) == "chat_ui")
+        #expect(token(true, true, true) == "workflow")
+        #expect(token(false, true, true) == "subagent")
+        #expect(token(false, false, true) == "synced_device")
+        #expect(
+            FeatureTelemetry.messageSourceToken(
+                base: .httpAPI, inWorkflow: false, isSubagent: false, forSyncedDevice: false) == "http_api")
+    }
+
+    @Test func messageInfo_drops_brain_source_off_chat_ui() {
+        let workflowStep = FeatureTelemetry.messageInfo(
+            service: StubService(id: "mlx"), effectiveModel: "m", source: .chatUI,
+            isAgent: false, stream: true, inWorkflow: true)
+        #expect(workflowStep.source == "workflow")
+        #expect(workflowStep.brainSource == nil)
+
+        let helper = FeatureTelemetry.messageInfo(
+            service: StubService(id: "mlx"), effectiveModel: "m", source: .chatUI,
+            isAgent: false, stream: true, isSubagent: true)
+        #expect(helper.source == "subagent")
+        #expect(helper.brainSource == nil)
+
+        let chat = FeatureTelemetry.messageInfo(
+            service: StubService(id: "mlx"), effectiveModel: "m", source: .chatUI, isAgent: false, stream: true)
+        #expect(chat.source == "chat_ui")
+        #expect(chat.brainSource != nil)
+    }
+
+    // MARK: - 1.0 feature events
+
+    @Test func workflowAndAutomationEvents_carry_closed_tokens() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.workflowRunStarted(caller: "test", resumed: false, service: service)
+        FeatureTelemetry.workflowRunFinished(caller: "test", status: "completed", duration: 42, service: service)
+        FeatureTelemetry.workflowRunFinished(caller: "event", status: "failed", duration: nil, service: service)
+        FeatureTelemetry.workflowDraftStarted(origin: "inline", service: service)
+        FeatureTelemetry.workflowsOpened(page: "home", service: service)
+        FeatureTelemetry.automationCreated(trigger: "schedule", origin: "user", service: service)
+        FeatureTelemetry.automationRunFinished(trigger: "folder", status: "succeeded", service: service)
+
+        #expect(
+            rec.events.map(\.name) == [
+                "workflow_run_started", "workflow_run_finished", "workflow_run_finished",
+                "workflow_draft_started", "workflows_opened", "automation_created", "automation_run_finished",
+            ])
+        #expect(business(rec.events[0].props).count == 2)
+        #expect(rec.events[0].props["resumed"] as? Bool == false)
+        #expect(rec.events[1].props["duration_bucket"] as? String == "10_60s")
+        #expect(rec.events[2].props["duration_bucket"] as? String == "none")
+        #expect(business(rec.events[1].props).count == 3)
+        #expect(rec.events[3].props["origin"] as? String == "inline")
+        #expect(rec.events[4].props["page"] as? String == "home")
+        #expect(business(rec.events[5].props).count == 2)
+        #expect(rec.events[6].props["status"] as? String == "succeeded")
+    }
+
+    @Test func deviceTemplateAccountAndSharingEvents_have_documented_shapes() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.phonePaired(service: service)
+        FeatureTelemetry.phoneUnpaired(via: "phone", service: service)
+        FeatureTelemetry.syncDevicePaired(platform: "iphone", service: service)
+        FeatureTelemetry.syncDeviceRemoved(rotatedKeys: true, service: service)
+        FeatureTelemetry.templateShared(kind: "agent", visibility: "public", bundledPublished: 2, service: service)
+        FeatureTelemetry.templateImported(kind: "workflow", origin: "file", result: "new", service: service)
+        FeatureTelemetry.loginWithOsaurus(outcome: "signed_in", service: service)
+        FeatureTelemetry.accessKeyCreated(service: service)
+        FeatureTelemetry.accessKeyRevoked(service: service)
+        FeatureTelemetry.credentialSaved(scope: "agent", origin: "user", service: service)
+        FeatureTelemetry.credentialDeleted(scope: "shared", service: service)
+        FeatureTelemetry.spaceCreated(service: service)
+        FeatureTelemetry.spaceSwitched(service: service)
+        FeatureTelemetry.spaceDeleted(mode: "after_relaunch", service: service)
+        FeatureTelemetry.workspaceCreated(via: "checkout", service: service)
+        FeatureTelemetry.workspaceJoined(service: service)
+        FeatureTelemetry.workspaceAgentShared(service: service)
+        FeatureTelemetry.guestAccessRevoked(state: "unused_link", service: service)
+        FeatureTelemetry.sharedAgentAdded(service: service)
+        FeatureTelemetry.teamSeeded(
+            source: "fresh_install", teammates: 4, workflows: 5, developerMac: false, service: service)
+
+        let byName = Dictionary(uniqueKeysWithValues: rec.events.map { ($0.name, business($0.props)) })
+        #expect(byName.count == 20)
+        #expect(byName["phone_paired"]?.isEmpty == true)
+        #expect(byName["phone_unpaired"]?["via"] as? String == "phone")
+        #expect(byName["sync_device_paired"]?["platform"] as? String == "iphone")
+        #expect(byName["sync_device_removed"]?["rotated_keys"] as? Bool == true)
+        #expect(byName["template_shared"]?.count == 3)
+        #expect(byName["template_shared"]?["bundled_published"] as? Int == 2)
+        #expect(byName["template_imported"]?.count == 3)
+        #expect(byName["login_with_osaurus"]?["outcome"] as? String == "signed_in")
+        #expect(byName["access_key_created"]?.isEmpty == true)
+        #expect(byName["access_key_revoked"]?.isEmpty == true)
+        #expect(byName["credential_saved"]?.count == 2)
+        #expect(byName["credential_deleted"]?["scope"] as? String == "shared")
+        #expect(byName["space_created"]?.isEmpty == true)
+        #expect(byName["space_switched"]?.isEmpty == true)
+        #expect(byName["space_deleted"]?["mode"] as? String == "after_relaunch")
+        #expect(byName["workspace_created"]?["via"] as? String == "checkout")
+        #expect(byName["workspace_joined"]?.isEmpty == true)
+        #expect(byName["workspace_agent_shared"]?.isEmpty == true)
+        #expect(byName["guest_access_revoked"]?["state"] as? String == "unused_link")
+        #expect(byName["shared_agent_added"]?.isEmpty == true)
+        #expect(byName["team_seeded"]?.count == 4)
+        #expect(byName["team_seeded"]?["developer_mac"] as? Bool == false)
+    }
+
+    @Test func newFeatureEvents_drop_when_consent_declined() {
+        let suiteName = "feature-telemetry-declined-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var sent: [String] = []
+        let service = TelemetryService(defaults: defaults, emit: { name, _ in sent.append(name) })
+        service.markStartedForTesting()
+        service.setEnabled(false)
+
+        FeatureTelemetry.workflowRunStarted(caller: "user", resumed: false, service: service)
+        FeatureTelemetry.automationCreated(trigger: "schedule", origin: "user", service: service)
+        FeatureTelemetry.phonePaired(service: service)
+        FeatureTelemetry.workspaceCreated(via: "direct", service: service)
+
+        #expect(sent.isEmpty)
+    }
+
+    @Test func templateImportResult_tokens_cover_every_disposition() {
+        #expect(TemplateImportSheet.importResultToken(.new, keepBoth: false) == "new")
+        #expect(TemplateImportSheet.importResultToken(nil, keepBoth: false) == "new")
+        #expect(TemplateImportSheet.importResultToken(.alreadyPresent, keepBoth: false) == "already_present")
+        #expect(TemplateImportSheet.importResultToken(.update(fromVersion: 1), keepBoth: false) == "update")
+        #expect(TemplateImportSheet.importResultToken(.older(localLatest: 3), keepBoth: false) == "older")
+        #expect(TemplateImportSheet.importResultToken(.conflict, keepBoth: true) == "copy")
+        #expect(TemplateImportSheet.importResultToken(.conflict, keepBoth: false) == "replace")
+        #expect(TemplateImportSheet.importResultToken(.signerMismatch(localAddress: "a"), keepBoth: false) == "copy")
     }
 
     // MARK: - Router announcements dialog
