@@ -205,6 +205,7 @@ public final class AgentManager: ObservableObject {
         // initialization here (a recursive dispatch_once traps).
         Task { @MainActor [weak self] in
             self?.migrateClaudeCodeModelsToHarness()
+            self?.reassignDuplicateAddressesInBackground()
         }
 
         // Load saved active agent
@@ -850,7 +851,9 @@ public final class AgentManager: ObservableObject {
     /// synchronous result before continuing.
     func assignAddressInBackground(to agent: Agent) {
         guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
-        let path = nextUnusedKeyPath()
+        let claims = identityClaims()
+        let deviceScope = Self.currentDeviceScope()
+        let path = Self.firstUnclaimedPath(indexes: claims.indexes, deviceScope: deviceScope)
         // Park the reservation immediately (address comes later) so another
         // creation in the same window gets the next index.
         if var reserving = self.agent(for: agent.id), reserving.agentIndex == nil {
@@ -858,6 +861,7 @@ public final class AgentManager: ObservableObject {
             reserving.agentDeviceScope = path.deviceScope
             update(reserving)
         }
+        let agentId = agent.id
         Task.detached(priority: .userInitiated) {
             guard MasterKey.exists() else { return }
             let context = LAContext()
@@ -865,16 +869,28 @@ public final class AgentManager: ObservableObject {
             context.interactionNotAllowed = true
             guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
             defer { masterKeyData.zeroOut() }
-            guard let address = try? AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
+            guard
+                let minted = try? Self.deriveUnclaimedIdentity(
+                    masterKey: masterKeyData, claims: claims, deviceScope: deviceScope)
             else { return }
             await MainActor.run {
-                guard var current = AgentManager.shared.agent(for: agent.id),
-                    current.agentAddress == nil
-                else { return }
-                current.agentIndex = path.index
-                current.agentDeviceScope = path.deviceScope
-                current.agentAddress = address
-                AgentManager.shared.update(current)
+                let manager = AgentManager.shared
+                guard var current = manager.agent(for: agentId), current.agentAddress == nil else { return }
+                // Another mint may have landed on the same slot while this
+                // one derived off-main; take a fresh one instead.
+                let taken = manager.agents.contains { other in
+                    other.id != agentId
+                        && (other.agentAddress?.lowercased() == minted.address.lowercased()
+                            || other.agentIndex == minted.path.index)
+                }
+                guard !taken else {
+                    manager.assignAddressInBackground(to: current)
+                    return
+                }
+                current.agentIndex = minted.path.index
+                current.agentDeviceScope = minted.path.deviceScope
+                current.agentAddress = minted.address
+                manager.update(current)
             }
         }
     }
@@ -889,8 +905,8 @@ public final class AgentManager: ObservableObject {
         guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
         defer { masterKeyData.zeroOut() }
 
-        let path = nextUnusedKeyPath()
-        let address = try AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
+        let (path, address) = try Self.deriveUnclaimedIdentity(
+            masterKey: masterKeyData, claims: identityClaims(), deviceScope: Self.currentDeviceScope())
 
         var updated = agent
         updated.agentIndex = path.index
@@ -926,8 +942,8 @@ public final class AgentManager: ObservableObject {
         var masterKeyData = try MasterKey.getPrivateKey(context: context)
         defer { masterKeyData.zeroOut() }
 
-        let path = nextUnusedKeyPath()
-        let newAddress = try AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
+        let (path, newAddress) = try Self.deriveUnclaimedIdentity(
+            masterKey: masterKeyData, claims: identityClaims(), deviceScope: Self.currentDeviceScope())
         let previousAddress = agent.agentAddress
 
         var updated = agent
@@ -993,24 +1009,123 @@ public final class AgentManager: ObservableObject {
         return repaired
     }
 
+    /// Give every agent that shares its address with an older agent
+    /// (`IdentityHealthCheck.duplicateAddressAgents`) a fresh one. Records
+    /// minted while a build couldn't read every agent file reused the same
+    /// slot, so two agents answered to one address.
+    ///
+    /// The record changes only once a new address is derived (non-interactive
+    /// master-key read; a no-op without one). Keys for the old address are
+    /// NOT revoked: that audience still belongs to the agent that keeps it.
+    /// Remote Access is turned off for the re-addressed agent so its new
+    /// public address is never published without the user asking.
+    func reassignDuplicateAddressesInBackground() {
+        let duplicateIds = IdentityHealthCheck.duplicateAddressAgents(agents).map(\.id)
+        guard !duplicateIds.isEmpty else { return }
+        let claims = identityClaims()
+        let deviceScope = Self.currentDeviceScope()
+        Task.detached(priority: .utility) {
+            guard MasterKey.exists() else { return }
+            let context = LAContext()
+            context.touchIDAuthenticationAllowableReuseDuration = 300
+            context.interactionNotAllowed = true
+            guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
+            defer { masterKeyData.zeroOut() }
+            var claimed = claims
+            var minted: [(id: UUID, path: AgentKeyPath, address: OsaurusID)] = []
+            for id in duplicateIds {
+                guard
+                    let identity = try? Self.deriveUnclaimedIdentity(
+                        masterKey: masterKeyData, claims: claimed, deviceScope: deviceScope)
+                else { return }
+                claimed.indexes.insert(identity.path.index)
+                claimed.addresses.insert(identity.address.lowercased())
+                minted.append((id, identity.path, identity.address))
+            }
+            await MainActor.run { [minted] in
+                AgentManager.shared.applyReassignedAddresses(minted)
+            }
+        }
+    }
+
+    func applyReassignedAddresses(_ minted: [(id: UUID, path: AgentKeyPath, address: OsaurusID)]) {
+        for entry in minted {
+            let stillDuplicate = IdentityHealthCheck.duplicateAddressAgents(agents).contains { $0.id == entry.id }
+            guard stillDuplicate, var current = agent(for: entry.id), agent(byAddress: entry.address) == nil,
+                !agents.contains(where: { $0.agentIndex == entry.path.index })
+            else { continue }
+            let previous = current.agentAddress ?? ""
+            current.agentIndex = entry.path.index
+            current.agentDeviceScope = entry.path.deviceScope
+            current.agentAddress = entry.address
+            update(current)
+            // After the address change: turning the tunnel off removes the
+            // agent's current address from the relay, and the old one still
+            // serves the agent that kept it.
+            if RelayTunnelManager.shared.isTunnelEnabled(for: entry.id) {
+                RelayTunnelManager.shared.setTunnelEnabled(false, for: entry.id)
+            }
+            MobileConnectLog.write(
+                "identity: \(entry.id.uuidString) shared \(previous.lowercased()) with an older agent; "
+                    + "gave it \(entry.address.lowercased()) and turned its remote access off"
+            )
+        }
+    }
+
+    /// Indices and addresses a freshly minted identity must not reuse: every
+    /// loaded agent's, plus those of agent files this build can't decode
+    /// (`AgentStore.reservedIdentities`).
+    struct IdentityClaims: Sendable {
+        var indexes: Set<UInt32>
+        var addresses: Set<String>
+    }
+
+    func identityClaims() -> IdentityClaims {
+        let reserved = AgentStore.reservedIdentities()
+        return IdentityClaims(
+            indexes: Set(agents.compactMap(\.agentIndex)).union(reserved.compactMap(\.index)),
+            addresses: Set(agents.compactMap { $0.agentAddress?.lowercased() })
+                .union(reserved.compactMap { $0.address?.lowercased() })
+        )
+    }
+
+    private static func currentDeviceScope() -> String? {
+        guard let scope = try? DeviceKey.currentDeviceId(), !scope.isEmpty else { return nil }
+        return scope
+    }
+
     /// The key path a freshly minted (or rotated) agent identity uses: the
     /// device-scoped v2 layout under this device's ID, at the first index
-    /// not already used by any agent in the list. Indices are never reused
-    /// because previously-derived addresses may still be referenced by
-    /// external clients holding osk-v1 tokens.
+    /// not already claimed. Indices are never reused because
+    /// previously-derived addresses may still be referenced by external
+    /// clients holding osk-v1 tokens.
     ///
     /// Device scoping is what keeps two devices sharing one master from
     /// minting the same address for their respective agent #N. Falls back to
     /// the legacy master-global layout only when this device has no device
     /// ID yet (identity setup normally attests before any agent is minted).
-    private func nextUnusedKeyPath() -> AgentKeyPath {
-        let used = Set(agents.compactMap(\.agentIndex))
+    nonisolated static func firstUnclaimedPath(indexes: Set<UInt32>, deviceScope: String?) -> AgentKeyPath {
         var index: UInt32 = 0
-        while used.contains(index) { index += 1 }
-        if let scope = try? DeviceKey.currentDeviceId(), !scope.isEmpty {
-            return .deviceScoped(index: index, deviceScope: scope)
-        }
+        while indexes.contains(index) { index += 1 }
+        if let deviceScope { return .deviceScoped(index: index, deviceScope: deviceScope) }
         return .legacy(index: index)
+    }
+
+    /// The first key path whose index and derived address no agent claims.
+    /// An index can be free while its address is not: a record minted by a
+    /// build that couldn't see every agent file may already hold it.
+    nonisolated static func deriveUnclaimedIdentity(
+        masterKey: Data,
+        claims: IdentityClaims,
+        deviceScope: String?
+    ) throws -> (path: AgentKeyPath, address: OsaurusID) {
+        var indexes = claims.indexes
+        while true {
+            let path = firstUnclaimedPath(indexes: indexes, deviceScope: deviceScope)
+            let address = try AgentKey.deriveAddress(masterKey: masterKey, path: path)
+            if !claims.addresses.contains(address.lowercased()) { return (path, address) }
+            indexes.insert(path.index)
+        }
     }
 
     /// Revoke every still-active osk-v1 access key whose audience matches

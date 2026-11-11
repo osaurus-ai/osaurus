@@ -299,6 +299,95 @@ struct MobileConnectRelayTests {
     }
 }
 
+/// Issue #3386: with a legacy phone pairing stored and "Remote Access for
+/// This iPhone" on, editing agents (the Agents pane, `config apply`) or
+/// adopting a migrated pairing at launch turned Remote Access on for every
+/// custom agent. Only an explicit action may turn it on.
+@Suite(.serialized)
+@MainActor
+struct MobilePairingRelayExposureTests {
+    private func pairedDevice() -> PairedMobileDevice {
+        PairedMobileDevice(deviceId: "iphone", name: "iPhone", keyId: UUID(), pairedAt: Date(), keyExpiresAt: nil)
+    }
+
+    private func reachableDefaults() -> UserDefaults {
+        let defaults = UserDefaults(suiteName: "MobilePairingRelayExposureTests.\(UUID().uuidString)")!
+        defaults.set(false, forKey: MobilePairingService.keepAwakeDefaultsKey)
+        defaults.set(true, forKey: MobilePairingService.reachAnywhereDefaultsKey)
+        return defaults
+    }
+
+    private func addRemoteAgent() -> Agent {
+        let agent = Agent(
+            name: "Relay Exposure Probe \(UUID().uuidString.prefix(6))",
+            agentAddress: "0x\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())00000000"
+        )
+        AgentManager.shared.add(agent)
+        return agent
+    }
+
+    private func cleanUp(_ agent: Agent) async {
+        if RelayTunnelManager.shared.isTunnelEnabled(for: agent.id) {
+            RelayTunnelManager.shared.setTunnelEnabled(false, for: agent.id)
+        }
+        _ = await AgentManager.shared.delete(id: agent.id)
+    }
+
+    /// Lets any `Task { @MainActor }` hop scheduled by an agents publish run.
+    private func drainMainActor() async {
+        for _ in 0 ..< 5 { await Task.yield() }
+        try? await Task.sleep(for: .milliseconds(50))
+    }
+
+    @Test func agentEditsNeverTurnOnRemoteAccess() async throws {
+        let defaults = reachableDefaults()
+        defaults.set(try JSONEncoder().encode(pairedDevice()), forKey: "mobileConnectPairedDevice")
+        let service = MobilePairingService(defaults: defaults)
+        #expect(service.pairedDevice != nil)
+
+        let agent = addRemoteAgent()
+        if var edited = AgentManager.shared.agent(for: agent.id) {
+            edited.description = "Edited while a phone is paired."
+            AgentManager.shared.update(edited)
+        }
+        await drainMainActor()
+
+        #expect(!RelayTunnelManager.shared.isTunnelEnabled(for: agent.id))
+        #expect(!RelayConfigurationStore.load().isEnabled(for: agent.id))
+        withExtendedLifetime(service) {}
+        await cleanUp(agent)
+    }
+
+    @Test func adoptingMultiPhonePairingDoesNotTurnOnRemoteAccess() async throws {
+        let agent = addRemoteAgent()
+        let defaults = reachableDefaults()
+        defaults.set(try JSONEncoder().encode([pairedDevice()]), forKey: "mobileConnectPairedDevices")
+
+        let service = MobilePairingService(defaults: defaults)
+        await drainMainActor()
+
+        #expect(service.pairedDevice?.deviceId == "iphone")
+        #expect(!RelayTunnelManager.shared.isTunnelEnabled(for: agent.id))
+        #expect(!RelayConfigurationStore.load().isEnabled(for: agent.id))
+        await cleanUp(agent)
+    }
+
+    @Test func explicitToggleStillControlsRemoteAccess() async throws {
+        let agent = addRemoteAgent()
+        let defaults = reachableDefaults()
+        defaults.set(try JSONEncoder().encode(pairedDevice()), forKey: "mobileConnectPairedDevice")
+        let service = MobilePairingService(defaults: defaults)
+
+        service.syncRelay()
+        #expect(RelayTunnelManager.shared.isTunnelEnabled(for: agent.id))
+
+        defaults.set(false, forKey: MobilePairingService.reachAnywhereDefaultsKey)
+        service.syncRelay()
+        #expect(!RelayTunnelManager.shared.isTunnelEnabled(for: agent.id))
+        await cleanUp(agent)
+    }
+}
+
 struct MobileConnectIdentityTests {
     private let master = Data(repeating: 0x42, count: 32)
 

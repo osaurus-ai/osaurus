@@ -164,7 +164,6 @@ final class MobilePairingService: ObservableObject {
     private var expiryTask: Task<Void, Never>?
     private var keepAwakeToken: NSObjectProtocol?
     private let defaults: UserDefaults
-    private var agentsCancellable: AnyCancellable?
     private var deviceExpiryTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
@@ -172,22 +171,16 @@ final class MobilePairingService: ObservableObject {
         if let data = defaults.data(forKey: Self.pairedDeviceDefaultsKey) {
             pairedDevice = try? JSONDecoder().decode(PairedMobileDevice.self, from: data)
         } else if let adopted = adoptMultiPhonePairing() {
+            // Adopting a migrated pairing never turns Remote Access on: that
+            // would publish every agent without the user asking.
             pairedDevice = adopted
             if let data = try? JSONEncoder().encode(adopted) {
                 defaults.set(data, forKey: Self.pairedDeviceDefaultsKey)
             }
-            // The relay was turned off while no phone seemed paired.
-            syncRelay()
         }
         refreshKeepAwake()
         // A key that lapsed while the app was closed ends the pairing now.
         scheduleDeviceExpiry()
-        // Agents created while a phone is paired get the relay too.
-        agentsCancellable = AgentManager.shared.$agents
-            .dropFirst()
-            .sink { [weak self] _ in
-                Task { @MainActor in self?.syncRelay() }
-            }
     }
 
     // MARK: Code lifecycle
@@ -617,9 +610,14 @@ extension MobilePairingService {
         Set((defaults.stringArray(forKey: Self.relayManagedAgentsKey) ?? []).compactMap { UUID(uuidString: $0) })
     }
 
-    /// Keeps the relay tunnel on for every remote agent while a phone is
-    /// paired and "Reach From Anywhere" is on; otherwise turns off exactly
-    /// the tunnels this service turned on.
+    /// Turns the relay tunnel on for every remote agent that exists now while
+    /// a phone is paired and "Remote Access for This iPhone" is on; otherwise
+    /// turns off exactly the tunnels this service turned on.
+    ///
+    /// Only explicit user actions may call this with the "on" outcome: a new
+    /// pairing (`setPairedDevice`) or the toggle in `OsaurusConnectView`.
+    /// Agent edits, `config apply` and launch must never reach it, or they
+    /// re-publish agents the user turned off.
     func syncRelay() {
         let relay = RelayTunnelManager.shared
         var managed = relayManagedAgentIds
