@@ -138,4 +138,29 @@ struct ShareArtifactToolTests {
         )
         #expect(EnvelopeAssertions.failureKind(envelope) == "invalid_args")
     }
+
+    /// #3387: empty inline content is invalid input, named as such.
+    @Test func execute_emptyContent_returnsInvalidArgsNamingEmptyContent() async throws {
+        let envelope = try await ShareArtifactTool().execute(
+            argumentsJSON: #"{"content":"","filename":"test.txt","description":"empty"}"#
+        )
+        #expect(EnvelopeAssertions.failureKind(envelope) == "invalid_args")
+        #expect(envelope.contains("`content` is empty"), "\(envelope)")
+    }
+
+    /// #3387: the chat post-processor must pass the tool's own failures through, not parse
+    /// them for markers and report a "tool-runtime bug".
+    @Test func markerText_passesFailuresThrough() async throws {
+        let failure = try await ShareArtifactTool().execute(argumentsJSON: #"{"content":"","filename":"test.txt"}"#)
+        #expect(SharedArtifact.shareArtifactMarkerText(fromToolResult: failure) == nil)
+
+        let success = try await ShareArtifactTool().execute(argumentsJSON: #"{"content":"hi","filename":"a.txt"}"#)
+        let text = try #require(SharedArtifact.shareArtifactMarkerText(fromToolResult: success))
+        #expect(text.contains(SharedArtifact.startMarker))
+        #expect(!text.hasPrefix("{"))
+
+        let legacy = "Artifact shared:\n\n" + SharedArtifact.startMarker + #"{"filename":"a.txt"}"# + "\n"
+            + SharedArtifact.endMarker
+        #expect(SharedArtifact.shareArtifactMarkerText(fromToolResult: legacy) == legacy)
+    }
 }

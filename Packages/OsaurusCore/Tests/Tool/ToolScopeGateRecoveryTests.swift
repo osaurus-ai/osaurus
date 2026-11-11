@@ -472,6 +472,87 @@ struct ToolScopeGateRecoveryTests {
         }
     }
 
+    // MARK: - Read-only working folder is not "no folder" (#3387)
+
+    /// A read-only agent with its folder attached: the schema exposes only the read tools.
+    private func withReadOnlyFolderAgent(
+        readOnly: Bool = true,
+        _ body: @MainActor @Sendable (_ agentId: UUID, _ root: URL) async throws -> Void
+    ) async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            var agent = Agent(name: "ReadOnlyScopeProbe-\(UUID().uuidString.prefix(6))")
+            agent.settings.workingFolderReadOnly = readOnly
+            AgentManager.shared.add(agent)
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            let root = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("ro-scope-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer {
+                try? FileManager.default.removeItem(at: root)
+                FolderToolManager.shared._unregisterAllForTesting()
+            }
+            try await body(agent.id, root)
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    @Test
+    func readOnlyFolderWrite_outsideScope_saysReadOnly_notNoFolder() async throws {
+        try await withReadOnlyFolderAgent { agentId, root in
+            let scope = ToolExecutionScope(exposed: ToolRegistry.shared.specs(forTools: ["file_read", "file_search"]))
+            for name in ["file_write", "shell_run", "file_copy"] {
+                let result = try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    try await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+                        try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                            try await ToolRegistry.shared.execute(
+                                name: name,
+                                argumentsJSON: #"{"path":"test.txt","content":"x","command":"touch test.txt"}"#
+                            )
+                        }
+                    }
+                }
+                let parsed = try envelope(result)
+                #expect(parsed?["ok"] as? Bool == false, "\(name)")
+                #expect(parsed?["kind"] as? String == "rejected", "\(name)")
+                let message = parsed?["message"] as? String ?? ""
+                #expect(message.contains("read only"), "\(name): \(message)")
+                #expect(!message.contains("Folder chip"), "\(name): \(message)")
+                #expect(!message.contains("share_artifact"), "\(name): \(message)")
+            }
+            #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("test.txt").path))
+        }
+    }
+
+    @Test
+    func readOnlyFolderWriteLoad_saysReadOnly_notNoFolder() async throws {
+        try await withReadOnlyFolderAgent { agentId, root in
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                try await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+                    try await CapabilitiesLoadTool().execute(argumentsJSON: #"{"ids":["tool/file_write"]}"#)
+                }
+            }
+            #expect(ToolEnvelope.isError(result), "\(result)")
+            #expect(result.contains("read only"), "\(result)")
+            #expect(!result.contains("Folder chip"), "\(result)")
+            #expect(!result.contains("callable NOW"), "\(result)")
+        }
+    }
+
+    @Test
+    func announcedRecovery_readOnlyFolder_doesNotClaimNoWorkspace() async throws {
+        let exposed: Set<String> = ["file_read", "file_search"]
+        try await withReadOnlyFolderAgent { agentId, _ in
+            let recovery = ToolRegistry.shared.announcedToolCallRecovery(
+                exposed: exposed, agentId: agentId, loaderPermitted: { _ in false })
+            #expect(recovery.workspaceBlocked.isEmpty, "\(recovery.workspaceBlocked)")
+        }
+        try await withReadOnlyFolderAgent(readOnly: false) { agentId, _ in
+            let recovery = ToolRegistry.shared.announcedToolCallRecovery(
+                exposed: exposed, agentId: agentId, loaderPermitted: { _ in false })
+            #expect(recovery.workspaceBlocked == ToolRegistry.coreWorkspaceToolNames.subtracting(exposed))
+        }
+    }
+
     /// `web_fetch_exa` is the Exa plugin's `exa_search_web_fetch_exa` with
     /// the plugin prefix dropped (Ornith, 2026-09-05). When that one tool is
     /// exposed to the request, the model is pointed at its real name; when
