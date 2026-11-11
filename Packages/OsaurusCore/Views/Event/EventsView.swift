@@ -294,7 +294,7 @@ struct EventsView: View {
 
     private func save(_ event: OsaurusEvent, isNew: Bool) {
         if isNew {
-            manager.create(event)
+            manager.create(event, telemetryOrigin: "user")
             showToast(L("Created \"\(event.name)\""))
             if event.sourceKind == .webhook { detailEventId = event.id }
         } else {

@@ -154,12 +154,8 @@ private struct AssignedTypography: ViewModifier {
             let weight = Int(recipe["weight"]?.designNumber ?? 400)
             let style = ThemeTextStyle(size: size, weight: weight, lineHeight: line)
             let family = recipe["family"]?.designString ?? "system"
-            let font: Font = family == "system" ? .system(size: size, weight: style.fontWeight)
-                : family == "systemMonospaced" ? .system(size: size, weight: style.fontWeight, design: .monospaced)
-                : .custom(family, size: size).weight(style.fontWeight)
-            let nativeFont: NSFont = family == "system" ? .systemFont(ofSize: size, weight: style.nsFontWeight)
-                : family == "systemMonospaced" ? .monospacedSystemFont(ofSize: size, weight: style.nsFontWeight)
-                : NSFont(name: family, size: size) ?? .systemFont(ofSize: size, weight: style.nsFontWeight)
+            let font = ThemeFontNameClassifier.font(family: family, size: size, weight: style.fontWeight)
+            let nativeFont = ThemeFontNameClassifier.nsFont(family: family, size: size, weight: style.nsFontWeight)
             content.font(font).tracking((recipe["tracking"]?.designNumber ?? 0) * theme.fontScale)
                 .lineSpacing(ThemeTextMetrics.extraLeading(for: nativeFont, lineHeight: line))
                 .frame(minHeight: line)
@@ -234,10 +230,7 @@ extension ThemeProtocol {
         let size = (recipe["size"]?.designNumber ?? 13) * fontScale
         let style = ThemeTextStyle(size: size, weight: Int(recipe["weight"]?.designNumber ?? 400), lineHeight: size)
         let family = recipe["family"]?.designString ?? "system"
-        if family == "system" { return .systemFont(ofSize: size, weight: style.nsFontWeight) }
-        if family == "systemMonospaced" { return .monospacedSystemFont(ofSize: size, weight: style.nsFontWeight) }
-        let base = NSFont(name: family, size: size) ?? .systemFont(ofSize: size, weight: style.nsFontWeight)
-        return NSFontManager.shared.convert(base, toHaveTrait: style.weight >= 600 ? .boldFontMask : .unboldFontMask)
+        return ThemeFontNameClassifier.nsFont(family: family, size: size, weight: style.nsFontWeight)
         #else
         return fallback
         #endif

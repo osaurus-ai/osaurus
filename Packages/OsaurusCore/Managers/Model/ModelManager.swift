@@ -738,6 +738,23 @@ public final class ModelManager: NSObject, ObservableObject {
 
     var installedModelCount: Int { installedModels().count }
 
+    /// Waits for the launch-time disk scan and folds it into the inventory,
+    /// so `installedModels()` lists every bundle on this Mac and not only the
+    /// curated entries seeded at init. For callers that run right after
+    /// launch and would otherwise read "scan not landed" as "not installed".
+    func awaitInstalledInventory() async {
+        await Self.awaitLocalModelsCacheReadyForDispatch()
+        let localModels = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                // Materialize the external registry too; discovery only reads
+                // its non-blocking snapshot, which is empty until built.
+                _ = ExternalModelLocator.models()
+                continuation.resume(returning: Self.discoverLocalModels())
+            }
+        }
+        mergeAvailable(with: localModels, refreshLocalInstallationMetadata: true)
+    }
+
     /// `!installedModels().isEmpty`, stopping at the first installed entry
     /// instead of probing every candidate.
     var hasInstalledModels: Bool { deduplicatedModels().contains(where: Self.isInstalledInventoryModel) }

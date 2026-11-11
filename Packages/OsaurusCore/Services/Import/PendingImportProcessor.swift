@@ -97,6 +97,9 @@ public final class PendingImportProcessor {
             return ([error.localizedDescription], [])
         }
         await SkillManager.shared.refresh()
+        if operations.contains(where: { $0.kind == .agent }) {
+            await ModelManager.shared.awaitInstalledInventory()
+        }
         let receipts = ImportQueue.loadReceipts()
         var issues: [String] = []
         var warnings: [String] = []
@@ -140,6 +143,11 @@ public final class PendingImportProcessor {
         let installs = request.operations.filter { $0.action != .remove }.sorted { $0.kind < $1.kind }
         let removals = request.operations.filter { $0.action == .remove }
             .sorted { Self.removalOrder($0.kind) < Self.removalOrder($1.kind) }
+        // Launch applies the queue before the models folder scan lands; an
+        // agent's model must resolve against what is on disk, not the seeds.
+        if installs.contains(where: { $0.kind == .agent }) {
+            await ModelManager.shared.awaitInstalledInventory()
+        }
 
         if !installs.isEmpty {
             do {

@@ -461,8 +461,8 @@ struct WorkflowSetupWizardView: View {
             installed.bindings = working.bindings
             installed.agentStepsAllowed = working.agentStepsAllowed
             installed.needsSetup = false
-            try store.save(installed)
-            return installed
+            try store.save(installed, reviewed: true)
+            return store.workflow(id: id) ?? installed
         case .update(let id):
             guard let current = store.workflow(id: id) else { return nil }
             let name = working.name.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -172,6 +172,11 @@ final class ConfigureAIState: ObservableObject {
     /// the first `message_sent`.
     @Published var selectedBrainSource: BrainSource? = nil
 
+    /// Where this step is shown, for `brain_source_selected`: `onboarding`
+    /// (the onboarding window) or `chat_sheet` (Choose a Brain over the
+    /// first-run chat).
+    var telemetrySurface = "onboarding"
+
     /// The local model id to record as the active agent's default when the user
     /// finishes onboarding on the Local path. `nil` for the bring-your-own-key
     /// source (or none committed), so `finishOnboarding` only pins the model the
@@ -361,7 +366,7 @@ final class ConfigureAIState: ObservableObject {
         selectedModel = model
         diskSpaceWarning = nil
         selectedBrainSource = .local
-        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false)
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false, surface: telemetrySurface)
     }
 
     /// Parameter-count floor that marks the large-RAM upgrade lane (Gemma 12B,
@@ -702,7 +707,7 @@ final class ConfigureAIState: ObservableObject {
     /// background by `OnboardingView` and finalized at finish.
     func chooseOsaurusAndContinue(onComplete: () -> Void) {
         selectedBrainSource = .osaurus
-        OnboardingTelemetry.brainSourceSelected(.osaurus)
+        OnboardingTelemetry.brainSourceSelected(.osaurus, surface: telemetrySurface)
         onComplete()
     }
 
@@ -721,7 +726,7 @@ final class ConfigureAIState: ObservableObject {
         // (no payment, no network).
         selectedBrainSource = .local
         let needsDownload = selectedModel?.isDownloaded != true
-        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: needsDownload)
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: needsDownload, surface: telemetrySurface)
         if needsDownload {
             startLocalDownload()
             hasStartedLocalDownload = true
@@ -807,7 +812,7 @@ final class ConfigureAIState: ObservableObject {
 
     func chooseClaudeCodeAndContinue(onComplete: () -> Void) {
         selectedBrainSource = .claudeCode
-        OnboardingTelemetry.brainSourceSelected(.claudeCode)
+        OnboardingTelemetry.brainSourceSelected(.claudeCode, surface: telemetrySurface)
         onComplete()
     }
 
@@ -987,7 +992,7 @@ final class ConfigureAIState: ObservableObject {
         // provider type (closed enum) is the only identifying bit sent.
         if let preset = currentAPIProvider {
             selectedBrainSource = .providerKey(preset)
-            OnboardingTelemetry.brainSourceSelected(.providerKey(preset))
+            OnboardingTelemetry.brainSourceSelected(.providerKey(preset), surface: telemetrySurface)
         }
 
         // OpenAI Codex and xAI persist OAuth tokens via a service-provided
@@ -1366,7 +1371,7 @@ private struct OnboardingPathCard: View {
                             .font(OnboardingTypography.cardTitle)
                             .foregroundColor(OnboardingPalette.labelPrimary)
                         if let badge {
-                            OnboardingPickedBadge(text: badge, tint: isRecommended ? OnboardingPalette.dinoGreen : nil)
+                            OnboardingPickedBadge(text: badge, isBrand: isRecommended)
                         }
                     }
                     Text(caption, bundle: .module)
@@ -1382,7 +1387,7 @@ private struct OnboardingPathCard: View {
                     if let status {
                         Text(status)
                             .font(OnboardingTypography.badge)
-                            .foregroundColor(OnboardingPalette.dinoGreen)
+                            .foregroundColor(OnboardingPalette.dinoGreenText)
                             .contentTransition(.numericText())
                             .animation(theme.motion.standard, value: status)
                     }
@@ -2296,7 +2301,7 @@ struct ProviderConnectDialog: View {
 /// Centered "Choose your model" dialog, hosted at the OnboardingView window
 /// root over the scrim. Forgiving draft-then-confirm so brand-new users can
 /// browse without committing: tapping a row only highlights it
-/// (`state.draftModel`); "Use this model" commits, while Cancel / X / Esc /
+/// (`state.draftModel`); "Select this model" commits, while Cancel / X / Esc /
 /// scrim-tap dismiss without touching the active selection. Copy and rows
 /// are written for first-timers — no `LLM`/`VLM` jargon, one
 /// hardware-chosen build per model family, a "Picked for your Mac" pill on
@@ -2317,7 +2322,7 @@ struct ConfigureModelChooserModal: View {
     var body: some View {
         Group {
 
-        OnboardingDialog(width: 520, onClose: { state.cancelModelChooser() }) {
+        OnboardingDialog(width: 520, closeInsets: closeInsets, onClose: { state.cancelModelChooser() }) {
             VStack(spacing: 0) {
                 header
                 modelList
@@ -2327,6 +2332,27 @@ struct ConfigureModelChooserModal: View {
     
         }.environment(\.theme, theme)
 }
+
+    /// The dialog's one edge inset: sides, top (to the title's cap height)
+    /// and bottom (to the buttons).
+    private var inset: CGFloat { theme.space.s16 + theme.space.s4 }
+
+    /// Space between the title's line box and its cap height, so the header
+    /// can place the visible glyphs `inset` from the top edge.
+    private var titleCapInset: CGFloat {
+        let font = theme.nsFont(.heading)
+        let box = max(0, theme.lineHeight(.heading) - ThemeTextMetrics.naturalLineHeight(for: font)) / 2
+        return box + font.ascender - font.capHeight
+    }
+
+    private var titleTop: CGFloat { max(0, inset - titleCapInset) }
+
+    /// The close button centred on the title's first line, `inset` from the side.
+    private var closeInsets: EdgeInsets {
+        let line = max(theme.lineHeight(.heading), ThemeTextMetrics.naturalLineHeight(for: theme.nsFont(.heading)))
+        let top = max(0, titleTop + (line - OnboardingLayout.glassButtonDiameter) / 2)
+        return EdgeInsets(top: top, leading: 0, bottom: 0, trailing: inset)
+    }
 
     // MARK: Header
 
@@ -2344,9 +2370,9 @@ struct ConfigureModelChooserModal: View {
             .fixedSize(horizontal: false, vertical: true)
         }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.header.verticalGap")
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.header.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.header.paddingX")
-        .padding(.top, 24)
-        .padding(.trailing, 44)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.header.paddingX", inheriting: inset)).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.header.paddingX")
+        .padding(.top, titleTop)
+        .padding(.trailing, OnboardingLayout.glassButtonDiameter + theme.space.s12)
         .padding(.bottom, 16)
     }
 
@@ -2359,9 +2385,10 @@ struct ConfigureModelChooserModal: View {
                     modelRow(pair.model, compatibility: pair.compatibility)
                 }
             }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.verticalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX", inheriting: inset)).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX")
             .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 4, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY")
         }
+        .sidebarScrollEdgeFade(length: theme.space.s24)
         .frame(maxHeight: 360)
     }
 
@@ -2380,7 +2407,7 @@ struct ConfigureModelChooserModal: View {
                         .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.optionTitle)
                         .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                     if model.id == recommendedRowId {
-                        OnboardingPickedBadge(text: "Picked for your Mac", tint: OnboardingPalette.dinoGreen)
+                        OnboardingPickedBadge(text: "Picked for your Mac", isBrand: true)
                     } else if model.id == standouts.smartestId {
                         OnboardingPickedBadge(text: "Smartest that fits")
                     } else if model.id == standouts.lightestId {
@@ -2463,7 +2490,7 @@ struct ConfigureModelChooserModal: View {
 
     private func fitColor(_ compatibility: ModelCompatibility) -> Color {
         switch compatibility {
-        case .compatible: return OnboardingPalette.dinoGreen
+        case .compatible: return OnboardingPalette.dinoGreenText
         case .tight: return OnboardingPalette.fitTight
         case .tooLarge, .unknown: return OnboardingPalette.labelSecondary
         }
@@ -2492,7 +2519,7 @@ struct ConfigureModelChooserModal: View {
                     action: { state.cancelModelChooser() }
                 )
                 OnboardingPillButton(
-                    title: "Use this model",
+                    title: "Select this model",
                     style: .primary,
                     size: .compact,
                     isEnabled: state.draftModel != nil,
@@ -2500,9 +2527,9 @@ struct ConfigureModelChooserModal: View {
                 )
             }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.horizontalGap")
         }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.verticalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.paddingX")
-        .padding(.top, 14)
-        .padding(.bottom, 20)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.paddingX", inheriting: inset)).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.paddingX")
+        .padding(.top, theme.space.s12)
+        .padding(.bottom, inset)
     }
 
     /// Footer hint carrying the Mac's actual specs, so every row's download /
