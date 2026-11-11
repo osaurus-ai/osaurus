@@ -143,6 +143,13 @@ public final class RemoteProviderManager: ObservableObject {
     /// 128k unknown-metadata fallback (issue #2301's workaround).
     private var customProviderContextLengths: [UUID: [String: Int]] = [:]
 
+    /// Reasoning-effort ladders advertised by custom OpenAI-compatible
+    /// providers' `/models` endpoints (OpenRouter's per-model
+    /// `reasoning.supported_efforts`), keyed by provider id then unprefixed
+    /// model id. Captured alongside the context windows so the picker offers
+    /// exactly the levels the route accepts instead of none (#3270).
+    private var customProviderReasoningCapabilities: [UUID: [String: ModelReasoningCapabilities]] = [:]
+
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
         Self.refreshProviderNameCache(configuration.providers)
@@ -468,6 +475,7 @@ public final class RemoteProviderManager: ObservableObject {
                     }
                     discoveredModels = discovery.models
                     customProviderContextLengths[provider.id] = discovery.contextLengths
+                    customProviderReasoningCapabilities[provider.id] = discovery.reasoningCapabilities
                 }
             } catch {
                 if provider.providerType == .azureOpenAI && !provider.manualModelIds.isEmpty {
@@ -572,6 +580,7 @@ public final class RemoteProviderManager: ObservableObject {
         }
         mediaModelCatalogs.removeValue(forKey: providerId)
         customProviderContextLengths.removeValue(forKey: providerId)
+        customProviderReasoningCapabilities.removeValue(forKey: providerId)
         AnthropicModelCatalog.remove(providerId: providerId)
 
         if let provider = configuration.provider(id: providerId) {
@@ -1142,6 +1151,7 @@ public final class RemoteProviderManager: ObservableObject {
         let discovered: [String]
         var mediaCatalogChanged = false
         var contextLengthsChanged = false
+        var reasoningCapabilitiesChanged = false
         do {
             if let override = testFetchModelsOverride {
                 discovered = try await override(provider)
@@ -1171,6 +1181,9 @@ public final class RemoteProviderManager: ObservableObject {
                 contextLengthsChanged =
                     customProviderContextLengths[provider.id] != discovery.contextLengths
                 customProviderContextLengths[provider.id] = discovery.contextLengths
+                reasoningCapabilitiesChanged =
+                    customProviderReasoningCapabilities[provider.id] != discovery.reasoningCapabilities
+                customProviderReasoningCapabilities[provider.id] = discovery.reasoningCapabilities
             }
         } catch {
             return false
@@ -1178,8 +1191,9 @@ public final class RemoteProviderManager: ObservableObject {
 
         let merged = provider.mergedModelIds(discovered: discovered)
         lastModelRefetchAt[providerId] = Date()
-        guard mediaCatalogChanged || contextLengthsChanged || merged != state.discoveredModels
-        else { return true }
+        let metadataChanged =
+            mediaCatalogChanged || contextLengthsChanged || reasoningCapabilitiesChanged
+        guard metadataChanged || merged != state.discoveredModels else { return true }
 
         state.discoveredModels = merged
         providerStates[providerId] = state
@@ -1657,6 +1671,17 @@ public final class RemoteProviderManager: ObservableObject {
         customProviderContextLengths[providerId]?[unprefixedModelId]
     }
 
+    /// Reasoning-effort levels a custom OpenAI-compatible provider's `/models`
+    /// endpoint advertised for an unprefixed model id (OpenRouter's
+    /// `reasoning.supported_efforts`), or nil when the server listed none
+    /// (or the provider hasn't connected yet).
+    func customProviderReasoningCapabilities(
+        providerId: UUID,
+        unprefixedModelId: String
+    ) -> ModelReasoningCapabilities? {
+        customProviderReasoningCapabilities[providerId]?[unprefixedModelId]
+    }
+
     /// Unprefixed model ids in `catalog` that advertise image/vision input.
     /// Pushed to the router's `RemoteProviderService` so the wire layer can
     /// keep user media multimodal only for models that accept it.
@@ -2062,6 +2087,7 @@ public final class RemoteProviderManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: OsaurusRouter.enabledDefaultsKey)
         osaurusRouterModelCatalog = [:]
         customProviderContextLengths = [:]
+        customProviderReasoningCapabilities = [:]
         AnthropicModelCatalog.removeAll()
         testFetchModelsOverride = nil
         testConnectionTransportOverride = nil
