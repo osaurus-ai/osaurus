@@ -164,23 +164,35 @@ final class MobilePairingService: ObservableObject {
     private var expiryTask: Task<Void, Never>?
     private var keepAwakeToken: NSObjectProtocol?
     private let defaults: UserDefaults
+    private var agentsCancellable: AnyCancellable?
+    /// Custom agents that had an address at the last `$agents` publish, so
+    /// only agents that just got one count as new.
+    private var addressedAgentIds: Set<UUID>
     private var deviceExpiryTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        addressedAgentIds = Self.addressedAgentIds(in: AgentManager.shared.agents)
         if let data = defaults.data(forKey: Self.pairedDeviceDefaultsKey) {
             pairedDevice = try? JSONDecoder().decode(PairedMobileDevice.self, from: data)
         } else if let adopted = adoptMultiPhonePairing() {
-            // Adopting a migrated pairing never turns Remote Access on: that
-            // would publish every agent without the user asking.
             pairedDevice = adopted
             if let data = try? JSONEncoder().encode(adopted) {
                 defaults.set(data, forKey: Self.pairedDeviceDefaultsKey)
             }
+            // The relay was turned off while no phone seemed paired.
+            syncRelay()
         }
         refreshKeepAwake()
         // A key that lapsed while the app was closed ends the pairing now.
         scheduleDeviceExpiry()
+        // Agents created while a phone is paired get the relay too. Their
+        // address is assigned after creation, so this watches every publish.
+        agentsCancellable = AgentManager.shared.$agents
+            .dropFirst()
+            .sink { [weak self] agents in
+                Task { @MainActor in self?.relayNewlyAddressedAgents(agents) }
+            }
     }
 
     // MARK: Code lifecycle
@@ -610,14 +622,14 @@ extension MobilePairingService {
         Set((defaults.stringArray(forKey: Self.relayManagedAgentsKey) ?? []).compactMap { UUID(uuidString: $0) })
     }
 
-    /// Turns the relay tunnel on for every remote agent that exists now while
-    /// a phone is paired and "Remote Access for This iPhone" is on; otherwise
-    /// turns off exactly the tunnels this service turned on.
+    /// Turns the relay tunnel on for every remote agent not kept off on
+    /// purpose while a phone is paired and "Remote Access for This iPhone" is
+    /// on; otherwise turns off exactly the tunnels this service turned on.
     ///
-    /// Only explicit user actions may call this with the "on" outcome: a new
-    /// pairing (`setPairedDevice`) or the toggle in `OsaurusConnectView`.
-    /// Agent edits, `config apply` and launch must never reach it, or they
-    /// re-publish agents the user turned off.
+    /// Runs only on one-off events: a pairing change, the toggle in
+    /// `OsaurusConnectView`, or adopting a migrated pairing. Agent edits go
+    /// through `relayNewlyAddressedAgents`, which never touches an agent
+    /// that already had an address, so a tunnel someone turned off stays off.
     func syncRelay() {
         let relay = RelayTunnelManager.shared
         var managed = relayManagedAgentIds
@@ -625,7 +637,7 @@ extension MobilePairingService {
 
         if shouldReach {
             let remoteIds = Set(Self.remoteAgents().compactMap { UUID(uuidString: $0.id) })
-            for agentId in remoteIds where !relay.isTunnelEnabled(for: agentId) {
+            for agentId in remoteIds where !relay.isTunnelEnabled(for: agentId) && !relay.isTunnelKeptOff(for: agentId) {
                 relay.setTunnelEnabled(true, for: agentId)
                 managed.insert(agentId)
             }
@@ -638,5 +650,30 @@ extension MobilePairingService {
             managed.removeAll()
         }
         defaults.set(managed.map(\.uuidString).sorted(), forKey: Self.relayManagedAgentsKey)
+    }
+
+    /// Turns the relay on for agents that just got an address while a phone
+    /// is paired and "Remote Access for This iPhone" is on, unless they were
+    /// kept off on purpose (`RelayTunnelManager.keepTunnelOff`).
+    func relayNewlyAddressedAgents(_ agents: [Agent]) {
+        let addressed = Self.addressedAgentIds(in: agents)
+        let fresh = addressed.subtracting(addressedAgentIds)
+        addressedAgentIds = addressed
+        guard !fresh.isEmpty, pairedDevice != nil, Self.isReachAnywhereEnabled(in: defaults) else { return }
+        let relay = RelayTunnelManager.shared
+        var managed = relayManagedAgentIds
+        for agentId in fresh.sorted(by: { $0.uuidString < $1.uuidString })
+        where !relay.isTunnelEnabled(for: agentId) && !relay.isTunnelKeptOff(for: agentId) {
+            relay.setTunnelEnabled(true, for: agentId)
+            managed.insert(agentId)
+        }
+        defaults.set(managed.map(\.uuidString).sorted(), forKey: Self.relayManagedAgentsKey)
+    }
+
+    private static func addressedAgentIds(in agents: [Agent]) -> Set<UUID> {
+        Set(agents.compactMap { agent in
+            guard !agent.isBuiltIn, let address = agent.agentAddress, !address.isEmpty else { return nil }
+            return agent.id
+        })
     }
 }

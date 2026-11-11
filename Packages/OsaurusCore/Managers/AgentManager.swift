@@ -1017,8 +1017,8 @@ public final class AgentManager: ObservableObject {
     /// The record changes only once a new address is derived (non-interactive
     /// master-key read; a no-op without one). Keys for the old address are
     /// NOT revoked: that audience still belongs to the agent that keeps it.
-    /// Remote Access is turned off for the re-addressed agent so its new
-    /// public address is never published without the user asking.
+    /// The re-addressed agent keeps its Remote Access setting, now served
+    /// under its new address.
     func reassignDuplicateAddressesInBackground() {
         let duplicateIds = IdentityHealthCheck.duplicateAddressAgents(agents).map(\.id)
         guard !duplicateIds.isEmpty else { return }
@@ -1059,15 +1059,12 @@ public final class AgentManager: ObservableObject {
             current.agentDeviceScope = entry.path.deviceScope
             current.agentAddress = entry.address
             update(current)
-            // After the address change: turning the tunnel off removes the
-            // agent's current address from the relay, and the old one still
-            // serves the agent that kept it.
-            if RelayTunnelManager.shared.isTunnelEnabled(for: entry.id) {
-                RelayTunnelManager.shared.setTunnelEnabled(false, for: entry.id)
-            }
+            // After the address change, so the old address resolves to the
+            // agent that kept it.
+            RelayTunnelManager.shared.handleAddressReassigned(agentId: entry.id, sharedAddress: previous)
             MobileConnectLog.write(
                 "identity: \(entry.id.uuidString) shared \(previous.lowercased()) with an older agent; "
-                    + "gave it \(entry.address.lowercased()) and turned its remote access off"
+                    + "gave it \(entry.address.lowercased())"
             )
         }
     }

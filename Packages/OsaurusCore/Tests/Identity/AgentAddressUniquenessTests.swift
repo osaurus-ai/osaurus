@@ -108,7 +108,8 @@ struct AgentAddressRepairTests {
         let repaired = AgentManager.shared.agent(for: duplicate.id)
         #expect(repaired?.agentAddress == fresh)
         #expect(repaired?.agentKeyPath == path)
-        #expect(!RelayTunnelManager.shared.isTunnelEnabled(for: duplicate.id))
+        #expect(RelayTunnelManager.shared.isTunnelEnabled(for: duplicate.id))
+        #expect(!RelayTunnelManager.shared.isTunnelEnabled(for: keeper.id))
         #expect(
             IdentityHealthCheck.duplicateAddressAgents(AgentManager.shared.agents).allSatisfy {
                 $0.id != duplicate.id
@@ -122,6 +123,7 @@ struct AgentAddressRepairTests {
         ])
         #expect(AgentManager.shared.agent(for: duplicate.id)?.agentAddress == fresh)
 
+        RelayTunnelManager.shared.setTunnelEnabled(false, for: duplicate.id)
         _ = await AgentManager.shared.delete(id: keeper.id)
         _ = await AgentManager.shared.delete(id: duplicate.id)
     }

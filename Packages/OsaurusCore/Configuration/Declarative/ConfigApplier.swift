@@ -1177,8 +1177,14 @@ enum ConfigApplier {
     @MainActor
     private static func applyRelay(_ desired: Bool?, to agentId: UUID) {
         guard let desired else { return }
-        guard RelayConfigurationStore.load().isEnabled(for: agentId) != desired else { return }
-        RelayTunnelManager.shared.setTunnelEnabled(desired, for: agentId)
+        guard desired else {
+            // Recorded even when already off: a new agent gets its address
+            // later, and a paired phone must not turn it on then.
+            RelayTunnelManager.shared.keepTunnelOff(for: agentId)
+            return
+        }
+        guard !RelayConfigurationStore.load().isEnabled(for: agentId) else { return }
+        RelayTunnelManager.shared.setTunnelEnabled(true, for: agentId)
     }
 
     // MARK: - Tools
