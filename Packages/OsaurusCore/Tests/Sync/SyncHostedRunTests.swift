@@ -331,12 +331,13 @@ struct SyncHostedRunTests {
             let store = SyncConversationStore.shared
             let session = hostedSession(host: core.deviceKey(), agentId: UUID())
             try store.saveSession(session)
-            let stale = hostedSession(
+            // The requester's clock says two hours ago; the message itself is new.
+            let clockBehind = hostedSession(
                 host: core.deviceKey(),
                 agentId: UUID(),
                 requestedMs: SyncHostedRunContract.nowMs() - 2 * 3_600_000
             )
-            try store.saveSession(stale)
+            try store.saveSession(clockBehind)
             let elsewhere = hostedSession(host: "another-device", agentId: UUID())
             try store.saveSession(elsewhere)
 
@@ -351,8 +352,12 @@ struct SyncHostedRunTests {
             #expect(hostRun(session, core: core)?.turn == questionId)
             #expect(runner._ledgerForTesting().runs[questionId]?.state == .done)
 
-            try await waitUntil("stale request closed") { hostRun(stale, core: core)?.state == .done }
-            #expect(store.loadSession(id: stale.id)?.turns.count == 1, "a stale request gets no reply")
+            try await waitUntil("clock-behind request answered") {
+                (store.loadSession(id: clockBehind.id)?.turns.count ?? 0) == 2
+            }
+            #expect(
+                store.loadSession(id: clockBehind.id)?.turns.last?.terminalStopReason
+                    == SyncHostedRunContract.declinedStopReason)
             #expect(hostRun(elsewhere, core: core) == nil, "another device's chat")
 
             // The ledger keeps a second look from answering again.

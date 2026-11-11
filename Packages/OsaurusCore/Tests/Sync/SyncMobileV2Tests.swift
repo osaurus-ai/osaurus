@@ -189,6 +189,32 @@ struct SyncMobileV2Tests {
         }
     }
 
+    @Test func onlyTheUsersCurrentDevicesMayAskForARun() {
+        let devices = [device("p1", "iPhone"), device("old", "Old", revoked: true)]
+        for ownChat in [false, true] {
+            #expect(SyncHostRunner.mayRequest("p1", me: "mac", devices: devices, ownChat: ownChat))
+            #expect(SyncHostRunner.mayRequest("P1", me: "mac", devices: devices, ownChat: ownChat))
+            #expect(!SyncHostRunner.mayRequest("old", me: "mac", devices: devices, ownChat: ownChat))
+            #expect(!SyncHostRunner.mayRequest("stranger", me: "mac", devices: devices, ownChat: ownChat))
+            #expect(!SyncHostRunner.mayRequest(nil, me: "mac", devices: devices, ownChat: ownChat))
+        }
+        // A chat this Mac hosts may be continued here; its own chats run locally.
+        #expect(SyncHostRunner.mayRequest("mac", me: "mac", devices: devices, ownChat: false))
+        #expect(!SyncHostRunner.mayRequest("mac", me: "mac", devices: devices, ownChat: true))
+    }
+
+    @Test func aRequestIsLateByTheLaterOfItsClockAndItsHLC() {
+        let now = Date()
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        let hour: Int64 = 3_600_000
+        func hlc(_ ms: Int64) -> UInt64 { UInt64(ms) << 16 }
+        #expect(SyncHostRunner.isStale(requestedMs: nowMs - 2 * hour, messageHlc: hlc(nowMs - 2 * hour), now: now))
+        #expect(SyncHostRunner.isStale(requestedMs: nowMs - 2 * hour, messageHlc: nil, now: now))
+        // A requester whose clock runs behind still sent it just now.
+        #expect(!SyncHostRunner.isStale(requestedMs: nowMs - 2 * hour, messageHlc: hlc(nowMs - 60_000), now: now))
+        #expect(!SyncHostRunner.isStale(requestedMs: nowMs - 60_000, messageHlc: nil, now: now))
+    }
+
     @Test func aModelThisMacDoesNotHaveIsDeclined() {
         let marker = HostRunRequest(device: "mac", requestedMs: 1, model: "missing/model")
         let result = SyncHostRunner.choices(
@@ -300,6 +326,30 @@ struct SyncMobileV2Tests {
         answering.phase = .answering
         #expect(!SyncRunProgressPublisher.shouldWrite(answering, after: base, writtenMs: 0, nowMs: 200))
         #expect(SyncRunProgressPublisher.shouldWrite(answering, after: base, writtenMs: 0, nowMs: 500))
+
+        // Through a relay only, both intervals stretch.
+        #expect(!SyncRunProgressPublisher.shouldWrite(answering, after: base, writtenMs: 0, nowMs: 500, relayed: true))
+        #expect(SyncRunProgressPublisher.shouldWrite(answering, after: base, writtenMs: 0, nowMs: 2_000, relayed: true))
+        #expect(!SyncRunProgressPublisher.shouldWrite(counted, after: base, writtenMs: 0, nowMs: 2_000, relayed: true))
+        #expect(SyncRunProgressPublisher.shouldWrite(counted, after: base, writtenMs: 0, nowMs: 8_000, relayed: true))
+    }
+
+    @Test func progressSlowsDownOnlyWhenEveryConnectedDeviceIsRelayed() {
+        func peer(_ id: String, connected: Bool, relayed: Bool) -> PeerConnection {
+            PeerConnection(
+                device: id, name: id, connected: connected, established: connected, relayed: relayed,
+                rttMs: nil, syncing: false, storageRole: false)
+        }
+        #expect(!SyncRunProgressPublisher.onlyRelayed([]))
+        #expect(SyncRunProgressPublisher.onlyRelayed([peer("a", connected: true, relayed: true)]))
+        #expect(
+            !SyncRunProgressPublisher.onlyRelayed([
+                peer("a", connected: true, relayed: true), peer("b", connected: true, relayed: false),
+            ]))
+        #expect(
+            SyncRunProgressPublisher.onlyRelayed([
+                peer("a", connected: true, relayed: true), peer("b", connected: false, relayed: false),
+            ]))
     }
 
     @Test func mediumValuesBecomeBlobsBeforeAnyFieldIsDropped() throws {

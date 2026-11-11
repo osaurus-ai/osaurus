@@ -93,7 +93,7 @@ final class SyncManageFeed {
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
             .store(in: &cancellables)
-        SyncPhoneDevices.shared.$hasPhone
+        SyncPhoneDevices.shared.$hasFeedReader
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
@@ -247,7 +247,7 @@ final class SyncManageFeed {
 
     func publishNow() {
         guard let core = SyncService.shared.core else { return }
-        let hasPhone = SyncPhoneDevices.shared.hasPhone
+        let hasReader = SyncPhoneDevices.shared.hasFeedReader
         let agents = AgentManager.shared.agents
         let state = Self.state(
             device: core.deviceKey(),
@@ -262,7 +262,7 @@ final class SyncManageFeed {
         Task.detached(priority: .utility) {
             do {
                 try SyncConversationStore.shared.performWrite { core in
-                    try Self.publish(state, core: core, createIfMissing: hasPhone)
+                    try Self.publish(state, core: core, createIfMissing: hasReader)
                 }
             } catch SyncConversationStoreError.notOpen {
             } catch {

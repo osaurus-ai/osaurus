@@ -448,14 +448,20 @@ public enum SettingsSearchIndex {
             tab: .devices,
             section: "Sync",
             title: "Status",
-            keywords: ["sync status", "connected devices", "waiting to send", "pending messages", "earlier chats", "import progress"]
+            keywords: [
+                "sync status", "connected devices", "waiting to send", "pending messages", "earlier chats", "import progress",
+                "older messages", "history download", "relay", "connected directly", "your devices aren't connecting",
+            ]
         ),
         .init(
             id: "settings.sync.devices",
             tab: .devices,
             section: "Devices",
             title: "Devices",
-            keywords: ["my devices", "device list", "remove device", "revoke device", "lost device", "stolen device"]
+            keywords: [
+                "my devices", "device list", "remove device", "revoke device", "lost device", "stolen device",
+                "remove and change phrase", "remove only",
+            ]
         ),
         .init(
             id: "settings.sync.addDevice",

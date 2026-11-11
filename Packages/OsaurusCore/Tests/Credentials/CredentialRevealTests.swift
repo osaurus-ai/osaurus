@@ -38,6 +38,25 @@ struct CredentialRevealTests {
         #expect(unavailable.prompts == 0)
     }
 
+    @Test("an account action asks first, and passes only on a Mac with no password")
+    func confirmOwner() async {
+        CredentialReveal._resetForTesting()
+        defer { CredentialReveal._resetForTesting() }
+        let refused = StubContext(allows: false)
+        CredentialReveal.makeContext = { refused }
+        #expect(await CredentialReveal.confirmOwner(reason: "sign out") == false)
+        #expect(refused.prompts == 1)
+
+        let noPassword = StubContext(allows: false, canEvaluate: false, unavailable: .passcodeNotSet)
+        CredentialReveal.makeContext = { noPassword }
+        #expect(await CredentialReveal.confirmOwner(reason: "sign out"))
+        #expect(noPassword.prompts == 0)
+
+        let lockedOut = StubContext(allows: false, canEvaluate: false, unavailable: .biometryLockout)
+        CredentialReveal.makeContext = { lockedOut }
+        #expect(await CredentialReveal.confirmOwner(reason: "sign out") == false)
+    }
+
     @Test("copy puts the value on the pasteboard")
     func copyWritesValue() {
         let pasteboard = NSPasteboard(name: .init("osaurus.test.\(UUID().uuidString)"))
@@ -50,15 +69,22 @@ struct CredentialRevealTests {
 private final class StubContext: LAContext {
     let allows: Bool
     let canEvaluate: Bool
+    let unavailable: LAError.Code?
     private(set) var prompts = 0
 
-    init(allows: Bool, canEvaluate: Bool = true) {
+    init(allows: Bool, canEvaluate: Bool = true, unavailable: LAError.Code? = nil) {
         self.allows = allows
         self.canEvaluate = canEvaluate
+        self.unavailable = unavailable
         super.init()
     }
 
-    override func canEvaluatePolicy(_ policy: LAPolicy, error: NSErrorPointer) -> Bool { canEvaluate }
+    override func canEvaluatePolicy(_ policy: LAPolicy, error: NSErrorPointer) -> Bool {
+        if !canEvaluate, let unavailable {
+            error?.pointee = NSError(domain: LAErrorDomain, code: unavailable.rawValue)
+        }
+        return canEvaluate
+    }
 
     override func evaluatePolicy(
         _ policy: LAPolicy, localizedReason: String, reply: @escaping (Bool, Error?) -> Void

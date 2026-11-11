@@ -344,12 +344,15 @@ enum SyncDeviceFeedContract {
     }
 
     /// This device's conversation of `kind`, if it made one.
+    /// Synced only: signing out and keeping chats leaves this device's old
+    /// feeds behind as device-local copies that nothing else reads.
     static func conversation(kind: String, device: String, core: SyncCore) throws -> Conversation? {
         let filter = ConversationFilter(
             tags: [
                 Tag(key: SyncConversationMapper.TagKey.kind, value: kind),
                 Tag(key: SyncConversationMapper.TagKey.device, value: device),
             ],
+            replication: .synced,
             limit: 1
         )
         return try core.conversationsFiltered(filter: filter).first

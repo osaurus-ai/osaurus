@@ -264,6 +264,156 @@ struct SyncLoopbackTests {
     }
 
     @Test
+    func aMacThatSignsOutKeepingChatsPairsAgainWithFreshFeedsAndRevokesTheIPhone() async throws {
+        try await ChatHistoryTestStorage.run {
+            let before = try SyncService.shared.open()
+            let deviceKey = before.deviceKey()
+            let feed = Data(#"{"v":1,"items":[],"recent":[]}"#.utf8)
+            _ = try SyncAttentionFeed.publish(feed, core: before, createIfMissing: true)
+            let oldFeed = try #require(
+                try SyncDeviceFeedContract.conversation(
+                    kind: SyncDeviceFeedContract.attentionKind, device: deviceKey, core: before)
+            ).scope
+
+            try await SyncService.shared.signOut(keepConversations: true)
+            let mac = try #require(SyncService.shared.core)
+            #expect(mac.deviceKey() == deviceKey, "signing out keeps the device key")
+            #expect(try mac.conversation(scope: oldFeed)?.replication == .deviceLocal)
+            #expect(
+                try SyncDeviceFeedContract.conversation(
+                    kind: SyncDeviceFeedContract.attentionKind, device: deviceKey, core: mac) == nil,
+                "the device-local leftover isn't this Mac's feed any more")
+            try await mac.resume()
+
+            let phoneDirectory = OsaurusPaths.root().appendingPathComponent("phone/sync", isDirectory: true)
+            try FileManager.default.createDirectory(at: phoneDirectory, withIntermediateDirectories: true)
+            var network = localNetworkConfig()
+            network.enabled = true
+            let phone = try SyncCore.open(
+                dataDirectory: phoneDirectory,
+                deviceName: "Tae's iPhone",
+                platform: .ios,
+                network: network,
+                keyStore: SyncKeyStores.make(dataDirectory: phoneDirectory)
+            )
+            let events = Recorder<CoreEvent>()
+            phone.setListener { events.append([$0]) }
+            try mac.addPeerAddress(address: #require(phone.localAddress()))
+            try phone.addPeerAddress(address: #require(mac.localAddress()))
+            try await phone.pairWithOffer(payload: mac.pairingOffer(ttlMs: 300_000).payload)
+            try await waitUntil("paired") {
+                events.all.contains { if case .paired = $0 { return true } else { return false } }
+            }
+
+            _ = try SyncAttentionFeed.publish(feed, core: mac, createIfMissing: true)
+            let newFeed = try #require(
+                try SyncDeviceFeedContract.conversation(
+                    kind: SyncDeviceFeedContract.attentionKind, device: deviceKey, core: mac)
+            ).scope
+            #expect(newFeed != oldFeed)
+            try await waitUntil("the iPhone sees the new feed") {
+                try SyncDeviceFeedContract.conversation(
+                    kind: SyncDeviceFeedContract.attentionKind, device: deviceKey, core: phone)?.scope == newFeed
+            }
+
+            let phoneKey = phone.deviceKey()
+            try await waitUntil("the Mac lists the iPhone") {
+                SyncService.shared.devices.contains { $0.id == phoneKey && !$0.revoked }
+            }
+            #expect(SyncHostRunner.mayRequest(phoneKey, me: deviceKey, devices: SyncService.shared.devices, ownChat: false))
+
+            try mac.revokeDevice(device: phoneKey)
+            try await waitUntil("the Mac marks the iPhone removed") {
+                SyncService.shared.devices.contains { $0.id == phoneKey && $0.revoked }
+            }
+            #expect(!SyncHostRunner.mayRequest(phoneKey, me: deviceKey, devices: SyncService.shared.devices, ownChat: false))
+            #expect(SyncDeviceFeedContract.deviceNames(SyncService.shared.devices)[phoneKey] == nil)
+
+            let late = SyncDeviceFeedContract.AttentionAnswers(answers: [
+                "item-1": .init(action: "approve", answeredMs: SyncHostedRunContract.nowMs())
+            ])
+            try phone.setConversationAppData(
+                scope: newFeed,
+                namespace: SyncDeviceFeedContract.attentionAnswerNamespace(device: phoneKey),
+                bytes: JSONEncoder().encode(late)
+            )
+            try await Task.sleep(for: .seconds(2))
+            let macFeed = try #require(try mac.conversation(scope: newFeed))
+            #expect(
+                !macFeed.appData.contains {
+                    $0.namespace == SyncDeviceFeedContract.attentionAnswerNamespace(device: phoneKey)
+                }, "a removed iPhone's answer doesn't arrive")
+
+            try await phone.close()
+            SyncService.shared.close()
+        }
+    }
+
+    @Test
+    func aWrongCodeIsReportedAsWrongOrExpired() async throws {
+        try await ChatHistoryTestStorage.run {
+            let mac = try SyncService.shared.open()
+            try await mac.resume()
+            let otherDirectory = OsaurusPaths.root().appendingPathComponent("other/sync", isDirectory: true)
+            try FileManager.default.createDirectory(at: otherDirectory, withIntermediateDirectories: true)
+            var network = localNetworkConfig()
+            network.enabled = true
+            let other = try SyncCore.open(
+                dataDirectory: otherDirectory,
+                deviceName: "Other Mac",
+                network: network,
+                keyStore: SyncKeyStores.make(dataDirectory: otherDirectory)
+            )
+            let events = Recorder<CoreEvent>()
+            other.setListener { events.append([$0]) }
+            try mac.addPeerAddress(address: #require(other.localAddress()))
+            try other.addPeerAddress(address: #require(mac.localAddress()))
+            let offer = try mac.pairingOffer(ttlMs: 300_000)
+            let wrong = offer.code.first == "A" ? "BBBBBBBBBBBB" : "AAAAAAAAAAAA"
+            try await other.pairWithOffer(payload: "osaurus-pair:1:\(offer.device):\(wrong)")
+            var reason: String?
+            try await waitUntil("refused") {
+                reason = events.all.lazy.compactMap { if case .pairingFailed(let r) = $0 { return r } else { return nil } }.first
+                return reason != nil
+            }
+            #expect(
+                SyncStatusModel.pairingFailureMessage(try #require(reason))
+                    == L("The code was wrong or has expired. Show a new code on your other device and paste its link again."))
+            #expect(SyncStatusModel.pairingFailureMessage("something new") == L("Pairing didn't finish. Check the code and try again."))
+
+            try await other.close()
+            SyncService.shared.close()
+        }
+    }
+
+    @Test
+    func sameNetworkSuggestsAnywhereOnlyAfterFindingNobodyForAWhile() {
+        var local = SyncConfiguration()
+        local.networkEnabled = true
+        local.networkMode = .localNetworkOnly
+        var anywhere = local
+        anywhere.networkMode = .anywhere
+        let start = Date()
+        let later = start.addingTimeInterval(SyncStatusModel.anywhereHintDelay)
+
+        let first = SyncStatusModel.anywhereHint(
+            configuration: local, otherDevices: 1, connected: 0, unreachableSince: nil, now: start)
+        #expect(!first.suggest)
+        #expect(first.unreachableSince == start)
+        #expect(
+            SyncStatusModel.anywhereHint(
+                configuration: local, otherDevices: 1, connected: 0, unreachableSince: start, now: later
+            ).suggest)
+        for (configuration, others, connected) in [(anywhere, 1, 0), (local, 0, 0), (local, 2, 1)] {
+            let hint = SyncStatusModel.anywhereHint(
+                configuration: configuration, otherDevices: others, connected: connected,
+                unreachableSince: start, now: later)
+            #expect(!hint.suggest)
+            #expect(hint.unreachableSince == nil)
+        }
+    }
+
+    @Test
     func everySourceRoutesToTheRightReplication() {
         for source in SessionSource.allCases {
             let expected: Replication = [.chat, .imported, .workspace].contains(source) ? .synced : .deviceLocal

@@ -21,7 +21,7 @@ Sync (Settings… (⌘,) → Sharing → Devices) keeps your chats on all your M
 
 These are separate, and turning one on never turns on another:
 
-- **Add a Device** is for your own Macs and your iPhone. **Add a Device** → **Show Code** on a Mac, then scan the code with the Osaurus iPhone app, or paste the pairing link into **Join Another Device** → **Join…** on the other Mac. The code works for 5 minutes. Your iPhone shows in **Devices** like any other device, and **Remove Device…** removes it. If a device was lost or stolen, use **Remove and Change Recovery Phrase…** instead: a removed device still holds your account's secret until the phrase changes, and an iPhone can allow tools and change agents on your Mac.
+- **Add a Device** is for your own Macs and your iPhone. **Add a Device** → **Show Code** on a Mac, then scan the code with the Osaurus iPhone app, or paste the pairing link into **Join Another Device** → **Join…** on the other Mac. The code works for 5 minutes. Joining asks you to confirm, since this Mac's chats move to the other device's account; use only a link shown on your own device's screen. If the code was wrong or expired, or the other device can't be reached, Devices says which. Your iPhone shows in **Devices** like any other device, and **Remove Device…** in its … menu removes it. The confirmation's default, **Remove and Change Phrase**, also changes the recovery phrase: a removed device still holds your account's secret until the phrase changes. Choose **Remove Only** for a device you've wiped. Showing a code or the recovery phrase, removing a device, restoring and signing out ask for Touch ID or your login password first.
 - **Workspaces** (Settings… (⌘,) → Sharing → Workspaces) share agents with other people, one agent at a time, over that agent's Remote Access. See the Workspaces topic.
 - **Guest links** (**Share Agent** → **Guest link**) give one person access to one agent. Everyone holding one is listed in Settings… (⌘,) → Sharing → Access → **Guests**.
 
@@ -31,7 +31,7 @@ Osaurus no longer advertises individual agents on the local network; nothing els
 
 Sync has a 24-word recovery phrase (**Recovery** → **Recovery Phrase** → **Show**). If this Mac loses its sync keys, the phrase, or another paired device that still has the chats, gets them back.
 
-When this Mac has an Osaurus ID, the Osaurus ID's recovery phrase can restore sync too, so you keep one phrase. Creating or restoring an Osaurus ID on a Mac with no other sync devices links them automatically; otherwise **Use My Osaurus Recovery Phrase** → **Use…** links them, and your other devices stop syncing with this Mac until each does the same. **Remove and Change Recovery Phrase…** ends the link and gives sync its own phrase again.
+When this Mac has an Osaurus ID, the Osaurus ID's recovery phrase can restore sync too, so you keep one phrase. Creating or restoring an Osaurus ID on a Mac with no other sync devices links them automatically; otherwise **Use My Osaurus Recovery Phrase** → **Use…** links them, and your other devices stop syncing with this Mac until each does the same. Removing a device with **Remove and Change Phrase** ends the link and gives sync its own phrase again.
 
 ## Your iPhone
 
@@ -46,6 +46,11 @@ When this Mac has an Osaurus ID, the Osaurus ID's recovery phrase can restore sy
 **Does adding a device share all my agents?** Yes, every agent except the built-in ones (your iPhone also gets the Default agent), as long as **Run Agents for My Other Devices** is on. There's no per-agent choice. The agents' settings, memory, tools and files don't copy: your other device sends its chats to the Mac that runs them. Chats you start sync; headless chats don't. Adding a device only covers your own devices, never other people.
 
 **Does a device on my network find my agents automatically?** Only devices already added to your sync account. They find each other with **Same Network**, or anywhere with **Anywhere (Beta)**. Nothing else on the network sees your agents.
+
+**Why aren't my devices connecting, or why is history slow?**
+- With **Same Network**, devices on different networks never meet. After a while Devices shows **Your Devices Aren't Connecting**; **Use Anywhere** switches this Mac, and each other device needs the same setting.
+- **Older Messages** shows how many chats are still downloading their history. New messages sync first; older ones wait while the network is metered or in Low Data Mode, or Low Power Mode is on.
+- A device **Connected through a relay server** syncs normally, just with more delay than one **Connected directly**.
 
 **Can Workspaces choose which agents to share?** Yes, one agent at a time. That is sharing with other people over the agent's Remote Access, and it is separate from sync: turning on sync never shares an agent with a workspace.
 

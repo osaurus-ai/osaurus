@@ -21,7 +21,7 @@ document is for developers changing the integration.
 | `SyncTurnStreamer` | Streams the reply being generated to other devices. |
 | `SyncLegacyImporter` | Copies chats from the read-only SQLCipher `chat-history` database, once, rebuilding chats whose turns were lost from their Memory transcript. |
 | `SyncStatusModel`, `SyncSettingsView` | Settings → Devices. |
-| `SyncNetworkDirectory` | The relay and discovery servers **Anywhere (Beta)** uses, fetched from `https://osaurus.ai/sync/network.json` (`OSAURUS_SYNC_NETWORK_URL` overrides it). |
+| `SyncNetworkDirectory` | The relay and discovery servers **Anywhere (Beta)** uses, fetched from `https://osaurus.ai/sync/network.json` (`OSAURUS_SYNC_NETWORK_URL` overrides it with an `https` URL, or `http` on localhost). A launch fetches at each open and network change until one fetch succeeds, at most every 15 minutes. |
 | `SyncAgentDirectory` | Publishes this Mac's agents for the user's other devices and reads theirs. |
 | `SyncHostRunner` | Runs chats another device asked this Mac to host. |
 | `SyncHostedRunMonitor`, `ChatSession+HostedRun` | The caller's side of a hosted chat. |
@@ -103,7 +103,9 @@ scopes only, and only when another device exists), pushes text deltas every 150 
 the stream with the final turn when the run ends. The finished stream commits the message under
 the stream's id, so the run's own save finds it in the index and doesn't send it again. Other
 devices show the text in a read-only bubble ("Replying on …"), lock that chat's composer, and
-swap the bubble for the committed message when it arrives. The bubble is never saved.
+swap the bubble for the committed message when it arrives. The bubble is never saved. If the
+message hasn't arrived 10 s after the stream finished, the bubble goes, unless the writing device
+is still connected: then it waits up to 2 minutes, since a slow link is still delivering it.
 
 Messages still in the outbox show "Waiting to reach your other devices" under the composer.
 
@@ -131,10 +133,17 @@ The plaintext backup (Privacy & Security → Data & Storage) exports each conver
 ## Failures
 
 An open failure is recorded as a `sync` store issue ("Synced conversations") in
-`PersistenceHealth`, so the storage recovery UI shows it. Retry reopens the core. Reset asks
-first, then starts this Mac over with an empty sync identity: an open core signs out and removes
-its copy, and one that can't open has its directory moved to quarantine and its keys deleted.
-Other devices keep their chats. Settings → Devices shows the failure too.
+`PersistenceHealth`, so the storage recovery UI shows it. Retry reopens the core. A launch open
+that fails for a reason that can clear by itself (`isTransientOpenFailure`: a locked Keychain,
+another copy still holding the database, the disk, the network) retries after 5 s, 30 s, 2 min
+and 10 min. Reset asks first, then starts this Mac over with an empty sync identity: an open core
+signs out and removes its copy, and one that can't open has its directory moved to quarantine and
+its keys deleted. Sign-out and reset hold the open lock throughout, so no other open lands
+between them and the fresh core. Other devices keep their chats. Settings → Devices shows the
+failure too.
+
+The core syncs again on every network change while online (Wi-Fi to Ethernet, a VPN, a hotspot),
+not only when the network comes back.
 `SyncError+Osaurus.swift` maps error codes to user copy, including a database from a newer build
 and a damaged one; logs use `logDetail`.
 
@@ -143,21 +152,69 @@ Mac being revoked, and a restored backup waiting for its recovery phrase.
 
 ## Removing a device
 
-Sharing → Devices offers two ways to remove a device:
+Sharing → Devices has one **Remove Device…** in each other device's … menu. It asks for Touch ID
+or the login password, and its confirmation offers two choices:
 
-- **Remove Device…** (`revokeDevice`) is for a device that was wiped or given away. Other
-  devices turn away its sessions, so nothing new reaches it and nothing it writes afterwards
-  arrives. It still holds the account secret, though, so it isn't enough for a device someone
-  else may be holding.
-- **Remove and Change Recovery Phrase…** (`revokeAndRotate`) is for a lost or stolen device. It
-  replaces the account identity, so the old secret no longer admits anyone.
+- **Remove and Change Phrase**, the default (`revokeAndRotate`). It replaces the account
+  identity, so the old secret no longer admits anyone. Other devices pick up the new identity
+  the next time they connect, and a wallet-linked account gets its own phrase again.
+- **Remove Only** (`revokeDevice`), for a device that was wiped. Other devices turn away its
+  sessions, so nothing new reaches it and nothing it writes afterwards arrives. It still holds
+  the account secret, so it isn't enough for a device someone else may be holding.
 
 What a device wrote before it was removed can still reach this Mac through another device.
 The Mac's iPhone feeds are written to limit that: management requests and attention answers
 older than 24 hours are ignored, an answer only settles an item that is still pending, and a
-secret answer only opens for the prompt that is still waiting. An iPhone can allow tools and
-change agents, so a lost iPhone should be removed with **Remove and Change Recovery Phrase…**;
-the confirmation says so.
+secret answer only opens for the prompt that is still waiting.
+
+Showing the recovery phrase or a pairing code, restoring from a phrase, switching to the Osaurus
+recovery phrase and signing out ask for Touch ID or the login password too
+(`CredentialReveal.confirmOwner`). A Mac with no login password skips the prompt.
+
+## What the core guarantees
+
+The app relies on these properties of osaurus-sync 0.1.0-beta.5 (upstream
+`docs/threat-model.md`, `sync/engine.rs`, `auth.rs`) instead of checking them again:
+
+- **Revoked devices.** Conversation app data and tags are Loro updates, which are control-layer
+  events. A revocation's cutoff, the newest event the revoking device had seen from the revoked
+  one, rejects anything later from it, whichever device relays it. A removed device can't publish
+  new requests or answers. What the revoking device had already seen stays applied; the 24-hour
+  and pending-only rules above cover that.
+- **Pairing offers.** One offer is open at a time. The code is 12 characters from a 32-character
+  alphabet (60 bits). The offer admits one device and closes, closes after five wrong attempts,
+  and expires after `pairingTTL` (5 minutes). Both sides prove the code with a keyed BLAKE3 hash
+  over both device keys, so a device that doesn't know the code can't answer a typed one. It isn't
+  a PAKE.
+- **Pairing failures.** `PairingFailed` carries the core's reason: `invalid or expired code` from
+  the host, or a proof or grant mismatch on the joiner. `pairWithOffer` returns once it connects;
+  a host that never answers sends nothing, so the app times the join out itself.
+- **Sign out, keeping conversations.** The device key stays. The user identity is replaced, the
+  other devices are revoked here, and every conversation this device owned becomes device-local,
+  the Mac's own feeds (agent directory, attention, management) included. Feed lookups ask for
+  synced conversations only, so pairing again creates new synced feeds.
+- **Servers.** Osaurus runs relays at `relay-us`, `relay-eu` and `relay-ap.sync.osaurus.ai`
+  and a discovery server at `dns.sync.osaurus.ai` (upstream `docs/deployment.md`, "Running on
+  Fly.io"). They are this Mac's bundled default, and the iPhone and Windows apps ship the same
+  list. Devices on different discovery servers can't find each other over the internet (they
+  still sync on one network). Osaurus 1.0.0 and 1.0.1 bundled number0's servers, so they move
+  only when `osaurus.ai/sync/network.json` publishes the Osaurus list. Publish it before or
+  with the build that changes the default. Until Fly delivers UDP replies reliably, fewer
+  connections go direct and more show as "Connected through a relay server".
+
+What the app would use from the core but can't yet:
+
+- **Authored app data.** A conversation's app data doesn't say which device wrote it, so
+  `hostRun.device` is the requester's own claim. The host checks it names a current device of
+  this account, which revocation makes enough today. A signed author on each app data write would
+  let the host trust the field itself.
+- **Pairing confirmation.** The code proof isn't a PAKE: someone who sees the link can pair
+  within its five minutes. A short code both screens show after connecting, confirmed on both
+  devices, would close that. Until then the join asks for confirmation and owner authentication,
+  and the guide tells users to paste only links from their own screen.
+- **Ephemeral progress.** Run progress is stored app data, so every write is kept. A core
+  channel for state that replaces itself and isn't stored would let progress update as fast as
+  the stream does over a relay.
 
 ## Recovery phrase
 
@@ -214,7 +271,7 @@ A's models, tools, memory and files. The contract is "Hosted runs" in upstream
   if that fails the reply goes out as A. A writes `ai.osaurus.host-run/1` (`running`, then `done`).
   It declines with a short reply (`terminalStopReason` `host_declined`) when the setting is off,
   the agent isn't on A, or the chat is busy there. A request first seen more than an hour after
-  it was made isn't started. A run a quit or crash cut off gets an `interrupted` reply at the
+  it was made (the later of `requestedMs` and the message's HLC) is declined the same way. A run a quit or crash cut off gets an `interrupted` reply at the
   next launch; it isn't retried.
 - **Stop.** B writes `ai.osaurus.run/1 {stop: <turn>}`; A cancels the task when it names the
   running turn. If A doesn't confirm within 15 seconds, B unlocks the composer anyway.
@@ -230,7 +287,7 @@ A's models, tools, memory and files. The contract is "Hosted runs" in upstream
   which the iPhone answers with the detections to redact.
 - **Progress and detail.**
   - While the run goes, A writes `ai.osaurus.run-progress/1`: phase, prefill, tool steps,
-    image steps and files, coalesced to 500 ms.
+    image steps and files, coalesced to 500 ms (2 s when every connected device is relayed).
   - The committed reply carries `ai.osaurus.turn-detail/1`: each tool call's label and its
     generated images and shared files as blobs.
   - After the run A writes `ai.osaurus.context-usage/1`.

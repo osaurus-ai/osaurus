@@ -175,7 +175,17 @@ struct MobileToSyncMigrationTests {
         #expect(SyncDevicePlatform("macos") == .mac)
         #expect(SyncDevicePlatform("macOS") == .mac)
         #expect(SyncDevicePlatform("linux") == .other)
+        #expect(SyncDevicePlatform("windows") == .windows)
+        #expect(SyncDevicePlatform("Windows") == .windows)
         #expect(SyncDevicePlatform.iPhone.symbol == "iphone")
+        #expect(SyncDevicePlatform.windows.symbol == "pc")
+    }
+
+    @Test func everyNonMacDeviceReadsTheMacsFeeds() {
+        #expect(!SyncPhoneDevices.hasActiveFeedReader([device("mac", platform: "macos")]))
+        #expect(SyncPhoneDevices.hasActiveFeedReader([device("pc", platform: "windows")]))
+        #expect(!SyncPhoneDevices.hasActiveFeedReader([device("pc", platform: "windows", revoked: true)]))
+        #expect(!SyncPhoneDevices.hasActivePhone([device("pc", platform: "windows")]), "keep-awake stays iPhone-only")
     }
 
     @Test func activePhoneIgnoresRevokedAndSelf() {

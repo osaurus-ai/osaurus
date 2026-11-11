@@ -4,9 +4,9 @@
 //
 //  Which relay and discovery servers Find Devices → Anywhere uses. Osaurus
 //  publishes the list as JSON; this Mac caches the last good copy at
-//  `config/sync-network.json` and falls back to number0's public servers,
-//  which ship with the sync library. A new list applies the next time the
-//  sync core opens, never to a running session.
+//  `config/sync-network.json` and falls back to the Osaurus servers built
+//  in here. A new list applies the next time the sync core opens, never to
+//  a running session.
 //
 
 import Foundation
@@ -22,16 +22,19 @@ struct SyncNetworkDirectory: Codable, Equatable, Sendable {
     var discoveryServer: String?
     var discoveryOrigin: String?
 
-    /// number0's public relays and discovery server, from the sync library.
-    static var bundledDefault: SyncNetworkDirectory {
-        let net = n0PublicNetworkConfig()
-        return SyncNetworkDirectory(
-            version: supportedVersion,
-            relays: net.relays,
-            discoveryServer: net.discoveryServer,
-            discoveryOrigin: net.discoveryOrigin
-        )
-    }
+    /// The Osaurus relays and discovery server. Every device must use the
+    /// same discovery server to find the others over the internet, so the
+    /// iPhone and Windows apps ship this same list.
+    static let bundledDefault = SyncNetworkDirectory(
+        version: supportedVersion,
+        relays: [
+            "https://relay-us.sync.osaurus.ai",
+            "https://relay-eu.sync.osaurus.ai",
+            "https://relay-ap.sync.osaurus.ai",
+        ],
+        discoveryServer: "https://dns.sync.osaurus.ai/pkarr",
+        discoveryOrigin: "dns.sync.osaurus.ai"
+    )
 
     /// A list this build can use: a known version, 1 to `maxRelays` HTTPS
     /// relays, and a discovery server and origin given together.
@@ -79,20 +82,36 @@ enum SyncNetworkDirectoryStore {
     private static let log = Logger(subsystem: "ai.osaurus", category: "sync")
 
     /// Where Osaurus publishes the list. `OSAURUS_SYNC_NETWORK_URL` points a
-    /// build at a staging copy.
+    /// build at a staging copy over HTTPS, or HTTP on this Mac.
     static var remoteURL: URL {
-        if let override = ProcessInfo.processInfo.environment["OSAURUS_SYNC_NETWORK_URL"],
-            let url = URL(string: override)
-        {
-            return url
+        remoteURL(override: ProcessInfo.processInfo.environment["OSAURUS_SYNC_NETWORK_URL"])
+    }
+
+    static func remoteURL(override: String?) -> URL {
+        let published = URL(string: "https://osaurus.ai/sync/network.json")!
+        guard let override, let url = URL(string: override), let host = url.host?.lowercased() else {
+            return published
         }
-        return URL(string: "https://osaurus.ai/sync/network.json")!
+        switch url.scheme?.lowercased() {
+        case "https":
+            return url
+        case "http" where ["localhost", "127.0.0.1", "::1"].contains(host):
+            return url
+        default:
+            log.error("OSAURUS_SYNC_NETWORK_URL ignored: it must be an https URL")
+            return published
+        }
     }
 
     typealias Fetch = @Sendable (URL) async throws -> Data
 
+    /// Least time between two fetches after one failed.
+    static let retryInterval: TimeInterval = 15 * 60
+
     private static let lock = NSLock()
     nonisolated(unsafe) private static var refreshTask: Task<Void, Never>?
+    nonisolated(unsafe) private static var lastAttempt: Date?
+    nonisolated(unsafe) private static var fetchedThisLaunch = false
 
     /// The cached list when it's valid, otherwise the bundled default.
     static func current() -> SyncNetworkDirectory {
@@ -110,6 +129,7 @@ enum SyncNetworkDirectoryStore {
         do {
             let data = try await fetch(remoteURL)
             let fetched = try JSONDecoder().decode(SyncNetworkDirectory.self, from: data)
+            lock.withLock { fetchedThisLaunch = true }
             guard fetched.isValid else {
                 log.error("sync network list rejected: unsupported version or bad server URLs")
                 return false
@@ -124,12 +144,35 @@ enum SyncNetworkDirectoryStore {
         }
     }
 
-    /// One background refresh per launch; the result applies at the next open.
+    /// Fetches in the background until one fetch per launch succeeds. The
+    /// result applies at the next open.
     static func refreshInBackground() {
         guard !RuntimeEnvironment.isUnderTests else { return }
+        scheduleRefresh(now: Date(), fetch: defaultFetch)
+    }
+
+    /// Starts a fetch unless one is running, one already succeeded this
+    /// launch, or the last one began within `retryInterval`.
+    @discardableResult
+    static func scheduleRefresh(now: Date, fetch: @escaping Fetch) -> Task<Void, Never>? {
         lock.withLock {
-            guard refreshTask == nil else { return }
-            refreshTask = Task.detached(priority: .utility) { await refresh() }
+            guard refreshTask == nil, !fetchedThisLaunch else { return nil }
+            if let lastAttempt, now.timeIntervalSince(lastAttempt) < retryInterval { return nil }
+            lastAttempt = now
+            let task = Task.detached(priority: .utility) {
+                await refresh(fetch: fetch)
+                lock.withLock { refreshTask = nil }
+            }
+            refreshTask = task
+            return task
+        }
+    }
+
+    static func _resetForTesting() {
+        lock.withLock {
+            refreshTask = nil
+            lastAttempt = nil
+            fetchedThisLaunch = false
         }
     }
 

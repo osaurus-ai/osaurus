@@ -31,6 +31,13 @@ final class SyncStatusModel: ObservableObject {
     @Published private(set) var peers: [PeerConnection] = []
     @Published private(set) var relays: [RelayState] = []
     @Published private(set) var pendingMessages = 0
+    /// Synced chats whose older messages haven't all arrived yet.
+    @Published private(set) var chatsDownloading = 0
+    /// Older messages wait while the network is metered or in Low Data
+    /// Mode, or Low Power Mode is on.
+    @Published private(set) var historyPaused = false
+    /// Same Network has found none of the user's other devices for a while.
+    @Published private(set) var suggestAnywhere = false
     @Published private(set) var storage: StorageUsage?
     @Published private(set) var recoveryAvailable = false
     @Published private(set) var revoked = false
@@ -42,6 +49,10 @@ final class SyncStatusModel: ObservableObject {
     private var watchers = 0
     private var poll: Task<Void, Never>?
     private var pairingExpiry: Task<Void, Never>?
+    private var unreachableSince: Date?
+
+    /// How long Same Network finds nobody before suggesting Anywhere.
+    static let anywhereHintDelay: TimeInterval = 30
 
     private init() {}
 
@@ -104,6 +115,9 @@ final class SyncStatusModel: ObservableObject {
             peers = []
             relays = []
             pendingMessages = 0
+            chatsDownloading = 0
+            historyPaused = false
+            suggestAnywhere = false
             storage = nil
             return
         }
@@ -123,10 +137,46 @@ final class SyncStatusModel: ObservableObject {
             self.peers = snapshot.diagnostics?.peers ?? []
             self.relays = snapshot.diagnostics?.homeRelays ?? []
             self.pendingMessages = Int(snapshot.diagnostics?.scopes.reduce(0) { $0 + $1.pendingOutbox } ?? 0)
+            self.chatsDownloading = snapshot.diagnostics?.scopes.filter { !$0.backfillComplete }.count ?? 0
+            self.historyPaused = snapshot.diagnostics?.backfillPaused ?? false
             self.storage = snapshot.storage
             self.recoveryAvailable = snapshot.recoveryAvailable
             self.revoked = snapshot.devices.contains { $0.isSelf && $0.revoked }
+            self.updateAnywhereHint(now: Date())
         }
+    }
+
+    private func updateAnywhereHint(now: Date) {
+        let hint = Self.anywhereHint(
+            configuration: configuration,
+            otherDevices: otherDeviceCount,
+            connected: connectedDeviceCount,
+            unreachableSince: unreachableSince,
+            now: now
+        )
+        unreachableSince = hint.unreachableSince
+        suggestAnywhere = hint.suggest
+    }
+
+    /// Same Network with other devices and none connected starts a clock;
+    /// the hint shows once it has run for `anywhereHintDelay`.
+    static func anywhereHint(
+        configuration: SyncConfiguration,
+        otherDevices: Int,
+        connected: Int,
+        unreachableSince: Date?,
+        now: Date
+    ) -> (suggest: Bool, unreachableSince: Date?) {
+        let stranded =
+            configuration.networkEnabled && configuration.networkMode == .localNetworkOnly
+            && otherDevices > 0 && connected == 0
+        guard stranded else { return (false, nil) }
+        let since = unreachableSince ?? now
+        return (now.timeIntervalSince(since) >= anywhereHintDelay, since)
+    }
+
+    func isRelayed(_ device: Device) -> Bool {
+        peers.contains { $0.device == device.id && $0.connected && $0.relayed }
     }
 
     /// This Mac first, then the rest by most recently seen; revoked last.
@@ -164,19 +214,24 @@ final class SyncStatusModel: ObservableObject {
         switch event {
         case let .paired(device):
             pairingExpiry?.cancel()
+            pairingExpiry = nil
             let name = SyncService.shared.deviceName(forKey: device) ?? L("your other device")
             pairing = .paired(deviceName: name)
             FeatureTelemetry.syncDevicePaired(platform: SyncPhoneDevices.isPhone(deviceKey: device) ? "iphone" : "other")
             ToastManager.shared.success(L("Device added"), message: String(format: L("Your chats now sync with %@."), name))
         case let .pairingFailed(reason):
-            pairingExpiry?.cancel()
             Self.log.notice("pairing failed: \(reason, privacy: .public)")
-            pairing = .failed(L("Pairing didn't finish. Check the code and try again."))
-        case .incompatiblePeer:
-            ToastManager.shared.warning(
-                L("A device needs an update"),
-                message: L("One of your devices runs a version of Osaurus that can't sync with this one. Update both to the latest version.")
-            )
+            // Only the joining side hears this; an offer shown here stays open.
+            guard pairing == .joining else { break }
+            pairingExpiry?.cancel()
+            pairing = .failed(Self.pairingFailureMessage(reason))
+        case let .incompatiblePeer(device, _):
+            let message =
+                SyncService.shared.deviceName(forKey: device).map {
+                    String(format: L("%@ runs a version of Osaurus that can't sync with this one. Update both to the latest version."), $0)
+                }
+                ?? L("One of your devices runs a version of Osaurus that can't sync with this one. Update both to the latest version.")
+            ToastManager.shared.warning(L("A device needs an update"), message: message)
         case .selfRevoked:
             revoked = true
             ToastManager.shared.warning(
@@ -254,21 +309,60 @@ final class SyncStatusModel: ObservableObject {
         pairing = .idle
     }
 
-    /// Joins the account of the device that showed `link`.
+    /// Whether `link` looks like a pairing link at all.
+    static func isPairingLink(_ link: String) -> Bool {
+        link.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("osaurus-pair:")
+    }
+
+    /// Joins the account of the device that showed `link`. The core reports
+    /// the result as an event; a host that never answers sends none, so the
+    /// join gives up after `joinTimeout`.
     func join(link: String) {
         let payload = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard payload.hasPrefix("osaurus-pair:") else {
+        guard Self.isPairingLink(payload) else {
             pairing = .failed(L("Paste the whole pairing link shown on your other device."))
             return
         }
         guard let core = SyncService.shared.core else { return }
         pairing = .joining
+        pairingExpiry?.cancel()
+        pairingExpiry = Task { [weak self] in
+            try? await Task.sleep(for: Self.joinTimeout)
+            guard !Task.isCancelled, let self, self.pairing == .joining else { return }
+            self.pairing = .failed(Self.unreachableMessage(mode: self.configuration.networkMode))
+        }
         Task {
             do {
                 try await core.pairWithOffer(payload: payload)
             } catch {
-                if self.pairing == .joining { self.pairing = .failed(error.syncUserMessage) }
+                if self.pairing == .joining {
+                    pairingExpiry?.cancel()
+                    self.pairing = .failed(error.syncUserMessage)
+                }
             }
+        }
+    }
+
+    static let joinTimeout: Duration = .seconds(45)
+
+    /// What the user can do about a pairing the core refused.
+    static func pairingFailureMessage(_ reason: String) -> String {
+        let reason = reason.lowercased()
+        if reason.contains("invalid or expired") {
+            return L("The code was wrong or has expired. Show a new code on your other device and paste its link again.")
+        }
+        if reason.contains("prove") || reason.contains("does not match") {
+            return L("The other device couldn't confirm the code. Use a link shown on your own device's screen, then try again.")
+        }
+        return L("Pairing didn't finish. Check the code and try again.")
+    }
+
+    static func unreachableMessage(mode: SyncConfiguration.NetworkMode) -> String {
+        switch mode {
+        case .localNetworkOnly:
+            return L("This Mac couldn't reach the other device. Check that it still shows the code and is on the same network, or set Find Devices to Anywhere (Beta) on both.")
+        case .anywhere:
+            return L("This Mac couldn't reach the other device. Check that it still shows the code and is online, then try again.")
         }
     }
 
