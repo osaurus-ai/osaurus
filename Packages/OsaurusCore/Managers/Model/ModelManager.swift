@@ -256,6 +256,8 @@ public final class ModelManager: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Download progress publishes are coalesced at the source
+        // (`ModelDownloadService.shouldPublishProgress`), so forward as-is.
         downloadService.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in

@@ -210,6 +210,16 @@ final class ModelDownloadService: ObservableObject {
     private var downloadTokens: [String: UUID] = [:]
     private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
     private var lastKnownSpeed: [String: Double] = [:]
+    /// Last progress actually published to `downloadStates`/`downloadMetrics`
+    /// per model. Per-file delegates each throttle on their own, so a
+    /// multi-file download can call `updateDownloadProgress` many times per
+    /// second; every write to those `@Published` dictionaries fires
+    /// `objectWillChange`, which `ModelManager` forwards and which
+    /// re-evaluates the whole model grid on the main thread (app hangs).
+    /// Coalesce publishes through `shouldPublishProgress`.
+    private var lastPublishedProgress: [String: (time: TimeInterval, fraction: Double)] = [:]
+    nonisolated static let progressPublishInterval: TimeInterval = 0.5
+    nonisolated static let progressPublishMinDelta: Double = 0.01
     /// Per-model transfer accounting for aggregate progress: bytes from
     /// files already fully on disk (`fileTransferBase`), live per-file byte
     /// counts (`fileTransferProgress`), and the manifest total.
@@ -336,6 +346,7 @@ final class ModelDownloadService: ObservableObject {
             etaSeconds: nil
         )
         progressSamples[model.id] = []
+        lastPublishedProgress[model.id] = nil
 
         let task = Task { [weak self, resuming] in
             guard let self = self else { return }
@@ -1021,6 +1032,7 @@ final class ModelDownloadService: ObservableObject {
         )
         progressSamples[modelId] = []
         lastKnownSpeed[modelId] = nil
+        lastPublishedProgress[modelId] = nil
         fileTransferProgress[modelId] = nil
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
@@ -1061,6 +1073,7 @@ final class ModelDownloadService: ObservableObject {
         downloadTokens[modelId] = nil
         progressSamples[modelId] = nil
         lastKnownSpeed[modelId] = nil
+        lastPublishedProgress[modelId] = nil
         fileTransferProgress[modelId] = nil
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
@@ -1297,6 +1310,7 @@ final class ModelDownloadService: ObservableObject {
         downloadMetrics[modelId] = nil
         progressSamples[modelId] = nil
         lastKnownSpeed[modelId] = nil
+        lastPublishedProgress[modelId] = nil
         fileTransferProgress[modelId] = nil
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
@@ -1496,7 +1510,6 @@ final class ModelDownloadService: ObservableObject {
         let fraction =
             totalBytes > 0
             ? min(1.0, Double(completedBytes) / Double(totalBytes)) : 0
-        downloadStates[modelId] = .downloading(progress: fraction)
 
         let now = Date().timeIntervalSince1970
         var samples = progressSamples[modelId] ?? []
@@ -1525,12 +1538,44 @@ final class ModelDownloadService: ObservableObject {
             if remaining > 0 { eta = remaining / speed }
         }
 
+        // Speed samples above are always recorded; only the UI-facing
+        // `@Published` writes are coalesced.
+        let last = lastPublishedProgress[modelId]
+        guard
+            Self.shouldPublishProgress(
+                now: now,
+                fraction: fraction,
+                lastTime: last?.time,
+                lastFraction: last?.fraction
+            )
+        else { return }
+        lastPublishedProgress[modelId] = (time: now, fraction: fraction)
+
+        let newState = DownloadState.downloading(progress: fraction)
+        if downloadStates[modelId] != newState {
+            downloadStates[modelId] = newState
+        }
         downloadMetrics[modelId] = DownloadMetrics(
             bytesReceived: completedBytes,
             totalBytes: totalBytes,
             bytesPerSecond: speed,
             etaSeconds: eta
         )
+    }
+
+    /// Whether a progress update should be published to the UI. Publishes the
+    /// first update, completion, any update after `progressPublishInterval`,
+    /// or a jump of at least `progressPublishMinDelta`.
+    nonisolated static func shouldPublishProgress(
+        now: TimeInterval,
+        fraction: Double,
+        lastTime: TimeInterval?,
+        lastFraction: Double?
+    ) -> Bool {
+        guard let lastTime, let lastFraction else { return true }
+        if fraction >= 1.0 && lastFraction < 1.0 { return true }
+        if now - lastTime >= progressPublishInterval { return true }
+        return abs(fraction - lastFraction) >= progressPublishMinDelta
     }
 
     // MARK: - Background Top-Up
