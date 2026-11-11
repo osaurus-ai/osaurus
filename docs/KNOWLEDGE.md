@@ -27,9 +27,9 @@ The mental model: **memory** is what an agent learns about you from conversation
 
 ## Getting Started
 
-1. Open the Management window (`⌘ Shift M`) → **Knowledge**
+1. Open Settings… (`⌘,`) → **Knowledge**
 2. **Add Collection** — point it at any folder of markdown (your docs, an Obsidian vault, an exported wiki)
-3. Open an agent → **Features → Knowledge** — enable the toggle and check the collections this agent may use
+3. Open a custom agent → **Abilities → Knowledge** — enable the toggle and check the collections this agent may use
 4. Chat. The agent gets `search_knowledge` / `read_knowledge` / `list_knowledge` and consults the library only when a task calls for it
 
 Files are indexed in place and never moved or modified. Edits to the folder are picked up within seconds (FSEvents watcher + content-hash incremental re-index).

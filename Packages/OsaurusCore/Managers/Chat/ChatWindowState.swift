@@ -587,6 +587,7 @@ final class ChatWindowState: ObservableObject {
 
     func showMainSurface(_ surface: MainSurface) {
         if surface == .workflows {
+            if mainSurface != .workflows { FeatureTelemetry.workflowsOpened(page: workflowsPageToken) }
             showsWorkflowLibrary = true
         } else if activeTab?.workflowID != nil || agentId == Agent.architectId {
             if let recent = tabs.filter({ $0.workflowID == nil && $0.session.agentId != Agent.architectId })
@@ -597,6 +598,16 @@ final class ChatWindowState: ObservableObject {
             }
         }
         mainSurface = surface
+    }
+
+    /// Closed `workflows_opened` page token for the page the surface lands on.
+    private var workflowsPageToken: String {
+        switch workflowsPath.last {
+        case nil: return "home"
+        case .workflow?: return "workflow"
+        case .run?: return "run"
+        case .create?: return "new"
+        }
     }
 
     func showWorkflowDetail() {
@@ -1195,6 +1206,13 @@ final class ChatWindowState: ObservableObject {
             dropTab(outgoing)
         }
         return true
+    }
+
+    /// A New Chat nothing has happened in yet. Leaving one closes it (its
+    /// unsent text goes back to the agent's draft), so a window holds at
+    /// most one and it never lingers in the sidebar.
+    private func isAbandonedOnLeave(_ tab: ChatTab) -> Bool {
+        tab.kind == .chat && !tab.isHibernated && tab.session.sessionId == nil && isBlank(tab.session)
     }
 
     /// Remove an INACTIVE tab from the strip and dispose of its session.
@@ -1839,10 +1857,11 @@ final class ChatWindowState: ObservableObject {
             if agentId == Agent.architectId { showWorkflowDetail() }
             else { mainSurface = .chat }
         }
-        // Browser-style: every ⌘T / ⌘N / + press opens another tab, even
-        // when the active one is still blank. Blank tabs are never
-        // persisted, so extras cost nothing across a relaunch.
+        // A blank active tab is replaced, not kept beside the new one.
+        // Stashed first so the fresh chat restores its unsent text.
         persistActiveSessionForTabSwitch()
+        let abandoned = activeTab.flatMap { isAbandonedOnLeave($0) ? $0 : nil }
+        abandoned?.session.stashDraft()
         // A new tab from a team-agent tab stays with that agent, same as
         // sidebar New Chat (`startNewChat`). Without the carried context the
         // fresh session scopes as a local tab, so the strip switches scope
@@ -1884,6 +1903,7 @@ final class ChatWindowState: ObservableObject {
             tabs.append(tab)
             activeTabId = tab.id
             session = fresh
+            if let abandoned { dropTab(abandoned) }
         }
         reconcileRemoteMode()
         refreshSessions()
@@ -1924,12 +1944,15 @@ final class ChatWindowState: ObservableObject {
         }
         guard id != activeTabId else { return }
         persistActiveSessionForTabSwitch()
+        let abandoned = activeTab.flatMap { isAbandonedOnLeave($0) ? $0 : nil }
+        abandoned?.session.stashDraft()
         tabs[idx].lastActivatedAt = Date()
         if tabs[idx].isHibernated {
             wake(tabAt: idx)
         }
         activeTabId = id
         adoptTabSession(tabs[idx].session)
+        if let abandoned { dropTab(abandoned) }
         hibernateColdTabsIfNeeded()
     }
 

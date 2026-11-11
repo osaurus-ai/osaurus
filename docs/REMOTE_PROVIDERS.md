@@ -20,8 +20,8 @@ With Remote Providers, you can:
 
 ### Via the UI
 
-1. Open the Management window (`⌘ Shift M`)
-2. Click **Providers** in the sidebar
+1. Open Settings… (`⌘,`)
+2. Click **Providers** in the sidebar (Models group)
 3. Click **Add Provider**
 4. Select a preset or choose **Custom**
 5. Configure the connection settings

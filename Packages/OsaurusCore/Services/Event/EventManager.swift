@@ -365,8 +365,11 @@ public final class EventManager {
 
     // MARK: - CRUD
 
+    /// `telemetryOrigin` (`user` or `config`) counts the creation in
+    /// `automation_created`; nil keeps agent self-schedules and plugin
+    /// installs out of that metric.
     @discardableResult
-    public func create(_ event: OsaurusEvent) -> OsaurusEvent {
+    public func create(_ event: OsaurusEvent, telemetryOrigin: String? = nil) -> OsaurusEvent {
         var created = event
         created.updatedAt = Date()
         ensureWebhookSecret(created)
@@ -375,6 +378,9 @@ public final class EventManager {
         didChangeEvents()
         if created.isEnabled { install(created) }
         adapter(for: created.sourceKind).eventDidChange(created, previous: nil)
+        if let telemetryOrigin {
+            FeatureTelemetry.automationCreated(trigger: created.sourceKind.rawValue, origin: telemetryOrigin)
+        }
         return created
     }
 
@@ -1107,6 +1113,7 @@ public final class EventManager {
         }
         if run.status != .filtered && run.status != .duplicate {
             EventActivityLogger.log(run, event: event)
+            FeatureTelemetry.automationRunFinished(trigger: run.sourceKind.rawValue, status: run.status.rawValue)
         }
         if run.status == .failed, let failures = adapter(for: .runFailed) as? RunFailedEventSource {
             failures.automationRunFailed(run, event: event)

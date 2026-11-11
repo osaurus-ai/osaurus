@@ -32,25 +32,15 @@ public enum Teammate: String, CaseIterable, Sendable {
         return allCases.first { $0.templateID == id }
     }
 
-    /// The costumed dino this teammate's agent wears as its avatar.
+    /// The stock dino this teammate's agent wears as its avatar. Green is
+    /// the default agent's, so the five teammates split the other five.
     public var avatar: AgentMascot {
         switch self {
-        case .planner: return .triceBeret
-        case .courier: return .rexPurse
-        case .keeper: return .brontoScarf
-        case .scout: return .triceBackpack
-        case .builder: return .rexMecha
-        }
-    }
-
-    /// The stock avatar earlier releases seeded. A teammate still wearing it
-    /// moves to `avatar`; one the person changed keeps their choice.
-    var previousStockAvatar: AgentMascot {
-        switch self {
-        case .planner, .builder: return .orange
+        case .planner: return .orange
         case .courier: return .purple
         case .keeper: return .yellow
         case .scout: return .red
+        case .builder: return .blue
         }
     }
 

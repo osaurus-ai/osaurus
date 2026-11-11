@@ -34,7 +34,7 @@ On a fresh install, the first chat (opened from the welcome window in a compact 
 
 Pick a folder with the Folder chip on an Orchestrator chat, or in Settings → Orchestrator → **Working Folder**. The Orchestrator itself never reads or writes it, and it does not have the `prompt_working_folder` picker tool that custom agents have.
 
-The folder is what delegated agents inherit: an agent with no working folder of its own works inside the Orchestrator's folder (read and write), so "write the report into the folder" works out of the box, and the worker's result names the files it wrote. Agents that have their own folder keep it. Teammates' shared agents run on their owner's Mac and cannot see your folder at all — the Orchestrator puts everything they need in the task text.
+The folder is what delegated agents inherit: an agent with no working folder of its own works inside the Orchestrator's folder (read and write), so "write the report into the folder" works out of the box, and the worker's result names the files it wrote. Agents that have their own folder keep it. A run a teammate or guest started through one of your shared agents never hands your folder on: a folder-less agent in that run gets no folder. Teammates' shared agents run on their owner's Mac and cannot see your folder at all — the Orchestrator puts everything they need in the task text.
 
 ## Delegating
 
