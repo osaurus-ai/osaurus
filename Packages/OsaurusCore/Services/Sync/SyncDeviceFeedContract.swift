@@ -59,6 +59,7 @@ enum SyncDeviceFeedContract {
         "workflow_runs",
         "workflow_library",
         "workflow_outputs",
+        "workflow_details",
     ]
 
     /// Each device's record under `prefix`, keyed by device key.

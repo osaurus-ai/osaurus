@@ -44,6 +44,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `workflow_runs` | `workflow` on a `run_progress` tool and in `toolCallDisplay`: the run the call started, its steps and how it ended (§3.2, §3.3) |
 | `workflow_library` | `workflows` in the manage state, the `runWorkflow` op and `ai.osaurus.workflow-runs/1` (§5.4) |
 | `workflow_outputs` | the `workflowOutput` op and its `ai.osaurus.workflow-output/1` message (§5.5) |
+| `workflow_details` | `facts` and `steps` on each manage-state workflow: the Mac page's chips and step badges (§5.4) |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
   NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without
@@ -701,6 +702,26 @@ The manage state lists the Mac's installed workflows, sorted by name (at most 10
 - `phoneStartable` is false when a required field is a `file` or `folder`. Those workflows are
   started on the Mac.
 - `blocked`, when present, says what has to be set up on the Mac first.
+- `facts` and `steps` (`workflow_details`) are what the Mac's workflow page shows:
+
+```json
+"facts": [ { "icon": "checkmark.circle.fill", "text": "Ready to run", "tone": "success" },
+           { "icon": "list.number", "text": "4 steps", "tone": "neutral" } ],
+"steps": [ { "name": "Research Company", "kind": "Uses a model and tools", "icon": "wand.and.stars",
+             "badges": [ { "icon": "cloud", "text": "Cloud model", "tone": "caution" },
+                         { "icon": "gauge", "text": "~1.9 min · ~26.4k tokens", "tone": "neutral" } ] } ]
+```
+
+  - `facts` lists, in order:
+    - whether it can run;
+    - its step count;
+    - where its models run;
+    - its version;
+    - whether it's published.
+  - `steps` are in run order (at most 30). Each has the Mac's risk and cost badges: hosts reached, files written, cloud or local model, and time and tokens from past runs.
+  - `icon` is an SF Symbol name.
+  - `tone` is `neutral`, `success`, `warning`, `caution` or `risky`. It is kept open.
+  - The state is written again when a run ends, since the time and token badges come from past runs.
 
 `runWorkflow` (`workflowId`, `input`) starts one as the Mac's Run button does, as a background
 run. Fields left out keep their defaults, and the input is checked against the schema.

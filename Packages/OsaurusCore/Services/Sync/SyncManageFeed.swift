@@ -125,8 +125,10 @@ final class SyncManageFeed {
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
             .store(in: &cancellables)
-        // The workflow list and each one's form and setup (`workflow_library`).
-        InstalledWorkflowStore.shared.$workflows
+        // The workflow list and each one's form and setup (`workflow_library`), and its published
+        // status (`workflow_details`).
+        InstalledWorkflowStore.shared.$workflows.map { _ in () }
+            .merge(with: WorkflowRegistryRecordStore.shared.$records.map { _ in () })
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
             .store(in: &cancellables)

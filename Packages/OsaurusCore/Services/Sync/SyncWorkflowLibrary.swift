@@ -31,6 +31,27 @@ extension SyncDeviceFeedContract {
         var phoneStartable: Bool
         /// Why it can't run until it's set up on the Mac.
         var blocked: String?
+        /// The facts the Mac's workflow page shows under its summary (`workflow_details`): whether it
+        /// can run, how many steps, where its models run, its version, whether it's published.
+        var facts: [WorkflowChip]?
+        /// Its steps in run order, each with the badges the Mac's page gives it.
+        var steps: [WorkflowStep]?
+    }
+
+    /// A small labelled capsule. `tone`: neutral, success, warning (needs attention), caution,
+    /// risky; kept open.
+    struct WorkflowChip: Codable, Equatable, Sendable {
+        var icon: String
+        var text: String
+        var tone: String
+    }
+
+    struct WorkflowStep: Codable, Equatable, Sendable {
+        var name: String
+        /// What kind of work it is, in words: "Uses a model and tools".
+        var kind: String
+        var icon: String
+        var badges: [WorkflowChip]
     }
 
     struct WorkflowInputField: Codable, Equatable, Sendable {
@@ -74,6 +95,7 @@ enum SyncWorkflowLibrary {
 
     static func managed(_ workflows: [InstalledWorkflow]) -> [SyncDeviceFeedContract.ManagedWorkflow] {
         let recent = WorkflowRunStore.shared.recentRuns()
+        let catalog = ConfigModelReference.liveCatalog()
         return workflows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             .prefix(workflowLimit)
             .map { workflow in
@@ -88,7 +110,9 @@ enum SyncWorkflowLibrary {
                     fields: fields.map(inputField),
                     prefill: (prefill?.isEmpty ?? true) ? nil : prefill,
                     phoneStartable: fields.allSatisfy { !$0.required || phoneTypes.contains($0.type) },
-                    blocked: report.hasBlockers ? report.blocking.map(\.title).joined(separator: "; ") : nil
+                    blocked: report.hasBlockers ? report.blocking.map(\.title).joined(separator: "; ") : nil,
+                    facts: facts(workflow, report: report),
+                    steps: steps(workflow, catalog: catalog)
                 )
             }
     }
@@ -108,6 +132,66 @@ enum SyncWorkflowLibrary {
     /// A phone run uses the keys shared by all agents, with nobody at the Mac.
     private static func setupReport(_ workflow: InstalledWorkflow) -> SetupReport {
         SetupChecker.check(workflow, secrets: .caller(nil), attended: false)
+    }
+
+    // MARK: Details (`workflow_details`)
+
+    static let stepLimit = 30
+
+    /// The chips under the Mac's workflow page heading, as `WorkflowDetailPage.hero` shows them.
+    private static func facts(_ workflow: InstalledWorkflow, report: SetupReport)
+        -> [SyncDeviceFeedContract.WorkflowChip]
+    {
+        typealias Chip = SyncDeviceFeedContract.WorkflowChip
+        let missingKeys = !SetupChecker.missingKeys(report).isEmpty
+        var chips = [
+            report.hasBlockers
+                ? Chip(icon: "exclamationmark.circle.fill", text: L("Needs setup"), tone: "warning")
+                : missingKeys
+                    ? Chip(icon: "key.fill", text: L("Keys missing"), tone: "warning")
+                    : Chip(icon: "checkmark.circle.fill", text: L("Ready to run"), tone: "success")
+        ]
+        let count = workflow.definition.nodes.count
+        chips.append(Chip(icon: "list.number", text: count == 1 ? L("1 step") : L("\(count) steps"), tone: "neutral"))
+        if let locality = locality(workflow) {
+            chips.append(Chip(icon: locality.icon, text: locality.text, tone: "neutral"))
+        }
+        chips.append(
+            Chip(icon: "clock.arrow.circlepath", text: L("Version \(workflow.templateVersion)"), tone: "neutral"))
+        if let published = WorkflowRegistryRecordStore.shared.record(for: workflow.templateID) {
+            chips.append(
+                Chip(
+                    icon: published.isLive ? published.visibility.symbol : "eye.slash",
+                    text: WorkflowShareCopy.status(published, includesReview: false), tone: "neutral"))
+        }
+        return chips
+    }
+
+    /// Where its model steps run once chosen; nil when it uses no model or none is chosen yet.
+    private static func locality(_ workflow: InstalledWorkflow) -> (icon: String, text: String)? {
+        let env = SetupChecker.Environment.live()
+        let models = workflow.template.requirements.models.compactMap {
+            SetupChecker.resolvedModel(for: $0, bindings: workflow.bindings, environment: env)
+        }
+        guard !models.isEmpty else { return nil }
+        return models.allSatisfy({ SetupChecker.isLocalModel($0, catalog: env.modelCatalog) })
+            ? ("lock.laptopcomputer", L("Runs on this Mac"))
+            : ("cloud", L("Uses the cloud"))
+    }
+
+    /// The steps in run order with their risk and cost badges, as the page's "Osaurus does" lists them.
+    private static func steps(_ workflow: InstalledWorkflow, catalog: ConfigModelReference.Catalog)
+        -> [SyncDeviceFeedContract.WorkflowStep]
+    {
+        let definition = workflow.definition
+        return WorkflowSummary.steps(definition).prefix(stepLimit).map { step in
+            let badges = definition.node(step.id).map {
+                WorkflowStepRisk.badges(for: $0, in: workflow, catalog: catalog)
+            } ?? []
+            return SyncDeviceFeedContract.WorkflowStep(
+                name: step.name, kind: step.kind, icon: step.icon,
+                badges: badges.map { .init(icon: $0.systemImage, text: $0.label, tone: $0.tone.rawValue) })
+        }
     }
 
     // MARK: Starting
@@ -210,6 +294,8 @@ final class SyncWorkflowRunsFeed {
         let (live, saved) = (store.live.count, store.recentPersisted?.count ?? 0)
         Self.trace("writing \(state.runs.count) runs (\(live) live, \(saved) saved)")
         written = state.runs
+        // A run that ended changes its steps' time and token badges (`workflow_details`).
+        SyncManageFeed.shared.schedulePublish()
         Task.detached(priority: .utility) {
             do {
                 try SyncConversationStore.shared.performWrite { core in

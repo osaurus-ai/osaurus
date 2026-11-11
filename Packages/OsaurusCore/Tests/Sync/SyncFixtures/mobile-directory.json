@@ -48,7 +48,8 @@
           "workflow_forms",
           "workflow_runs",
           "workflow_library",
-          "workflow_outputs"
+          "workflow_outputs",
+          "workflow_details"
         ],
         "build": "0.25.31 (1234)",
         "presence": {
