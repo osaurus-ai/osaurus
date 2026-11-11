@@ -376,6 +376,7 @@ public final class CredentialStore: @unchecked Sendable {
 
     /// Create or update a credential. Metadata arguments left `nil` keep the
     /// existing record's values (or the origin's defaults for a new record).
+    /// `countsInTelemetry` false keeps legacy imports out of `credential_saved`.
     @discardableResult
     public func save(
         _ key: String,
@@ -384,7 +385,8 @@ public final class CredentialStore: @unchecked Sendable {
         kind: CredentialKind? = nil,
         description: String? = nil,
         exposeToSandbox: Bool? = nil,
-        origin: CredentialOrigin
+        origin: CredentialOrigin,
+        countsInTelemetry: Bool = true
     ) -> CredentialWriteOutcome {
         guard CredentialKeys.isValid(key) else { return .invalidKey }
         guard !value.isEmpty else { return .emptyValue }
@@ -433,6 +435,11 @@ public final class CredentialStore: @unchecked Sendable {
             return persistIndexLocked()
         }
         notifyChanged(keys: [key])
+        if persisted, existing == nil, countsInTelemetry {
+            let scopeToken = scope.telemetryToken
+            let originToken = origin.rawValue
+            Task { @MainActor in FeatureTelemetry.credentialSaved(scope: scopeToken, origin: originToken) }
+        }
         return persisted ? .success : .indexWriteFailed
     }
 
@@ -461,6 +468,15 @@ public final class CredentialStore: @unchecked Sendable {
     /// refuses the delete.
     @discardableResult
     public func delete(_ key: String, scope: CredentialScope) -> CredentialWriteOutcome {
+        let outcome = remove(key, scope: scope)
+        if outcome.isSuccess {
+            let scopeToken = scope.telemetryToken
+            Task { @MainActor in FeatureTelemetry.credentialDeleted(scope: scopeToken) }
+        }
+        return outcome
+    }
+
+    private func remove(_ key: String, scope: CredentialScope) -> CredentialWriteOutcome {
         let account = scope.account(for: key)
         if record(key, scope: scope)?.kind != .variable {
             let removed = removeSecretValue(account: account)
@@ -488,7 +504,7 @@ public final class CredentialStore: @unchecked Sendable {
         let scope = CredentialScope.agent(agentId)
         var outcome = CredentialWriteOutcome.success
         for key in records(in: scope).map(\.key) {
-            let result = delete(key, scope: scope)
+            let result = remove(key, scope: scope)
             if !result.isSuccess { outcome = result }
         }
         return outcome

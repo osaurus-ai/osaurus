@@ -167,7 +167,7 @@ struct ChannelRoutingSection: View {
             EventEditorSheet(
                 request: request,
                 onSave: { event in
-                    if request.existing == nil { _ = manager.create(event) } else { manager.update(event) }
+                    if request.existing == nil { _ = manager.create(event, telemetryOrigin: "user") } else { manager.update(event) }
                     editor = nil
                     reload()
                 },
@@ -500,7 +500,7 @@ struct ChannelRoutingSection: View {
             target: target, targetName: ChannelRoutingNames.target(target),
             roomIds: roomIds, roomName: rooms.label, existingNames: manager.events.map(\.name),
             workflowDefinition: definition)
-        _ = manager.create(event)
+        _ = manager.create(event, telemetryOrigin: "user")
         reload()
     }
 
@@ -511,7 +511,7 @@ struct ChannelRoutingSection: View {
                 targetName: rule.target.map(ChannelRoutingNames.target) ?? rule.event.name,
                 existingNames: manager.events.map(\.name))
         else { return }
-        _ = manager.create(copy)
+        _ = manager.create(copy, telemetryOrigin: "user")
         reload()
     }
 

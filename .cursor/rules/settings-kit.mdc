@@ -55,7 +55,7 @@ Rules:
 - Inner navigation is one of two kinds, never both on a page:
   - `SettingsTabsRow` in the header when the views are peers over one
     collection (scopes or kinds of the same list: Local Models kinds,
-    Plugins, Skills, Themes, Insights).
+    Plugins, Skills, Insights).
   - `SettingsDrillInHost` + `SettingsDrillInRows` when the children are
     different kinds of page (Memory, Voice, Privacy, Server, Computer &
     Browser Use). Drill-in ids are stable deep-link keys.

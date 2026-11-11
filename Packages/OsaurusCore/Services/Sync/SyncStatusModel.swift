@@ -166,6 +166,7 @@ final class SyncStatusModel: ObservableObject {
             pairingExpiry?.cancel()
             let name = SyncService.shared.deviceName(forKey: device) ?? L("your other device")
             pairing = .paired(deviceName: name)
+            FeatureTelemetry.syncDevicePaired(platform: SyncPhoneDevices.isPhone(deviceKey: device) ? "iphone" : "other")
             ToastManager.shared.success(L("Device added"), message: String(format: L("Your chats now sync with %@."), name))
         case let .pairingFailed(reason):
             pairingExpiry?.cancel()
@@ -276,6 +277,7 @@ final class SyncStatusModel: ObservableObject {
     func revoke(_ device: Device) throws {
         guard let core = SyncService.shared.core else { return }
         try core.revokeDevice(device: device.id)
+        FeatureTelemetry.syncDeviceRemoved(rotatedKeys: false)
         dismissPairingResult()
         refresh()
     }
@@ -285,6 +287,7 @@ final class SyncStatusModel: ObservableObject {
     func revokeAndRotate(_ device: Device) throws -> [String] {
         guard let core = SyncService.shared.core else { return [] }
         _ = try core.revokeAndRotate(devices: [device.id])
+        FeatureTelemetry.syncDeviceRemoved(rotatedKeys: true)
         SyncWalletLink.clear()
         dismissPairingResult()
         refresh()

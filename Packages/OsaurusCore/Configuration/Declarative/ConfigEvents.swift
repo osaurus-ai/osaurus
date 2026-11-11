@@ -1221,7 +1221,7 @@ enum ConfigEvents {
                 if existing != nil {
                     manager.update(outcome.event)
                 } else {
-                    manager.create(outcome.event)
+                    manager.create(outcome.event, telemetryOrigin: "config")
                 }
                 matched.insert(outcome.event.id)
                 results.append(

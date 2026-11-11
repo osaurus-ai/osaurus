@@ -118,7 +118,7 @@ Only the manifest and the files it lists are copied into the queue. Your scripts
   "version": "1.0.0",
   "description": "Two starter agents for the Acme support team...",
   "publisher": { "name": "Acme Example", "url": "https://acme.example", "email": "it@acme.example" },
-  "min_osaurus_version": "0.26.0",
+  "min_osaurus_version": "1.0.0",
   "skills": [{ "name": "triage-ticket", "path": "skills/triage-ticket" }],
   "mcp_servers": [{ "name": "Acme Tickets", "transport": "http", "url": "https://mcp.acme.example/mcp", "...": "..." }],
   "harness_runtimes": [{ "name": "Acme Pi", "kind": "pi_rpc", "executable": "pi", "...": "..." }],
@@ -136,7 +136,7 @@ Only the manifest and the files it lists are copied into the queue. Your scripts
 | `version` | string | yes | Semantic version, like `1.2.0`. |
 | `description` | string | no | For your own records. |
 | `publisher` | object | no | `name` (required inside the object), `url`, `email`. |
-| `min_osaurus_version` | string | no | Oldest Osaurus that may install this bundle, like `0.26.0`. The CLI compares it with the installed app's version and refuses an older app. |
+| `min_osaurus_version` | string | no | Oldest Osaurus that may install this bundle, like `1.0.0`. The CLI compares it with the installed app's version and refuses an older app. |
 | `skills` | array | no | `{ "name", "path" }`. `path` is a folder relative to the bundle root. |
 | `mcp_servers` | array | no | MCP server entries, written inline ([section 6](#6-mcp-server-reference)). |
 | `harness_runtimes` | array | no | Harness runtime entries, written inline ([section 6a](#6a-harness-runtime-reference)). |

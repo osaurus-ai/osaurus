@@ -160,10 +160,12 @@ enum RemoteConnectionsModel {
     static func revoke(_ row: ConnectionRow) {
         if let keyId = row.keyId {
             APIKeyManager.shared.revoke(id: keyId)
+            FeatureTelemetry.guestAccessRevoked(state: "active")
         } else if let nonce = row.inviteNonce, let agentId = row.agentId {
             if let linkedKeyId = AgentInviteStore.revoke(nonce: nonce, for: agentId) {
                 APIKeyManager.shared.revoke(id: linkedKeyId)
             }
+            FeatureTelemetry.guestAccessRevoked(state: "unused_link")
         }
     }
 }

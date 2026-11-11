@@ -18,16 +18,75 @@ Requirements:
 
 - macOS 15.5+
 - Apple Silicon (M1 or newer)
-- Xcode 16.4+
+- Xcode 26+ (the packages use Swift tools 6.2; CI builds with Xcode 26.4.1)
+- [Git LFS](https://git-lfs.com) (`brew install git-lfs && git lfs install`) — the OsaurusSync FFI libraries and the sandbox init image are stored in LFS
 
 Build and run:
 
-1. Open `osaurus.xcworkspace` in Xcode 16.4+
-2. Select the `osaurus` target and press Run
-3. In the app UI, choose a port (default `1337`), then Start
-4. Download a model from the Model Manager to generate text locally
+1. Clone with LFS objects (`git clone https://github.com/osaurus-ai/osaurus.git`, or `git lfs pull` in an existing checkout)
+2. Open `osaurus.xcworkspace` in Xcode
+3. Select the `osaurus` scheme and press Run
+4. Pick a model in the welcome window (or Settings… (⌘,) → Local Models) to generate text locally
 
-Project layout and API overview are in `README.md`. For a complete feature inventory, see [FEATURES.md](FEATURES.md).
+The fast unit loop is `make test`; see the `Makefile` for the CI-equivalent and eval lanes. For a complete feature inventory, see [FEATURES.md](FEATURES.md).
+
+### Project structure
+
+```
+osaurus/
+├── App/                          # macOS app target (SwiftUI entry point, assets, entitlements)
+├── Packages/
+│   ├── OsaurusCore/              # Core library — all app logic
+│   │   ├── Models/               # Data types, DTOs, configuration stores
+│   │   ├── Services/             # Business logic (actors and stateless types)
+│   │   ├── Managers/             # UI-facing state holders (@MainActor, observable)
+│   │   ├── Views/                # SwiftUI views, organized by feature
+│   │   ├── Networking/           # HTTP server, routing, relay
+│   │   ├── Storage/              # SQLite databases
+│   │   ├── Identity/             # Cryptographic identity and access keys
+│   │   ├── Tools/                # MCP tools, plugin ABI, tool registry
+│   │   ├── Folder/               # Working-folder context, file ops, batch tool
+│   │   ├── Resources/Guide/      # In-app guides the Orchestrator reads
+│   │   ├── Utils/                # Cross-cutting utilities
+│   │   └── Tests/                # Unit and integration tests
+│   ├── OsaurusCLI/               # CLI (osaurus command)
+│   ├── OsaurusEvals/             # Eval suites (make evals)
+│   ├── OsaurusRepository/        # Plugin registry and installation
+│   └── Vendor/                   # Vendored binary dependencies (LFS)
+├── docs/                         # Feature guides and documentation
+├── scripts/                      # Build, release, and benchmark scripts
+├── sandbox/                      # Sandbox VM Dockerfile
+└── assets/                       # DMG packaging assets
+```
+
+### Git hooks (lefthook)
+
+Install [lefthook](https://github.com/evilmartians/lefthook) to set up the hooks that verify code quality:
+
+```bash
+brew install lefthook
+lefthook install
+```
+
+This installs a `pre-push` hook that runs `swift-format` over the `Packages/` directory before each push.
+
+### Telemetry in local builds
+
+Usage analytics ([Aptabase](https://aptabase.com)) and crash reporting ([Sentry](https://sentry.io)) are **off by default in source builds**: with no key, the SDK is never initialized and every event is a silent no-op, so you can build and contribute without any of this. See [TELEMETRY.md](TELEMETRY.md) for what is collected. To enable it locally:
+
+1. Create `App/osaurus/Secrets.xcconfig` (gitignored — never commit it) with the keys you want:
+   - `APTABASE_APP_KEY = A-XX-...` — your Aptabase app key (analytics).
+   - `SENTRY_DSN` — your Sentry project DSN (crash reporting). Optional; omit it to leave crash reporting off. **Escape the scheme slashes**: an `.xcconfig` treats `//` as a comment, so a raw `https://…` DSN gets silently truncated to `https:`. Add a slash variable and reference it:
+
+     ```
+     SENTRY_SLASH = /
+     SENTRY_DSN = https:$(SENTRY_SLASH)$(SENTRY_SLASH)yourPublicKey@o123.ingest.sentry.io/456
+     ```
+
+2. In Xcode, add `Secrets.xcconfig` to the project (**no** target membership), then under **Project → Info → Configurations → Debug → osaurus** set "Based on Configuration File" to **Secrets**.
+3. Clean build (⇧⌘K) and relaunch.
+
+The keys flow `Secrets.xcconfig` → `$(APTABASE_APP_KEY)` / `$(SENTRY_DSN)` build settings → `AptabaseAppKey` / `SentryDSN` in `Info.plist`. Debug builds report to Aptabase's **Debug** bucket (enable the Debug view on the dashboard to see them) and to Sentry's `debug` environment, so local testing never pollutes production data.
 
 ## Architecture guide
 
@@ -38,14 +97,14 @@ The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each 
 **Models** — Pure data. No logic, no side effects, no singletons.
 
 - Structs, enums, Codable types, API DTOs, configuration types
-- Organized into domain subfolders: `API/`, `Chat/`, `Agent/`, `Configuration/`, `Method/`, `Plugin/`, `Memory/`, `Voice/`, `Theme/`, `Tool/`, `Work/`, `Schedule/`, `Watcher/`
+- Organized into domain subfolders, for example: `API/`, `Agent/`, `AgentDelegation/`, `Channels/`, `Chat/`, `Configuration/`, `Memory/`, `Method/`, `Plugin/`, `Project/`, `Task/`, `Theme/` (System/Light/Dark design tokens), `Tool/`, `Voice/`, `Workflow/`
 - Rule: if it has `@Published` or `static let shared`, it does not belong here
 
 **Services** — Business logic. Not observable. Not UI-aware.
 
 - Swift `actor` for concurrent work (ChatEngine, MemoryService)
 - Stateless `struct` for pure functions (Router, PromptBuilder)
-- Organized into domain subfolders: `Chat/`, `Context/`, `Inference/`, `Method/`, `ModelRuntime/`, `MCP/`, `Memory/`, `Sandbox/`, `Skill/`, `Tool/`, `Voice/`, `Provider/`, `Plugin/`, `Keychain/`
+- Organized into domain subfolders, for example: `Chat/`, `Context/`, `Guide/`, `Inference/`, `Keychain/`, `MCP/`, `Memory/`, `ModelRuntime/`, `Plugin/`, `Provider/`, `Sandbox/`, `Skill/`, `Sync/`, `Tool/`, `Voice/`, `Workflow/`
 - Rule: services do NOT conform to `ObservableObject` or `@Observable`
 - Rule: if it drives UI directly, it is a Manager, not a Service
 - Naming: suffix with `Service` or `Engine`
@@ -55,13 +114,14 @@ The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each 
 - `@MainActor` classes with `@Observable` (preferred) or `ObservableObject`
 - Own published properties that SwiftUI views bind to
 - Coordinate Services, Stores, and other Managers
-- Grouped into `Chat/`, `Model/`, `Plugin/` subfolders; remaining at root
+- Grouped into `Chat/`, `Documents/`, `Model/`, `Plugin/` subfolders; remaining at root
 - Rule: managers always run on `@MainActor`
 - Naming: suffix with `Manager`
 
 **Views** — SwiftUI. Organized by feature, not by type.
 
-- Each feature has its own subfolder: `Chat/`, `Agent/`, `Model/`, `Plugin/`, `Memory/`, `Voice/`, `Work/`, `Settings/`, `Theme/`, `Skill/`, `Toast/`, `Schedule/`, `Watcher/`, `Identity/`, `Sandbox/`, `Insights/`, `Onboarding/`, `Management/`
+- Each feature has its own subfolder, for example: `Agent/`, `Chat/`, `Event/`, `Identity/`, `Insights/`, `Management/`, `Memory/`, `Model/`, `Onboarding/`, `Plugin/`, `Project/`, `Sandbox/`, `Settings/`, `Skill/`, `Task/`, `Toast/`, `Voice/`, `Workflow/`, `Workspaces/`
+- `DesignSystem/` holds the shared styled controls built on the bundled design library
 - `Common/` holds only generic, reusable primitives (buttons, layouts, glass effects)
 - A view that only makes sense in one feature goes in that feature's folder
 
@@ -182,7 +242,7 @@ Good documentation is just as important as good code. Here's how to contribute t
 
 | Document                                                       | Purpose                                                           |
 | -------------------------------------------------------------- | ----------------------------------------------------------------- |
-| [README.md](../README.md)                                      | Project overview, quick start, feature highlights                 |
+| [README.md](../README.md)                                      | What Osaurus is and why, install, links to everything else        |
 | [FEATURES.md](FEATURES.md)                                     | **Source of truth** — feature inventory and architecture          |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration                           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                                         |
@@ -199,17 +259,18 @@ Good documentation is just as important as good code. Here's how to contribute t
    - Documentation file (if applicable)
    - Code location
 
-2. **Update the README** — If the feature should be highlighted:
-   - Add to the "Highlights" table
-   - Add to "Key Features" section
-   - Update "What is Osaurus?" if it's a major feature
+2. **Update the README** — Only if the feature belongs in the pitch:
+   - Add one line to "What you get", linking to its doc
+   - Keep detail out of the README; it belongs in the feature's own doc
 
-3. **Create dedicated documentation** — For significant features:
+3. **Update the in-app guides** — If users or the Orchestrator need to know about it, edit the matching topic in `Packages/OsaurusCore/Resources/Guide/`. A user-facing setting also needs its `SettingsSearchIndex` row (see `AGENTS.md`).
+
+4. **Create dedicated documentation** — For significant features:
    - Create a new doc in `/docs/` (e.g., `FEATURE_NAME.md`)
    - Add to the Documentation Index in FEATURES.md
    - Link from the README
 
-4. **Update the Architecture Overview** — If the feature adds new components, update the diagram in FEATURES.md
+5. **Update the Architecture Overview** — If the feature adds new components, update the diagram in FEATURES.md
 
 ### When modifying an existing feature
 

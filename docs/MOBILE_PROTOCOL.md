@@ -843,7 +843,7 @@ sequenceDiagram
 ## 11. Mobile pairing (6-digit code)
 
 The Osaurus iPhone app pairs with **one** Mac by typing a 6-digit code shown in
-Settings → Mobile. It needs no master key on the phone and yields a
+Sharing → Devices → Mobile. It needs no master key on the phone and yields a
 master-scoped `osk-v1` key covering every agent on that Mac, plus each agent's
 crypto address for the Secure Channel (§6.2). One phone per Mac: a new
 pairing revokes the previous phone's key.
@@ -893,7 +893,7 @@ plaintext = {"apiKey":"osk-v1.…","keyExpiresAt":<unix s>|null,
 | `429` | — | Per-IP rate limit (shared with `/pair/confirm` and `/pair-invite`) |
 
 `isSimulator` (optional) only drives a "Simulator" badge next to the paired
-device in Settings → Mobile.
+device in Sharing → Devices → Mobile.
 
 The phone pins every returned `address` against its agent `id` and uses the
 key as the Bearer inside the Secure Channel. `GET /agents` and
@@ -986,14 +986,14 @@ version (v2 sends it in step one), and the sealed plaintext gains one field:
 ```
 
 - The phone passes it to `pairWithOffer` on its own sync core. The offer
-  lasts 10 minutes and pairs one device, like one shown in Settings → Sync.
+  lasts 10 minutes and pairs one device, like one shown in Sharing → Devices.
 - Additive. The field is absent when the phone didn't ask, when sync isn't
   open on the Mac, or when the core can't make an offer; the rest of the
   payload is unchanged. A phone that doesn't send `wantsSync` gets exactly
   the payload above, and the Mac opens no offer for it.
 - The offer is made only after the code is proven (v1 code match, v2 cA),
   and travels only inside the sealed payload. The sync core holds one offer
-  at a time, so this replaces any offer showing in Settings → Sync.
+  at a time, so this replaces any offer showing in Sharing → Devices.
 - Unknown request fields are ignored, so a phone can send `wantsSync` to a
   Mac that predates it and simply gets no offer.
 
@@ -1027,7 +1027,7 @@ into the transcript, so they can't be relabelled either.
 
 ### 11.6 Reaching the Mac away from the LAN
 
-"Reach From Anywhere" (Settings → Mobile, default on) turns on the
+**Remote Access for This iPhone** (Sharing → Devices → Mobile; formerly "Reach From Anywhere", default on) turns on the
 relay tunnel (§6.1) for every remote agent while a phone is paired, and off
 again — only for tunnels it turned on — when disabled or unpaired. Agents
 created later are added automatically.

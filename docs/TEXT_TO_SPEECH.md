@@ -21,7 +21,7 @@ Playback streams as audio is synthesized — speech starts before the full utter
 
 ### On-Device (PocketTTS)
 
-1. Open the Management window (`⌘ Shift M`) → **Voice** → **Text-to-Speech**
+1. Open Settings… (`⌘,`) → **Voice** → **Text to Speech**
 2. Enable **Text-to-Speech**
 3. Leave **Engine** on *On-Device (PocketTTS)*
 4. Click **Download** on the PocketTTS Model card (~700 MB, one time)

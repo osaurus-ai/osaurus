@@ -69,15 +69,18 @@ enum OnboardingTelemetry {
     /// bring-your-own-key path also carries the closed-enum `provider` type,
     /// and the local path carries `download_started` — whether committing
     /// kicked off a background model download (vs. an already-downloaded
-    /// model). No key, model id, or URL is ever attached. Selection is
-    /// payment-free — this fires at the proceed moment, not on any checkout.
+    /// model). `surface` is `onboarding` or `chat_sheet` (Choose a Brain over
+    /// the first-run chat). No key, model id, or URL is ever attached.
+    /// Selection is payment-free — this fires at the proceed moment, not on
+    /// any checkout.
     static func brainSourceSelected(
         _ source: BrainSource,
         downloadStarted: Bool? = nil,
+        surface: String = "onboarding",
         distribution: Distribution = .current,
         service: TelemetryService = .shared
     ) {
-        var props: [String: Value] = ["source": source.telemetryValue]
+        var props: [String: Value] = ["source": source.telemetryValue, "surface": surface]
         if let provider = source.providerTelemetryValue {
             props["provider"] = provider
         }
@@ -173,6 +176,28 @@ enum OnboardingTelemetry {
         var props: [String: Value] = ["reason": reason.rawValue, "ask": ask]
         if let step { props["step"] = step }
         service.track("onboarding_agent_finished", withDistribution(props, distribution))
+    }
+
+    /// An offer to keep a default workflow running settled. `offer` is
+    /// `turn_on`; `outcome` is `taken`, `declined`, or `failed`.
+    static func keepResolved(
+        offer: String,
+        outcome: OnboardingKeep.Outcome,
+        distribution: Distribution = .current,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "onboarding_keep_resolved",
+            withDistribution(["offer": offer, "outcome": outcome.telemetryName], distribution)
+        )
+    }
+
+    /// The Choose a Brain sheet opened over the first-run chat.
+    static func brainChooserOpened(
+        distribution: Distribution = .current,
+        service: TelemetryService = .shared
+    ) {
+        service.track("onboarding_brain_chooser_opened", withDistribution([:], distribution))
     }
 
     // MARK: - Discovery

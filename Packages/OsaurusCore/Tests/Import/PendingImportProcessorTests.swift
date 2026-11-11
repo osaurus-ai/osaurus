@@ -31,7 +31,7 @@ struct PendingImportProcessorTests {
     }
 
     private func makeFixture(
-        withServer: Bool = false, withRuntime: Bool = false, orchestratorSpawnable: Bool? = nil
+        withServer: Bool = false, withRuntime: Bool = false, orchestratorSpawnable: Bool? = nil, model: String? = nil
     ) throws -> Fixture {
         let suffix = UUID().uuidString.prefix(8).lowercased()
         let fixture = Fixture(
@@ -59,6 +59,7 @@ struct PendingImportProcessorTests {
             "tools": ["mode": "manual", "enabled": ["tickets_\(suffix)_search"]],
         ]
         if let orchestratorSpawnable { agent["orchestrator_spawnable"] = orchestratorSpawnable }
+        if let model { agent["model"] = model }
         if withServer {
             manifest["mcp_servers"] = [
                 [
@@ -182,6 +183,56 @@ struct PendingImportProcessorTests {
             #expect(rest.items.allSatisfy { $0.status == .done }, "\(rest.items)")
             #expect(SkillManager.shared.skill(named: fixture.skill) == nil)
             #expect(receipts(fixture).isEmpty)
+        }
+    }
+
+    /// Launch applies the queue before the models folder scan has landed. An
+    /// agent pinned to a model that is only in the folder (not a curated id)
+    /// still gets it instead of falling back to the default.
+    @Test
+    func agentPinnedToAModelInTheModelsFolder_getsItWhenTheScanLandsAfterLaunch() async throws {
+        try await exclusive {
+            let suffix = UUID().uuidString.prefix(8).lowercased()
+            let modelId = "probe-org/Import-Scan-\(suffix)-4bit"
+            let bundleRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-import-model-\(suffix)", isDirectory: true)
+            let bundleDirectory = bundleRoot.appendingPathComponent(modelId, isDirectory: true)
+            try FileManager.default.createDirectory(at: bundleDirectory, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: bundleDirectory.appendingPathComponent("config.json"))
+            try Data("{}".utf8).write(to: bundleDirectory.appendingPathComponent("tokenizer.json"))
+            try Data().write(to: bundleDirectory.appendingPathComponent("model.safetensors"))
+            let model = MLXModel(
+                id: modelId, name: "Import Scan Probe", description: "fixture",
+                downloadURL: "https://huggingface.co/\(modelId)", bundleDirectory: bundleDirectory)
+            let fixture = try makeFixture(model: modelId)
+
+            let releaseScan = DispatchSemaphore(value: 0)
+            let previousScan = ModelManager.scanLocalModelsOverrideForTests
+            let previousWaiting = ModelManager.localModelsDispatchWaitingForTests
+            defer {
+                releaseScan.signal()
+                ModelManager.scanLocalModelsOverrideForTests = previousScan
+                ModelManager.localModelsDispatchWaitingForTests = previousWaiting
+                ModelManager.invalidateLocalModelsCache()
+                MLXModelDownloadCache.invalidateAll()
+                try? FileManager.default.removeItem(at: fixture.root)
+                try? FileManager.default.removeItem(at: bundleRoot)
+            }
+            ModelManager.scanLocalModelsOverrideForTests = { _ in
+                releaseScan.wait()
+                releaseScan.signal()
+                return [model]
+            }
+            // The scan finishes only once the import is waiting on it.
+            ModelManager.localModelsDispatchWaitingForTests = { releaseScan.signal() }
+            ModelManager.invalidateLocalModelsCache()
+            #expect(!ModelManager.shared.installedModels().contains { $0.id == modelId })
+
+            let installed = try await run(.install, fixture)
+            #expect(installed.status == .applied, "\(installed.items)")
+            #expect(agent(named: fixture.agent)?.defaultModel == modelId)
+
+            _ = try await run(.remove, fixture)
         }
     }
 
