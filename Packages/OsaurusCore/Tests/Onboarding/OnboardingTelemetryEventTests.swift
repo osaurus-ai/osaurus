@@ -133,8 +133,9 @@ struct OnboardingTelemetryEventTests {
 
         let event = rec.events[0]
         #expect(event.name == "brain_source_selected")
-        #expect(business(event.props).count == 2)
+        #expect(business(event.props).count == 3)
         #expect(event.props["source"] as? String == "provider_key")
+        #expect(event.props["surface"] as? String == "onboarding")
         #expect(event.props["provider"] as? String == ProviderPreset.openai.rawValue)
         #expect(event.props["privacy_tier"] == nil)
     }
@@ -147,7 +148,7 @@ struct OnboardingTelemetryEventTests {
 
         let event = rec.events[0]
         #expect(event.name == "brain_source_selected")
-        #expect(business(event.props).count == 1)
+        #expect(business(event.props).count == 2)
         #expect(event.props["source"] as? String == "local")
     }
 
@@ -161,7 +162,7 @@ struct OnboardingTelemetryEventTests {
 
         let event = rec.events[0]
         #expect(event.name == "brain_source_selected")
-        #expect(business(event.props).count == 2)
+        #expect(business(event.props).count == 3)
         #expect(event.props["source"] as? String == "local")
         #expect(event.props["download_started"] as? Bool == true)
     }
@@ -176,7 +177,7 @@ struct OnboardingTelemetryEventTests {
 
         let event = rec.events[0]
         #expect(event.name == "brain_source_selected")
-        #expect(business(event.props).count == 1)
+        #expect(business(event.props).count == 2)
         #expect(event.props["source"] as? String == "hosted")
         #expect(event.props["provider"] == nil)
     }
@@ -219,5 +220,43 @@ struct OnboardingTelemetryEventTests {
         let event = rec.events[0]
         #expect(event.props["last_step"] as? String == "welcome")
         #expect(event.props["via"] as? String == "skip_button")
+    }
+
+    @Test func brainSourceSelected_from_chat_sheet_carries_its_surface() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.brainSourceSelected(.claudeCode, surface: "chat_sheet", service: service)
+
+        let event = rec.events[0]
+        #expect(event.props["source"] as? String == "claude_code")
+        #expect(event.props["surface"] as? String == "chat_sheet")
+        #expect(business(event.props).count == 2)
+    }
+
+    @Test func keepResolved_maps_each_outcome_to_its_token() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.keepResolved(offer: "turn_on", outcome: .turnedOn, service: service)
+        OnboardingTelemetry.keepResolved(offer: "turn_on", outcome: .declined, service: service)
+        OnboardingTelemetry.keepResolved(offer: "turn_on", outcome: .failed("no schedule"), service: service)
+
+        #expect(rec.events.map(\.name) == Array(repeating: "onboarding_keep_resolved", count: 3))
+        #expect(rec.events.map { $0.props["outcome"] as? String } == ["taken", "declined", "failed"])
+        #expect(rec.events.allSatisfy { $0.props["offer"] as? String == "turn_on" })
+        // The failure reason is free text and never leaves the Mac.
+        #expect(rec.events.allSatisfy { business($0.props).count == 2 })
+        #expect(rec.events.allSatisfy { $0.props["distribution"] != nil })
+    }
+
+    @Test func brainChooserOpened_has_no_business_props() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.brainChooserOpened(service: service)
+
+        #expect(rec.events.map(\.name) == ["onboarding_brain_chooser_opened"])
+        #expect(business(rec.events[0].props).isEmpty)
     }
 }

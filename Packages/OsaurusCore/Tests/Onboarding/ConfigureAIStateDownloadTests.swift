@@ -354,7 +354,7 @@ struct ConfigureAIStateDownloadTests {
         #expect(state.isChoosingModel == true)
     }
 
-    /// "Use this model" applies the draft as the active local brain and closes
+    /// "Select this model" applies the draft as the active local brain and closes
     /// the dialog.
     @Test func commitModelChooser_appliesDraftAndCloses() {
         let (state, model) = makeStateWithModel()

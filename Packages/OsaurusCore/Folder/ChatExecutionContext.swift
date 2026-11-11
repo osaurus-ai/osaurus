@@ -133,7 +133,18 @@ public enum ChatExecutionContext {
     /// `false` once it is answered, denied, or cancelled. A workflow step or
     /// spawned worker binds it so its time budget stands still while the
     /// person decides (`DeadlineClock`).
-    @TaskLocal static var approvalWaitObserver: (@Sendable (_ waiting: Bool) async -> Void)?
+    struct ApprovalWaitObserver: Sendable {
+        let notify: @Sendable (_ waiting: Bool) async -> Void
+    }
+
+    /// Boxed rather than function-typed: binding a function-typed task-local
+    /// with the synchronous `withValue` passes null type metadata to
+    /// `swift_task_localValuePush` in optimized builds (Swift 6.3) and crashes.
+    @TaskLocal static var approvalWait: ApprovalWaitObserver?
+
+    static var approvalWaitObserver: (@Sendable (_ waiting: Bool) async -> Void)? {
+        approvalWait?.notify
+    }
 
     /// The current batch ID for grouped operations (nil for non-batch operations).
     @TaskLocal public static var currentBatchId: UUID?
