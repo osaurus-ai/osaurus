@@ -34,6 +34,8 @@ struct SettingsAbilityRow<Accessory: View>: View {
     var verbatim: Bool
     @ViewBuilder let accessory: Accessory
 
+    /// `accessory` has no default so an unlabeled trailing closure always
+    /// binds to it rather than to `onPausedNoteTap` / `onConfigure`.
     init(
         title: String,
         description: String = "",
@@ -46,7 +48,7 @@ struct SettingsAbilityRow<Accessory: View>: View {
         configureLabel: String? = nil,
         onConfigure: (() -> Void)? = nil,
         verbatim: Bool = false,
-        @ViewBuilder accessory: () -> Accessory = { EmptyView() }
+        @ViewBuilder accessory: () -> Accessory
     ) {
         self.title = title
         self.description = description
@@ -143,5 +145,39 @@ struct SettingsAbilityRow<Accessory: View>: View {
             .assignedSettingsButtonStyle(.tertiary, size: .compact)
             .transition(.opacity)
         }
+    }
+}
+
+extension SettingsAbilityRow where Accessory == EmptyView {
+    /// Disfavored so a trailing-closure call resolves to the accessory init
+    /// instead of binding the closure to `onPausedNoteTap` here.
+    @_disfavoredOverload
+    init(
+        title: String,
+        description: String = "",
+        icon: String? = nil,
+        isOn: Binding<Bool>? = nil,
+        isActive: Bool? = nil,
+        isInteractive: Bool = true,
+        pausedNote: String? = nil,
+        onPausedNoteTap: (() -> Void)? = nil,
+        configureLabel: String? = nil,
+        onConfigure: (() -> Void)? = nil,
+        verbatim: Bool = false
+    ) {
+        self.init(
+            title: title,
+            description: description,
+            icon: icon,
+            isOn: isOn,
+            isActive: isActive,
+            isInteractive: isInteractive,
+            pausedNote: pausedNote,
+            onPausedNoteTap: onPausedNoteTap,
+            configureLabel: configureLabel,
+            onConfigure: onConfigure,
+            verbatim: verbatim,
+            accessory: { EmptyView() }
+        )
     }
 }
