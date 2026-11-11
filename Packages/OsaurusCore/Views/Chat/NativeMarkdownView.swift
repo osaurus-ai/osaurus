@@ -618,7 +618,9 @@ final class NativeMarkdownView: NSView {
             return
         }
 
-        let blocks = reflowParagraphs ? parseDocumentBlocks(parseInput) : parseBlocks(parseInput)
+        let blocks = ChatPerfTrace.shared.time("markdown.parse") {
+            reflowParagraphs ? parseDocumentBlocks(parseInput) : parseBlocks(parseInput)
+        }
         let segs = groupBlocksIntoSegments(blocks)
         if !reflowParagraphs {
             ThreadCache.shared.setMarkdown(blocks: blocks, segments: segs, for: parseInput)
