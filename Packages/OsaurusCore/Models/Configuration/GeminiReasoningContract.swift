@@ -8,11 +8,13 @@
 import Foundation
 
 /// Per-model thinking levels for Gemini text models, from Google's thinking
-/// docs (ai.google.dev/gemini-api/docs/thinking, audited 2026-10). The level
+/// docs (ai.google.dev/gemini-api/docs/thinking, audited 2026-11). The level
 /// sets differ by model (3 Pro stops at low/high, 3.6 Flash adds `minimal`,
-/// 3.8 Flash drops it), so one shared ladder would send values some models
-/// reject. Ids are matched by documented prefix; an unlisted Gemini revision
-/// gets no control until it is added here, rather than a guessed set.
+/// 3.7/3.8 Flash and Gemini 4 reject it with HTTP 400), so one shared ladder
+/// would send values some models reject. Gemini 4 also 400s on any
+/// `thinkingBudget`, so its rows must stay on `.level`. Ids are matched by
+/// documented prefix; an unlisted Gemini revision gets no control until it
+/// is added here, rather than a guessed set.
 ///
 /// Image, TTS, embedding and live models are excluded: they have their own
 /// profiles or no thinking control.
@@ -37,9 +39,14 @@ enum GeminiReasoningContract {
     /// fall through to the Flash level set.
     static let entries: [Entry] = [
         Entry(prefix: "gemini-3.5-flash-lite", levels: ["minimal", "low", "medium", "high"], defaultLevel: "minimal", control: .level),
+        Entry(prefix: "gemini-3.1-flash-lite", levels: ["minimal", "low", "medium", "high"], defaultLevel: "minimal", control: .level),
         Entry(prefix: "gemini-2.5-flash-lite", levels: ["low", "medium", "high"], defaultLevel: nil, control: .budget),
+        Entry(prefix: "gemini-4-carbon", levels: ["low", "medium", "high"], defaultLevel: "medium", control: .level),
+        Entry(prefix: "gemini-4-argon", levels: ["low", "medium", "high"], defaultLevel: "medium", control: .level),
         Entry(prefix: "gemini-3.8-flash", levels: ["low", "medium", "high"], defaultLevel: "medium", control: .level),
+        Entry(prefix: "gemini-3.7-flash", levels: ["low", "medium", "high"], defaultLevel: "medium", control: .level),
         Entry(prefix: "gemini-3.6-flash", levels: ["minimal", "low", "medium", "high"], defaultLevel: "medium", control: .level),
+        Entry(prefix: "gemini-3.5-flash", levels: ["minimal", "low", "medium", "high"], defaultLevel: "medium", control: .level),
         Entry(prefix: "gemini-3-flash", levels: ["minimal", "low", "medium", "high"], defaultLevel: "high", control: .level),
         Entry(prefix: "gemini-3.1-pro", levels: ["low", "medium", "high"], defaultLevel: "high", control: .level),
         Entry(prefix: "gemini-3-pro", levels: ["low", "high"], defaultLevel: "high", control: .level),
