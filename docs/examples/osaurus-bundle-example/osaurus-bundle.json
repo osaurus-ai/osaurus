@@ -6,7 +6,7 @@
   "version": "1.0.0",
   "description": "Starter agents for the Acme support team, a ticket-triage skill, the Acme Tickets and GitHub MCP servers, and the Acme Pi coding harness.",
   "publisher": { "name": "Acme Example", "url": "https://acme.example", "email": "it@acme.example" },
-  "min_osaurus_version": "0.26.0",
+  "min_osaurus_version": "1.0.0",
   "skills": [
     { "name": "triage-ticket", "path": "skills/triage-ticket" }
   ],

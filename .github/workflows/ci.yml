@@ -34,6 +34,52 @@ env:
   XCODE_VERSION: "26.4.1"
 
 jobs:
+  changes:
+    # Decides whether a pull request needs the optional macOS lanes
+    # (test-evals, test-statspack). Pushes to main/classic and manual runs
+    # always run them, so a pull request that breaks them through an
+    # OsaurusCore-only change is caught on the next main push. If the
+    # file list can't be read, every lane runs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      evals: ${{ steps.filter.outputs.evals }}
+      statspack: ${{ steps.filter.outputs.statspack }}
+    steps:
+      - name: Classify changed paths
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -u
+          run_all() {
+            echo "evals=true" >> "$GITHUB_OUTPUT"
+            echo "statspack=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          [ "$EVENT_NAME" = "pull_request" ] || run_all
+          if ! files=$(gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --name-only); then
+            echo "::warning::Could not list changed files; running every lane."
+            run_all
+          fi
+          shared='^(\.github/workflows/ci\.yml|Makefile|osaurus\.xcworkspace/xcshareddata/swiftpm/Package\.resolved|Packages/[^/]+(/[^/]+)?/Package\.(swift|resolved))$'
+          match() { printf '%s\n' "$files" | grep -Eq "$1"; }
+          if match "$shared" || match '^(Packages/OsaurusEvals/|scripts/evals/)'; then
+            echo "evals=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "evals=false" >> "$GITHUB_OUTPUT"
+          fi
+          if match "$shared" || match '^Packages/OsaurusPlugins/StatsPack/'; then
+            echo "statspack=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "statspack=false" >> "$GITHUB_OUTPUT"
+          fi
+
   release-helper-tests:
     runs-on: ubuntu-latest
     steps:
@@ -720,6 +766,8 @@ jobs:
     # SwiftPM — the same ~25-30 min floor as test-evals. The .build cache
     # below returns warm runs to single-digit minutes; the cache-key shape
     # deliberately mirrors test-evals'.
+    needs: changes
+    if: ${{ needs.changes.outputs.statspack == 'true' }}
     runs-on: macos-26
     timeout-minutes: 45
     env:
@@ -775,6 +823,8 @@ jobs:
     # suite-count assertions sat red for weeks unnoticed).
     #
     # Pinned (was `macos-latest`) for the same reason as test-core.
+    needs: changes
+    if: ${{ needs.changes.outputs.evals == 'true' }}
     runs-on: macos-26
     # Cold build compiles the whole OsaurusCore graph (mlx-swift Cmlx C++ +
     # SQLCipher amalgamation) under SwiftPM — same ~25-30 min floor as
@@ -841,17 +891,15 @@ jobs:
         run: echo "::notice title=test-evals duration::$SECONDS seconds"
 
   swiftlint:
-    # Pinned (was `macos-latest`).
-    runs-on: macos-26
+    # .swiftlint.yml enables only lint rules (no analyzer rules), so the
+    # official Linux image lints the same as macOS without holding one of
+    # the organization's 5 concurrent macOS slots.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
+    container: ghcr.io/realm/swiftlint:0.65.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          lfs: true
-
-      - name: Install SwiftLint
-        run: brew install swiftlint
 
       - name: Run SwiftLint
         run: swiftlint lint --reporter github-actions-logging

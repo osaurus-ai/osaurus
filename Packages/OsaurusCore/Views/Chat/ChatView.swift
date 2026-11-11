@@ -5134,6 +5134,8 @@ final class ChatSession: ObservableObject {
     }
 
     private func completeRunCleanup() {
+        // `stop()` also lands here when idle (every session switch / reset).
+        let hadLiveRun = isStreaming || currentTask != nil
         currentTask = nil
         isStreaming = false
         ForegroundReservationCenter.shared.release(foregroundReservation)
@@ -5156,7 +5158,7 @@ final class ChatSession: ObservableObject {
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
         markUnfinishedToolCallsInterrupted()
-        finishOrchestratorTurn()
+        finishOrchestratorTurn(turnRan: hadLiveRun)
         rebuildVisibleBlocks()
         save()
         OnboardingFirstRun.shared.runEnded(in: self)
@@ -5197,11 +5199,14 @@ final class ChatSession: ObservableObject {
     /// End an Orchestrator turn's session state: commit this turn's last
     /// `state` write, or keep the previous object marked stale, and set
     /// `inFlight` from the runs this chat is waiting on.
-    private func finishOrchestratorTurn() {
+    /// Without `turnRan` nothing is committed: marking the session dirty
+    /// would make the next save re-stamp `updatedAt` on a chat the user only
+    /// navigated away from.
+    private func finishOrchestratorTurn(turnRan: Bool) {
         let ending = orchestratorTurnEnding
         orchestratorTurnEnding = nil
         stateExtractionToken = nil
-        guard (agentId ?? Agent.defaultId) == Agent.defaultId, !isRemoteAgentTarget else { return }
+        guard turnRan, (agentId ?? Agent.defaultId) == Agent.defaultId, !isRemoteAgentTarget else { return }
         let key = expectedTodoSessionId
         let interrupted = orchestratorTurnInterrupted
         if interrupted { SessionStateRegistry.shared.discardPending(sessionId: key) }

@@ -24,7 +24,7 @@ Osaurus comes with 9 built-in skills ready to use. Each one teaches the AI a con
 
 **To get started:**
 
-1. Open Management window (`⌘ Shift M`) → **Skills**
+1. Open Settings… (`⌘,`) → **Skills** (in the Context group)
 2. Browse the library — every installed skill is automatically available to your custom agents
 3. Start a chat — the AI discovers and loads relevant skills on demand, or type `/skill-name` to invoke one explicitly for a single message
 
@@ -251,7 +251,7 @@ No per-agent skill configuration is needed — agent configuration only scopes *
 
 ### Skills not appearing in chat
 
-- Verify the skill appears in the Skills library (Management window → Skills)
+- Verify the skill appears in the Skills library (Settings… → Skills)
 - Add **keywords** to the skill (edit it in the library): the capability search indexes name + keywords + description, and keywords carry the most weight
 - Check that the skill's description clearly describes its purpose (the search uses this too)
 - Start a new chat session — the capabilities manifest is frozen when a chat starts, so skills added mid-conversation aren't listed until the next chat (they remain reachable via `capabilities_discover`)
@@ -282,7 +282,7 @@ No per-agent skill configuration is needed — agent configuration only scopes *
 ## Related Documentation
 
 - [Claude Plugins](CLAUDE_PLUGINS.md) — Full plugin imports (skills + schedules + commands + MCP + `CLAUDE.md`)
-- [Agents](../README.md#agents) — Custom AI assistants
+- [Agents](../Packages/OsaurusCore/Resources/Guide/guide-agents.md) — Custom AI assistants
 - [Tools & Plugins](plugins/README.md) — Extend with custom tools
 - [Agent Skills Specification](https://agentskills.io/) — Open format documentation
 - [Features: Methods](FEATURES.md#methods) — Reusable learned workflows

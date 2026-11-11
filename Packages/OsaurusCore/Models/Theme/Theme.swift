@@ -49,6 +49,59 @@ enum ThemeFontNameClassifier {
         lock.unlock()
         return result
     }
+
+    /// How a design-library family name renders. The library stores Figma
+    /// names ("SF Pro", "SF Mono"); those are the system faces, and a name
+    /// that is not installed must not reach `Font.custom`, which silently
+    /// falls back to Helvetica.
+    enum FamilyKind: Equatable {
+        case system
+        case monospaced
+        case named(String)
+    }
+
+    nonisolated(unsafe) private static var kindMemo: [String: FamilyKind] = [:]
+
+    static func kind(of family: String) -> FamilyKind {
+        lock.lock()
+        let cached = kindMemo[family]
+        lock.unlock()
+        if let cached { return cached }
+
+        let lower = family.lowercased()
+        let kind: FamilyKind
+        if lower == "systemmonospaced" || lower.contains("sf mono") {
+            kind = .monospaced
+        } else if isSystemFamily(family, matching: "sf pro") {
+            kind = .system
+        } else if NSFont(name: family, size: 13) != nil {
+            kind = .named(family)
+        } else {
+            kind = .system
+        }
+        lock.lock()
+        kindMemo[family] = kind
+        lock.unlock()
+        return kind
+    }
+
+    static func font(family: String, size: CGFloat, weight: Font.Weight) -> Font {
+        switch kind(of: family) {
+        case .system: return .system(size: size, weight: weight)
+        case .monospaced: return .system(size: size, weight: weight, design: .monospaced)
+        case .named(let name): return .custom(name, size: size).weight(weight)
+        }
+    }
+
+    static func nsFont(family: String, size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        switch kind(of: family) {
+        case .system: return .systemFont(ofSize: size, weight: weight)
+        case .monospaced: return .monospacedSystemFont(ofSize: size, weight: weight)
+        case .named(let name):
+            guard let base = NSFont(name: name, size: size) else { return .systemFont(ofSize: size, weight: weight) }
+            return NSFontManager.shared.convert(base, toHaveTrait: weight >= .semibold ? .boldFontMask : .unboldFontMask)
+        }
+    }
 }
 
 // MARK: - Theme Protocol
