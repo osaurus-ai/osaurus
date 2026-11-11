@@ -258,7 +258,7 @@ callers talk to `BackgroundTaskManager` directly.
 (`events/runs.sqlite`) are in `StorageDatabaseCatalog`, so they are rekeyed
 on rotation, converted with the encryption mode and included in export.
 When the file cannot open at launch (usually the storage key is not
-resident yet), the failure shows under Settings → Storage with Retry and
+resident yet), the failure shows under Settings → Privacy & Security → Data & Storage with Retry and
 Reset, the store runs in memory, and it reattaches when the key arrives or
 on Retry: stored rows win, and anything recorded meanwhile is written
 through.

@@ -63,6 +63,15 @@ public final class LoginWithOsaurusService {
         case answeredWithError(LoginWithOsaurusError, URL)
         /// The request could not be answered safely; only the user saw it.
         case rejectedLocally(LoginWithOsaurusError)
+
+        /// Closed `login_with_osaurus` outcome token.
+        var telemetryToken: String {
+            switch self {
+            case .signedIn: return "signed_in"
+            case .answeredWithError: return "answered_error"
+            case .rejectedLocally: return "rejected_locally"
+            }
+        }
     }
 
     private let dependencies: Dependencies
@@ -76,6 +85,12 @@ public final class LoginWithOsaurusService {
 
     @discardableResult
     public func handle(_ url: URL) async -> Outcome {
+        let outcome = await resolve(url)
+        FeatureTelemetry.loginWithOsaurus(outcome: outcome.telemetryToken)
+        return outcome
+    }
+
+    private func resolve(_ url: URL) async -> Outcome {
         let request: LoginWithOsaurusRequest
         switch LoginWithOsaurusRequest.parse(url, clients: dependencies.clients()) {
         case .success(let parsed):

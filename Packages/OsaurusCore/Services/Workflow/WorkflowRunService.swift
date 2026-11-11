@@ -323,6 +323,7 @@ public final class WorkflowRunService {
             (request.template.workflow?.nodes ?? []).map { ($0.id, $0.timeout) }, uniquingKeysWith: max)
         WorkflowActivityLogger.shared.begin(runID: runID, definition: request.template.workflow)
         WorkflowTaskRecorder.began(request, resuming: request.resuming != nil)
+        FeatureTelemetry.workflowRunStarted(caller: request.caller.kind.rawValue, resumed: request.resuming != nil)
         let ownerTaskId = request.caller.taskId
         keepalives[runID]?.cancel()
         keepalives[runID] = Task { @MainActor in
@@ -359,6 +360,11 @@ public final class WorkflowRunService {
         WorkflowRunStore.shared.record(run)
         WorkflowActivityLogger.shared.finished(run)
         WorkflowTaskRecorder.finished(run)
+        FeatureTelemetry.workflowRunFinished(
+            caller: run.caller.kind.rawValue,
+            status: run.status.rawValue,
+            duration: run.finishedAt.map { $0.timeIntervalSince(run.startedAt) }
+        )
         tasks[run.id] = nil
         stepTimeouts[run.id] = nil
         keepalives.removeValue(forKey: run.id)?.cancel()

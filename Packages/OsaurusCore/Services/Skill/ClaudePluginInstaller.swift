@@ -1554,7 +1554,7 @@ public final class ClaudePluginInstaller {
         let agent = Agent(
             name: ChatImportApplier.uniqueName(name, kind: .agent), description: description, systemPrompt: prompt,
             defaultModel: model, autonomousExec: exec, pluginId: pluginId)
-        AgentManager.shared.add(agent)
+        AgentManager.shared.add(agent, telemetryOrigin: "plugin")
         return agent
     }
 

@@ -86,7 +86,11 @@ enum ConfigApplier {
     ) async -> [ConfigApplyResult] {
         await ConfigApplySerialQueue.shared.acquire()
         if caller != nil { await ConfigHistoryRecorder.noticeDrift(.beforeApply) }
-        let results = await applyLocked(document: document, prune: prune, options: options)
+        let results = await TelemetryContext.$agentCreationOrigin.withValue(
+            TelemetryContext.agentCreationOrigin ?? FeatureTelemetry.agentCreationOrigin(for: caller)
+        ) {
+            await applyLocked(document: document, prune: prune, options: options)
+        }
         if let caller {
             await ConfigHistoryRecorder.recordApply(
                 results, caller: caller, approvalId: approvalId, requestText: requestText)
@@ -746,7 +750,7 @@ enum ConfigApplier {
             entry.description = AgentDescriptionPolicy.normalized(description)
         }
         if let avatar = entry.avatar?.trimmingCharacters(in: .whitespacesAndNewlines), !avatar.isEmpty,
-            AgentMascot(rawValue: avatar) == nil
+            AgentMascot(storedID: avatar) == nil
         {
             return "avatar: `\(avatar)` is not a mascot. Valid: "
                 + AgentMascot.allCases.map(\.rawValue).joined(separator: ", ") + ", or \"\" for the name's initial."
@@ -803,7 +807,7 @@ enum ConfigApplier {
         if let v = entry.systemPrompt { agent.systemPrompt = v }
         if let raw = entry.avatar {
             let avatar = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            agent.avatar = AgentMascot(rawValue: avatar)?.rawValue
+            agent.avatar = AgentMascot(storedID: avatar)?.rawValue
         }
         if entry.model.isSpecified { agent.defaultModel = entry.model.valueOrNil }
         if entry.temperature.isSpecified {

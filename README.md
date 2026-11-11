@@ -23,6 +23,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-macOS%20(Apple%20Silicon)-black?logo=apple" alt="Platform">
   <img src="https://img.shields.io/badge/OpenAI%20API-compatible-0A7CFF" alt="OpenAI API">
+  <img src="https://img.shields.io/badge/Open%20Responses-compatible-0A7CFF" alt="Open Responses">
   <img src="https://img.shields.io/badge/Anthropic%20API-compatible-0A7CFF" alt="Anthropic API">
   <img src="https://img.shields.io/badge/Ollama%20API-compatible-0A7CFF" alt="Ollama API">
   <img src="https://img.shields.io/badge/MCP-server-0A7CFF" alt="MCP Server">
@@ -43,15 +44,55 @@
 
 ---
 
-## Inference is all you need. Everything else can be owned by you.
+## Why Osaurus
 
-Models are getting cheaper and more interchangeable by the day. What's irreplaceable is the layer around them -- your context, your memory, your tools, your identity. Others keep that layer on their servers. Osaurus keeps it on your machine.
+Models are getting cheaper, better, and more interchangeable every month. The model you use today will not be the one you use next year.
 
-Osaurus is the AI harness for macOS. It sits between you and any model -- local or cloud -- and provides the continuity that makes AI personal: agents that remember, execute autonomously, run real code, and stay reachable from anywhere. The models are interchangeable. The harness is what compounds.
+What doesn't get replaced is everything around the model: what your assistant knows about you, the tools it can use, the work it has learned to do, and the identity it acts under. That layer is what makes AI useful to you personally, and it compounds over time. Most AI products keep it on their servers, tied to their model.
 
-Works fully offline with local models. Connect to any cloud provider when you want more power. Nothing leaves your Mac unless you choose.
+Osaurus keeps it on your Mac. Your agents, memory, tools, and keys live locally, work fully offline with local models, and stay intact when you switch to a different local or cloud model. Nothing leaves your Mac unless you choose a cloud model or turn on a feature that connects out. Native Swift on Apple Silicon, no Electron, MIT licensed.
 
-Native Swift on Apple Silicon. No Electron. No compromises. MIT licensed.
+## What it does
+
+You talk to one assistant, the **Orchestrator**. Ask in your own words and it decides how to handle the request:
+
+- **Answers** questions directly, from what it knows or what's already in the chat.
+- **Changes Osaurus for you**, like "switch my default model" or "add a provider", showing an approval card first. Nothing changes until you confirm.
+- **Hands work to your team.** A fresh install comes with a small team of agents, each bound to one app or folder: **Planner** (Calendar and Reminders), **Courier** (Mail), **Keeper** (Downloads and Notes), **Scout** (the web), and, on a Mac set up for development, **Builder** (a project folder). You can rename them or create your own.
+- **Uses built-in helpers** for hands-on work: **Research** (web search with sources), **Files** (your chat's working folder), **Browser** (sites you're signed in to), and **Code** (an isolated sandbox).
+- **Runs workflows.** It starts one of your saved workflows when a request matches, or sketches a small one on the spot and offers to keep it if it worked.
+
+When you first launch Osaurus, you choose how it runs: a private model on this Mac, Osaurus Cloud (nothing to download), or an AI account you already have. You can change that at any time, and your agents and memory carry over.
+
+## What you get
+
+- **Agents**: custom agents, each with its own prompt, model, tools, memory, working folder, and avatar. They can run on Osaurus's own [agent loop](docs/AGENT_LOOP.md) or on an external harness such as Claude Code ([Agent Runtimes](docs/HARNESS_RUNTIMES.md)). See the [Agents guide](Packages/OsaurusCore/Resources/Guide/guide-agents.md) and the [Orchestrator guide](docs/ORCHESTRATOR.md).
+- **Workflows and the Architect**: typed, repeatable multi-step workflows. The built-in Architect agent designs, tests, and fixes them for you. See [Workflows](docs/WORKFLOWS.md).
+- **Automations**: run a workflow, an agent, or a model on a schedule, a folder change, a webhook, or a feed. See [Automations](docs/AUTOMATIONS.md).
+- **Memory and knowledge**: layered memory that stays small and relevant, plus document libraries agents can search. See [Memory](docs/MEMORY.md) and [Knowledge](docs/KNOWLEDGE.md).
+- **Sandbox**: agents run code in an isolated Linux VM, with a per-agent user and home folder, on macOS 26+. See [Sandbox](docs/SANDBOX.md).
+- **Browser and computer use**: a per-agent browser session, plus macOS control with per-app autonomy rules. Both are off by default. See [Browser Use](docs/BROWSER.md) and [Computer Use](docs/COMPUTER_USE.md).
+- **Apple apps**: Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps, Music, and Shortcuts as native tools, turned on per agent. See [Apple Apps](docs/APPLE_APPS.md).
+- **Channels**: agents read and post on Discord, Slack, Telegram, iMessage, WhatsApp, Email, and n8n, with strict allowlists. See [Agent Channels](docs/AGENT_CHANNELS.md).
+- **Privacy filter**: before a cloud send, an on-device classifier finds names, emails, keys, and other secrets and swaps them for placeholders. It fails closed if anything leaks. See [Privacy Filter](docs/PRIVACY_FILTER.md).
+- **Identity and secure channels**: every agent has a cryptographic address, can be reached through a relay, and talks to other Osaurus agents end-to-end encrypted. See [Identity](docs/IDENTITY.md) and [Secure Channel](docs/SECURE_CHANNEL.md).
+- **Devices and Workspaces**: sync chats end-to-end encrypted between your Macs and iPhone, and share agents and workflows with teammates. See [Sync](docs/SYNC.md) and [Workspaces](docs/OSAURUS_WORKSPACES.md).
+- **Voice**: on-device transcription, wake word, and a system-wide dictation hotkey. See [Voice Input](docs/VOICE_INPUT.md).
+- **Images**: generate and edit images on-device with local image models. See the [Images guide](Packages/OsaurusCore/Resources/Guide/guide-images.md).
+- **Skills and plugins**: import [Agent Skills](https://agentskills.io/) and Claude plugins, or install native plugins from the registry. See [Skills](docs/SKILLS.md), [Claude Plugins](docs/CLAUDE_PLUGINS.md), and [Plugin Authoring](docs/plugins/README.md).
+- **MCP, both ways**: Osaurus is an MCP server for other clients, and an MCP client that connects to remote MCP services with one-tap OAuth. See [Remote MCP Providers](docs/REMOTE_MCP_PROVIDERS.md).
+- **Shortcuts, Spotlight, and Siri**: "Ask Osaurus" and "Run Osaurus Agent" work system-wide. See [App Intents](docs/APP_INTENTS.md).
+
+For the full inventory, see [docs/FEATURES.md](docs/FEATURES.md).
+
+## Models
+
+Osaurus doesn't depend on any one model. Swap models freely and your agents, memory, and tools stay intact.
+
+- **Local**: Gemma, Qwen, GPT-OSS, Llama, LFM, and more, running on Apple Silicon through MLX. Osaurus publishes [curated quantizations on Hugging Face](https://huggingface.co/OsaurusAI) tuned for quality per gigabyte. Models live in `~/MLXModels` (override with `OSU_MODELS_DIR`), and models already in your Hugging Face cache or LM Studio can be used in place.
+- **Apple Foundation Models**: on macOS 26+ with Apple Intelligence, Apple's on-device model is available as `foundation`.
+- **Cloud**: OpenAI, Anthropic, Gemini, xAI, Venice AI, OpenRouter, Ollama, LM Studio, or any endpoint that speaks the OpenAI, Anthropic, or Open Responses format. See [Remote Providers](docs/REMOTE_PROVIDERS.md).
+- **Osaurus Cloud**: pay-as-you-go access through [Osaurus Router](docs/OSAURUS_ROUTER.md), with no separate provider account. Osaurus doesn't store your prompt or response content, only the usage metadata needed for billing.
 
 ## Install
 
@@ -59,316 +100,93 @@ Native Swift on Apple Silicon. No Electron. No compromises. MIT licensed.
 brew install --cask osaurus
 ```
 
-Or download the latest `.dmg` from [Releases](https://github.com/osaurus-ai/osaurus/releases/latest). Two builds ship per release:
+Or download a `.dmg` from [Releases](https://github.com/osaurus-ai/osaurus/releases/latest). Each release ships two builds:
 
-- **`Osaurus-<version>.dmg`** (~70 MB) — the standard build. Pick and download a model during onboarding. This is what Homebrew and in-app updates use.
-- **`Osaurus-<version>-full.dmg`** (~4 GB, linked from each release's notes and hosted on [Hugging Face](https://huggingface.co/datasets/OsaurusAI/osaurus-releases)) — the same app with [Raptor 0.6](https://huggingface.co/OsaurusAI/Raptor-0.6-4B-JANG_6M) bundled. First launch installs the model into `~/MLXModels` and onboarding skips the download, so you can chat offline immediately. Updates afterwards are the small build.
+- **`Osaurus-<version>.dmg`** (~70 MB) is the standard build. You pick a model during setup. Homebrew and in-app updates use this build.
+- **`Osaurus-<version>-full.dmg`** (~4 GB, on [Hugging Face](https://huggingface.co/datasets/OsaurusAI/osaurus-releases)) is the same app with [Raptor 0.6](https://huggingface.co/OsaurusAI/Raptor-0.6-4B-JANG_6M) bundled, so you can chat offline right after install. Later updates use the small build.
 
-After installing, launch from Spotlight (`⌘ Space` → "Osaurus") or the CLI:
+> Requires macOS 15.5+ and Apple Silicon. The sandbox VM and Apple Foundation Models need macOS 26+.
+
+Open the chat window with the global hotkey (default `⌘;`) or from Spotlight. Settings… (`⌘,`) holds everything else. Homebrew installs the CLI; otherwise use Settings → Server → Overview → Command Line Tool → **Install CLI**:
 
 ```bash
 osaurus ui       # Open the chat UI
-osaurus serve    # Start the server
+osaurus serve    # Start the server (add --expose for LAN access)
 osaurus status   # Check status
+osaurus stop     # Stop the server
 ```
 
-> Requires macOS 15.5+ and Apple Silicon.
+## For developers
 
-## Agents
-
-Agents are the core of Osaurus. Each one gets its own prompts, memory, and avatar -- a research assistant, a coding partner, a file organizer, whatever you need. Tools and skills are automatically selected via RAG search based on the task at hand -- no manual configuration needed. Everything else in the harness exists to make agents smarter, faster, and more capable over time.
-
-Agents can also opt into a private local database and a single self-scheduled next run -- see [Agent DB & Self-Scheduling](docs/AGENT_DB.md). Local storage is plaintext by default (protected by FileVault) with opt-in SQLCipher encryption -- see [Storage](docs/STORAGE.md).
-
-### Agent Loop
-
-Custom agents run an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated sandbox. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. The built-in Orchestrator is the exception: it has no working folder, sandbox, browser, or computer use. For filesystem work, create or switch to a custom agent, then pick the folder there. See the [Agent Loop Guide](docs/AGENT_LOOP.md) and [Orchestrator Guide](docs/ORCHESTRATOR.md).
-
-### Sandbox
-
-Agents execute code in an isolated Linux VM powered by Apple's [Containerization](https://developer.apple.com/documentation/containerization) framework. Full dev environment -- shell, Python, Node.js, compilers, package managers -- with zero risk to your Mac.
-
-Each agent gets its own Linux user and home directory. The VM connects back to Osaurus (inference, memory, secrets) via a vsock bridge -- sandboxed but not disconnected. Extend with simple JSON plugin recipes, no Xcode or code signing required.
-
-```
-┌────────────────┐       ┌────────────────────────────┐
-│    Osaurus     │       │   Linux VM (Alpine)        │
-│                │       │                            │
-│  Sandbox Mgr ──┼───────┤→ /workspace  (VirtioFS)    │
-│  Host API   ←──┼─vsock─┤→ osaurus-host bridge       │
-│                │       │                            │
-│                │       │  agent-alice  (Linux user) │
-│                │       │  agent-bob    (Linux user) │
-└────────────────┘       └────────────────────────────┘
-```
-
-> The Linux VM requires macOS 26+ (Tahoe). On earlier versions Osaurus falls back to a native macOS Seatbelt sandbox: commands run on your Mac under `sandbox-exec` confinement, with writes limited to the sandbox workspace, `pip`/`npm` installs (no `apk`), and all-or-nothing network access instead of per-domain allowlists. See the [Sandbox Guide](docs/SANDBOX.md) for configuration, built-in tools, and plugin authoring.
-
-### Memory
-
-Three layers -- identity, pinned facts, and per-session episodes -- plus a transcript fallback. Agents distill conversations once at session end (not on every turn), score what matters by salience, and surface at most one compact slice per request based on what you're actually asking. A background consolidator decays, merges, and evicts so memory stays sharp instead of bloating. Most turns inject ~800 tokens or less; many inject zero. See the [Memory Guide](docs/MEMORY.md).
-
-### Privacy Filter
-
-When you send to a cloud model, an on-device classifier — OpenAI's `openai/privacy-filter` (Apache-2.0, 1.5B params / 50M active sparse-MoE), served via the MLX conversion `mlx-community/openai-privacy-filter-bf16` (~2.8 GB) — detects names, emails, phones, URLs, addresses, dates, account numbers, and free-form secrets, alongside deterministic regex for SSN, credit cards, IBAN, AWS keys, GitHub tokens, and your own custom patterns. Each detection is shown in a review sheet with a scrubbed preview before sending; approved entities are swapped for stable `[PERSON_1]` / `[EMAIL_2]` placeholders, and streaming replies are unscrubbed back on the fly so the chat reads naturally. **Fail-closed**: if the post-scrub scan finds anything that leaked, the send is blocked. Verify wire-level redaction in the **Insights** panel — it captures the exact bytes the cloud saw. See the [Privacy Filter Guide](docs/PRIVACY_FILTER.md).
-
-### Identity
-
-Every participant -- human, agent, device -- gets a secp256k1 cryptographic address. Authority flows from your master key (iCloud Keychain) down to each agent in a verifiable chain of trust. Create portable access keys (`osk-v1`), scope per-agent, revoke anytime. See [Identity docs](docs/IDENTITY.md).
-
-### Relay
-
-Expose agents to the internet via secure WebSocket tunnels through `agent.osaurus.ai`. Unique URL per agent based on its crypto address. No port forwarding, no ngrok, no configuration.
-
-### Secure Channel
-
-When two Osaurus agents talk -- across your LAN or across the world through the relay -- the conversation is **end-to-end encrypted**: a forward-secret X25519 handshake authenticated by each agent's crypto identity, with every request, streamed token, and access key sealed in ChaCha20-Poly1305. The relay becomes a blind pipe that forwards ciphertext it cannot open; a man-in-the-middle cannot complete a handshake; replayed or truncated traffic is detected and refused; and there is no plaintext fallback an attacker can force. Zero configuration -- pairing is all it takes. See the [Secure Channel docs](docs/SECURE_CHANNEL.md).
-
-### Orchestrator
-
-The built-in Osaurus agent is the default Orchestrator. New chat windows open on it unless you start a chat on a custom agent. Ask it anything about the app and it answers from live state; ask it to change a setting and it plans the change, shows an approval card, and applies only after you confirm. It also delegates work: spawn your custom agents and allowed local/cloud models as subagents -- in parallel, within budgets you set -- and get their results woven back into the conversation. It deliberately does no hands-on work itself -- no sandbox, working folder, browser, or computer use; those belong to custom agents -- which keeps it safe and predictable. The chat composer does not offer a working-folder chip on the Orchestrator; picking a folder there would not grant file tools. For filesystem work, create or switch to a custom agent, then pick the working folder on that agent. Rename the Orchestrator, give it a persona, and control exactly what it may delegate to in Settings → Orchestrator. See the [Orchestrator Guide](docs/ORCHESTRATOR.md).
-
-### Subagents (Spawn)
-
-Let a chat -- the Orchestrator or any custom agent -- delegate a bounded task to another model -- **local or remote** -- or to one of your saved agents, and get a compact result back without cluttering the conversation. Perfect for offloading research, coding, or analysis to a specialist mid-turn. When the subagent runs on a **different local** model, Osaurus normally does a **single-residency handoff**: it unloads your chat model, runs the job, then reloads and continues, so two large models never fight for memory. Same-model children reuse the resident model; experimental RAM-safe coexistence can keep both resident when enabled and admitted. Custom agents are added to the Orchestrator's spawn pool automatically (you can remove them in Settings → Orchestrator). First use still asks for approval; budgets and permission mode are configured per agent.
-
-### Browser Use
-
-Give an agent its own browser. `browser_use` runs a self-contained subagent that navigates, reads pages, clicks, types, and verifies each step against a persistent per-agent WebKit session — cookies and sign-ins survive between chats, isolated from other agents and your regular browser. Reads and navigation run automatically; typing and anything consequential pause for your approval, and sign-ins happen in a secure window you type into directly (agents never see credentials). Off by default, enabled per agent, sessions managed in Settings → Browser. See the [Browser Use Guide](docs/BROWSER.md).
-
-### Image Generation
-
-Create images on your Mac, fully offline. Install a local image model -- z-image-turbo, FLUX, Qwen-Image, or Ideogram -- and generate from a text prompt with control over size, seed, and negative prompts; hand it a source image to edit instead of starting from scratch. Your chat model can also call the built-in `image` tool to generate or edit a picture and render it **inline in the conversation**. Nothing is sent to a server.
-
-## Models
-
-The harness is model-agnostic. Swap freely -- your agents, memory, and tools stay intact.
-
-### Local
-
-Run Gemma 4, Qwen3.6, GPT-OSS, Llama, and more on Apple Silicon with optimized MLX inference. Osaurus maintains its own [optimized model library on Hugging Face](https://huggingface.co/OsaurusAI) with curated quantizations for the best quality-to-size ratio on Apple Silicon. Models stored at `~/MLXModels` (override with `OSU_MODELS_DIR`). Fully private, fully offline.
-
-### Liquid Foundation Models
-
-Osaurus supports [Liquid AI's LFM](https://www.liquid.ai/models) family -- on-device models built on a non-transformer architecture optimized for edge deployment. Fast decode, low memory footprint, and strong tool calling out of the box.
-
-### Apple Foundation Models
-
-On macOS 26+, use Apple's on-device model as a first-class provider. Pass `model: "foundation"` in API requests. Tool calling maps through Apple's native interface automatically. Zero inference cost, fully private.
-
-### Cloud
-
-Connect to OpenAI, Anthropic, Gemini, xAI/Grok, [Venice AI](https://venice.ai), OpenRouter, Ollama, LM Studio, or Osaurus Router. Osaurus Router is the hosted path — pay-as-you-go with credits and no separate provider account; Osaurus doesn't store your prompt or response content (only the usage metadata needed for billing), and upstream providers process requests under their own policies. Context and memory persist across all providers. See [Remote Providers](docs/REMOTE_PROVIDERS.md) and [Osaurus Router](docs/OSAURUS_ROUTER.md).
-
-## MCP
-
-Osaurus is a full MCP (Model Context Protocol) server. Give any MCP-compatible client access to your tools with the command-based stdio bridge:
-
-```json
-{
-  "mcpServers": {
-    "osaurus": {
-      "command": "osaurus",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-`osaurus mcp` starts a stdio MCP server for the client and proxies tool discovery/calls to your local Osaurus HTTP server. Local-only servers can rely on loopback trust. If Server > Network exposure is enabled, add an access key to the client environment:
-
-```json
-{
-  "mcpServers": {
-    "osaurus": {
-      "command": "osaurus",
-      "args": ["mcp"],
-      "env": {
-        "OSAURUS_MCP_ACCESS_KEY": "osk-v1..."
-      }
-    }
-  }
-}
-```
-
-In the other direction, Osaurus can also act as an MCP client and aggregate tools from URL-based remote MCP providers. One-tap connect to ~25 well-known providers (Linear, Notion, GitHub, Vercel, Supabase, Sentry, Stripe, Cloudflare, ...) with auto OAuth 2.1 + Dynamic Client Registration, or paste an API key. The Remote MCP Providers UI is for HTTP/SSE MCP endpoints; it does not launch third-party `command`/`args` stdio providers. See the [Remote MCP Providers Guide](docs/REMOTE_MCP_PROVIDERS.md) for details.
-
-## Tools & Plugins
-
-```bash
-osaurus tools install osaurus.xlsx       # Install from registry
-osaurus tools list                       # List installed
-osaurus tools create MyPlugin --swift    # Create a plugin
-osaurus tools dev com.acme.my-plugin     # Dev with hot reload
-```
-
-**Apple apps are built in.** Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps & Location, Music, and Shortcuts ship as native tools you turn on per custom agent under Agents → Abilities → Tools — off by default, with the macOS permission prompt on enable and an approval card for every send or delete. See the [Apple Apps guide](docs/APPLE_APPS.md).
-
-Native plugins cover the rest: Vision, XLSX, PPTX, Images, Telegram, Resend, Fetch, and more. (Web search, browsing, macOS control, and the Apple apps are core Osaurus capabilities now — no plugin needed.) Plugins target the v3 host API surface — register HTTP routes, serve web apps, persist data in SQLite, dispatch agent tasks, and call inference through any model. Older v1/v2 plugins continue to load unchanged. See the [Plugin Authoring Guide](docs/plugins/README.md).
-
-Document attachments keep structure where the file format exposes it: CSV/TSV tables, XLSX workbooks, PPTX decks, PDF page anchors, and rich document sections are parsed through the document adapter registry before they reach the agent.
-
-## More
-
-**Skills & Methods** -- Skills import reusable AI capabilities from GitHub repos or files, compatible with [Agent Skills](https://agentskills.io/). Full Claude plugins (skills, scheduled agents, slash commands, MCP providers, and `CLAUDE.md` context) can be imported from any GitHub repo and managed as a single bundle. Methods are learned workflows that agents save and reuse over time. All are automatically selected via RAG search -- no manual configuration needed. See [Skills Guide](docs/SKILLS.md) and [Claude Plugins](docs/CLAUDE_PLUGINS.md).
-
-**Workflows & the Architect** -- A workflow is a fixed, typed graph of steps (model calls with schema-checked output, forms, sandboxed code, tools, HTTP with first-class pagination, waits, map fan-out, nested workflows, stored state) that an agent can call as a tool, the Orchestrator can run, or you can open as a tab. The built-in **Architect** agent designs one from a description, from an API's docs or an MCP server, from a chat that already did the work, or from a shared template; tests it; builds evals to pick the right model per step; and fixes repeated failures on request. Secrets and sign-ins live in the Keychain as shared connections and never travel with a template. See [Workflows](docs/WORKFLOWS.md).
-
-**Automations** -- Start a workflow, an agent, or a one-off model answer on a schedule, when files in a folder change, or when a webhook is called; a channel message starts an agent or a workflow. Every run, and every channel message that never reached one, is listed in History with the reason. See [Automations](docs/AUTOMATIONS.md).
-
-**Voice** -- On-device transcription via FluidAudio on Apple's Neural Engine. Voice input in chat, VAD mode with wake-word activation, and a global hotkey to transcribe into any app. No audio leaves your Mac. See [Voice Input Guide](docs/VOICE_INPUT.md).
-
-**Shortcuts, Spotlight & Siri** -- Osaurus ships App Intents, so "Ask Osaurus" and "Run Osaurus Agent" are available system-wide the moment you install -- no setup. Ask your active agent and get the reply inline, or kick off a custom agent in the background. See [App Intents Guide](docs/APP_INTENTS.md).
-
-**Developer Tools** -- Server explorer, MCP tool inspector, inference monitoring, plugin debugging. See [Developer Tools Guide](docs/DEVELOPER_TOOLS.md). For the inference scheduler, model leases, continuous-batching engine, and feature flags that tune them, see [Inference Runtime](docs/INFERENCE_RUNTIME.md).
-
-## Telemetry
-
-Osaurus collects **anonymous, aggregated usage analytics** via [Aptabase](https://aptabase.com), an [open-source](https://github.com/aptabase/aptabase), privacy-first analytics project. We collect this only to understand broad user trends and preferences (how the app is used and where people run into friction) so we can make it better. It **never** includes your chats, prompts, files, model outputs, or keys. There are no accounts or device profiles, so events aren't tied to you.
-
-For the exact, exhaustive list of every event and property we capture — and an explicit list of what we never collect — see [Telemetry & KPIs](docs/TELEMETRY.md).
-
-### Crash reporting
-
-**Crash and app-hang reporting** via [Sentry](https://sentry.io) is a **separate, independent** switch from usage analytics. Unlike analytics it's **opt-out** — on by default and active from launch — because crash reports carry no personal information and are what let us fix real bugs; you can turn it off anytime in **Settings → Privacy → Send Crash Reports**. It's limited to crash and hang diagnostics — no performance tracing, profiling, failed-request capture, network breadcrumbs, screenshots, or personal information; we drop the user object and device hostname from every event, on top of disabling PII. It needs a DSN to be configured, so like analytics it's off by default in source builds.
-
-### Local development
-
-Telemetry is **off by default in source builds**: with no key, the SDK is never initialized and every event is a silent no-op, so you can build and contribute without any of this. To enable it locally:
-
-1. Create `App/osaurus/Secrets.xcconfig` (gitignored — never commit it) with the keys you want:
-   - `APTABASE_APP_KEY = A-XX-...` — your Aptabase app key (analytics).
-   - `SENTRY_DSN` — your Sentry project DSN (crash reporting). Optional; omit it to leave crash reporting off. **Escape the scheme slashes**: an `.xcconfig` treats `//` as a comment, so a raw `https://…` DSN gets silently truncated to `https:`. Add a slash variable and reference it:
-
-     ```
-     SENTRY_SLASH = /
-     SENTRY_DSN = https:$(SENTRY_SLASH)$(SENTRY_SLASH)yourPublicKey@o123.ingest.sentry.io/456
-     ```
-
-2. In Xcode, add `Secrets.xcconfig` to the project (**no** target membership), then under **Project → Info → Configurations → Debug → osaurus** set "Based on Configuration File" to **Secrets**.
-3. Clean build (⇧⌘K) and relaunch.
-
-The keys flow `Secrets.xcconfig` → `$(APTABASE_APP_KEY)` / `$(SENTRY_DSN)` build settings → `AptabaseAppKey` / `SentryDSN` in `Info.plist`. Debug builds report to Aptabase's **Debug** bucket (enable the Debug view on the dashboard to see them) and to Sentry's `debug` environment, so local testing never pollutes production data.
-
-## Compatible APIs
-
-Drop-in endpoints for existing tools:
+Osaurus runs a local server with drop-in endpoints for existing tools:
 
 | API       | Endpoint                                      |
 | --------- | --------------------------------------------- |
 | OpenAI    | `http://127.0.0.1:1337/v1/chat/completions`   |
+| Responses | `http://127.0.0.1:1337/v1/responses`          |
 | Anthropic | `http://127.0.0.1:1337/anthropic/v1/messages` |
 | Ollama    | `http://127.0.0.1:1337/api/chat`              |
 
-All prefixes supported (`/v1`, `/api`, `/v1/api`). Full function calling with streaming tool call deltas. `/chat/completions` keeps **strict OpenAI semantics** -- it returns `tool_calls` and the client executes them, so Osaurus drops in cleanly behind harnesses that already manage their own tool loop. For server-side autonomous loops use `POST /agents/{id}/run`; to expose Osaurus tools to remote MCP harnesses use `/mcp/tools` + `/mcp/call`. See [OpenAI API Guide](docs/OpenAI_API_GUIDE.md) for tool calling, streaming, and SDK examples. Building a macOS app that connects to Osaurus? See the [Shared Configuration Guide](docs/SHARED_CONFIGURATION_GUIDE.md). Shipping Osaurus with your own agents, skills, and MCP servers pre-installed? See [Osaurus Bundles](docs/OSAURUS_BUNDLES.md) (`osaurus import`).
+`/chat/completions` keeps strict OpenAI semantics: it returns `tool_calls` and your client runs them. `/v1/responses` speaks the item-based [Open Responses](https://www.openresponses.org) format, so Responses-only clients such as Codex work too. For server-side autonomous runs, use `POST /agents/{id}/run`. See the [OpenAI API Guide](docs/OpenAI_API_GUIDE.md).
 
-## CLI
+To give any MCP client access to your Osaurus tools:
+
+```json
+{
+  "mcpServers": {
+    "osaurus": { "command": "osaurus", "args": ["mcp"] }
+  }
+}
+```
+
+If network exposure is on, add `"env": { "OSAURUS_MCP_ACCESS_KEY": "osk-v1..." }`.
+
+More for developers:
+
+- [Shared Configuration](docs/SHARED_CONFIGURATION_GUIDE.md): connecting your own macOS app to Osaurus.
+- [Osaurus Bundles](docs/OSAURUS_BUNDLES.md): shipping Osaurus with your agents, skills, and MCP servers pre-installed (`osaurus import`).
+- [Developer Tools](docs/DEVELOPER_TOOLS.md): Server Explorer and Insights.
+- [Inference Runtime](docs/INFERENCE_RUNTIME.md): the scheduler, batching, and caches.
+
+## Privacy and telemetry
+
+Your chats, memory, agents, and configuration are stored under `~/.osaurus/` on your Mac. Storage is plaintext by default (protected by FileVault), with opt-in SQLCipher encryption; see [Storage](docs/STORAGE.md).
+
+Osaurus collects **anonymous, aggregated usage analytics** through [Aptabase](https://aptabase.com) to understand how the app is used and where people get stuck. It never includes your chats, prompts, files, model outputs, or keys, and events aren't tied to an account or device profile. Analytics are on by default; turn them off during setup or in Settings → Privacy & Security → **Share Anonymous Usage Data**. Every event and property is listed in [Telemetry](docs/TELEMETRY.md).
+
+### Crash reporting
+
+Crash and app-hang reports go to [Sentry](https://sentry.io). This switch is separate from analytics, on by default, and can be turned off in Settings → Privacy & Security → **Send Crash Reports**. Reports carry crash and hang diagnostics only: no performance tracing, network breadcrumbs, screenshots, user object, or device hostname.
+
+Source builds have both off: with no keys configured, neither SDK starts. To enable them locally, see [Telemetry in local builds](docs/CONTRIBUTING.md#telemetry-in-local-builds).
+
+## Build from source
 
 ```bash
-osaurus serve --port 1337              # Start on localhost
-osaurus serve --port 1337 --expose     # Expose on LAN
-osaurus ui                             # Open the chat UI
-osaurus status                         # Check status
-osaurus stop                           # Stop the server
-```
-
-Homebrew auto-links the CLI, or symlink manually:
-
-```bash
-ln -sf "/Applications/Osaurus.app/Contents/MacOS/osaurus" "$(brew --prefix)/bin/osaurus"
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│                   The Harness                       │
-├──────────┬──────────┬────────────┬──────────────────┤
-│ Agents   │ Memory   │ Agent Loop │ Automations      │
-├──────────┴──────────┴────────────┴──────────────────┤
-│              MCP Server + Client                    │
-├──────────┬──────────┬───────────┬───────────────────┤
-│ MLX      │ OpenAI   │ Anthropic │ Ollama / Others   │
-│ Runtime  │ API      │ API       │                   │
-├──────────┴──────────┴───────────┴───────────────────┤
-│      Plugin System (v1 / v2 ABI) · Native Plugins   │
-├──────────┬──────────┬───────────┬───────────────────┤
-│ Identity │ Relay    │ Tools     │ Skills · Methods  │
-├──────────┴──────────┴───────────┴───────────────────┤
-│  Sandbox VM (Alpine · Apple Containerization)       │
-│  vsock bridge · VirtioFS · per-agent isolation      │
-└─────────────────────────────────────────────────────┘
-```
-
-Most features are accessible through the Management window (`⌘ ⇧ M`).
-
-## Build from Source
-
-```bash
+git lfs install
 git clone https://github.com/osaurus-ai/osaurus.git
 cd osaurus
 open osaurus.xcworkspace
 ```
 
-Build and run the `osaurus` target. Requires Xcode 16+ and macOS 15.5+.
-
-### Git Hooks (lefthook)
-
-Install [lefthook](https://github.com/evilmartians/lefthook) to set up the hooks that verify quality of the code:
-
-```bash
-brew install lefthook
-lefthook install
-```
-
-This installs a `pre-push` hook that runs `swift-format` over the `Packages/` directory before each push.
-
-## Project Structure
-
-```
-osaurus/
-├── App/                          # macOS app target (SwiftUI entry point, assets, entitlements)
-├── Packages/
-│   ├── OsaurusCore/              # Core library — all app logic
-│   │   ├── Models/               # Data types, DTOs, configuration stores
-│   │   ├── Services/             # Business logic (actors and stateless types)
-│   │   ├── Managers/             # UI-facing state holders (@MainActor, observable)
-│   │   ├── Views/                # SwiftUI views, organized by feature
-│   │   ├── Networking/           # HTTP server, routing, relay
-│   │   ├── Storage/              # SQLite databases
-│   │   ├── Identity/             # Cryptographic identity and access keys
-│   │   ├── Tools/                # MCP tools, plugin ABI, tool registry
-│   │   ├── Folder/               # Working-folder context, file ops, batch tool
-│   │   ├── Utils/                # Cross-cutting utilities
-│   │   └── Tests/                # Unit and integration tests
-│   ├── OsaurusCLI/               # CLI (osaurus command)
-│   └── OsaurusRepository/        # Plugin registry and installation
-├── docs/                         # Feature guides and documentation
-├── scripts/                      # Build, release, and benchmark scripts
-├── sandbox/                      # Sandbox VM Dockerfile
-└── assets/                       # DMG packaging assets
-```
-
-See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for the architecture guide and layer definitions.
+Build and run the `osaurus` scheme. Requires Xcode 26+ and [Git LFS](https://git-lfs.com). See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for the project layout, architecture guide, tests, and git hooks.
 
 ## Contributing
 
-Osaurus is actively developed and we welcome contributions: bug fixes, new plugins, documentation, UI/UX improvements, and testing.
-
-Check out [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), read the [Contributing Guide](CONTRIBUTING.md), or join [Discord](https://discord.gg/osaurus). See [docs/FEATURES.md](docs/FEATURES.md) for the full feature inventory.
+We welcome bug fixes, plugins, documentation, UI/UX improvements, and testing. Start with [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), read the [Contributing Guide](docs/CONTRIBUTING.md), or join us on [Discord](https://discord.gg/osaurus).
 
 > [!NOTE]
-> **🌐 Help translate Osaurus.** We're looking for contributors to localize the app into **Spanish** and **Japanese** -- these locales are already wired up in Xcode, so you can start translating right away. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md) for how to contribute and the contributor leaderboard.
+> **Help translate Osaurus.** We're looking for contributors to localize the app into **Spanish** and **Japanese**. These locales are already set up in Xcode, so you can start translating right away. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md).
 
 ## Community
 
-- [Discord](https://discord.gg/osaurus) -- chat, feedback, show-and-tell
-- [Twitter](https://x.com/OsaurusAI) -- updates and demos
-- [Hugging Face](https://huggingface.co/OsaurusAI) -- optimized models for Apple Silicon
-- [Community Calls](https://lu.ma/osaurus) -- bi-weekly, open to everyone
-- [Blog](https://osaurus.ai/blog) -- long-form thinking on personal AI
-- [Docs](https://docs.osaurus.ai) -- guides and tutorials
-- [Plugin Registry](https://github.com/osaurus-ai/osaurus-tools) -- browse and contribute tools
+- [Discord](https://discord.gg/osaurus): chat, feedback, show-and-tell
+- [Twitter](https://x.com/OsaurusAI): updates and demos
+- [Hugging Face](https://huggingface.co/OsaurusAI): optimized models for Apple Silicon
+- [Community Calls](https://lu.ma/osaurus): every two weeks, open to everyone
+- [Blog](https://osaurus.ai/blog): long-form thinking on personal AI
+- [Docs](https://docs.osaurus.ai): guides and tutorials
+- [Plugin Registry](https://github.com/osaurus-ai/osaurus-tools): browse and contribute tools
 
 ## License
 

@@ -33,13 +33,13 @@ path such as `/opt/homebrew/bin/npx` when a command-not-found diagnostic appears
 
 ## Adding a Provider
 
-The Add Provider sheet is a two-step flow.
+The Add Service sheet is a two-step flow.
 
 ### Step 1 — Pick a service
 
-`⌘ Shift M` → **Tools** → **Connections** tab → **+ Add Provider**.
+Settings… (`⌘,`) → **Tools & MCP** → **Services** → **Add Service**, or click **Add** on a row in the **Directory** below the Services list.
 
-> Note: this is the **Tools** sidebar item (under Agents & Automation), not the top-level **Providers** item — that one manages _inference_ endpoints (Ollama, OpenAI-compatible, etc.), not MCP tool servers. See [Remote Providers](REMOTE_PROVIDERS.md) for the difference.
+> Note: this is the **Tools & MCP** sidebar item (Capabilities group), not **Providers** (Models group) — that one manages _inference_ endpoints (Ollama, OpenAI-compatible, etc.), not MCP tool servers. See [Remote Providers](REMOTE_PROVIDERS.md) for the difference.
 
 You land on a catalog grid with a search bar and a row of category chips at the top (Legal, Finance & Accounting, Investing & Market Data, Healthcare & Life Sciences, Documents & Signatures, Compliance & Security, Business Productivity, Sales & CRM, Developer). Type to filter by name, tagline, or category ("issues" finds Linear, "legal" finds every legal service). Enterprise data products carry a **Requires subscription** note; they only work with a paid account. The first card is always **Custom Server** for any HTTP(S) MCP endpoint you want to point at; the rest are pre-vetted well-known providers (see [Provider Catalog](#provider-catalog) below).
 
@@ -55,7 +55,7 @@ Used by most of the catalog (every row marked plain **OAuth** in the [Provider C
 - Tap it → your default browser opens to the vendor's OAuth consent screen.
 - After you approve, the browser redirects back to a loopback URL Osaurus is listening on (`http://127.0.0.1:<ephemeral>/callback`).
 - A green **Connected** badge appears.
-- Click **Add Provider**. Done.
+- Click **Add Service**. Done.
 
 No client ID, secret, or redirect URI to configure. Osaurus picks a client registration in this order (see [`MCPOAuthClientMetadata.swift`](../Packages/OsaurusCore/Services/MCP/OAuth/MCPOAuthClientMetadata.swift)):
 
@@ -78,7 +78,7 @@ Some vendors require confidential-client OAuth and don't publish a `registration
 1. Click **Open [Provider] docs** to land on the vendor's OAuth-app instructions.
 2. Register a new OAuth app and **copy this exact redirect URI** into its allowed list — the sheet shows it with a **Copy** button. Every manual-credentials template uses `http://127.0.0.1:33267/callback`.
 3. Paste the resulting **Client ID** and **Client Secret** into the form.
-4. Click **Sign In with [Provider]**, complete the browser flow, then **Add Provider**.
+4. Click **Sign In with [Provider]**, complete the browser flow, then **Add Service**.
 
 The Client Secret is stored in your macOS Keychain alongside access/refresh tokens and is sent only to the vendor's token endpoint: in the form body (`client_secret_post`), or as HTTP Basic credentials when the token endpoint only advertises `client_secret_basic` (Zoom). The loopback port is pinned to the value the vendor expects, so future refreshes keep working without re-registering the app.
 
@@ -99,16 +99,16 @@ Used by GitHub Copilot MCP.
 
 - A secure text field labeled **API Key**.
 - A **Where do I get my key?** link that opens the vendor's docs.
-- Paste the key, click **Add Provider**.
+- Paste the key, click **Add Service**.
 
-The key is saved in General → Keys (macOS Keychain, never on disk in plaintext) and sent on every request as `Authorization: Bearer <key>`. An agent with its own value for the same key uses that instead when it calls the server; see [CREDENTIALS.md](CREDENTIALS.md).
+The key is saved in General → Vault (macOS Keychain, never on disk in plaintext) and sent on every request as `Authorization: Bearer <key>`. An agent with its own value for the same key uses that instead when it calls the server; see [CREDENTIALS.md](CREDENTIALS.md).
 
 #### No Auth
 
 Used by public data sources: TaxAct, SNOMED CT, Open Targets, Excalidraw, DeepWiki, Exa Search, and Keenable.
 
 - A small green **This server doesn't require authentication.** confirmation.
-- Click **Add Provider**.
+- Click **Add Service**.
 
 #### Custom Server
 
@@ -327,12 +327,12 @@ remote MCP providers and is not exposed through external tool surfaces.
 | Mode             | Description                                                                                                                                |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | **None**         | No `Authorization` header added.                                                                                                           |
-| **Bearer Token** | Token sent as `Authorization: Bearer <token>`. Saved in General → Keys.                                                                    |
+| **Bearer Token** | Token sent as `Authorization: Bearer <token>`. Saved in General → Vault.                                                                    |
 | **OAuth**        | RFC 9728 PRM + RFC 8414 ASM discovery, Client ID Metadata Documents or RFC 7591 DCR, RFC 8252 loopback redirect, PKCE S256, RFC 8707 resource indicators, RFC 9207 `iss` check, auto refresh. |
 
 ### Custom Headers
 
-Add arbitrary HTTP headers. Mark a header as a **secret** to save its value in General → Keys instead of `mcp.json`.
+Add arbitrary HTTP headers. Mark a header as a **secret** to save its value in General → Vault instead of `mcp.json`.
 
 ### Advanced
 
@@ -657,8 +657,8 @@ The **Export** button in Tools settings produces a reporter-safe snapshot of eve
 
 Use the **Insights** tab to monitor MCP provider activity:
 
-1. Open Management window (`⌘ Shift M`).
-2. Click **Insights** in the sidebar.
+1. Open Settings… (`⌘,`).
+2. Click **Insights** in the sidebar (Developer Tools group).
 3. Filter by source or search for your provider name.
 
 ---
@@ -668,7 +668,7 @@ Use the **Insights** tab to monitor MCP provider activity:
 ### Token Storage
 
 - OAuth access tokens, OAuth refresh tokens, and DCR client secrets live in the macOS Keychain with the server's sign-in — encrypted at rest, scoped to your login, never written to `mcp.json`.
-- Bearer tokens, secret env vars, and custom headers marked **secret** are saved in General → Keys (also the Keychain). Each is shared by all agents unless an agent has its own value; an agent whose value differs gets its own client for that server (up to 8 per server, least recently used closed first), and an agent whose value matches the shared one uses the shared client. Removing a server keeps its keys, since other servers or agents may use them.
+- Bearer tokens, secret env vars, and custom headers marked **secret** are saved in General → Vault (also the Keychain). Each is shared by all agents unless an agent has its own value; an agent whose value differs gets its own client for that server (up to 8 per server, least recently used closed first), and an agent whose value matches the shared one uses the shared client. Removing a server keeps its keys, since other servers or agents may use them.
 
 ### Loopback Redirect
 
@@ -692,7 +692,7 @@ only), timeouts, `authType` (`none` | `bearerToken` | `oauth`), `transport`
 (`oauth.clientId`, `oauth.scopes`, `oauth.authorizationEndpoint`, etc.). Stdio
 records also carry non-secret `command`, `args`, `env`, execution host, and
 working-directory fields. Secret env values, secret headers, and bearer tokens
-are saved in General → Keys; `mcp.json` only lists which ones the server needs.
+are saved in General → Vault; `mcp.json` only lists which ones the server needs.
 
 Existing pre-OAuth `mcp.json` files keep working unchanged; missing fields default to `bearerToken` for backwards compatibility.
 

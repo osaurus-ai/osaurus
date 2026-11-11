@@ -44,7 +44,7 @@ The shared token values and assignments are part of the app and should merge wit
 
 Use an approved export of the complete editable inspector document to replace `LibraryResources/design-library.json`; retain primitives, aliases and assignments together. `semantic-tokens.resolved.json` in this folder is the corresponding resolved engineering reference, not the editable source. `component-assignments.json` contains the full mapping export. Do not copy an entire local app profile.
 
-Existing upstream theme-import/custom-theme behavior and all account-dependent flows need regression review before release; the bundled design overlay now applies to the delivered UI in normal builds. Do not assume this package certifies those combinations.
+All account-dependent flows need regression review before release; the bundled design overlay now applies to the delivered UI in normal builds. Do not assume this package certifies those combinations. Custom themes (import, editor, gallery) were removed in Osaurus 1.0, so the bundled design with System, Light and Dark appearance is the only styling the app renders.
 
 ## Verification and remaining work
 

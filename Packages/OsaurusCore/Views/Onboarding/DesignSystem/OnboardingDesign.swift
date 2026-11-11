@@ -68,6 +68,12 @@ enum OnboardingPalette {
 
     /// Selection green `#68d735` (specialty card border, verified check).
     static let dinoGreen = Color(red: 0x68 / 255, green: 0xD7 / 255, blue: 0x35 / 255)
+    /// Dino green for text. `#68d735` is 1.2–1.7:1 on light glass, so light
+    /// mode sets copy in a deep green `#24650f` (4.5:1 or better on the
+    /// green washes and the dialog surface).
+    static var dinoGreenText: Color {
+        theme.isDark ? dinoGreen : Color(red: 0x24 / 255, green: 0x65 / 255, blue: 0x0F / 255)
+    }
     /// The local-model card's gradient tint, fading to clear.
     static let createGradientGreen = Color(red: 133 / 255, green: 212 / 255, blue: 82 / 255)
         .opacity(0.26)
