@@ -4714,13 +4714,10 @@ final class ChatSession: ObservableObject {
         // Extract the marker block from the envelope. Older shapes (raw
         // marker-only string from before the envelope migration) are
         // accepted too so plugin authors who emit raw markers keep working.
-        let markerText: String
-        if let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
-            let text = payload["text"] as? String
-        {
-            markerText = text
-        } else {
-            markerText = toolResult
+        // The tool's own failures (invalid args, ...) carry no marker block
+        // and must reach the model as-is.
+        guard let markerText = SharedArtifact.shareArtifactMarkerText(fromToolResult: toolResult) else {
+            return toolResult
         }
 
         // `processToolResultDetailed` performs a `FileManager.copyItem` that can

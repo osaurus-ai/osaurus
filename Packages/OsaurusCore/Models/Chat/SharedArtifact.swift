@@ -254,6 +254,18 @@ extension SharedArtifact {
         case copyFailed(source: String, reason: String)
     }
 
+    /// The marker block a `share_artifact` result carries: the success envelope's `text`, or
+    /// the whole string for a legacy raw-marker result. `nil` for anything else (the tool's
+    /// own failure envelopes), which callers must pass through unchanged.
+    static func shareArtifactMarkerText(fromToolResult toolResult: String) -> String? {
+        if let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
+            let text = payload["text"] as? String
+        {
+            return text
+        }
+        return toolResult.contains(startMarker) ? toolResult : nil
+    }
+
     /// Extracts marker-delimited metadata and content lines from a tool result string.
     static func parseMarkers(from toolResult: String) -> ParsedMarkers? {
         guard let startRange = toolResult.range(of: startMarker),

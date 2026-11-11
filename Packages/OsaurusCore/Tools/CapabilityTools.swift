@@ -1252,6 +1252,19 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             }
         }
+        if ToolRegistry.readOnlyFolderBlockedToolNames.contains(toolId),
+            ChatExecutionContext.currentFolderRoot != nil
+        {
+            let agentId = ChatExecutionContext.currentAgentId
+            if await MainActor.run(body: { ToolRegistry.agentHasReadOnlyWorkingFolder(agentId) }) {
+                return .failure(
+                    LoadFailure(
+                        kind: .rejected,
+                        message: "Tool '\(toolId)' cannot be loaded: " + ToolRegistry.readOnlyFolderMessageSuffix
+                    )
+                )
+            }
+        }
         let allowedNames = await grantedToolNamesForCurrentAgent()
         let (availability, isEnabled, isBuiltIn, toolSpec, isWorkspaceTool) = await MainActor.run {
             (
