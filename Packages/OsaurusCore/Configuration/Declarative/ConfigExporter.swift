@@ -180,7 +180,7 @@ enum ConfigExporter {
         var entry = AgentEntry(name: agent.name)
         entry.description = agent.description
         entry.systemPrompt = agent.systemPrompt
-        entry.avatar = agent.avatar.flatMap(AgentMascot.init(rawValue:))?.rawValue
+        entry.avatar = agent.avatar.flatMap(AgentMascot.init(storedID:))?.rawValue
         entry.model = agent.defaultModel.map { .value($0) } ?? .null
         entry.temperature = agent.temperature.map { .value(Double($0)) } ?? .null
         entry.maxTokens = agent.maxTokens.map { .value($0) } ?? .null

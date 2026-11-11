@@ -6,7 +6,7 @@ This document is the contract for harness authors.
 
 ## Registering a runtime
 
-Settings → **Runtimes** → **Add Runtime**:
+Settings → **Agent Runtimes** → **Add Runtime**:
 
 | Field | Meaning |
 |---|---|

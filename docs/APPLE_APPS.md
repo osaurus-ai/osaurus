@@ -22,7 +22,7 @@ Turning an app on asks macOS for its permission right away:
 | Music | Automation → Music | AppleScript |
 | Shortcuts | none | `/usr/bin/shortcuts` CLI; individual shortcuts may prompt on their own |
 
-A denied grant does **not** flip the switch back. The group header shows a **Permission needed** badge; clicking it re-asks for any grant macOS can still prompt for and then opens the System Settings pane for whatever is still missing (Full Disk Access, or an Automation grant that was previously denied). The same grants are listed under Management → Permissions.
+A denied grant does **not** flip the switch back. The group header shows a **Permission needed** badge; clicking it re-asks for any grant macOS can still prompt for and then opens the System Settings pane for whatever is still missing (Full Disk Access, or an Automation grant that was previously denied). The same grants are listed under Settings → Privacy & Security → Permissions.
 
 ## The off switch is authoritative
 

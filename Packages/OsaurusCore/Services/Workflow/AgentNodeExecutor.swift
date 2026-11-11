@@ -5,9 +5,10 @@
 //  Agent steps: hand the rendered task to another agent through the same
 //  delegation path `spawn_agent` uses, and take its final answer. A local
 //  agent runs as a real chat session of that agent on this Mac, on its own
-//  model; a teammate's shared agent runs on their Mac over the workspace
-//  relay (liveness is probed before anything is sent, and the host bills
-//  its own run). Only the task text travels.
+//  model, in its own Working Folder or else the launcher's; a teammate's
+//  shared agent runs on their Mac over the workspace relay (liveness is
+//  probed before anything is sent, and the host bills its own run), and
+//  only the task text travels.
 //
 //  The target must be on the launching agent's Allowed subagents, the
 //  same lists `spawn_agent` checks. The launching agent's `spawn` (local)
@@ -400,13 +401,35 @@ enum AgentNodeExecutor {
         let feedID = "workflow-agent-\(context.runID.uuidString)-\(context.node.id)-\(context.attempt)"
         let feed = SubagentFeed(toolCallId: feedID, kindId: target.permissionKindId, title: task)
         defer { SubagentFeedRegistry.shared.removeNow(toolCallId: feedID) }
+        let launcherFolder = await MainActor.run {
+            launcherWorkingFolder(for: context.caller) { AgentManager.shared.workingFolder(for: $0) }
+        }
         let outcome = try await AgentDelegationDispatcher.run(
             target: target.dispatchTarget, targetAgentName: target.name, input: task,
-            maxElapsedSeconds: seconds, feed: feed, interrupt: InterruptToken())
+            maxElapsedSeconds: seconds, feed: feed, interrupt: InterruptToken(),
+            launcherWorkingFolder: launcherFolder)
         let artifacts = await MainActor.run { importArtifacts(of: outcome.sessionId, context: context) }
         return Delegated(
             sessionID: outcome.sessionId, text: outcome.finalText, needsInput: outcome.needsInput,
             completionTokens: outcome.completionTokens, artifacts: artifacts)
+    }
+
+    /// The folder a folder-less local agent inherits for this step: the
+    /// launching agent's Working Folder, else the calling chat's folder.
+    /// Nil for a run someone else started: their task text must not get
+    /// write access to the owner's folder.
+    static func launcherWorkingFolder(
+        for caller: WorkflowCaller,
+        agentFolder: (UUID) -> (bookmark: Data?, path: String?)?
+    ) -> DelegatedWorkingFolder? {
+        guard caller.onBehalfOf == nil else { return nil }
+        if let folder = agentFolder(caller.agentID ?? Agent.defaultId),
+            folder.bookmark != nil || folder.path?.isEmpty == false
+        {
+            return DelegatedWorkingFolder(bookmark: folder.bookmark, path: folder.path)
+        }
+        guard let path = caller.folderPath, !path.isEmpty else { return nil }
+        return DelegatedWorkingFolder(bookmark: nil, path: path)
     }
 
     /// Copies the files the agent shared into the run's files.

@@ -105,7 +105,7 @@ Luminance = 0.2126 × R + 0.7152 × G + 0.0722 × B
 
 ### Typography
 
-- Configurable font sizes via theme settings
+- Text Size (Settings → General → Appearance, or View → Zoom In / Zoom Out) scales text everywhere from 70% to 160%
 - System font support for optimal rendering
 - Minimum text size of 12pt for body content
 
@@ -136,16 +136,15 @@ Our accessibility testing includes:
 
 1. **Decorative Borders**: Some decorative borders (e.g., card borders, subtle dividers) may not meet the 3:1 contrast requirement, as they are purely decorative and do not convey information.
 
-2. **Custom Themes**: User-created custom themes may not meet accessibility standards. The theme editor does not currently enforce minimum contrast ratios.
+Osaurus has no custom themes. Appearance is System, Light or Dark, so the two palettes above are the only ones the app renders.
 
 ---
 
 ## Future Improvements
 
-- [ ] Add contrast ratio warnings in the theme editor
 - [ ] Provide accessibility presets for users with specific needs
-- [ ] Implement automatic contrast adjustment suggestions
-- [ ] Add colorblind-friendly theme presets
+- [ ] Honor the macOS Increase Contrast setting with a higher-contrast palette
+- [ ] Verify the Light and Dark palettes under color vision deficiency simulations
 
 ---
 
@@ -154,7 +153,7 @@ Our accessibility testing includes:
 If you encounter accessibility issues with Osaurus, please report them:
 
 1. Open an issue on GitHub with the `accessibility` label
-2. Include the theme you're using
+2. Include your Appearance (System, Light or Dark) and Text Size
 3. Describe the specific accessibility barrier
 4. If possible, include a screenshot
 

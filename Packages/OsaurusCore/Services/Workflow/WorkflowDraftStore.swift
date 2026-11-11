@@ -91,7 +91,7 @@ public final class WorkflowDraftStore: ObservableObject {
         {
             delete(draft.id, keepTestRuns: true)
         }
-        return create(sessionID: Self.inlineSessionPrefix + UUID().uuidString)
+        return create(sessionID: Self.inlineSessionPrefix + UUID().uuidString, telemetryOrigin: "inline")
     }
 
     /// Brings a draft up to `template`, a newer saved version of what it
@@ -118,6 +118,12 @@ public final class WorkflowDraftStore: ObservableObject {
     /// A new draft, empty or starting from `template` (Edit in the Architect).
     @discardableResult
     public func create(sessionID: String?, from template: Template? = nil) -> WorkflowDraft {
+        create(sessionID: sessionID, from: template, telemetryOrigin: nil)
+    }
+
+    /// `telemetryOrigin` overrides the `workflow_draft_started` origin token
+    /// (`inline` for a chat handoff); otherwise `edit` or `blank`.
+    private func create(sessionID: String?, from template: Template? = nil, telemetryOrigin: String?) -> WorkflowDraft {
         var draft = WorkflowDraft(sessionID: sessionID)
         if let template, let definition = template.workflow {
             draft.name = template.name
@@ -136,6 +142,8 @@ public final class WorkflowDraftStore: ObservableObject {
             }
         }
         write(draft)
+        FeatureTelemetry.workflowDraftStarted(
+            origin: telemetryOrigin ?? (draft.templateID == nil ? "blank" : "edit"))
         return draft
     }
 

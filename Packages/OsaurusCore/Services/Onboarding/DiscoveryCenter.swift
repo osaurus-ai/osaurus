@@ -410,6 +410,7 @@ final class DiscoveryCenter {
                 let automation = OnboardingKeep.automation(workflowId: offer.id, name: offer.name)
             else { return end() }
             let outcome = await turnOnAutomation(automation.entry)
+            OnboardingTelemetry.keepResolved(offer: "turn_on", outcome: outcome)
             if outcome == .turnedOn {
                 await OnboardingKeep.requestGrants(
                     forWorkflow: offer.id,

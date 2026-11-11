@@ -365,7 +365,8 @@ enum CredentialMigration {
             report.merged += 1
         } else {
             let outcome = store.save(
-                target, scope: .global, value: value, kind: .secret, exposeToSandbox: false, origin: origin)
+                target, scope: .global, value: value, kind: .secret, exposeToSandbox: false, origin: origin,
+                countsInTelemetry: false)
             guard outcome.isSuccess else {
                 report.failed += 1
                 return
@@ -397,7 +398,7 @@ enum CredentialMigration {
         }
         let outcome = store.save(
             key, scope: .agent(agentId), value: value, kind: .secret, exposeToSandbox: exposeToSandbox,
-            origin: origin)
+            origin: origin, countsInTelemetry: false)
         guard outcome.isSuccess else {
             report.failed += 1
             return

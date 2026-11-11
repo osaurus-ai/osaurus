@@ -1,7 +1,7 @@
-# Credentials (Keys)
+# Credentials (Vault)
 
 One store holds every value an agent can use: API keys, tokens, passwords, and
-plain variables. The user sees it as **General → Keys**; code reaches it
+plain variables. The user sees it as **General → Vault**; code reaches it
 through `CredentialStore`, `CredentialResolver`, and one small consumer helper
 per feature.
 
@@ -66,7 +66,7 @@ the legacy items: they never sync to other devices and can't be read while
 the Mac is locked. An automation that runs while the screen is locked can't
 use hidden values; visible values (variables) still work.
 
-Every write posts `.credentialsDidChange`. `CredentialRegistry` (the Keys
+Every write posts `.credentialsDidChange`. `CredentialRegistry` (the Vault
 page model) refreshes on it, and `MCPProviderManager` evicts per-agent MCP
 clients whose credentials changed.
 
@@ -79,15 +79,15 @@ tasks must capture `CredentialStore.current` and re-bind it.
 
 | Feature | Helper | Notes |
 |---|---|---|
-| Sandbox | `SandboxCredentials` | Env vars are the global keys with exposure on, overlaid by the agent's own keys. `sandbox_secret_set` saves an agent-scoped key; `sandbox_secret_check` reports presence. The agent page's **Sandbox → Keys** list shows what the agent sees. |
-| Plugins | `PluginCredentials` | Declared secrets (`manifest.secrets`, sandbox plugin `secrets`) resolve through Keys for tool payload injection, `config_get`, and initial config. `config_set` of a declared secret saves the calling agent's value. Undeclared config and runtime state (`tunnel_url`) stay in `ToolSecretsKeychain`. |
+| Sandbox | `SandboxCredentials` | Env vars are the global keys with exposure on, overlaid by the agent's own keys. `sandbox_secret_set` saves an agent-scoped key; `sandbox_secret_check` reports presence. The agent page's **Sandbox** row lists what the agent sees, with **Open Vault**. |
+| Plugins | `PluginCredentials` | Declared secrets (`manifest.secrets`, sandbox plugin `secrets`) resolve through the Vault for tool payload injection, `config_get`, and initial config. `config_set` of a declared secret saves the calling agent's value. Undeclared config and runtime state (`tunnel_url`) stay in `ToolSecretsKeychain`. |
 | MCP | `MCPCredentials` | Env vars, secret headers, and the bearer token. A server with no agent-specific values shares one client; an agent whose values differ from the shared ones gets a variant client keyed by `(providerId, agentId)`, reused while its credential fingerprint matches, swept after 10 idle minutes, at most 8 per server (least recently used closed first). An agent whose own value equals the shared value uses the shared client. |
 | Channels | `ChannelCredentials` | Slack, Discord, Telegram tokens, and custom JSON / n8n connection secrets. |
 | Workflows | `WorkflowCredentials` | Code and HTTP steps read secrets for the calling agent (`request.caller.agentID`). OAuth and saved connections stay in `WorkflowConnections`. |
 | Config documents | `ConfigSecretRef` | `credential:KEY` points at a global key. |
 
 Model provider, web search, TTS, Hugging Face, and GitHub keys are not agent
-usable and stay in their own stores. The Keys page lists them on its **App
+usable and stay in their own stores. The Vault page lists them on its **App
 Keys** tab and edits them in place through `AppKeys.save`. OAuth sign-ins stay
 with their MCP server or provider and are listed on the **Accounts** tab. The
 **Your Keys** tab holds everything in the store (`KeysTab` raw values are the
@@ -102,12 +102,12 @@ loads). It is copy-only:
   `MCPProviderKeychain`, `WorkflowSecretsKeychain`, channel stores) and config
   files are never deleted or rewritten. A downgrade keeps working.
 - Each copied item is recorded in `importedLegacy`. A re-run skips it, so an
-  edit or delete in Keys is never undone by the old value.
+  edit or delete in the Vault is never undone by the old value.
 - Default-agent plugin secrets become global; other agents' plugin secrets and
   agent secrets become agent-scoped.
 - Each consumer lists the legacy items for a slot as
   `CredentialResolver.LegacyItem`s (its `legacyItem(s)` helpers) and passes
-  them to `CredentialResolver.resolve` / `isSatisfied`; the Keys page's
+  them to `CredentialResolver.resolve` / `isSatisfied`; the Vault page's
   missing list uses the same items. The resolver alone decides whether an
   item may still be read (migration incomplete, item unimported, key not
   deleted). All legacy wrappers are read-only.
