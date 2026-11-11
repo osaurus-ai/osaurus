@@ -110,6 +110,25 @@ struct InlineMathScannerTests {
         #expect(rendered(segments) == source)
     }
 
+    @Test(arguments: [
+        "The result of multiplying the most recent tool result ($1081$) by $2$ is $2162$.",
+        "The result is ($1,081$) plus $2.5$, with $2162$ remaining.",
+        "Use $2$ and $3$ in the next calculation.",
+    ])
+    func pairedNumericLiteralsDoNotSwallowProse(_ source: String) {
+        let segments = InlineMathScanner.split(source)
+        #expect(!segments.contains { $0.isMath })
+        #expect(rendered(segments) == source)
+    }
+
+    @Test
+    func realMathStillMatchesAfterPairedNumericLiterals() {
+        let source = "The value ($1081$) runs in $O(n)$; budget $5 to $10."
+        let segments = InlineMathScanner.split(source)
+        #expect(segments.filter(\.isMath).map(\.text) == ["O(n)"])
+        #expect(rendered(segments) == source)
+    }
+
     /// An escaped `\$` is a literal dollar sign, not an opening delimiter.
     @Test
     func escapedDollarStaysLiteral() {
