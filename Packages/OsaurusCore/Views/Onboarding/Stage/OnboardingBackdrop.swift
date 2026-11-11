@@ -48,6 +48,9 @@ struct OnboardingBackdrop: View {
                 Rectangle()
                     .fill(theme.scrim)
                     .opacity(dim)
+                Rectangle()
+                    .fill(OnboardingPalette.windowBackground)
+                    .opacity(wash)
                 if !reduceMotion, let pointer {
                     RadialGradient(
                         colors: [OnboardingPalette.pointerLight, OnboardingPalette.pointerLight.opacity(0)],
@@ -92,11 +95,17 @@ struct OnboardingBackdrop: View {
 
     /// Dark themes sit the landscape further back so glass and text read.
     private var dim: Double {
-        let base = theme.isDark ? 0.28 : 0.06
+        guard theme.isDark else { return 0.06 }
         switch focus {
-        case .clear: return base
-        case .pulled: return base + 0.22
+        case .clear: return 0.28
+        case .pulled: return 0.5
         }
+    }
+
+    /// Light themes pull focus toward the canvas instead: dark ink needs a
+    /// light ground, and the evening and night plates are dark.
+    private var wash: Double {
+        theme.isDark || focus == .clear ? 0 : 0.62
     }
 }
 
