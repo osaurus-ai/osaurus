@@ -60,6 +60,7 @@ enum SyncDeviceFeedContract {
         "workflow_library",
         "workflow_outputs",
         "workflow_details",
+        "workflow_push",
     ]
 
     /// Each device's record under `prefix`, keyed by device key.
@@ -198,6 +199,8 @@ enum SyncDeviceFeedContract {
         var workspaces: [HistoryFilter]?
         /// Installed workflows and their input forms (`workflow_library`).
         var workflows: [ManagedWorkflow]?
+        /// The iPhones this Mac holds a push registration for (`workflow_push`), by device key.
+        var pushRegistered: [String]?
         var updatedMs: Int64
     }
 

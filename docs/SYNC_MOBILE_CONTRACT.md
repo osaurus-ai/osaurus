@@ -45,6 +45,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `workflow_library` | `workflows` in the manage state, the `runWorkflow` op and `ai.osaurus.workflow-runs/1` (§5.4) |
 | `workflow_outputs` | the `workflowOutput` op and its `ai.osaurus.workflow-output/1` message (§5.5) |
 | `workflow_details` | `facts` and `steps` on each manage-state workflow: the Mac page's chips and step badges (§5.4) |
+| `workflow_push` | Workflow notifications on the iPhone through the push service: push registrations on the manage conversation, `pushRegistered` in the manage state (§5.6) |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
   NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without
@@ -766,6 +767,55 @@ when a card changed.
 - The same run's message is replaced only when its digest changes. The Mac keeps the last 10 of
   these messages.
 - Errors: `run_not_found`, and `running` (the run hasn't ended).
+
+### 5.6 Workflow notifications (`workflow_push`)
+
+An iPhone that wants notifications about this Mac's workflow runs writes
+`ai.osaurus.push-registration/1/<its device key>` on the manage conversation:
+
+```json
+{ "v": 1, "grant": "<base64>", "grantId": "…", "expiresMs": 1770163260000,
+  "contentKey": "<32 bytes, base64>", "installId": "…",
+  "events": ["started", "awaiting_user", "completed", "failed", "needs_setup"],
+  "onlyOthers": true, "updatedMs": 1767571260000 }
+```
+
+- `grant` comes from osaurus-sync's `pushGrant`, made for this Mac as its `audience`. It is
+  sealed to the Osaurus push service, so the Mac can't read the APNs token in it.
+- `contentKey` is a ChaChaPoly key, new with each registration, for what a notification says.
+- `installId` stays the same across unpairing and pairing again. Of several registrations with
+  the same `installId` (an older identity of the same iPhone), the Mac uses the newest.
+- `events` is which changes the iPhone wants; `cancelled` is also accepted. `onlyOthers` (default
+  true) leaves out `started` for runs an iPhone started with `runWorkflow`.
+- Writing nothing (`nil`) to the namespace turns notifications off.
+- The Mac reads registrations on every manage conversation tagged with its device, and only of
+  devices still in the account. It lists the iPhones it holds one for in the manage state as
+  `pushRegistered` (device keys), so an iPhone can tell its registration arrived.
+
+When one of the Mac's own runs changes (§5.4's list), it sends each registered iPhone a push
+through `https://push.sync.osaurus.ai/v1/send`, with `apns-collapse-id` set to the run id:
+
+```json
+{ "aps": { "alert": { "title": "Workflow update", "body": "Open Osaurus to see it." },
+           "mutable-content": 1, "sound": "default", "thread-id": "<workflowId>" },
+  "o": "<base64 of ChaChaPoly combined: nonce | ciphertext | tag>" }
+```
+
+`o` opens with `contentKey` to:
+
+```json
+{ "v": 1, "event": "failed", "runId": "…", "workflowId": "…", "device": "<Mac device key>",
+  "title": "Weekly Report", "body": "Failed: Draft: timed out" }
+```
+
+- The iPhone's notification service extension replaces the alert's title and body with these.
+  The plain alert is what shows if it can't.
+- `event` is one of the registration's `events`, or `cleared`: the run stopped waiting for an
+  answer (answered on the Mac, or on another iPhone). `cleared` comes as a background push
+  (`content-available`, no alert), so the iPhone can remove the waiting notification.
+- Runs that started or ended before the Mac started aren't announced.
+- When the service answers 403 or 410, the Mac stops using that grant until it would have expired.
+  The iPhone writes a new registration to start again.
 
 ## 6. HTTP routes and their Sync replacements
 

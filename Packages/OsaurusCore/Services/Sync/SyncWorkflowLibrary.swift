@@ -221,7 +221,9 @@ enum SyncWorkflowLibrary {
         }
         // Nobody at this Mac sees its forms: they park and go to the attention feed.
         let caller = WorkflowCaller(kind: .user, background: true)
-        return .success(WorkflowRunService.shared.start(workflow, input: input, caller: caller))
+        let runId = WorkflowRunService.shared.start(workflow, input: input, caller: caller)
+        SyncWorkflowPush.shared.noteStartedFromPhone(runId)
+        return .success(runId)
     }
 
     // MARK: Runs
@@ -289,6 +291,8 @@ final class SyncWorkflowRunsFeed {
             return
         }
         let state = SyncWorkflowLibrary.runs(nowMs: SyncHostedRunContract.nowMs())
+        // Notifications first: they compare statuses, not the written list.
+        SyncWorkflowPush.shared.observe(state.runs)
         // Streamed step text isn't on the card: most store changes write nothing.
         guard state.runs != written else { return }
         let (live, saved) = (store.live.count, store.recentPersisted?.count ?? 0)

@@ -133,6 +133,11 @@ final class SyncManageFeed {
             .sink { _ in MainActor.assumeIsolated { SyncManageFeed.shared.schedulePublish() } }
             .store(in: &cancellables)
         SyncWorkflowRunsFeed.shared.start()
+        // Workflow notifications (`workflow_push`): an iPhone that leaves the account gets none.
+        NotificationCenter.default.publisher(for: SyncService.devicesDidChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { _ in MainActor.assumeIsolated { SyncWorkflowPush.shared.refresh() } }
+            .store(in: &cancellables)
         // Loading or removing a plugin changes the tool list.
         NotificationCenter.default.publisher(for: .toolsListChanged)
             .receive(on: DispatchQueue.main)
@@ -144,6 +149,7 @@ final class SyncManageFeed {
                 feed.subscribe(core)
                 feed.schedulePublish()
                 SyncWorkflowRunsFeed.shared.reset()
+                SyncWorkflowPush.shared.refresh()
             },
             detach: { SyncManageFeed.shared.detach() })
     }
@@ -163,7 +169,10 @@ final class SyncManageFeed {
                     && conversation.tag(SyncConversationMapper.TagKey.device) == me
             }
             guard mine else { return }
-            Task { @MainActor in await SyncManageFeed.shared.applyRequests() }
+            Task { @MainActor in
+                SyncWorkflowPush.shared.refresh()
+                await SyncManageFeed.shared.applyRequests()
+            }
         }
     }
 
@@ -177,7 +186,8 @@ final class SyncManageFeed {
         models: [ModelPickerItem],
         workspaceAgents: [SyncDeviceFeedContract.WorkspaceAgent] = [],
         filters: HistoryFilters = HistoryFilters(),
-        workflows: [SyncDeviceFeedContract.ManagedWorkflow]? = nil
+        workflows: [SyncDeviceFeedContract.ManagedWorkflow]? = nil,
+        pushRegistered: [String] = []
     ) -> SyncDeviceFeedContract.ManageState {
         let manager = AgentManager.shared
         let listed = agents.filter(SyncHostRunner.canHost).map { agent -> SyncDeviceFeedContract.ManagedAgent in
@@ -205,6 +215,7 @@ final class SyncManageFeed {
             plugins: filters.plugins,
             workspaces: filters.workspaces,
             workflows: workflows,
+            pushRegistered: pushRegistered.isEmpty ? nil : pushRegistered,
             updatedMs: SyncHostedRunContract.nowMs()
         )
     }
@@ -278,7 +289,8 @@ final class SyncManageFeed {
                 localAddresses: Set(agents.compactMap { $0.agentAddress?.lowercased() })
             ),
             filters: Self.historyFilters(),
-            workflows: SyncWorkflowLibrary.managed(InstalledWorkflowStore.shared.workflows)
+            workflows: SyncWorkflowLibrary.managed(InstalledWorkflowStore.shared.workflows),
+            pushRegistered: SyncWorkflowPush.shared.registeredDevices
         )
         Task.detached(priority: .utility) {
             do {

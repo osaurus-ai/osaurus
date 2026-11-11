@@ -79,9 +79,10 @@ Only the owner's devices see it.
   same items, and either path settles both. Those routes are `/approvals`,
   `/computer-use/prompts`, `/secrets/prompts`, `/privacy/reviews` and
   `/config/approvals`.
-- **Push** (`push`): no transport ships yet, and there is no route or Sync
-  record to register a token. The channel exists so one can be added without
-  a protocol change.
+- **Push** (`push`): no transport ships yet for attention items. Workflow
+  runs already notify the iPhone through the push service and Sync
+  registrations (`SyncWorkflowPush`, docs/SYNC_MOBILE_CONTRACT.md §5.6);
+  attention items can move onto that transport later.
 
 `NotificationPreferences` (`~/.osaurus/config/notifications.json`) routes
 each category — **Approvals**, **Questions from Agents**, **Inbound
