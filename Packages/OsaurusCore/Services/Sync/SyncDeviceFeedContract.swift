@@ -396,6 +396,19 @@ enum SyncDeviceFeedContract {
                 Tag(key: SyncConversationMapper.TagKey.kind, value: kind),
             ].sorted { $0.key < $1.key }
         )
+        offerSystemConversationsFirst(core: core)
         return scope
+    }
+
+    /// This Mac's own state conversations (agent directory, manage, attention) go to a catching-up
+    /// iPhone before any chat: it can't list agents or open a chat without the directory, and a
+    /// new iPhone on an account with hundreds of chats otherwise waited behind them
+    /// (`setOfferFirst`). Called when the core opens and when one of them is made.
+    nonisolated static func offerSystemConversationsFirst(core: SyncCore) {
+        let me = core.deviceKey()
+        let kinds = [SyncHostedRunContract.directoryKind, manageKind, attentionKind]
+        let scopes = kinds.compactMap { kind in (try? conversation(kind: kind, device: me, core: core))?.scope }
+        // Fails only on a closed core; the next open sets it again.
+        try? core.setOfferFirst(scopes: scopes)
     }
 }

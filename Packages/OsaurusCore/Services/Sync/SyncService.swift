@@ -385,6 +385,10 @@ final class SyncService: @unchecked Sendable {
         }
 
         func start() {
+            // This Mac's directory, manage and attention conversations reach a new iPhone first.
+            Task.detached(priority: .utility) { [core] in
+                SyncDeviceFeedContract.offerSystemConversationsFirst(core: core)
+            }
             let workspace = NSWorkspace.shared.notificationCenter
             observers.append(
                 workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) {

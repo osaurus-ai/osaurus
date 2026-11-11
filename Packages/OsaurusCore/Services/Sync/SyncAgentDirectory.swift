@@ -180,6 +180,7 @@ final class SyncAgentDirectory: ObservableObject {
                     Tag(key: SyncConversationMapper.TagKey.kind, value: SyncHostedRunContract.directoryKind),
                 ].sorted { $0.key < $1.key }
             )
+            SyncDeviceFeedContract.offerSystemConversationsFirst(core: core)
         }
         try core.setConversationAppData(
             scope: scope,
