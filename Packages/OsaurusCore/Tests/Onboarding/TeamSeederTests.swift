@@ -47,9 +47,9 @@ struct BundledTeamTests {
             #expect(template.agent.orchestratorSpawnable == true)
             #expect(template.agent.capabilities?.clarifyEnabled == true)
         }
-        #expect(Teammate.allCases.map(\.avatar) == [.triceBeret, .rexPurse, .brontoScarf, .triceBackpack, .rexMecha])
+        #expect(Teammate.allCases.map(\.avatar) == [.orange, .purple, .yellow, .red, .blue])
         #expect(Set(Teammate.allCases.map(\.avatar)).count == Teammate.allCases.count)
-        #expect(!Teammate.allCases.contains { $0.avatar == .green || $0.avatar == .blue })
+        #expect(!Teammate.allCases.contains { $0.avatar.rawValue == Agent.defaultAgentStockAvatar })
     }
 
     /// SwiftPM does not compile asset catalogs, so this reads the source
@@ -61,16 +61,18 @@ struct BundledTeamTests {
             .appendingPathComponent("Resources/Assets.xcassets")
         for teammate in Teammate.allCases {
             let name = teammate.avatar.assetName
-            let image = catalog.appendingPathComponent("\(name).imageset/\(name).png")
+            let image = catalog.appendingPathComponent("\(name).imageset/\(name)@2x.png")
             #expect(NSImage(contentsOf: image) != nil, "\(teammate)")
         }
     }
 
     @Test
-    func aTeammateOnItsOldStockAvatarMovesToItsDino() {
-        for teammate in Teammate.allCases {
-            #expect(teammate.previousStockAvatar != teammate.avatar)
-        }
+    func aRetiredCostumeId_readsAsTheTeammatesStockDino() {
+        let costumes = ["trice-beret", "rex-purse", "bronto-scarf", "trice-backpack", "rex-mecha"]
+        #expect(costumes.compactMap(AgentMascot.init(storedID:)) == Teammate.allCases.map(\.avatar))
+        #expect(costumes.allSatisfy { AgentMascot(rawValue: $0) == nil })
+        #expect(AgentMascot(storedID: "green") == .green)
+        #expect(AgentMascot(storedID: "not-a-mascot") == nil)
     }
 
     @Test

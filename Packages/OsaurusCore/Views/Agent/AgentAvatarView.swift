@@ -15,16 +15,27 @@ import SwiftUI
 /// `OsaurusCore/Resources/Assets.xcassets`
 public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
     case blue, green, orange, purple, red, yellow
-    /// The day-one team, drawn from the same `dino.riv` costumes the first
-    /// run shows them in.
-    case triceBeret = "trice-beret"
-    case rexPurse = "rex-purse"
-    case brontoScarf = "bronto-scarf"
-    case triceBackpack = "trice-backpack"
-    case rexMecha = "rex-mecha"
 
     public var id: String { rawValue }
     public var assetName: String { "osaurus-avatar-\(rawValue)" }
+
+    /// Costumed day-one-team avatars an earlier build stored, and the stock
+    /// dino each one became. Agents, exports, and relay peers may still
+    /// carry these ids.
+    static let retiredIDs: [String: AgentMascot] = [
+        "trice-beret": .orange,
+        "rex-purse": .purple,
+        "bronto-scarf": .yellow,
+        "trice-backpack": .red,
+        "rex-mecha": .blue,
+    ]
+
+    /// The mascot a persisted `Agent.avatar` names, reading a retired id as
+    /// its stock replacement.
+    public init?(storedID: String) {
+        guard let mascot = AgentMascot(rawValue: storedID) ?? Self.retiredIDs[storedID] else { return nil }
+        self = mascot
+    }
 
 
     /// Human-friendly label for accessibility / tooltip surfaces. Avoids
@@ -38,11 +49,6 @@ public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
         case .purple: return "Purple dino"
         case .red: return "Red dino"
         case .yellow: return "Yellow dino"
-        case .triceBeret: return "Trice in a beret"
-        case .rexPurse: return "Rex with a purse"
-        case .brontoScarf: return "Bronto in a scarf"
-        case .triceBackpack: return "Trice with a backpack"
-        case .rexMecha: return "Rex in a mecha helmet"
         }
     }
 
@@ -132,7 +138,7 @@ struct AgentAvatarView: View {
         {
             return image
         }
-        if let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)) {
+        if let mascot = mascotId.flatMap(AgentMascot.init(storedID:)) {
             return AvatarBitmapRenderer.shared.image(mascot: mascot, pointSize: mascotPointSize, scale: displayScale)
         }
         return nil

@@ -70,9 +70,6 @@ extension AgentMascot {
         case .purple: return Color(red: 0.62, green: 0.42, blue: 0.92)
         case .red: return Color(red: 0.91, green: 0.38, blue: 0.36)
         case .yellow: return Color(red: 0.95, green: 0.78, blue: 0.27)
-        case .triceBeret, .triceBackpack: return Color(red: 0.94, green: 0.49, blue: 0.33)
-        case .rexPurse, .rexMecha: return Color(red: 0.56, green: 0.82, blue: 0.38)
-        case .brontoScarf: return Color(red: 0.58, green: 0.78, blue: 0.94)
         }
     }
 }
