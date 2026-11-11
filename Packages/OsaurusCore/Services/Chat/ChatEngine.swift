@@ -501,12 +501,17 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         // with a user turn.
         guard !request.context.warmupPrefill else { return }
         guard FeatureTelemetry.isPrimaryUserTurn(request.input) else { return }
+        // Task-locals are read here, at request time; they are not reliable
+        // on the stream's termination path.
         let info = FeatureTelemetry.messageInfo(
             service: service,
             effectiveModel: effectiveModel,
             source: inferenceSource,
             isAgent: request.context.isAgentRequest,
-            stream: stream
+            stream: stream,
+            inWorkflow: ChatExecutionContext.currentWorkflowRunId != nil,
+            isSubagent: activitySource == .agent || ChatExecutionContext.currentSessionSource == .delegation,
+            forSyncedDevice: ChatExecutionContext.syncReviewerScope != nil
         )
         Task { @MainActor in FeatureTelemetry.messageSent(info) }
     }

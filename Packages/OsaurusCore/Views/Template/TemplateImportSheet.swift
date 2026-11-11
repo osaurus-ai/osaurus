@@ -247,9 +247,25 @@ struct TemplateImportSheet: View {
                 }
             }()
             let saved = try store.importTemplate(parsed, resolution: resolution)
+            FeatureTelemetry.templateImported(
+                kind: parsed.kind.rawValue,
+                origin: sourceHost == nil ? "file" : "registry",
+                result: Self.importResultToken(disposition, keepBoth: keepBoth))
             onImported(saved, bundled)
         } catch {
             parseError = error.localizedDescription
+        }
+    }
+
+    /// Closed `template_imported` result token.
+    static func importResultToken(_ disposition: TemplateStore.ImportDisposition?, keepBoth: Bool) -> String {
+        switch disposition {
+        case .update?: return "update"
+        case .conflict?: return keepBoth ? "copy" : "replace"
+        case .signerMismatch?: return "copy"
+        case .older?: return "older"
+        case .alreadyPresent?: return "already_present"
+        case .new?, nil: return "new"
         }
     }
 

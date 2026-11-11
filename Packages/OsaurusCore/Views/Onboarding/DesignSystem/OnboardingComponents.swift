@@ -350,26 +350,26 @@ struct OnboardingSelectableCard: View {
 
 // MARK: - Chips & badge
 
-/// Cyan-on-blue-tint "Picked for your Mac" badge, or `tint` on its own
-/// wash (the recommended path's dino green).
+/// Cyan-on-blue-tint "Picked for your Mac" badge, or dino green on its own
+/// wash for the recommended path (`isBrand`).
 struct OnboardingPickedBadge: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
     private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
     let text: LocalizedStringKey
-    var tint: Color? = nil
+    var isBrand = false
 
     var body: some View {
         Group {
 
         Text(text, bundle: .module)
             .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.badge)
-            .foregroundColor(tint ?? theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.accentCyan))
+            .foregroundColor(isBrand ? OnboardingPalette.dinoGreenText : theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.accentCyan))
             .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingPickedBadge.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 8, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingPickedBadge.body.paddingX")
             .padding(.vertical, 3)
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .fill((tint ?? theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.accentBlue)).opacity(0.22))
+                    .fill((isBrand ? OnboardingPalette.dinoGreen : theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.accentBlue)).opacity(0.22))
             )
     
         }.environment(\.theme, theme)
@@ -505,6 +505,9 @@ struct OnboardingOptionRow: View {
 struct OnboardingDialog<Content: View>: View {
     var width: CGFloat = 438
     var isDismissable: Bool = true
+    /// Top and trailing inset of the close button, so it can line up with a
+    /// leading title. Only `.top` and `.trailing` are read.
+    var closeInsets: EdgeInsets? = nil
     let onClose: () -> Void
     @ViewBuilder let content: () -> Content
 
@@ -552,7 +555,7 @@ struct OnboardingDialog<Content: View>: View {
                 .overlay(alignment: .topTrailing) {
                     if isDismissable {
                         OnboardingCircleIconButton(systemName: "xmark", action: onClose)
-                            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingDialog.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingDialog.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingDialog.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.onboardingDialog.body.padding.vertical")
+                            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingDialog.body.padding.horizontal", inheriting: closeInsets?.trailing ?? NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.onboardingDialog.body.padding.vertical", inheriting: closeInsets?.top ?? NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.onboardingDialog.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.onboardingDialog.body.padding.vertical")
                     }
                 }
                 .themeElevation(theme.elevation.overlay)

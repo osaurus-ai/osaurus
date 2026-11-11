@@ -42,7 +42,8 @@ public final class InstalledWorkflowStore: ObservableObject {
     public func reload() {
         templateNameCache = [:]
         let loaded = Self.loadAllWithContents()
-        modifiedOutsideApp = Self.reconcileIntegrity(loaded.map { ($0.workflow.id, $0.contents) })
+        modifiedOutsideApp = Self.reconcileIntegrity(
+            loaded.map { ($0.workflow.id, $0.contents) }, present: Self.fileIDs())
         workflows = loaded.map(\.workflow)
         ToolRegistry.shared.syncWorkflowTools(workflows)
     }
@@ -52,13 +53,9 @@ public final class InstalledWorkflowStore: ObservableObject {
     }
 
     nonisolated static func loadAllWithContents() -> [(workflow: InstalledWorkflow, contents: Data)] {
-        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return files.filter {
-            $0.pathExtension == "json" && UUID(uuidString: $0.deletingPathExtension().lastPathComponent) != nil
-        }
+        return workflowFiles()
             .compactMap { url -> (InstalledWorkflow, Data)? in
                 guard let data = try? Data(contentsOf: url),
                     let workflow = try? decoder.decode(InstalledWorkflow.self, from: data)
@@ -66,6 +63,19 @@ public final class InstalledWorkflowStore: ObservableObject {
                 return (workflow, data)
             }
             .sorted { $0.0.name.localizedStandardCompare($1.0.name) == .orderedAscending }
+    }
+
+    /// Every `<uuid>.json` in the directory, whether or not it decodes.
+    nonisolated static func workflowFiles() -> [URL] {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        else { return [] }
+        return files.filter {
+            $0.pathExtension == "json" && UUID(uuidString: $0.deletingPathExtension().lastPathComponent) != nil
+        }
+    }
+
+    nonisolated static func fileIDs() -> Set<UUID> {
+        Set(workflowFiles().compactMap { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) })
     }
 
     // MARK: - Integrity
@@ -94,31 +104,35 @@ public final class InstalledWorkflowStore: ObservableObject {
     }
 
     /// The ids whose file differs from the recorded hash, or that have no
-    /// hash while others do (a file Osaurus did not write). The first load
-    /// after this check shipped records every file as it is.
-    nonisolated static func reconcileIntegrity(_ files: [(id: UUID, contents: Data)]) -> Set<UUID> {
-        let result = integrityCheck(files, recorded: loadIntegrity())
+    /// hash while others do (a file Osaurus did not write). A load with no
+    /// recorded hashes records every file as it is.
+    nonisolated static func reconcileIntegrity(_ files: [(id: UUID, contents: Data)], present: Set<UUID>) -> Set<UUID> {
+        let result = integrityCheck(files, recorded: loadIntegrity(), present: present)
         if let updated = result.updated { saveIntegrity(updated) }
         return result.modified
     }
 
     /// Pure half of `reconcileIntegrity`: the modified ids, and the hashes
     /// to write back when they change (first record, or removed files).
+    /// `present` is every workflow file on disk, decodable or not, so a
+    /// file one build cannot read keeps its hash; nil means `files`.
     nonisolated static func integrityCheck(
-        _ files: [(id: UUID, contents: Data)], recorded: [UUID: String]?
+        _ files: [(id: UUID, contents: Data)], recorded: [UUID: String]?, present: Set<UUID>? = nil
     ) -> (modified: Set<UUID>, updated: [UUID: String]?) {
-        guard let recorded else {
+        guard let recorded, !recorded.isEmpty else {
             guard !files.isEmpty else { return ([], nil) }
             return ([], Dictionary(files.map { ($0.id, contentHash($0.contents)) }) { first, _ in first })
         }
         let modified = Set(files.filter { recorded[$0.id] != contentHash($0.contents) }.map(\.id))
-        let present = Set(files.map(\.id))
-        let kept = recorded.filter { present.contains($0.key) }
+        let onDisk = present ?? Set(files.map(\.id))
+        let kept = recorded.filter { onDisk.contains($0.key) }
         return (modified, kept.count == recorded.count ? nil : kept)
     }
 
     nonisolated static func recordIntegrity(_ id: UUID, contents: Data?) {
-        var hashes = loadIntegrity() ?? [:]
+        let recorded = loadIntegrity()
+        if recorded == nil, contents == nil { return }
+        var hashes = recorded ?? [:]
         hashes[id] = contents.map(contentHash)
         saveIntegrity(hashes)
     }

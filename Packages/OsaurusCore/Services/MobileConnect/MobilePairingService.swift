@@ -346,6 +346,7 @@ final class MobilePairingService: ObservableObject {
                 isSimulator: isSimulator == true ? true : nil
             )
         )
+        if isSimulator != true { FeatureTelemetry.phonePaired() }
     }
 
     // MARK: Redeem v2 (POST /pair/code, then POST /pair/confirm)
@@ -490,7 +491,7 @@ final class MobilePairingService: ObservableObject {
             let info = APIKeyManager.shared.listKeys().first(where: { $0.id == device.keyId }),
             PairingCode.constantTimeEquals(info.nonce, keyNonce)
         else { return false }
-        revokeDevice()
+        revokeDevice(via: "phone")
         return true
     }
 
@@ -531,10 +532,12 @@ final class MobilePairingService: ObservableObject {
         return kept
     }
 
-    func revokeDevice() {
+    /// `via` is the `phone_unpaired` token: `mac` (removed here) or `phone`.
+    func revokeDevice(via: String = "mac") {
         guard let device = pairedDevice else { return }
         APIKeyManager.shared.revoke(id: device.keyId)
         setPairedDevice(nil)
+        if device.isSimulator != true { FeatureTelemetry.phoneUnpaired(via: via) }
     }
 
     /// The iPhone joined Sync (`MobileConnectMigration`), which revoked the
