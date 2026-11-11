@@ -11,6 +11,10 @@ import Foundation
 public struct RelayConfiguration: Codable, Equatable, Sendable {
     /// Maps agent UUID string -> tunnel enabled. Only agents with `true` are tunneled.
     public var enabledAgents: [String: Bool]
+    /// Agents explicitly kept off the relay (`relay_enabled: false` from
+    /// `config apply`), even before they had an address. A paired phone's
+    /// turn-on for newly addressed agents skips them; turning one on clears it.
+    public var keptOffAgents: [String]?
 
     public static let `default` = RelayConfiguration(enabledAgents: [:])
 
@@ -18,8 +22,19 @@ public struct RelayConfiguration: Codable, Equatable, Sendable {
         enabledAgents[agentId.uuidString] == true
     }
 
+    public func isKeptOff(_ agentId: UUID) -> Bool {
+        keptOffAgents?.contains(agentId.uuidString) == true
+    }
+
     public mutating func setEnabled(_ enabled: Bool, for agentId: UUID) {
         enabledAgents[agentId.uuidString] = enabled ? true : nil
+        if enabled { setKeptOff(false, for: agentId) }
+    }
+
+    public mutating func setKeptOff(_ keptOff: Bool, for agentId: UUID) {
+        var ids = Set(keptOffAgents ?? [])
+        if keptOff { ids.insert(agentId.uuidString) } else { ids.remove(agentId.uuidString) }
+        keptOffAgents = ids.isEmpty ? nil : ids.sorted()
     }
 
     /// All agent UUIDs that have tunneling enabled.
