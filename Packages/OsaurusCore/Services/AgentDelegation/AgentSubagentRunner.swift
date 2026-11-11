@@ -416,7 +416,7 @@ enum AgentSubagentRunner {
                 let operation = ChatExecutionContext.$currentSessionId.withValue(sessionId) {
                     ChatExecutionContext.$currentModelName.withValue(modelName) {
                         ChatExecutionContext.$toolResultImagesEnabled.withValue(childAcceptsImages) {
-                            ChatExecutionContext.$approvalWaitObserver.withValue(approvalWait) {
+                            ChatExecutionContext.$approvalWait.withValue(.init(notify: approvalWait)) {
                                 toolset.beginExecution(invocation)
                             }
                         }
