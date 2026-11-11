@@ -695,7 +695,7 @@ private struct AddProviderFlow: View {
         DeploymentNamesEditor(
             text: $manualModelIdsText,
             title: "DEPLOYMENT NAMES",
-            placeholder: "gpt-5.4\nmy-prod-chat",
+            placeholder: "gpt-6.1-sol\nmy-prod-chat",
             theme: theme
         )
         .onChange(of: manualModelIdsText) { _, _ in testResult = nil }
@@ -1638,7 +1638,7 @@ private struct EditProviderFlow: View {
                 DeploymentNamesEditor(
                     text: $manualModelIdsText,
                     title: "DEPLOYMENT NAMES",
-                    placeholder: "gpt-5.4\nmy-prod-chat",
+                    placeholder: "gpt-6.1-sol\nmy-prod-chat",
                     theme: theme
                 )
             }

@@ -277,8 +277,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
 
     /// Returns `true` when the model name indicates an image-generation-capable model.
     fileprivate static func isImageCapableModel(_ modelName: String) -> Bool {
-        Gemini31FlashImageProfile.matches(modelId: modelName) || GeminiProImageProfile.matches(modelId: modelName)
-            || GeminiFlashImageProfile.matches(modelId: modelName)
+        GeminiImageModels.isImageModel(modelName)
     }
 
     /// Thin delegates over `RemoteReasoningPolicy`, which is the single source of
@@ -4152,7 +4151,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             // rejected. See issue #858.
             //
             // Allowed chars cover:
-            // - standard model IDs: `gemini-2.0-flash-exp`, `gemini-1.5-pro-latest`
+            // - standard model IDs: `gemini-3.8-flash`, `gemini-nano-banana-2.1`
             // - tuned models: `tunedModels/my-tuned-model`
             // - Google's path-parent syntax: `models/foo/bar` (rare)
             // Disallowed: whitespace, colons (reserved for the action
@@ -4161,7 +4160,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             let trimmedModel = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmedModel.isEmpty {
                 throw RemoteProviderServiceError.requestFailed(
-                    "Gemini model name is empty. Set a model ID like 'gemini-2.0-flash-exp' in provider settings."
+                    "Gemini model name is empty. Set a model ID like 'gemini-3.8-flash' in provider settings."
                 )
             }
             let allowed = CharacterSet(
