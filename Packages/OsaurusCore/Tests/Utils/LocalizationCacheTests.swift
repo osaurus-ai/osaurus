@@ -57,17 +57,25 @@ struct LocalizationCacheTests {
 
     /// Gauge labels and format keys rendered from `SystemStatusBar.body`
     /// on every `SystemMonitorService` publish (production hang APPLE-MACOS-3RN).
-    private static let systemStatusBarKeys = [
+    private static let systemStatusBarLabels = [
         "RAM",
         "Storage",
-        "%@ free / %@",
-        "%.0f GB",
-        "%.1f TB",
     ]
 
-    @Test("LCached matches L for system status bar keys", arguments: systemStatusBarKeys)
+    @Test("LCached matches L for system status bar labels", arguments: systemStatusBarLabels)
     func matchesUncachedLookupForStatusBar(key: String) {
         #expect(LCached(key) == L(String.LocalizationValue(key)))
+    }
+
+    /// The status bar's format keys must come back from `LCached` as usable
+    /// format strings, so formatting them with real arguments keeps the values.
+    @Test("LCached format keys for the system status bar keep their arguments")
+    func statusBarFormatKeysFormatArguments() {
+        #expect(String(format: LCached("%.0f GB"), 512.0).contains("512"))
+        #expect(String(format: LCached("%.1f TB"), 1.5).contains("1"))
+        let detail = String(format: LCached("%@ free / %@"), "12 GB", "64 GB")
+        #expect(detail.contains("12 GB"))
+        #expect(detail.contains("64 GB"))
     }
 
     @Test("LCached returns empty key unchanged")
