@@ -302,7 +302,7 @@ When transcription is active, a minimal floating overlay appears at the top of y
 - **Done button** — Click to stop transcription
 - **Close button** — Cancel and discard (same as pressing Esc)
 
-The overlay stays on top of all windows and follows the app's theme.
+The overlay stays on top of all windows and follows the app's appearance (System, Light or Dark).
 
 ### Use Cases
 
@@ -517,4 +517,4 @@ Your voice data never leaves your computer.
 
 - [README.md](../README.md) — Project overview
 - [FEATURES.md](FEATURES.md) — Complete feature inventory
-- [Agents](../README.md#agents) — Create custom AI assistants
+- [Agents](../Packages/OsaurusCore/Resources/Guide/guide-agents.md) — Create custom AI assistants

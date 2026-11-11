@@ -6,7 +6,7 @@ between a user's devices. It is the only conversation store: there is no second 
 be kept in step.
 
 User-facing operation is in the in-app guide
-(`Packages/OsaurusCore/Resources/Guide/guide-settings.md`, Settings → General → Sync). This
+(`Packages/OsaurusCore/Resources/Guide/guide-sync.md`, Settings → Sharing → Devices). This
 document is for developers changing the integration.
 
 ## Layout
@@ -20,7 +20,7 @@ document is for developers changing the integration.
 | `SyncInboundApplier` | Applies other devices' changes to the sidebar and to open chats. |
 | `SyncTurnStreamer` | Streams the reply being generated to other devices. |
 | `SyncLegacyImporter` | Copies chats from the read-only SQLCipher `chat-history` database, once, rebuilding chats whose turns were lost from their Memory transcript. |
-| `SyncStatusModel`, `SyncSettingsView` | Settings → Sync. |
+| `SyncStatusModel`, `SyncSettingsView` | Settings → Devices. |
 | `SyncNetworkDirectory` | The relay and discovery servers **Anywhere (Beta)** uses, fetched from `https://osaurus.ai/sync/network.json` (`OSAURUS_SYNC_NETWORK_URL` overrides it). |
 | `SyncAgentDirectory` | Publishes this Mac's agents for the user's other devices and reads theirs. |
 | `SyncHostRunner` | Runs chats another device asked this Mac to host. |
@@ -113,7 +113,7 @@ On first launch with sync, `SyncLegacyImporter` copies every session from the SQ
 `chat-history` database in batches of 20, newest first, and records each imported id in
 `sync-local/legacy-import.json`. It is resumable and idempotent: a session already in the store
 or in the ledger is skipped, so a chat deleted after import stays deleted. The importer waits for
-the storage key if it isn't available yet. Settings → Sync shows progress under **Earlier Chats**.
+the storage key if it isn't available yet. Settings → Devices shows progress under **Earlier Chats**.
 
 `ChatHistoryDatabase` is now a read-only import source. Nothing writes chats to it: it keeps its
 migrations so an old file still opens, the reads the importer and file history need, and delete,
@@ -125,7 +125,7 @@ Memory can't open, those sessions wait and the import finishes on a later launch
 no transcript either is skipped. Ledger version 2 added this: a ledger finished by an earlier
 build re-checks only the sessions it skipped as empty. Loading a chat no longer queries Memory.
 
-The plaintext backup (General → Advanced → Data & Storage) exports each conversation with
+The plaintext backup (Privacy & Security → Data & Storage) exports each conversation with
 `exportConversation` into `conversations/` alongside the databases.
 
 ## Failures
@@ -134,7 +134,7 @@ An open failure is recorded as a `sync` store issue ("Synced conversations") in
 `PersistenceHealth`, so the storage recovery UI shows it. Retry reopens the core. Reset asks
 first, then starts this Mac over with an empty sync identity: an open core signs out and removes
 its copy, and one that can't open has its directory moved to quarantine and its keys deleted.
-Other devices keep their chats. Settings → Sync shows the failure too.
+Other devices keep their chats. Settings → Devices shows the failure too.
 `SyncError+Osaurus.swift` maps error codes to user copy, including a database from a newer build
 and a damaged one; logs use `logDetail`.
 
@@ -168,7 +168,7 @@ wallet master key (info `osaurus-sync/user-secret/v1`) and encodes it as BIP39 E
 `recoverFromPhrase`, which adopts that identity and keeps this Mac's chats.
 
 - **When.** Creating or restoring the wallet links automatically, unless the sync account already
-  has other devices: switching identity would split this Mac from them. Settings → Sync →
+  has other devices: switching identity would split this Mac from them. Settings → Devices →
   Recovery → **Use My Osaurus Recovery Phrase** links on request and warns about that split.
 - **Record.** `SyncConfiguration.walletLinked` and `walletUserKey`. Once linked, Settings points to
   the wallet phrase instead of showing a second one, and a restored backup waiting for its phrase
