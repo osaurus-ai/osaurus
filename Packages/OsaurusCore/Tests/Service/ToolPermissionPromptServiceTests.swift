@@ -380,7 +380,7 @@ struct ToolPermissionPromptQueueTests {
             let probe = PromptPresenterProbe()
             let events = WaitEvents()
             let observer: @Sendable (Bool) async -> Void = { await events.add($0) }
-            let task = ChatExecutionContext.$approvalWaitObserver.withValue(observer) {
+            let task = ChatExecutionContext.$approvalWait.withValue(.init(notify: observer)) {
                 request(probe, ending)
             }
             await probe.waitForPresented(1)

@@ -141,7 +141,7 @@ struct ChatWindowStateWorkspaceAgentTests {
         }
     }
 
-    @Test func switchToWorkspaceAgent_focusesExistingBlankTabForSameAgent() async throws {
+    @Test func switchToWorkspaceAgent_afterLeavingItsBlankTab_opensOneFreshTab() async throws {
         try await ChatHistoryTestStorage.run {
             try await withRoster {
                 let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
@@ -155,10 +155,10 @@ struct ChatWindowStateWorkspaceAgentTests {
 
                 window.selectTab(id: localTab)
                 #expect(window.workspaceAgentAddress == nil, "selecting a local tab leaves remote mode")
+                #expect(!window.tabs.contains { $0.id == teamTab }, "the blank team-agent tab closes on leave")
 
                 window.switchToWorkspaceAgent(address: Self.addressA)
-                #expect(window.tabs.count == 2, "the existing blank team-agent tab is focused, not duplicated")
-                #expect(window.activeTabId == teamTab)
+                #expect(window.tabs.count == 2, "one team-agent tab, never a duplicate")
                 #expect(window.workspaceAgentAddress == lowered(Self.addressA))
             }
         }

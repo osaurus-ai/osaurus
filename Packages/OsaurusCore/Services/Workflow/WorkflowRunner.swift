@@ -1042,7 +1042,7 @@ public actor WorkflowRunner {
             })
             do {
                 let outcome = try await valueWithDeadline(seconds: timeout, clock: clock, operationName: node.name) {
-                    try await ChatExecutionContext.$approvalWaitObserver.withValue(approvalWait) {
+                    try await ChatExecutionContext.$approvalWait.withValue(.init(notify: approvalWait)) {
                         try await executor.execute(context, awaitingUser: awaiting)
                     }
                 }

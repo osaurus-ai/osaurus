@@ -232,7 +232,7 @@ scrubbing:
   - **`.allText` (default for cloud)** — paints opaque boxes over **every**
     recognized text region, so nothing readable leaves the device. This is what
     a consented cloud screenshot uses out of the box.
-  - **`.pii`** (opt-in via Settings → Computer Use → *Mask only detected
+  - **`.pii`** (opt-in via Settings → Computer & Browser Use → *Mask only detected
     sensitive text*) — masks only regions whose text matched a detector. For
     parity with outbound text filtering, the cloud path runs **both** the
     `RegexEntityDetector` layer built from the **user's configured Privacy
@@ -276,7 +276,7 @@ ambient awareness of what you're doing *without driving anything*. It's a
 Computer Use enabled. The effective value is gated by the per-agent
 `computerUseEnabled` (`screenContextEnabled && computerUseEnabled`), so an agent
 without Computer Use — including the built-in Default agent — never injects screen
-context. Settings → Computer Use → *Screen context* keeps an explainer and a live
+context. Settings → Computer & Browser Use → *Screen context* keeps an explainer and a live
 preview, but the on/off control lives on each agent.
 
 When enabled, a distilled, text-only snapshot of your screen is **frozen** on the
@@ -407,7 +407,7 @@ Vivaldi / Opera).
 
 ## UI surfaces
 
-- **Settings → Computer Use** (`Views/Settings/ComputerUseSettingsView.swift`) —
+- **Settings → Computer & Browser Use** (`Views/Settings/ComputerUseSettingsView.swift`) —
   global preset picker, per-app overrides (the picker is filtered to presets at
   least as strict as the global default, since a looser per-app rule would
   silently no-op), app allowlist, the **Cloud vision** consent toggle (off by

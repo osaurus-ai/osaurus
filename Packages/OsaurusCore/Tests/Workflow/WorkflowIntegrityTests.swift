@@ -46,6 +46,91 @@ struct WorkflowIntegrityTests {
     }
 
     @Test
+    func integrityCheck_emptyRecord_recordsEveryFileWithoutFlagging() {
+        let a = UUID(), b = UUID()
+        let result = InstalledWorkflowStore.integrityCheck(
+            [(a, Data("a".utf8)), (b, Data("b".utf8))], recorded: [:])
+        #expect(result.modified.isEmpty)
+        #expect(
+            result.updated == [
+                a: InstalledWorkflowStore.contentHash(Data("a".utf8)),
+                b: InstalledWorkflowStore.contentHash(Data("b".utf8)),
+            ])
+    }
+
+    @Test
+    func integrityCheck_keepsHashOfFileThatIsPresentButUndecoded() {
+        let a = UUID(), unreadable = UUID()
+        let recorded = [a: InstalledWorkflowStore.contentHash(Data("a".utf8)), unreadable: "x"]
+        let result = InstalledWorkflowStore.integrityCheck(
+            [(a, Data("a".utf8))], recorded: recorded, present: [a, unreadable])
+        #expect(result.modified.isEmpty)
+        #expect(result.updated == nil)
+    }
+
+    @Test
+    func emptyRecordOnDisk_doesNotFlagInstalledWorkflows() async throws {
+        try await isolated {
+            let store = InstalledWorkflowStore.shared
+            let installed = try store.install(WF.template(WF.intake()), bindings: InstallBindings())
+            try Data("{}".utf8).write(to: InstalledWorkflowStore.integrityFile)
+            store.reload()
+            #expect(store.modifiedOutsideApp.isEmpty)
+            #expect(InstalledWorkflowStore.loadIntegrity()?[installed.id] != nil)
+        }
+    }
+
+    @Test
+    func unreadableFile_keepsItsHash_andIsNotFlaggedOnceReadableAgain() async throws {
+        try await isolated {
+            let store = InstalledWorkflowStore.shared
+            _ = try store.install(WF.template(WF.intake()), bindings: InstallBindings())
+            let other = try store.install(WF.template(WF.intake(), name: "Other"), bindings: InstallBindings())
+            let url = InstalledWorkflowStore.fileURL(other.id)
+            let original = try Data(contentsOf: url)
+            try Data("not a workflow".utf8).write(to: url)
+            store.reload()
+            #expect(store.workflow(id: other.id) == nil)
+            #expect(InstalledWorkflowStore.loadIntegrity()?[other.id] != nil)
+
+            try original.write(to: url)
+            store.reload()
+            #expect(store.modifiedOutsideApp.isEmpty)
+        }
+    }
+
+    @Test
+    func deletingWithNoRecord_writesNoRecord() async throws {
+        try await isolated {
+            let store = InstalledWorkflowStore.shared
+            let installed = try store.install(WF.template(WF.intake()), bindings: InstallBindings())
+            try FileManager.default.removeItem(at: InstalledWorkflowStore.integrityFile)
+            store.delete(id: installed.id)
+            #expect(!FileManager.default.fileExists(atPath: InstalledWorkflowStore.integrityFile.path))
+        }
+    }
+
+    @Test
+    func finishingSetup_clearsTheFlag() async throws {
+        try await isolated {
+            let store = InstalledWorkflowStore.shared
+            let installed = try store.install(WF.template(WF.intake()), bindings: InstallBindings())
+            let url = InstalledWorkflowStore.fileURL(installed.id)
+            let text = try String(contentsOf: url, encoding: .utf8)
+            try (text + "\n").write(to: url, atomically: true, encoding: .utf8)
+            store.reload()
+            let flagged = try #require(store.workflow(id: installed.id))
+            #expect(store.modifiedOutsideApp == [installed.id])
+
+            let saved = try #require(try WorkflowSetupWizardView.commit(.setup(flagged)))
+            #expect(store.modifiedOutsideApp.isEmpty)
+            #expect(!SetupChecker.check(saved).blocking.contains { $0.kind == .integrity })
+            store.reload()
+            #expect(store.modifiedOutsideApp.isEmpty)
+        }
+    }
+
+    @Test
     func editedFile_blocksRuns_untilInstalledAgainFromSetup() async throws {
         try await isolated {
             let store = InstalledWorkflowStore.shared

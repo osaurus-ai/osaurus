@@ -160,7 +160,7 @@ Client (this repo):
   v3, additive `INTEGER NOT NULL DEFAULT 0` columns). Missing fields decode as
   `0`, so a pre-cache router and pre-migration ledger rows keep working.
 - Shows the split as "N cached · P%": in the composer wallet panel
-  (session aggregate under "This session"), in Credits → Credits Activity
+  (session aggregate under "This session"), in Osaurus ID → Wallet & Credits → Credits Activity
   ("Cached input" total, shown only when non-zero), and on each activity row's
   token line.
 

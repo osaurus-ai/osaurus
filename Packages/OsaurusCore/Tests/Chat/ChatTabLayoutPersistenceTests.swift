@@ -264,28 +264,48 @@ struct ChatTabLayoutPersistenceTests {
         }
     }
 
-    // MARK: Unlimited blank tabs
+    // MARK: One blank tab
 
-    @Test func newTab_alwaysOpensAnotherTab() async throws {
+    @Test func newTab_replacesABlankActiveTab_andKeepsConversations() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
             let blank = window.activeTabId
 
-            // Browser-style: ⌘T / ⌘N / + on a blank tab still open a new one.
+            // ⌘T / ⌘N / + on a blank tab focus a new one; the blank one goes.
             window.newTab()
             window.newTab()
             window.newTabInCurrentProject()
-            #expect(window.tabs.count == 4, "every press opens a tab, blank or not")
+            #expect(window.tabs.count == 1, "a window holds at most one blank chat")
             #expect(window.activeTabId != blank)
-            #expect(window.tabs.allSatisfy { $0.session.turns.isEmpty })
 
-            // A conversation gets a fresh tab too, and keeps its own.
+            // A conversation keeps its tab beside the new one.
             addTurn(window.session, "work")
             let conversation = window.activeTabId
             window.newTab()
-            #expect(window.tabs.count == 5)
+            #expect(window.tabs.count == 2)
             #expect(window.tabs.contains { $0.id == conversation && !$0.session.turns.isEmpty })
+
+            // Selecting the conversation closes the blank chat left behind.
+            window.selectTab(id: conversation)
+            #expect(window.tabs.map(\.id) == [conversation])
+        }
+    }
+
+    @Test func leavingABlankTab_keepsItsUnsentTextForTheNextNewChat() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            addTurn(window.session, "work")
+            let conversation = window.activeTabId
+            window.newTab()
+            window.session.input = "half a thought"
+
+            window.selectTab(id: conversation)
+            #expect(window.tabs.count == 1)
+
+            window.newTab()
+            #expect(window.session.input == "half a thought")
         }
     }
 

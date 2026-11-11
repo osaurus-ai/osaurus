@@ -220,7 +220,7 @@ public final class RemoteAgentManager: ObservableObject {
         }
         guard !resolvedApiKey.isEmpty else { throw RemoteAgentPairError.malformedResponse }
 
-        return upsertPairedAgent(
+        let added = upsertPairedAgent(
             agentAddress: decoded.agentAddress,
             name: decoded.agentName,
             description: decoded.agentDescription ?? "",
@@ -228,6 +228,8 @@ public final class RemoteAgentManager: ObservableObject {
             apiKey: resolvedApiKey,
             note: note
         )
+        FeatureTelemetry.sharedAgentAdded()
+        return added
     }
 
     /// Persist a paired agent + its backing `RemoteProvider`, replacing any
