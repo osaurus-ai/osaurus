@@ -45,7 +45,7 @@ final class SyncManageDetail {
             .sink { _ in schedule() }.store(in: &cancellables)
         ToolRegistry.shared.objectWillChange.receive(on: DispatchQueue.main).sink { _ in schedule() }
             .store(in: &cancellables)
-        SyncPhoneDevices.shared.$hasPhone.removeDuplicates().receive(on: DispatchQueue.main)
+        SyncPhoneDevices.shared.$hasFeedReader.removeDuplicates().receive(on: DispatchQueue.main)
             .sink { _ in schedule() }.store(in: &cancellables)
         observers += SyncService.shared.observeCore(
             attach: { _ in SyncManageDetail.shared.schedulePublish() },
@@ -63,7 +63,7 @@ final class SyncManageDetail {
     }
 
     func publishNow() async {
-        guard SyncService.shared.core != nil, SyncPhoneDevices.shared.hasPhone else { return }
+        guard SyncService.shared.core != nil, SyncPhoneDevices.shared.hasFeedReader else { return }
         let allItems = await ModelPickerItemCache.shared.currentItems()
         let payloads = Self.payloads(allItems: allItems)
         await Task.detached(priority: .utility) {

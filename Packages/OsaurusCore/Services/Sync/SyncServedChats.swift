@@ -106,9 +106,9 @@ enum SyncServedChatsContract {
         var result: [String: Answers] = [:]
         for entry in conversation.appData where entry.namespace.hasPrefix(answerNamespacePrefix) {
             let device = String(entry.namespace.dropFirst(answerNamespacePrefix.count))
-            guard !device.isEmpty, let decoded = try? JSONDecoder().decode(Answers.self, from: entry.bytes) else {
-                continue
-            }
+            guard !device.isEmpty, SyncHostedRunContract.isSigned(entry, byNamespaceDevice: device),
+                let decoded = try? JSONDecoder().decode(Answers.self, from: entry.bytes)
+            else { continue }
             result[device] = decoded
         }
         return result

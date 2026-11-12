@@ -1,8 +1,9 @@
 # Third-party notices
 
 The Osaurus sync native library (`OsaurusSyncFFI.xcframework`, `osaurus_sync_ffi.dll`,
-`libosaurus_sync_ffi.dylib`) includes the open source components below. It also embeds SQLite,
-through `libsqlite3-sys`, which is in the public domain.
+`libosaurus_sync_ffi.dylib`) includes the open source components below. It also embeds
+SQLCipher, through `libsqlite3-sys` and `sqlcipher-src`. SQLCipher's license is at the end of
+this file; the SQLite it is built on is in the public domain.
 
 Components under MPL-2.0 are used unmodified; their source is available from crates.io at the
 versions listed.
@@ -11,8 +12,8 @@ versions listed.
 
 - Apache License 2.0: 292 components
 - MIT License: 81 components
+- ISC License: 23 components
 - Unicode License v3: 20 components
-- ISC License: 18 components
 - Mozilla Public License 2.0: 10 components
 - BSD 3-Clause "New" or "Revised" License: 6 components
 - Creative Commons Zero v1.0 Universal: 3 components
@@ -10500,6 +10501,43 @@ Used by:
 - [ring 0.17.14](https://github.com/briansmith/ring)
 
 ```
+// Copyright 2015-2024 Brian Smith.
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+// OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+// CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+#[cfg(target_pointer_width = "64")]
+type CompilerWord = u64;
+
+#[cfg(target_pointer_width = "32")]
+type CompilerWord = u32;
+
+/// A native word that isn't secret.
+///
+/// `LeakyWord` supports `as` conversions to/from native types.
+///
+/// XXX: This isn't the native word size on targets where a pointer isn't the
+/// same size as a native word. TODO: Fix this.
+pub(crate) type LeakyWord = CompilerWord;
+
+```
+
+## ISC License
+
+Used by:
+
+- [ring 0.17.14](https://github.com/briansmith/ring)
+
+```
 // Copyright 2015-2025 Brian Smith.
 //
 // Permission to use, copy, modify, and/or distribute this software for any
@@ -10621,6 +10659,48 @@ Used by:
 // OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+#[cfg(target_arch = "x86")]
+pub fn shift_full_blocks<const BLOCK_LEN: usize>(
+    in_out: super::overlapping::Overlapping<'_, u8>,
+    mut transform: impl FnMut(&[u8; BLOCK_LEN]) -> [u8; BLOCK_LEN],
+) {
+    let (in_out, src) = in_out.into_slice_src_mut();
+    let in_out_len = in_out[src.clone()].len();
+
+    for i in (0..in_out_len).step_by(BLOCK_LEN) {
+        let block = {
+            let input =
+                <&[u8; BLOCK_LEN]>::try_from(&in_out[(src.start + i)..][..BLOCK_LEN]).unwrap();
+            transform(input)
+        };
+        let output = <&mut [u8; BLOCK_LEN]>::try_from(&mut in_out[i..][..BLOCK_LEN]).unwrap();
+        *output = block;
+    }
+}
+
+```
+
+## ISC License
+
+Used by:
+
+- [ring 0.17.14](https://github.com/briansmith/ring)
+
+```
+// Copyright 2018 Brian Smith.
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+// OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+// CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 //! Serialization and deserialization.
 
 #[doc(hidden)]
@@ -10682,6 +10762,45 @@ mod ffi;
 pub(super) mod fallback;
 mod sha2_32;
 mod sha2_64;
+
+```
+
+## ISC License
+
+Used by:
+
+- [ring 0.17.14](https://github.com/briansmith/ring)
+
+```
+// Copyright 2022 Brian Smith.
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+// OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+// CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+/// Polyfill for `Option::unwrap()` as a const fn; feature `const_option`.
+/// https://github.com/rust-lang/rust/issues/67441.
+/// TODO(MSRV): Replace this with `x.unwrap()`.
+///
+/// `T: Copy` avoids "constant functions cannot evaluate destructors."
+pub const fn unwrap_const<T>(x: Option<T>) -> T
+where
+    T: Copy,
+{
+    if let Some(x) = x {
+        x
+    } else {
+        panic!("unwrap_const on `None`");
+    }
+}
 
 ```
 
@@ -10770,6 +10889,39 @@ Used by:
 // OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 // CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+//! Utilities to make dealing with slices less tediuous.
+
+/// Replaces the first N elements of `a` with the first N elements of `b`, where
+/// N is `core::cmp::min(a.len(), b.len())`, leaving the rest unchanged.
+pub fn overwrite_at_start<T: Copy>(a: &mut [T], b: &[T]) {
+    a.iter_mut().zip(b).for_each(|(a, b)| {
+        *a = *b;
+    });
+}
+
+```
+
+## ISC License
+
+Used by:
+
+- [ring 0.17.14](https://github.com/briansmith/ring)
+
+```
+// Copyright 2024 Brian Smith.
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+// OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+// CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 pub use self::{
     array::Array,
     base::{IndexError, Overlapping},
@@ -10779,6 +10931,46 @@ pub use self::{
 mod array;
 mod base;
 mod partial_block;
+
+```
+
+## ISC License
+
+Used by:
+
+- [ring 0.17.14](https://github.com/briansmith/ring)
+
+```
+// Copyright 2024 Brian Smith.
+//
+// Permission to use, copy, modify, and/or distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+// SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+// OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+// CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+use crate::testutil;
+use core::{marker::PhantomData, mem::size_of};
+
+/// A ZST that can be added to any type to make the type `!Send`.
+#[derive(Clone, Copy)]
+pub struct NotSend(PhantomData<*mut ()>);
+
+impl NotSend {
+    pub const VALUE: Self = Self(PhantomData);
+}
+
+#[allow(deprecated)]
+const _: () = testutil::compile_time_assert_clone::<NotSend>();
+#[allow(deprecated)]
+const _: () = testutil::compile_time_assert_copy::<NotSend>();
+const _: () = assert!(size_of::<NotSend>() == 0);
 
 ```
 
@@ -11009,8 +11201,8 @@ THE SOFTWARE.
 
 Used by:
 
-- [libsqlite3-sys 0.38.2](https://github.com/rusqlite/rusqlite)
-- [rusqlite 0.40.2](https://github.com/rusqlite/rusqlite)
+- [libsqlite3-sys 0.40.0](https://github.com/rusqlite/rusqlite)
+- [rusqlite 0.42.0](https://github.com/rusqlite/rusqlite)
 
 ```
 Copyright (c) 2014 The rusqlite developers
@@ -13884,3 +14076,35 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
+## SQLCipher
+
+Used by:
+
+- [sqlcipher-src](https://github.com/LucaCappelletti94/sqlcipher-src), the SQLCipher source that `libsqlite3-sys` builds
+
+```
+Copyright (c) 2025, ZETETIC LLC
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the ZETETIC LLC nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY ZETETIC LLC ''AS IS'' AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL ZETETIC LLC BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```

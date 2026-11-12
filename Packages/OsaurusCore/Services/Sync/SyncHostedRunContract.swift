@@ -224,6 +224,35 @@ enum SyncHostedRunContract {
         return try? JSONDecoder().decode(type, from: bytes)
     }
 
+    /// `read` for a value that steers a run on this Mac: it counts only when
+    /// signed by this Mac or another of the user's current devices.
+    static func readFromOwnDevice<T: Decodable>(
+        _ type: T.Type,
+        _ namespace: String,
+        from conversation: Conversation,
+        me: String,
+        devices: [Device]
+    ) -> T? {
+        guard let entry = conversation.appDataEntry(namespace),
+            isTrustedSigner(entry.authorDevice, me: me, devices: devices)
+        else { return nil }
+        return read(type, namespace, from: conversation)
+    }
+
+    /// Values written before 0.1.0-beta.6 carry no signer, so an unsigned
+    /// value still counts until every client signs.
+    nonisolated static func isTrustedSigner(_ signer: String?, me: String, devices: [Device]) -> Bool {
+        guard let signer else { return true }
+        return SyncHostRunner.isOwnDevice(signer, me: me, devices: devices)
+    }
+
+    /// A per-device namespace names its writer; a signed value from any
+    /// other device is someone writing in that device's name.
+    nonisolated static func isSigned(_ entry: AppDataEntry, byNamespaceDevice device: String) -> Bool {
+        guard let signer = entry.authorDevice else { return true }
+        return signer.lowercased() == device.lowercased()
+    }
+
     static func encode<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

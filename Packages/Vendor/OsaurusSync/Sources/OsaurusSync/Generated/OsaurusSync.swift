@@ -905,6 +905,9 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
      */
     func assignAgent(scope: String, agentSecret: Data, host: String?, role: MemberRole, ttlMs: UInt64) throws  -> String
     
+    /**
+     * Closes the pairing offer. A new device waiting on its confirmation is told.
+     */
     func cancelPairing() 
     
     func changeRole(scope: String, principal: String, role: MemberRole) throws 
@@ -913,6 +916,14 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
      * Stops networking, flushes and releases the data directory. Further calls fail with `Closed`.
      */
     func close() async throws 
+    
+    /**
+     * The user checked that `device` shows the same number as this device
+     * (`CoreEvent::PairingConfirmation`). Call it on both devices: the existing one hands
+     * over the identity only once both have. Fails with `Pairing` if no confirmation with
+     * that device is waiting.
+     */
+    func confirmPairing(device: String) throws 
     
     func conversation(scope: String) throws  -> Conversation?
     
@@ -988,6 +999,12 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
     func leaveConversation(scope: String) throws 
     
     /**
+     * The live state every device currently holds in a conversation, this device's
+     * included, ordered by namespace and device.
+     */
+    func liveState(scope: String) throws  -> [LiveState]
+    
+    /**
      * This device's direct addresses, for QR payloads or setups without discovery.
      */
     func localAddress()  -> String?
@@ -1008,14 +1025,17 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
     func openStream(scope: String, role: MessageRole, asAgent: String?) throws  -> OutgoingStream
     
     /**
-     * On the new device: joins using a scanned payload, or `osaurus-pair:1:<device>:<code>`
-     * built from a typed code. Completion arrives as `CoreEvent::Paired` or `PairingFailed`.
+     * On the new device: joins using a scanned payload, or `osaurus-pair:2:<device>:<code>`
+     * built from a typed code. A current host answers with `CoreEvent::PairingConfirmation`;
+     * completion arrives as `CoreEvent::Paired` or `PairingFailed`. A payload from a host
+     * older than 0.1.0-beta.6 (`osaurus-pair:1:`) still pairs, without the confirmation.
      */
     func pairWithOffer(payload: String) async throws 
     
     /**
      * Starts pairing on this (existing) device. Show `payload` as a QR code or `code` for
-     * typing. Valid for `ttl_ms`.
+     * typing. Valid for `ttl_ms`. A new offer replaces the previous one. When a new device
+     * connects with the code, `CoreEvent::PairingConfirmation` arrives here and there.
      */
     func pairingOffer(ttlMs: UInt64) throws  -> PairingOffer
     
@@ -1056,6 +1076,13 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
      * Redeems an invite. The result arrives as `CoreEvent::InviteResult`.
      */
     func redeemInvite(token: String) throws 
+    
+    /**
+     * The numbers differ, or the user backed out. Ends pairing with `device`, which gets
+     * `PairingFailed`. On the existing device the offer closes too, since whoever reached
+     * the confirmation knew the code.
+     */
+    func rejectPairing(device: String) throws 
     
     func remove(scope: String, principal: String) throws 
     
@@ -1131,6 +1158,17 @@ public protocol SyncCoreProtocol: AnyObject, Sendable {
      * Receives device, identity and pairing events.
      */
     func setListener(listener: CoreListener?) 
+    
+    /**
+     * Sets what this device is doing right now in a conversation, such as the progress of a
+     * run, under `namespace`; None clears it. It replaces this device's previous value there.
+     * Connected devices that may read the conversation get `ScopeChange::LiveState`, and one
+     * that connects later gets the current value. Nothing is stored or kept for later: the
+     * value is gone once this device clears it, disconnects or suspends, so set it again
+     * after `resume` if it still holds. Limits are the app data ones (namespace length,
+     * `max_app_data_bytes`) and 256 values per device.
+     */
+    func setLiveState(scope: String, namespace: String, bytes: Data?) throws 
     
     /**
      * Writes app data onto a message this user or a hosted agent authored. Each namespace
@@ -1345,6 +1383,9 @@ open func assignAgent(scope: String, agentSecret: Data, host: String?, role: Mem
 })
 }
     
+    /**
+     * Closes the pairing offer. A new device waiting on its confirmation is told.
+     */
 open func cancelPairing()  {try! rustCall() {
     uniffi_osaurus_sync_ffi_fn_method_synccore_cancel_pairing(
             self.uniffiCloneHandle(),$0
@@ -1380,6 +1421,20 @@ open func close()async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeSyncError_lift
         )
+}
+    
+    /**
+     * The user checked that `device` shows the same number as this device
+     * (`CoreEvent::PairingConfirmation`). Call it on both devices: the existing one hands
+     * over the identity only once both have. Fails with `Pairing` if no confirmation with
+     * that device is waiting.
+     */
+open func confirmPairing(device: String)throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_confirm_pairing(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(device),$0
+    )
+}
 }
     
 open func conversation(scope: String)throws  -> Conversation?  {
@@ -1605,6 +1660,19 @@ open func leaveConversation(scope: String)throws   {try rustCallWithError(FfiCon
 }
     
     /**
+     * The live state every device currently holds in a conversation, this device's
+     * included, ordered by namespace and device.
+     */
+open func liveState(scope: String)throws  -> [LiveState]  {
+    return try  FfiConverterSequenceTypeLiveState.lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_live_state(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(scope),$0
+    )
+})
+}
+    
+    /**
      * This device's direct addresses, for QR payloads or setups without discovery.
      */
 open func localAddress() -> String?  {
@@ -1663,8 +1731,10 @@ open func openStream(scope: String, role: MessageRole, asAgent: String?)throws  
 }
     
     /**
-     * On the new device: joins using a scanned payload, or `osaurus-pair:1:<device>:<code>`
-     * built from a typed code. Completion arrives as `CoreEvent::Paired` or `PairingFailed`.
+     * On the new device: joins using a scanned payload, or `osaurus-pair:2:<device>:<code>`
+     * built from a typed code. A current host answers with `CoreEvent::PairingConfirmation`;
+     * completion arrives as `CoreEvent::Paired` or `PairingFailed`. A payload from a host
+     * older than 0.1.0-beta.6 (`osaurus-pair:1:`) still pairs, without the confirmation.
      */
 open func pairWithOffer(payload: String)async throws   {
     return
@@ -1685,7 +1755,8 @@ open func pairWithOffer(payload: String)async throws   {
     
     /**
      * Starts pairing on this (existing) device. Show `payload` as a QR code or `code` for
-     * typing. Valid for `ttl_ms`.
+     * typing. Valid for `ttl_ms`. A new offer replaces the previous one. When a new device
+     * connects with the code, `CoreEvent::PairingConfirmation` arrives here and there.
      */
 open func pairingOffer(ttlMs: UInt64)throws  -> PairingOffer  {
     return try  FfiConverterTypePairingOffer_lift(try rustCallWithError(FfiConverterTypeSyncError_lift) {
@@ -1783,6 +1854,19 @@ open func redeemInvite(token: String)throws   {try rustCallWithError(FfiConverte
     uniffi_osaurus_sync_ffi_fn_method_synccore_redeem_invite(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(token),$0
+    )
+}
+}
+    
+    /**
+     * The numbers differ, or the user backed out. Ends pairing with `device`, which gets
+     * `PairingFailed`. On the existing device the offer closes too, since whoever reached
+     * the confirmation knew the code.
+     */
+open func rejectPairing(device: String)throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_reject_pairing(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(device),$0
     )
 }
 }
@@ -2011,6 +2095,25 @@ open func setListener(listener: CoreListener?)  {try! rustCall() {
     uniffi_osaurus_sync_ffi_fn_method_synccore_set_listener(
             self.uniffiCloneHandle(),
         FfiConverterOptionCallbackInterfaceCoreListener.lower(listener),$0
+    )
+}
+}
+    
+    /**
+     * Sets what this device is doing right now in a conversation, such as the progress of a
+     * run, under `namespace`; None clears it. It replaces this device's previous value there.
+     * Connected devices that may read the conversation get `ScopeChange::LiveState`, and one
+     * that connects later gets the current value. Nothing is stored or kept for later: the
+     * value is gone once this device clears it, disconnects or suspends, so set it again
+     * after `resume` if it still holds. Limits are the app data ones (namespace length,
+     * `max_app_data_bytes`) and 256 values per device.
+     */
+open func setLiveState(scope: String, namespace: String, bytes: Data?)throws   {try rustCallWithError(FfiConverterTypeSyncError_lift) {
+    uniffi_osaurus_sync_ffi_fn_method_synccore_set_live_state(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(scope),
+        FfiConverterString.lower(namespace),
+        FfiConverterOptionData.lower(bytes),$0
     )
 }
 }
@@ -2426,16 +2529,34 @@ public struct AppData: Equatable, Hashable {
      * Attachments written with the data. Fetch them with `fetch_attachment`.
      */
     public var blobs: [Blob]
+    /**
+     * The device that signed this write. It is one of the message author's devices, but not
+     * always the one that wrote the message: check it against `devices()`.
+     */
+    public var authorDevice: String
+    /**
+     * The write's HLC.
+     */
+    public var hlc: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(namespace: String, bytes: Data, 
         /**
          * Attachments written with the data. Fetch them with `fetch_attachment`.
-         */blobs: [Blob]) {
+         */blobs: [Blob], 
+        /**
+         * The device that signed this write. It is one of the message author's devices, but not
+         * always the one that wrote the message: check it against `devices()`.
+         */authorDevice: String, 
+        /**
+         * The write's HLC.
+         */hlc: UInt64) {
         self.namespace = namespace
         self.bytes = bytes
         self.blobs = blobs
+        self.authorDevice = authorDevice
+        self.hlc = hlc
     }
 
     
@@ -2456,7 +2577,9 @@ public struct FfiConverterTypeAppData: FfiConverterRustBuffer {
             try AppData(
                 namespace: FfiConverterString.read(from: &buf), 
                 bytes: FfiConverterData.read(from: &buf), 
-                blobs: FfiConverterSequenceTypeBlob.read(from: &buf)
+                blobs: FfiConverterSequenceTypeBlob.read(from: &buf), 
+                authorDevice: FfiConverterString.read(from: &buf), 
+                hlc: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -2464,6 +2587,8 @@ public struct FfiConverterTypeAppData: FfiConverterRustBuffer {
         FfiConverterString.write(value.namespace, into: &buf)
         FfiConverterData.write(value.bytes, into: &buf)
         FfiConverterSequenceTypeBlob.write(value.blobs, into: &buf)
+        FfiConverterString.write(value.authorDevice, into: &buf)
+        FfiConverterUInt64.write(value.hlc, into: &buf)
     }
 }
 
@@ -2489,12 +2614,34 @@ public func FfiConverterTypeAppData_lower(_ value: AppData) -> RustBuffer {
 public struct AppDataEntry: Equatable, Hashable {
     public var namespace: String
     public var bytes: Data
+    /**
+     * The device that signed these bytes, when the core read them. `None` when no signature
+     * matches them: the value was written by a release before 0.1.0-beta.6, or changed
+     * without being signed again. Check the device against `devices()`. Ignored on import,
+     * where the importing device signs.
+     */
+    public var authorDevice: String?
+    /**
+     * The signing device's HLC at the write; set together with `author_device`.
+     */
+    public var hlc: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(namespace: String, bytes: Data) {
+    public init(namespace: String, bytes: Data, 
+        /**
+         * The device that signed these bytes, when the core read them. `None` when no signature
+         * matches them: the value was written by a release before 0.1.0-beta.6, or changed
+         * without being signed again. Check the device against `devices()`. Ignored on import,
+         * where the importing device signs.
+         */authorDevice: String? = nil, 
+        /**
+         * The signing device's HLC at the write; set together with `author_device`.
+         */hlc: UInt64? = nil) {
         self.namespace = namespace
         self.bytes = bytes
+        self.authorDevice = authorDevice
+        self.hlc = hlc
     }
 
     
@@ -2514,13 +2661,17 @@ public struct FfiConverterTypeAppDataEntry: FfiConverterRustBuffer {
         return
             try AppDataEntry(
                 namespace: FfiConverterString.read(from: &buf), 
-                bytes: FfiConverterData.read(from: &buf)
+                bytes: FfiConverterData.read(from: &buf), 
+                authorDevice: FfiConverterOptionString.read(from: &buf), 
+                hlc: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppDataEntry, into buf: inout [UInt8]) {
         FfiConverterString.write(value.namespace, into: &buf)
         FfiConverterData.write(value.bytes, into: &buf)
+        FfiConverterOptionString.write(value.authorDevice, into: &buf)
+        FfiConverterOptionUInt64.write(value.hlc, into: &buf)
     }
 }
 
@@ -3489,6 +3640,73 @@ public func FfiConverterTypeLegacyMessage_lower(_ value: LegacyMessage) -> RustB
 }
 
 
+/**
+ * A value a device currently holds for a conversation; see `SyncCore::set_live_state`.
+ */
+public struct LiveState: Equatable, Hashable {
+    public var namespace: String
+    /**
+     * The device that set it. Its sync connection is authenticated with this key.
+     */
+    public var device: String
+    public var bytes: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(namespace: String, 
+        /**
+         * The device that set it. Its sync connection is authenticated with this key.
+         */device: String, bytes: Data) {
+        self.namespace = namespace
+        self.device = device
+        self.bytes = bytes
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension LiveState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLiveState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LiveState {
+        return
+            try LiveState(
+                namespace: FfiConverterString.read(from: &buf), 
+                device: FfiConverterString.read(from: &buf), 
+                bytes: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LiveState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.namespace, into: &buf)
+        FfiConverterString.write(value.device, into: &buf)
+        FfiConverterData.write(value.bytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLiveState_lift(_ buf: RustBuffer) throws -> LiveState {
+    return try FfiConverterTypeLiveState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLiveState_lower(_ value: LiveState) -> RustBuffer {
+    return FfiConverterTypeLiveState.lower(value)
+}
+
+
 public struct LogRecord: Equatable, Hashable {
     public var level: LogLevel
     /**
@@ -4079,11 +4297,12 @@ public func FfiConverterTypePageCursor_lower(_ value: PageCursor) -> RustBuffer 
 
 public struct PairingOffer: Equatable, Hashable {
     /**
-     * Encode as a QR code. Contains the code.
+     * Encode as a QR code. Contains the code: `osaurus-pair:2:<device>:<code>`.
      */
     public var payload: String
     /**
-     * Shown for typing on the new device.
+     * Shown for typing on the new device. An app that takes a typed code builds the payload
+     * in the form above.
      */
     public var code: String
     public var device: String
@@ -4092,10 +4311,11 @@ public struct PairingOffer: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Encode as a QR code. Contains the code.
+         * Encode as a QR code. Contains the code: `osaurus-pair:2:<device>:<code>`.
          */payload: String, 
         /**
-         * Shown for typing on the new device.
+         * Shown for typing on the new device. An app that takes a typed code builds the payload
+         * in the form above.
          */code: String, device: String) {
         self.payload = payload
         self.code = code
@@ -5235,6 +5455,14 @@ public enum CoreEvent: Equatable, Hashable {
     )
     case pairingFailed(reason: String
     )
+    /**
+     * Pairing reached the confirmation step, on the existing device and on the new one. Show
+     * `code` and ask whether the other device shows the same six digits; then call
+     * `confirm_pairing(device)` or `reject_pairing(device)`. Nothing is granted until both
+     * devices confirmed. `name` and `platform` are what the other device calls itself.
+     */
+    case pairingConfirmation(device: String, name: String, platform: Platform, code: String
+    )
     case inviteResult(scope: String, error: String?
     )
     case peerRevoked(device: String
@@ -5281,16 +5509,19 @@ public struct FfiConverterTypeCoreEvent: FfiConverterRustBuffer {
         case 6: return .pairingFailed(reason: try FfiConverterString.read(from: &buf)
         )
         
-        case 7: return .inviteResult(scope: try FfiConverterString.read(from: &buf), error: try FfiConverterOptionString.read(from: &buf)
+        case 7: return .pairingConfirmation(device: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf), platform: try FfiConverterTypePlatform.read(from: &buf), code: try FfiConverterString.read(from: &buf)
         )
         
-        case 8: return .peerRevoked(device: try FfiConverterString.read(from: &buf)
+        case 8: return .inviteResult(scope: try FfiConverterString.read(from: &buf), error: try FfiConverterOptionString.read(from: &buf)
         )
         
-        case 9: return .peerRejected(device: try FfiConverterString.read(from: &buf)
+        case 9: return .peerRevoked(device: try FfiConverterString.read(from: &buf)
         )
         
-        case 10: return .incompatiblePeer(device: try FfiConverterString.read(from: &buf), version: try FfiConverterUInt32.read(from: &buf)
+        case 10: return .peerRejected(device: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 11: return .incompatiblePeer(device: try FfiConverterString.read(from: &buf), version: try FfiConverterUInt32.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -5327,24 +5558,32 @@ public struct FfiConverterTypeCoreEvent: FfiConverterRustBuffer {
             FfiConverterString.write(reason, into: &buf)
             
         
-        case let .inviteResult(scope,error):
+        case let .pairingConfirmation(device,name,platform,code):
             writeInt(&buf, Int32(7))
+            FfiConverterString.write(device, into: &buf)
+            FfiConverterString.write(name, into: &buf)
+            FfiConverterTypePlatform.write(platform, into: &buf)
+            FfiConverterString.write(code, into: &buf)
+            
+        
+        case let .inviteResult(scope,error):
+            writeInt(&buf, Int32(8))
             FfiConverterString.write(scope, into: &buf)
             FfiConverterOptionString.write(error, into: &buf)
             
         
         case let .peerRevoked(device):
-            writeInt(&buf, Int32(8))
-            FfiConverterString.write(device, into: &buf)
-            
-        
-        case let .peerRejected(device):
             writeInt(&buf, Int32(9))
             FfiConverterString.write(device, into: &buf)
             
         
-        case let .incompatiblePeer(device,version):
+        case let .peerRejected(device):
             writeInt(&buf, Int32(10))
+            FfiConverterString.write(device, into: &buf)
+            
+        
+        case let .incompatiblePeer(device,version):
+            writeInt(&buf, Int32(11))
             FfiConverterString.write(device, into: &buf)
             FfiConverterUInt32.write(version, into: &buf)
             
@@ -5961,6 +6200,12 @@ public enum ScopeChange: Equatable, Hashable {
     case reset
     case stream(update: StreamUpdate
     )
+    /**
+     * Another device set its live state under `namespace` (`bytes` present), or no longer
+     * holds it (absent): it cleared it, disconnected or suspended.
+     */
+    case liveState(namespace: String, device: String, bytes: Data?
+    )
     case syncStatusChanged
 
 
@@ -5997,7 +6242,10 @@ public struct FfiConverterTypeScopeChange: FfiConverterRustBuffer {
         case 5: return .stream(update: try FfiConverterTypeStreamUpdate.read(from: &buf)
         )
         
-        case 6: return .syncStatusChanged
+        case 6: return .liveState(namespace: try FfiConverterString.read(from: &buf), device: try FfiConverterString.read(from: &buf), bytes: try FfiConverterOptionData.read(from: &buf)
+        )
+        
+        case 7: return .syncStatusChanged
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -6031,8 +6279,15 @@ public struct FfiConverterTypeScopeChange: FfiConverterRustBuffer {
             FfiConverterTypeStreamUpdate.write(update, into: &buf)
             
         
-        case .syncStatusChanged:
+        case let .liveState(namespace,device,bytes):
             writeInt(&buf, Int32(6))
+            FfiConverterString.write(namespace, into: &buf)
+            FfiConverterString.write(device, into: &buf)
+            FfiConverterOptionData.write(bytes, into: &buf)
+            
+        
+        case .syncStatusChanged:
+            writeInt(&buf, Int32(7))
         
         }
     }
@@ -7765,6 +8020,31 @@ fileprivate struct FfiConverterSequenceTypeLegacyMessage: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeLiveState: FfiConverterRustBuffer {
+    typealias SwiftType = [LiveState]
+
+    public static func write(_ value: [LiveState], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeLiveState.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [LiveState] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [LiveState]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeLiveState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMember: FfiConverterRustBuffer {
     typealias SwiftType = [Member]
 
@@ -8261,13 +8541,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_assign_agent() != 45017) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_cancel_pairing() != 44031) {
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_cancel_pairing() != 61867) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_change_role() != 39299) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_close() != 65443) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_confirm_pairing() != 27754) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_conversation() != 16945) {
@@ -8327,6 +8610,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_leave_conversation() != 55451) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_live_state() != 13237) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_local_address() != 856) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8342,10 +8628,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_open_stream() != 50682) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_pair_with_offer() != 227) {
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_pair_with_offer() != 13500) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_pairing_offer() != 48492) {
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_pairing_offer() != 45202) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_promote_to_synced() != 25097) {
@@ -8367,6 +8653,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_redeem_invite() != 24733) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_reject_pairing() != 49070) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_remove() != 36601) {
@@ -8421,6 +8710,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_listener() != 506) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_live_state() != 52108) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_osaurus_sync_ffi_checksum_method_synccore_set_message_app_data() != 51680) {
