@@ -251,6 +251,10 @@ final class SyncWorkflowRunsFeed {
 
     nonisolated private static let log = Logger(subsystem: "ai.osaurus", category: "sync.workflow-runs")
     private static let debounce: Duration = .milliseconds(500)
+    /// Notifications don't wait for the list's debounce: they only compare statuses. A short
+    /// window still folds a streaming step's per-token store changes into one check.
+    private static let pushDebounce: Duration = .milliseconds(100)
+    private var pushTask: Task<Void, Never>?
 
     private var cancellable: AnyCancellable?
     private var task: Task<Void, Never>?
@@ -270,11 +274,24 @@ final class SyncWorkflowRunsFeed {
     }
 
     func schedule() {
+        schedulePushCheck()
         guard task == nil else { return }
         task = Task { @MainActor in
             try? await Task.sleep(for: Self.debounce)
             self.task = nil
             self.publishNow()
+        }
+    }
+
+    private func schedulePushCheck() {
+        guard pushTask == nil else { return }
+        pushTask = Task { @MainActor in
+            try? await Task.sleep(for: Self.pushDebounce)
+            self.pushTask = nil
+            guard SyncService.shared.core != nil, SyncPhoneDevices.shared.hasPhone,
+                WorkflowRunStore.shared.recentPersisted != nil
+            else { return }
+            SyncWorkflowPush.shared.observe(SyncWorkflowLibrary.runs(nowMs: SyncHostedRunContract.nowMs()).runs)
         }
     }
 
@@ -291,7 +308,8 @@ final class SyncWorkflowRunsFeed {
             return
         }
         let state = SyncWorkflowLibrary.runs(nowMs: SyncHostedRunContract.nowMs())
-        // Notifications first: they compare statuses, not the written list.
+        // Notifications are checked sooner (`schedulePushCheck`); this one finds nothing new unless
+        // that check was skipped (the run history still loading), so nothing is missed.
         SyncWorkflowPush.shared.observe(state.runs)
         // Streamed step text isn't on the card: most store changes write nothing.
         guard state.runs != written else { return }
