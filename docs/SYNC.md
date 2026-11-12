@@ -173,7 +173,7 @@ recovery phrase and signing out ask for Touch ID or the login password too
 
 ## What the core guarantees
 
-The app relies on these properties of osaurus-sync 0.1.0-beta.5 (upstream
+The app relies on these properties of osaurus-sync 0.1.0-beta.6 (upstream
 `docs/threat-model.md`, `sync/engine.rs`, `auth.rs`) instead of checking them again:
 
 - **Revoked devices.** Conversation app data and tags are Loro updates, which are control-layer
@@ -202,19 +202,26 @@ The app relies on these properties of osaurus-sync 0.1.0-beta.5 (upstream
   with the build that changes the default. Until Fly delivers UDP replies reliably, fewer
   connections go direct and more show as "Connected through a relay server".
 
-What the app would use from the core but can't yet:
+From osaurus-sync 0.1.0-beta.6:
 
-- **Authored app data.** A conversation's app data doesn't say which device wrote it, so
-  `hostRun.device` is the requester's own claim. The host checks it names a current device of
-  this account, which revocation makes enough today. A signed author on each app data write would
-  let the host trust the field itself.
-- **Pairing confirmation.** The code proof isn't a PAKE: someone who sees the link can pair
-  within its five minutes. A short code both screens show after connecting, confirmed on both
-  devices, would close that. Until then the join asks for confirmation and owner authentication,
-  and the guide tells users to paste only links from their own screen.
-- **Ephemeral progress.** Run progress is stored app data, so every write is kept. A core
-  channel for state that replaces itself and isn't stored would let progress update as fast as
-  the stream does over a relay.
+- **Pairing confirmation.** After the code checks out, both devices show the same six digits
+  (`pairingConfirmation`) next to the other device's name, and the account is handed over only
+  after the user confirms on both (`confirmPairing`). "They're Different" calls `rejectPairing`.
+  On the Mac showing the code, a new device that leaves before confirming puts the code back on
+  screen, since the core keeps the offer open. A confirmation that arrives with no pairing in
+  progress is ignored, which hands over nothing. A beta.6 Mac doesn't add a device running an
+  older core, so the iPhone and Windows apps must ship beta.6 before pairing with this build.
+  Links are `osaurus-pair:2:`; a `:1:` link from an older Mac still pairs, without the number.
+- **Signed app data.** Conversation app data reports the device that signed each value.
+  `SyncHostedRunContract.readFromOwnDevice` reads run control (Stop), tool approval answers and
+  secret prompt answers only when the signer is this Mac or another current device of the
+  account. Per-device namespaces (attention answers, manage requests, served-chat answers) drop
+  a value signed by any device other than the one the namespace names. A value with no signer
+  still counts: older builds don't sign, and the core also reports no signer when a signature
+  doesn't match, so refusing unsigned values has to wait until every client is on beta.6.
+- **Live state** (`setLiveState`) isn't used yet. Run progress is still stored app data, so the
+  iPhone app reads it unchanged. Moving progress to live state needs the iPhone app to read it
+  first, since devices before beta.6 neither send nor receive it.
 
 ## Recovery phrase
 

@@ -193,7 +193,8 @@ final class SyncAttentionFeed {
         let perDevice = SyncDeviceFeedContract.perDevice(
             SyncDeviceFeedContract.AttentionAnswers.self,
             prefix: SyncDeviceFeedContract.attentionAnswerNamespacePrefix,
-            in: conversation
+            in: conversation,
+            writtenByThatDevice: true
         )
         for (device, set) in perDevice {
             guard let name = deviceNames[device] else { continue }

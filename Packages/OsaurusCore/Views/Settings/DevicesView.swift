@@ -263,7 +263,7 @@ struct DevicesView: View {
                     SettingsButton(.secondary, "Show Code") {
                         asOwner(L("show a code that adds a device to your sync account")) { model.startPairing() }
                     }
-                    .disabled(!model.isOpen)
+                    .disabled(!model.isOpen || model.isConfirmingPairing)
                 }
             }
             if case let .offering(offer) = model.pairing {
@@ -290,7 +290,7 @@ struct DevicesView: View {
                         joinLink = ""
                         model.dismissPairingResult()
                     }
-                    .disabled(!model.isOpen)
+                    .disabled(!model.isOpen || model.isConfirmingPairing)
                 }
             }
             if isJoining, model.pairing != .joining {
@@ -418,6 +418,41 @@ struct DevicesView: View {
         }
     }
 
+    /// The number goes next to the other device's name, and the question makes
+    /// the user look at that device: approving blindly adds whoever is asking.
+    private func confirmationPanel(_ confirmation: SyncStatusModel.PairingConfirmation) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            SettingsCallout(
+                icon: "number.circle.fill",
+                title: "Check the Number",
+                message: confirmation.confirmed
+                    ? String(format: L("Waiting for you to confirm the same number on %@."), confirmation.name)
+                    : String(format: L("Does %@ show this number? Look at its screen. Only confirm if both show the same number."), confirmation.name),
+                tone: .info
+            ) {
+                if confirmation.confirmed {
+                    ProgressView().controlSize(.small)
+                    SettingsButton(.tertiary, "Cancel") { model.rejectPairing() }
+                } else {
+                    SettingsButton(.primary, "Numbers Match") { model.confirmPairing() }
+                    SettingsButton(.secondary, "They're Different") { model.rejectPairing() }
+                }
+            }
+            HStack(spacing: theme.space.s8) {
+                Text(verbatim: SyncStatusModel.groupedConfirmationCode(confirmation.code))
+                    .font(SettingsFont.detailTitle)
+                    .monospaced()
+                    .foregroundColor(theme.text.primary)
+                Text(verbatim: confirmation.name)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
+            }
+            .padding(theme.space.s12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .settingsChrome(.inset)
+        }
+    }
+
     /// The core may already group the code with dashes; regroup the bare characters.
     private static func grouped(_ code: String) -> String {
         let code = code.filter { $0.isLetter || $0.isNumber }
@@ -431,6 +466,8 @@ struct DevicesView: View {
     @ViewBuilder
     private var pairingResult: some View {
         switch model.pairing {
+        case let .confirming(confirmation):
+            confirmationPanel(confirmation)
         case let .paired(name):
             SettingsCallout(
                 icon: "checkmark.circle.fill",

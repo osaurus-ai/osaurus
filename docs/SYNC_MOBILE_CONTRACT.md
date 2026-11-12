@@ -81,6 +81,18 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 - The iPhone scans or pastes it and calls `SyncCore.pairWithOffer(payload:)`. When pairing
   finishes, the iPhone is a device of the same user, and the Mac's Devices list shows it as
   **iPhone**.
+- Every client MUST use osaurus-sync 0.1.0-beta.6 or later: a current Mac doesn't add a device
+  on an older core. Offers are `osaurus-pair:2:`; a client that builds one from a typed code
+  MUST use `PairingOffer.payload(device:code:)`.
+- After the code checks out, both devices get `CoreEvent.pairingConfirmation(device, name,
+  platform, code)`. The client MUST show the six digits next to the Mac's name, ask whether the
+  Mac shows the same number, and call `confirmPairing(device:)` only when the user says yes;
+  otherwise `rejectPairing(device:)`. It MUST dismiss the prompt on `pairingFailed`. The Mac
+  asks the same question, and hands over the account only after both confirmed.
+- Conversation app data a client writes is signed by its device. The Mac counts run control,
+  tool approval answers and secret prompt answers only when signed by one of the user's current
+  devices, and drops a value in a per-device namespace (`…/<device>`) signed by any other
+  device, so a client MUST write only its own namespaces.
 - The iPhone MUST join only through a pairing offer. It MUST NOT offer to type the recovery
   phrase: on Macs linked to the user's wallet, that phrase is derived from the wallet and
   restores the whole identity.

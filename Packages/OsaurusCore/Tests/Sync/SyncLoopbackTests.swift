@@ -108,6 +108,7 @@ struct SyncLoopbackTests {
             try peer.addPeerAddress(address: #require(mac.localAddress()))
             let offer = try mac.pairingOffer(ttlMs: 300_000)
             try await peer.pairWithOffer(payload: offer.payload)
+            try await SyncTestPairing.confirm(host: mac, joiner: peer)
             try await waitUntil("paired") {
                 events.all.contains { if case .paired = $0 { return true } else { return false } }
             }
@@ -194,6 +195,7 @@ struct SyncLoopbackTests {
             try mac.addPeerAddress(address: #require(phone.localAddress()))
             try phone.addPeerAddress(address: #require(mac.localAddress()))
             try await phone.pairWithOffer(payload: mac.pairingOffer(ttlMs: 300_000).payload)
+            try await SyncTestPairing.confirm(host: mac, joiner: phone)
             try await waitUntil("paired") {
                 events.all.contains { if case .paired = $0 { return true } else { return false } }
             }
@@ -301,6 +303,7 @@ struct SyncLoopbackTests {
             try mac.addPeerAddress(address: #require(phone.localAddress()))
             try phone.addPeerAddress(address: #require(mac.localAddress()))
             try await phone.pairWithOffer(payload: mac.pairingOffer(ttlMs: 300_000).payload)
+            try await SyncTestPairing.confirm(host: mac, joiner: phone)
             try await waitUntil("paired") {
                 events.all.contains { if case .paired = $0 { return true } else { return false } }
             }
@@ -329,14 +332,19 @@ struct SyncLoopbackTests {
             #expect(!SyncHostRunner.mayRequest(phoneKey, me: deviceKey, devices: SyncService.shared.devices, ownChat: false))
             #expect(SyncDeviceFeedContract.deviceNames(SyncService.shared.devices)[phoneKey] == nil)
 
+            try await waitUntil("the iPhone is told it was removed") {
+                events.all.contains { if case .selfRevoked = $0 { return true } else { return false } }
+            }
             let late = SyncDeviceFeedContract.AttentionAnswers(answers: [
                 "item-1": .init(action: "approve", answeredMs: SyncHostedRunContract.nowMs())
             ])
-            try phone.setConversationAppData(
-                scope: newFeed,
-                namespace: SyncDeviceFeedContract.attentionAnswerNamespace(device: phoneKey),
-                bytes: JSONEncoder().encode(late)
-            )
+            #expect(throws: (any Error).self, "a removed iPhone can't write") {
+                try phone.setConversationAppData(
+                    scope: newFeed,
+                    namespace: SyncDeviceFeedContract.attentionAnswerNamespace(device: phoneKey),
+                    bytes: JSONEncoder().encode(late)
+                )
+            }
             try await Task.sleep(for: .seconds(2))
             let macFeed = try #require(try mac.conversation(scope: newFeed))
             #expect(
@@ -370,7 +378,7 @@ struct SyncLoopbackTests {
             try other.addPeerAddress(address: #require(mac.localAddress()))
             let offer = try mac.pairingOffer(ttlMs: 300_000)
             let wrong = offer.code.first == "A" ? "BBBBBBBBBBBB" : "AAAAAAAAAAAA"
-            try await other.pairWithOffer(payload: "osaurus-pair:1:\(offer.device):\(wrong)")
+            try await other.pairWithOffer(payload: PairingOffer.payload(device: offer.device, code: wrong))
             var reason: String?
             try await waitUntil("refused") {
                 reason = events.all.lazy.compactMap { if case .pairingFailed(let r) = $0 { return r } else { return nil } }.first
@@ -380,6 +388,12 @@ struct SyncLoopbackTests {
                 SyncStatusModel.pairingFailureMessage(try #require(reason))
                     == L("The code was wrong or has expired. Show a new code on your other device and paste its link again."))
             #expect(SyncStatusModel.pairingFailureMessage("something new") == L("Pairing didn't finish. Check the code and try again."))
+            #expect(
+                SyncStatusModel.pairingFailureMessage("update the app on the new device to pair with this one")
+                    == L("The new device needs the latest version of Osaurus to pair. Update it, then try again."))
+            #expect(SyncStatusModel.isOfferStillOpen(after: "the new device disconnected before pairing finished"))
+            #expect(!SyncStatusModel.isOfferStillOpen(after: "pairing was declined on the other device"))
+            #expect(SyncStatusModel.groupedConfirmationCode("483920") == "483 920")
 
             try await other.close()
             SyncService.shared.close()

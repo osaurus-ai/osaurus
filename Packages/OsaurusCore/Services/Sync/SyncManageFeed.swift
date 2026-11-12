@@ -346,7 +346,8 @@ final class SyncManageFeed {
         let lists = SyncDeviceFeedContract.perDevice(
             SyncDeviceFeedContract.ManageRequests.self,
             prefix: SyncDeviceFeedContract.manageRequestNamespacePrefix,
-            in: conversation
+            in: conversation,
+            writtenByThatDevice: true
         )
         for (device, list) in lists.sorted(by: { $0.key < $1.key }) where deviceNames[device] != nil {
             let results =

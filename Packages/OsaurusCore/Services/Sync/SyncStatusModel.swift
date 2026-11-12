@@ -20,8 +20,24 @@ final class SyncStatusModel: ObservableObject {
         case idle
         case offering(PairingOffer)
         case joining
+        case confirming(PairingConfirmation)
         case paired(deviceName: String)
         case failed(String)
+    }
+
+    /// Both devices show the same number before the account is handed over.
+    struct PairingConfirmation: Equatable {
+        let device: String
+        let name: String
+        let code: String
+        /// The offer this Mac showed; nil when this Mac is the one joining.
+        let offer: PairingOffer?
+        var confirmed = false
+    }
+
+    var isConfirmingPairing: Bool {
+        if case .confirming = pairing { return true }
+        return false
     }
 
     @Published private(set) var isOpen = false
@@ -219,12 +235,35 @@ final class SyncStatusModel: ObservableObject {
             pairing = .paired(deviceName: name)
             FeatureTelemetry.syncDevicePaired(platform: SyncPhoneDevices.isPhone(deviceKey: device) ? "iphone" : "other")
             ToastManager.shared.success(L("Device added"), message: String(format: L("Your chats now sync with %@."), name))
+        case let .pairingConfirmation(device, name, _, code):
+            switch pairing {
+            case let .offering(offer):
+                pairing = .confirming(PairingConfirmation(device: device, name: name, code: code, offer: offer))
+            case .joining:
+                pairingExpiry?.cancel()
+                pairing = .confirming(PairingConfirmation(device: device, name: name, code: code, offer: nil))
+            default:
+                // Nothing here is pairing any more; unconfirmed, it hands over nothing.
+                Self.log.notice("ignored a pairing confirmation with no pairing in progress")
+            }
         case let .pairingFailed(reason):
             Self.log.notice("pairing failed: \(reason, privacy: .public)")
-            // Only the joining side hears this; an offer shown here stays open.
-            guard pairing == .joining else { break }
-            pairingExpiry?.cancel()
-            pairing = .failed(Self.pairingFailureMessage(reason))
+            switch pairing {
+            case .joining:
+                pairingExpiry?.cancel()
+                pairing = .failed(Self.pairingFailureMessage(reason))
+            case let .confirming(confirmation):
+                // A new device that leaves before confirming leaves the offer open.
+                if let offer = confirmation.offer, Self.isOfferStillOpen(after: reason) {
+                    pairing = .offering(offer)
+                } else {
+                    pairingExpiry?.cancel()
+                    pairing = .failed(Self.pairingFailureMessage(reason))
+                }
+            default:
+                // An offer shown here stays open.
+                break
+            }
         case let .incompatiblePeer(device, _):
             let message =
                 SyncService.shared.deviceName(forKey: device).map {
@@ -306,7 +345,30 @@ final class SyncStatusModel: ObservableObject {
 
     func dismissPairingResult() {
         if case .offering = pairing { return }
+        if isConfirmingPairing { return }
         pairing = .idle
+    }
+
+    /// The user saw the same number on the other device.
+    func confirmPairing() {
+        guard case var .confirming(confirmation) = pairing, !confirmation.confirmed,
+            let core = SyncService.shared.core
+        else { return }
+        do {
+            try core.confirmPairing(device: confirmation.device)
+            confirmation.confirmed = true
+            pairing = .confirming(confirmation)
+        } catch {
+            pairing = .failed(error.syncUserMessage)
+        }
+    }
+
+    /// The numbers differ, or the user stopped: the other device gets a refusal.
+    func rejectPairing() {
+        guard case let .confirming(confirmation) = pairing else { return }
+        try? SyncService.shared.core?.rejectPairing(device: confirmation.device)
+        pairingExpiry?.cancel()
+        pairing = .failed(L("Pairing stopped, and no device was added. To add your own device, start again with a new code."))
     }
 
     /// Whether `link` looks like a pairing link at all.
@@ -354,7 +416,37 @@ final class SyncStatusModel: ObservableObject {
         if reason.contains("prove") || reason.contains("does not match") {
             return L("The other device couldn't confirm the code. Use a link shown on your own device's screen, then try again.")
         }
+        if reason.contains("declined") {
+            return L("The other device stopped pairing, so no device was added. If you're adding your own device, start again with a new code.")
+        }
+        if reason.contains("cancelled") {
+            return L("Pairing was cancelled on the other device.")
+        }
+        if reason.contains("expired before the number") {
+            return L("The code expired before both devices confirmed the number. Show a new code and try again.")
+        }
+        if reason.contains("update the app") {
+            return L("The new device needs the latest version of Osaurus to pair. Update it, then try again.")
+        }
+        if reason.contains("another device is being paired") {
+            return L("Another device is being added right now. Wait for it to finish, then try again.")
+        }
+        if reason.contains("disconnected") {
+            return L("The other device disconnected before pairing finished. Try again.")
+        }
         return L("Pairing didn't finish. Check the code and try again.")
+    }
+
+    /// The core keeps an offer open when the new device leaves before confirming.
+    static func isOfferStillOpen(after reason: String) -> Bool {
+        reason.lowercased().contains("new device disconnected")
+    }
+
+    /// The six digits both devices show, split for reading aloud.
+    static func groupedConfirmationCode(_ code: String) -> String {
+        let digits = code.filter(\.isNumber)
+        guard digits.count == 6 else { return code }
+        return "\(digits.prefix(3)) \(digits.suffix(3))"
     }
 
     static func unreachableMessage(mode: SyncConfiguration.NetworkMode) -> String {

@@ -183,6 +183,8 @@ final class SyncInboundApplier {
                 applyStream(update, sessionId: sessionId, me: me)
             case .syncStatusChanged:
                 refreshPendingDelivery(sessionId)
+            case .liveState:
+                break
             }
         }
     }

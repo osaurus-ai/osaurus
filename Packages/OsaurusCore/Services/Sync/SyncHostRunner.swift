@@ -345,14 +345,18 @@ final class SyncHostRunner: ObservableObject {
             )
         }.value
         guard let snapshot else { return }
-        let control = SyncHostedRunContract.read(
+        let devices = SyncService.shared.devices
+        let control = SyncHostedRunContract.readFromOwnDevice(
             SyncHostedRunContract.RunControl.self,
             SyncHostedRunContract.runNamespace,
-            from: snapshot.conversation
+            from: snapshot.conversation,
+            me: snapshot.me,
+            devices: devices
         )
 
         if active[scope] != nil {
-            controlActiveRun(scope: scope, control: control, conversation: snapshot.conversation)
+            controlActiveRun(
+                scope: scope, control: control, conversation: snapshot.conversation, me: snapshot.me, devices: devices)
             return
         }
 
@@ -603,7 +607,13 @@ final class SyncHostRunner: ObservableObject {
         return .success(HostedChoices(run: asksForNothing ? nil : run, overrides: overrides))
     }
 
-    private func controlActiveRun(scope: String, control: SyncHostedRunContract.RunControl?, conversation: Conversation) {
+    private func controlActiveRun(
+        scope: String,
+        control: SyncHostedRunContract.RunControl?,
+        conversation: Conversation,
+        me: String,
+        devices: [Device]
+    ) {
         guard var run = active[scope] else { return }
         if control?.stop?.lowercased() == run.turnId, !run.stopRequested, let taskId = run.taskId {
             run.stopRequested = true
@@ -612,20 +622,24 @@ final class SyncHostRunner: ObservableObject {
             BackgroundTaskManager.shared.cancelTask(taskId)
         }
         let answers =
-            SyncHostedRunContract.read(
+            SyncHostedRunContract.readFromOwnDevice(
                 SyncHostedRunContract.ApprovalAnswers.self,
                 SyncHostedRunContract.approvalAnswerNamespace,
-                from: conversation
+                from: conversation,
+                me: me,
+                devices: devices
             )?.answers ?? [:]
         for (id, answer) in answers {
             guard let uuid = UUID(uuidString: id) else { continue }
             _ = ToolPermissionPromptService.resolveFromSyncedDevice(id: uuid, scope: scope, outcome: answer.resolution)
         }
         let promptAnswers =
-            SyncHostedRunContract.read(
+            SyncHostedRunContract.readFromOwnDevice(
                 SyncHostedRunContract.PromptAnswers.self,
                 SyncHostedRunContract.promptAnswerNamespace,
-                from: conversation
+                from: conversation,
+                me: me,
+                devices: devices
             )?.answers ?? [:]
         if !promptAnswers.isEmpty {
             let label = Self.deviceLabel(run.requester)

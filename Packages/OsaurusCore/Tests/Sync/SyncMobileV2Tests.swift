@@ -203,6 +203,43 @@ struct SyncMobileV2Tests {
         #expect(!SyncHostRunner.mayRequest("mac", me: "mac", devices: devices, ownChat: true))
     }
 
+    @Test func runControlCountsOnlyFromTheUsersCurrentDevices() throws {
+        let devices = [device("p1", "iPhone"), device("old", "Old", revoked: true)]
+        let stop = SyncHostedRunContract.RunControl(stop: "turn-1", stopMs: 1)
+        func control(signedBy signer: String?) throws -> SyncHostedRunContract.RunControl? {
+            var entry = try appData(SyncHostedRunContract.runNamespace, stop)
+            entry.authorDevice = signer
+            return SyncHostedRunContract.readFromOwnDevice(
+                SyncHostedRunContract.RunControl.self, SyncHostedRunContract.runNamespace,
+                from: conversation([entry]), me: "mac", devices: devices)
+        }
+        #expect(try control(signedBy: "P1") == stop)
+        #expect(try control(signedBy: "mac") == stop)
+        #expect(try control(signedBy: nil) == stop, "unsigned values from builds before beta.6 still count")
+        #expect(try control(signedBy: "old") == nil)
+        #expect(try control(signedBy: "stranger") == nil)
+    }
+
+    @Test func aPerDeviceAnswerSignedByAnotherDeviceIsIgnored() throws {
+        let prefix = SyncDeviceFeedContract.attentionAnswerNamespacePrefix
+        let answers = SyncDeviceFeedContract.AttentionAnswers(answers: [
+            "a": .init(action: "approve", answeredMs: SyncHostedRunContract.nowMs())
+        ])
+        var own = try appData(prefix + "p1", answers)
+        own.authorDevice = "p1"
+        var forged = try appData(prefix + "p2", answers)
+        forged.authorDevice = "p1"
+        let legacy = try appData(prefix + "p3", answers)
+        let read = SyncDeviceFeedContract.perDevice(
+            SyncDeviceFeedContract.AttentionAnswers.self, prefix: prefix, in: conversation([own, forged, legacy]),
+            writtenByThatDevice: true)
+        #expect(Set(read.keys) == ["p1", "p3"])
+        let results = SyncDeviceFeedContract.perDevice(
+            SyncDeviceFeedContract.AttentionAnswers.self, prefix: prefix, in: conversation([own, forged, legacy]),
+            writtenByThatDevice: false)
+        #expect(Set(results.keys) == ["p1", "p2", "p3"], "a namespace named for its reader keeps the writer's value")
+    }
+
     @Test func aRequestIsLateByTheLaterOfItsClockAndItsHLC() {
         let now = Date()
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
