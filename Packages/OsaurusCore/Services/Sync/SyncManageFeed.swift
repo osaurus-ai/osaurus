@@ -441,8 +441,11 @@ final class SyncManageFeed {
                 }
             )
             applied += outcome.applied
-            guard outcome.results != source.results else { continue }
-            let snapshot = SyncDeviceFeedContract.ManageResults(results: outcome.results)
+            // Fitted to the core's app data cap: one over it failed to write, so it was retried on every
+            // change, forever. The same results always fit the same way, so a fitted record that
+            // is already written isn't written again.
+            let snapshot = SyncDeviceFeedContract.ManageResults(results: outcome.results).fitted()
+            guard snapshot.results != source.results else { continue }
             let namespace = source.resultNamespace
             await Task.detached(priority: .userInitiated) {
                 do {
@@ -847,4 +850,30 @@ final class SyncManageFeed {
             started = false
         }
     #endif
+}
+
+extension SyncDeviceFeedContract.ManageResults {
+    /// The core refuses one app data value over 64 KiB; a little under, for the encoding's own size.
+    static let maxBytes = 60_000
+
+    /// These results, made to fit `maxBytes`: the oldest lose their `data` first (the iPhone has
+    /// read them), then the oldest go. Deterministic, so the same results always fit the same way.
+    func fitted(maxBytes: Int = Self.maxBytes) -> Self {
+        func fits(_ results: [String: SyncDeviceFeedContract.ManageResult]) -> Bool {
+            ((try? SyncHostedRunContract.encode(Self(v: v, results: results)))?.count ?? .max) <= maxBytes
+        }
+        guard !fits(results) else { return self }
+        var kept = results
+        let oldestFirst = results.sorted { ($0.value.doneMs, $0.key) < ($1.value.doneMs, $1.key) }
+            .map(\.key)
+        for key in oldestFirst where kept[key]?.data != nil {
+            kept[key]?.data = nil
+            if fits(kept) { return Self(v: v, results: kept) }
+        }
+        for key in oldestFirst {
+            kept[key] = nil
+            if fits(kept) { break }
+        }
+        return Self(v: v, results: kept)
+    }
 }
