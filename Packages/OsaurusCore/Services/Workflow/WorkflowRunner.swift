@@ -160,11 +160,8 @@ public actor WorkflowRunner {
     /// came from: install secrets resolved for code nodes and secret
     /// dialog answers. Nothing published or returned contains them.
     private var knownSecrets: [String: String] = [:]
-    /// Seconds a form that was waiting when a previous launch quit still
-    /// has, by node id (runs picked up with `Request.resuming`).
-    private var resumedTimeouts: [String: TimeInterval] = [:]
-    /// Seconds a wait step had already spent when a previous launch quit,
-    /// by node id, so it waits only the rest.
+    /// Seconds a wait step or form had already spent when a previous launch
+    /// quit, by node id, so it waits only the rest.
     private var resumedElapsed: [String: TimeInterval] = [:]
 
     public init(request: Request, executor: WorkflowNodeExecuting, observer: @escaping Observer = { _ in }) {
@@ -176,7 +173,6 @@ public actor WorkflowRunner {
             let seeded = Self.resumed(previous, definition: request.template.workflow)
             self.run = seeded.run
             self.outputs = seeded.outputs
-            self.resumedTimeouts = seeded.timeouts
             self.resumedElapsed = seeded.elapsed
         } else if let previous = request.retrying {
             let seeded = Self.retried(
@@ -196,14 +192,13 @@ public actor WorkflowRunner {
 
     /// The record of an open run made ready to continue: `done`, `pinned`,
     /// and `skipped` nodes stay as they were and seed `outputs`; every other
-    /// node goes back to pending. A dialog node that was running or waiting
-    /// keeps `node.timeout` less the time already spent, so a form the
-    /// person never answered times out when it would have (at once, when
-    /// that time has passed). Nodes the definition no longer has are
-    /// dropped; new ones start pending.
+    /// node goes back to pending. A wait step or form that was running or
+    /// waiting records the time it already spent, so a wait waits only the
+    /// rest and a form with `expires_after` expires when it would have (at
+    /// once, when that time has passed). Nodes the definition no longer has
+    /// are dropped; new ones start pending.
     static func resumed(_ previous: WorkflowRun, definition: WorkflowDefinition?) -> (
-        run: WorkflowRun, outputs: [String: JSONValue], timeouts: [String: TimeInterval],
-        elapsed: [String: TimeInterval]
+        run: WorkflowRun, outputs: [String: JSONValue], elapsed: [String: TimeInterval]
     ) {
         var run = previous
         run.status = .running
@@ -211,7 +206,6 @@ public actor WorkflowRunner {
         run.output = nil
         run.finishedAt = nil
         var outputs: [String: JSONValue] = [:]
-        var timeouts: [String: TimeInterval] = [:]
         var elapsed: [String: TimeInterval] = [:]
         let nodes = definition?.nodes ?? []
         let byID = Dictionary(uniqueKeysWithValues: previous.nodes.map { ($0.nodeID, $0) })
@@ -225,11 +219,11 @@ public actor WorkflowRunner {
                 outputs[node.id] = .null
                 return record
             case .running, .awaitingUser:
-                if case .dialog = node.kind, let started = record.startedAt {
-                    timeouts[node.id] = max(0, node.timeout - Date().timeIntervalSince(started))
-                }
-                if case .wait = node.kind, let started = record.startedAt {
-                    elapsed[node.id] = max(0, Date().timeIntervalSince(started))
+                switch node.kind {
+                case .dialog, .wait:
+                    if let started = record.startedAt { elapsed[node.id] = max(0, Date().timeIntervalSince(started)) }
+                default:
+                    break
                 }
                 fallthrough
             case .pending, .failed:
@@ -241,7 +235,7 @@ public actor WorkflowRunner {
                 return record
             }
         }
-        return (run, outputs, timeouts, elapsed)
+        return (run, outputs, elapsed)
     }
 
     /// A new run that continues a failed one from its failed step: nodes
@@ -377,13 +371,16 @@ public actor WorkflowRunner {
             .map(\.url)
     }
 
-    private func hostFileHooks(for node: WorkflowNode, workspace: URL) -> WorkflowHostFileHooks {
+    private func hostFileHooks(
+        for node: WorkflowNode, workspace: URL, personWait: @escaping WorkflowAwaitingUserHandler
+    ) -> WorkflowHostFileHooks {
         let canAsk = WorkflowFolderGrantCoordinator.canAsk(request.caller)
         return WorkflowHostFileHooks(
             workspace: workspace,
             approveReplace: { [weak self] folder, file in
                 guard let self else { throw CancellationError() }
-                return try await self.approveReplace(node, folder: folder, file: file, canAsk: canAsk)
+                return try await self.approveReplace(
+                    node, folder: folder, file: file, canAsk: canAsk, personWait: personWait)
             },
             record: { [weak self] file, replaced in
                 await self?.recordHostWrite(file, replaced: replaced)
@@ -397,31 +394,35 @@ public actor WorkflowRunner {
     /// Whether this run may replace `file` in `folder`: allowed already
     /// (this run or always), else the person decides on a card. Steps that
     /// hit the same folder at once share the card.
-    private func approveReplace(_ node: WorkflowNode, folder: URL, file: URL, canAsk: Bool) async throws -> Bool {
+    private func approveReplace(
+        _ node: WorkflowNode, folder: URL, file: URL, canAsk: Bool, personWait: WorkflowAwaitingUserHandler
+    ) async throws -> Bool {
         let standing = request.replaceGrants.map { URL(fileURLWithPath: $0, isDirectory: true) }
         if FolderToolHelpers.isWithin(file, anyOf: replaceApproved + standing) { return true }
         guard canAsk else { return false }
         let key = folder.standardized.path
-        if let pending = replaceRequests[key] { return try await pending.value }
-        let task = Task { try await self.askReplace(node, folder: folder.standardized, file: file) }
-        replaceRequests[key] = task
-        defer { replaceRequests[key] = nil }
-        return try await task.value
+        let task: Task<Bool, Error>
+        let asking = replaceRequests[key] == nil
+        if let pending = replaceRequests[key] {
+            task = pending
+        } else {
+            task = Task { try await self.askReplace(node, folder: folder.standardized, file: file) }
+            replaceRequests[key] = task
+        }
+        // Every step waiting on the card stands still, not only the one that raised it.
+        await personWait(true)
+        let answer: Result<Bool, Error>
+        do { answer = .success(try await task.value) } catch { answer = .failure(error) }
+        await personWait(false)
+        if asking { replaceRequests[key] = nil }
+        return try answer.get()
     }
 
     private func askReplace(_ node: WorkflowNode, folder: URL, file: URL) async throws -> Bool {
         let dialog = WorkflowFolderGrantCoordinator.replaceDialog(
             runID: request.runID, workflowID: request.workflowID, workflowName: request.workflowName, node: node,
             folder: folder, file: file, caller: request.caller)
-        await setAwaitingUser(node.id, waiting: true)
-        let decision: WorkflowFolderGrantDecision
-        do {
-            decision = try await WorkflowFolderGrantCoordinator.request(dialog)
-        } catch {
-            await setAwaitingUser(node.id, waiting: false)
-            throw error
-        }
-        await setAwaitingUser(node.id, waiting: false)
+        let decision = try await WorkflowFolderGrantCoordinator.request(dialog)
         switch decision {
         case .deny:
             run.update(node.id) { $0.logs.append(L("Not allowed to replace files in \(folder.path).")) }
@@ -439,30 +440,33 @@ public actor WorkflowRunner {
         return decision != .deny
     }
 
-    private func folderGrantRequest(for node: WorkflowNode) -> WorkflowFolderGrantRequest? {
+    private func folderGrantRequest(
+        for node: WorkflowNode, personWait: @escaping WorkflowAwaitingUserHandler
+    ) -> WorkflowFolderGrantRequest? {
         guard WorkflowFolderGrantCoordinator.canAsk(request.caller) else { return nil }
         return { [weak self] path, access in
             guard let self else { throw CancellationError() }
-            return try await self.grantFolder(node, path: path, access: access)
+            return try await self.grantFolder(node, path: path, access: access, personWait: personWait)
         }
     }
 
     /// Shows the folder card for `node` and records the answer.
     private func grantFolder(
-        _ node: WorkflowNode, path: String, access: FolderRequirement.Access
+        _ node: WorkflowNode, path: String, access: FolderRequirement.Access,
+        personWait: WorkflowAwaitingUserHandler
     ) async throws -> WorkflowFolderGrantDecision {
         let dialog = WorkflowFolderGrantCoordinator.dialog(
             runID: request.runID, workflowID: request.workflowID, workflowName: request.workflowName, node: node,
             path: path, access: access, caller: request.caller)
-        await setAwaitingUser(node.id, waiting: true)
+        await personWait(true)
         let decision: WorkflowFolderGrantDecision
         do {
             decision = try await WorkflowFolderGrantCoordinator.request(dialog)
         } catch {
-            await setAwaitingUser(node.id, waiting: false)
+            await personWait(false)
             throw error
         }
-        await setAwaitingUser(node.id, waiting: false)
+        await personWait(false)
         let folder = FolderRequirement.grantRoot(for: path)
         switch decision {
         case .deny:
@@ -975,10 +979,8 @@ public actor WorkflowRunner {
         if case .map(let spec) = node.kind {
             return await runMap(node, spec: spec, bindings: bindings, workspace: workspace)
         }
-        // A form picked up after a relaunch has only the time it had left.
-        let timeout = resumedTimeouts[node.id] ?? node.timeout
         return await attempt(
-            node, recordAs: node.id, input: input, bindings: bindings, workspace: workspace, timeout: timeout,
+            node, recordAs: node.id, input: input, bindings: bindings, workspace: workspace, timeout: node.timeout,
             item: nil)
     }
 
@@ -1004,6 +1006,14 @@ public actor WorkflowRunner {
             // into the node record (a map item's would interleave with its
             // siblings', so items do not stream).
             let streaming = item == nil && Self.slot(of: node) != nil ? makeDeltaSink(recordID) : nil
+            // The step's time limit counts its own work, not a person filling
+            // in its form, picking a folder, or reading an approval card.
+            let clock = DeadlineClock()
+            let outer = ChatExecutionContext.approvalWaitObserver
+            let personWait = clock.observer(chainingTo: { [weak self] waiting in
+                await self?.setAwaitingUser(recordID, waiting: waiting)
+                await outer?(waiting)
+            })
             let context = WorkflowNodeContext(
                 runID: request.runID, workflowID: request.workflowID, workflowName: request.workflowName,
                 node: node, input: input, bindings: bindings, model: model,
@@ -1012,9 +1022,9 @@ public actor WorkflowRunner {
                 folderRoot: request.folderRoot ?? workspace, sandbox: sandboxContext,
                 grantedPaths: nodeGrantedPaths,
                 writableRoots: nodeWritableRoots,
-                hostFiles: hostFileHooks(for: node, workspace: workspace),
+                hostFiles: hostFileHooks(for: node, workspace: workspace, personWait: personWait),
                 permissionScope: permissionScope,
-                requestFolderGrant: folderGrantRequest(for: node),
+                requestFolderGrant: folderGrantRequest(for: node, personWait: personWait),
                 attempt: attempt, timeout: timeout,
                 elapsedBeforeResume: resumedElapsed[node.id] ?? 0,
                 residentParentModel: lastInferenceModel,
@@ -1029,21 +1039,10 @@ public actor WorkflowRunner {
                 if item == nil { run.update(recordID) { $0.progress = nil } }
             }
             let executor = self.executor
-            let awaiting: WorkflowAwaitingUserHandler = { [weak self] waiting in
-                await self?.setAwaitingUser(recordID, waiting: waiting)
-            }
-            // The step's time limit counts its own work, not a person
-            // reading an approval card it raised.
-            let clock = DeadlineClock()
-            let outer = ChatExecutionContext.approvalWaitObserver
-            let approvalWait = clock.observer(chainingTo: { waiting in
-                await awaiting(waiting)
-                await outer?(waiting)
-            })
             do {
                 let outcome = try await valueWithDeadline(seconds: timeout, clock: clock, operationName: node.name) {
-                    try await ChatExecutionContext.$approvalWait.withValue(.init(notify: approvalWait)) {
-                        try await executor.execute(context, awaitingUser: awaiting)
+                    try await ChatExecutionContext.$approvalWait.withValue(.init(notify: personWait)) {
+                        try await executor.execute(context, awaitingUser: personWait)
                     }
                 }
                 let issues = JSONSchemaValidator.validate(outcome.output, against: schema)

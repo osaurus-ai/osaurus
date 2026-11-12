@@ -79,6 +79,11 @@ enum WorkflowFailure {
                     type: type)
             case .dialogDismissed:
                 return make("dialog_dismissed", .person, L("The form was closed without an answer. Run again and fill it in."), type: type)
+            case .formExpired:
+                return make(
+                    "form_expired", .person,
+                    L("Nobody answered the form in time. Run again and fill it in, or remove the form's `expires_after` so it waits for an answer."),
+                    type: type)
             case .unsupported:
                 return make("unsupported", .workflow, type: type)
             case .toolFailed(let tool, let kind, _, let toolRetryable):
@@ -238,6 +243,7 @@ extension WorkflowNodeError {
         case .outputMismatch: return "outputMismatch"
         case .timedOut: return "timedOut"
         case .dialogDismissed: return "dialogDismissed"
+        case .formExpired: return "formExpired"
         case .unsupported: return "unsupported"
         case .toolFailed: return "toolFailed"
         case .missingSecret: return "missingSecret"

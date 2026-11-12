@@ -173,6 +173,8 @@ public enum WorkflowNodeError: Error, LocalizedError, Equatable {
     case outputMismatch([String])
     case timedOut(seconds: Int)
     case dialogDismissed
+    /// Nobody answered the form within its `expires_after`.
+    case formExpired(seconds: Int)
     case unsupported(String)
     /// The tool answered with a failure envelope.
     case toolFailed(tool: String, kind: String, message: String, retryable: Bool)
@@ -192,6 +194,8 @@ public enum WorkflowNodeError: Error, LocalizedError, Equatable {
             return L("Timed out after \(s)s.")
         case .dialogDismissed:
             return L("The form was dismissed.")
+        case .formExpired(let s):
+            return L("Nobody answered the form within \(s)s.")
         case .unsupported(let what):
             return what
         case .toolFailed(let tool, let kind, let message, _):
@@ -209,7 +213,7 @@ public enum WorkflowNodeError: Error, LocalizedError, Equatable {
         if let e = error as? WorkflowNodeError {
             switch e {
             case .outputMismatch, .timedOut: return true
-            case .placeholder, .noModel, .dialogDismissed, .unsupported, .missingSecret: return false
+            case .placeholder, .noModel, .dialogDismissed, .formExpired, .unsupported, .missingSecret: return false
             case .toolFailed(_, _, _, let retryable): return retryable
             }
         }

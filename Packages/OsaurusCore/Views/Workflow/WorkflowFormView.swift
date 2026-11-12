@@ -458,7 +458,9 @@ struct WorkflowDialogPreview: View {
 @MainActor
 final class WorkflowDialogAnswer: ObservableObject {
     let dialog: PendingDialog
-    @Published var values: [String: JSONValue]
+    @Published var values: [String: JSONValue] {
+        didSet { DialogCoordinator.shared.saveDraft(for: dialog, values: values) }
+    }
     @Published private(set) var issues: [String: String] = [:]
     @Published private(set) var generalIssue: String?
 

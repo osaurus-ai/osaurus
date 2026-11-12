@@ -376,6 +376,15 @@ public final class WorkflowRunService {
 
     public func isActive(_ runID: UUID) -> Bool { tasks[runID] != nil }
 
+    /// Whether a run the chat `sessionID` started is waiting on a person: a
+    /// form, a folder card, or an approval. Its step's clock stands still
+    /// meanwhile, so no step timeout bounds how long it stays quiet.
+    func isAwaitingPerson(sessionID: String) -> Bool {
+        WorkflowRunStore.shared.live.values.contains {
+            $0.caller.sessionID == sessionID && $0.status == .awaitingUser && tasks[$0.id] != nil
+        }
+    }
+
     /// The longest timeout of a step now running in a run the chat
     /// `sessionID` started, or nil when it has none going. The runner fails
     /// a step at its timeout, so that bounds how long such a run stays quiet.
