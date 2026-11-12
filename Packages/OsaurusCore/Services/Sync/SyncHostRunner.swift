@@ -22,8 +22,11 @@ final class SyncHostRunner: ObservableObject {
     nonisolated static let agentTTLMs: UInt64 = 30 * 24 * 3600 * 1000
     /// Assignments closer than this to expiring are renewed on the next run.
     nonisolated static let agentRenewMs: UInt64 = 7 * 24 * 3600 * 1000
-    /// Requests older than this when first seen are not started.
-    static let staleRequestAge: TimeInterval = 3600
+    /// Requests older than this when first seen are declined, not started.
+    nonisolated static let staleRequestAge: TimeInterval = 3600
+    /// How far back a launch looks for this Mac's own chats with a request
+    /// still waiting, so a late one gets its decline.
+    nonisolated static let waitingRequestScanAge: TimeInterval = 7 * 24 * 3600
     /// Longest a hosted run may take.
     static let runTimeoutSeconds: UInt64 = 3 * 3600
 
@@ -106,6 +109,7 @@ final class SyncHostRunner: ObservableObject {
     private var processing: Set<String> = []
     private var queued: Set<String> = []
     private var flushTask: Task<Void, Never>?
+    private var activeDevices: Set<String> = []
 
     private init() {}
 
@@ -118,6 +122,17 @@ final class SyncHostRunner: ObservableObject {
             center.addObserver(forName: SyncService.didChangeConfigurationNotification, object: nil, queue: .main) {
                 _ in
                 MainActor.assumeIsolated { SyncHostRunner.shared.rescan() }
+            })
+        // A request can arrive before this Mac learns of the device that sent it.
+        observers.append(
+            center.addObserver(forName: SyncService.devicesDidChangeNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    let runner = SyncHostRunner.shared
+                    let current = Set(SyncService.shared.devices.filter { !$0.revoked }.map(\.id))
+                    guard current != runner.activeDevices else { return }
+                    runner.activeDevices = current
+                    runner.rescan()
+                }
             })
         observers.append(
             center.addObserver(
@@ -199,14 +214,13 @@ final class SyncHostRunner: ObservableObject {
                 schedule(scope)
             }
             // This Mac's own chats that another device asked to continue
-            // while it was away. Older requests aren't started, so only
-            // chats active within that window are read.
-            let staleAge = Self.staleRequestAge
+            // while it was away; only chats active within the window are read.
+            let scanAge = Self.waitingRequestScanAge
             let recent = await Task.detached(priority: .utility) { () -> [String] in
                 let filter = ConversationFilter(
                     tags: [Tag(key: SyncConversationMapper.TagKey.source, value: SessionSource.chat.rawValue)]
                 )
-                let cutoffMs = UInt64(max(0, Date().timeIntervalSince1970 - staleAge) * 1000)
+                let cutoffMs = UInt64(max(0, Date().timeIntervalSince1970 - scanAge) * 1000)
                 return ((try? core.conversationsFiltered(filter: filter)) ?? [])
                     .filter { Self.mayBeOwnChat($0) && $0.lastActivityHlc >> 16 >= cutoffMs }
                     .map(\.scope)
@@ -303,6 +317,8 @@ final class SyncHostRunner: ObservableObject {
         let session: ChatSessionData
         /// Device that wrote the latest user message.
         let requester: String?
+        /// That message's HLC.
+        let requestHlc: UInt64?
     }
 
     private func process(_ scope: String) async {
@@ -318,32 +334,45 @@ final class SyncHostRunner: ObservableObject {
                     id: SyncConversationMapper.sessionId(of: conversation)
                 )
             else { return nil }
-            let requester = (try? core.messages(scope: scope, before: nil, limit: 20))?
-                .messages.last { $0.role == .user && !$0.isAgent }?.authorDevice
-            return Snapshot(me: me, conversation: conversation, session: session, requester: requester)
+            let request = (try? core.messages(scope: scope, before: nil, limit: 20))?
+                .messages.last { $0.role == .user && !$0.isAgent }
+            return Snapshot(
+                me: me,
+                conversation: conversation,
+                session: session,
+                requester: request?.authorDevice,
+                requestHlc: request?.hlc
+            )
         }.value
         guard let snapshot else { return }
-        let control = SyncHostedRunContract.read(
+        let devices = SyncService.shared.devices
+        let control = SyncHostedRunContract.readFromOwnDevice(
             SyncHostedRunContract.RunControl.self,
             SyncHostedRunContract.runNamespace,
-            from: snapshot.conversation
+            from: snapshot.conversation,
+            me: snapshot.me,
+            devices: devices
         )
 
         if active[scope] != nil {
-            controlActiveRun(scope: scope, control: control, conversation: snapshot.conversation)
+            controlActiveRun(
+                scope: scope, control: control, conversation: snapshot.conversation, me: snapshot.me, devices: devices)
             return
         }
 
         let session = snapshot.session
         // One of this Mac's own chats, continued from another device
-        // (§3.10): no host is set, and the asking device is one of the
-        // user's own that isn't revoked. Anything else stays the Mac's.
+        // (§3.10): no host is set. Either way the asking device must be one
+        // of the user's own that isn't revoked; anything else isn't run.
         let ownChat = session.hostDevice == nil
-        if ownChat {
-            guard let requester = snapshot.requester, requester != snapshot.me,
-                SyncService.shared.devices.contains(where: { $0.id == requester && !$0.revoked })
-            else { return }
-        }
+        guard
+            Self.mayRequest(
+                snapshot.requester,
+                me: snapshot.me,
+                devices: SyncService.shared.devices,
+                ownChat: ownChat
+            )
+        else { return }
         guard session.hostDevice == snapshot.me || ownChat,
             let request = SyncHostedRunContract.latestRunRequest(in: session.turns),
             let marker = request.turn.hostRun, marker.device == snapshot.me
@@ -355,10 +384,18 @@ final class SyncHostRunner: ObservableObject {
             return
         }
 
-        let requestedAt = Date(timeIntervalSince1970: TimeInterval(marker.requestedMs) / 1000)
-        if control?.stop == turnId || Date().timeIntervalSince(requestedAt) > Self.staleRequestAge {
+        if control?.stop?.lowercased() == turnId {
             record(turnId, sessionId: session.id, scope: scope, state: .done)
             writeHostRun(scope: scope, turnId: turnId, state: .done)
+            return
+        }
+        if Self.isStale(requestedMs: marker.requestedMs, messageHlc: snapshot.requestHlc, now: Date()) {
+            decline(
+                session: session,
+                scope: scope,
+                turnId: turnId,
+                text: L("This Mac got your message more than an hour after you sent it, so it didn't start it. Send it again to run it now.")
+            )
             return
         }
 
@@ -505,6 +542,32 @@ final class SyncHostRunner: ObservableObject {
         let message: String
     }
 
+    /// Whether `requester` is this Mac or another of the user's devices
+    /// that's still on the account.
+    nonisolated static func isOwnDevice(_ requester: String?, me: String, devices: [Device]) -> Bool {
+        guard let key = requester?.lowercased() else { return false }
+        return key == me.lowercased() || devices.contains { $0.id.lowercased() == key && !$0.revoked }
+    }
+
+    /// Whether a request is too old to start. Its age is the later of the
+    /// requester's clock and the message's HLC, which moves past anything
+    /// the requester has heard from other devices, so a clock running
+    /// behind doesn't make a fresh request look old.
+    nonisolated static func isStale(requestedMs: Int64, messageHlc: UInt64?, now: Date) -> Bool {
+        let hlcMs = messageHlc.map { Int64(clamping: $0 >> 16) } ?? 0
+        let madeMs = max(requestedMs, hlcMs)
+        return now.timeIntervalSince1970 * 1000 - Double(madeMs) > staleRequestAge * 1000
+    }
+
+    /// Whether a run request's author may have this Mac run it. A chat this
+    /// Mac hosts takes requests from any of the user's current devices; one
+    /// of its own chats only from another device, since its own turns run
+    /// locally.
+    nonisolated static func mayRequest(_ requester: String?, me: String, devices: [Device], ownChat: Bool) -> Bool {
+        guard isOwnDevice(requester, me: me, devices: devices) else { return false }
+        return !ownChat || requester?.lowercased() != me.lowercased()
+    }
+
     /// What a run request's own fields ask for. They're honoured only from
     /// this Mac or another of the user's devices that's still on the
     /// account; from anyone else the turn runs the agent as set up here.
@@ -515,9 +578,7 @@ final class SyncHostRunner: ObservableObject {
         devices: [Device],
         pickerItems: [ModelPickerItem]
     ) -> Result<HostedChoices, ChoiceRefusal> {
-        let ownDevice =
-            requester.map { key in key == me || devices.contains { $0.id == key && !$0.revoked } } ?? false
-        guard ownDevice else { return .success(HostedChoices()) }
+        guard isOwnDevice(requester, me: me, devices: devices) else { return .success(HostedChoices()) }
 
         var run = DispatchRequest.HostedRunChoices()
         if let model = marker.pinnedModel {
@@ -546,29 +607,39 @@ final class SyncHostRunner: ObservableObject {
         return .success(HostedChoices(run: asksForNothing ? nil : run, overrides: overrides))
     }
 
-    private func controlActiveRun(scope: String, control: SyncHostedRunContract.RunControl?, conversation: Conversation) {
+    private func controlActiveRun(
+        scope: String,
+        control: SyncHostedRunContract.RunControl?,
+        conversation: Conversation,
+        me: String,
+        devices: [Device]
+    ) {
         guard var run = active[scope] else { return }
-        if control?.stop == run.turnId, !run.stopRequested, let taskId = run.taskId {
+        if control?.stop?.lowercased() == run.turnId, !run.stopRequested, let taskId = run.taskId {
             run.stopRequested = true
             active[scope] = run
             Self.log.info("stop requested for \(run.turnId, privacy: .public)")
             BackgroundTaskManager.shared.cancelTask(taskId)
         }
         let answers =
-            SyncHostedRunContract.read(
+            SyncHostedRunContract.readFromOwnDevice(
                 SyncHostedRunContract.ApprovalAnswers.self,
                 SyncHostedRunContract.approvalAnswerNamespace,
-                from: conversation
+                from: conversation,
+                me: me,
+                devices: devices
             )?.answers ?? [:]
         for (id, answer) in answers {
             guard let uuid = UUID(uuidString: id) else { continue }
             _ = ToolPermissionPromptService.resolveFromSyncedDevice(id: uuid, scope: scope, outcome: answer.resolution)
         }
         let promptAnswers =
-            SyncHostedRunContract.read(
+            SyncHostedRunContract.readFromOwnDevice(
                 SyncHostedRunContract.PromptAnswers.self,
                 SyncHostedRunContract.promptAnswerNamespace,
-                from: conversation
+                from: conversation,
+                me: me,
+                devices: devices
             )?.answers ?? [:]
         if !promptAnswers.isEmpty {
             let label = Self.deviceLabel(run.requester)

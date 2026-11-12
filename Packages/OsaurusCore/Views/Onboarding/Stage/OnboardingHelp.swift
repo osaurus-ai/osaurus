@@ -52,20 +52,17 @@ enum OnboardingHelp {
             ]
         case .localModel:
             var pages = [
-                L("Bigger models give smarter answers, but they need more memory and a longer download. Lighter ones reply faster.")
+                L("This model runs right here on your Mac, so nothing you type leaves it and it works offline.")
             ]
             if let pick {
-                if let reason = pick.reason {
-                    pages.append(L("I picked \(pick.name) for you. \(reason)"))
-                } else {
-                    pages.append(L("You picked \(pick.name). It stays on this Mac, so it works offline."))
-                }
+                let reason = pick.reason ?? L("It stays on this Mac, so it works offline.")
+                pages.append(L("I picked \(pick.name) for you. \(reason)"))
                 pages.append(
                     pick.isDownloaded
                         ? L("It's ready now. Press Use this model to keep going.")
                         : L("Press Download and keep going. It finishes in the background."))
             }
-            pages.append(L("Want a different one? Change model shows how well each one fits your Mac. You can switch any time in Settings."))
+            pages.append(L("Want a different one later? You can add more models any time in Settings."))
             return pages
         case .ownAccount:
             return [

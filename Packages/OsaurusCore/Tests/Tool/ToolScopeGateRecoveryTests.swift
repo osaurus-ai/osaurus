@@ -538,6 +538,44 @@ struct ToolScopeGateRecoveryTests {
         }
     }
 
+    // MARK: - Attached folder is not "no folder" (#3390)
+
+    @Test
+    func attachedFolderWorkspaceLoad_saysAlreadyCallable_notNoFolder() async throws {
+        try await withReadOnlyFolderAgent(readOnly: false) { agentId, root in
+            let scope = ToolExecutionScope(
+                exposed: ToolRegistry.shared.specs(forTools: Array(ToolRegistry.coreWorkspaceToolNames)))
+            for name in ToolRegistry.coreWorkspaceToolNames.sorted() {
+                let result = try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    try await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+                        try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                            try await CapabilitiesLoadTool().execute(argumentsJSON: #"{"ids":["tool/\#(name)"]}"#)
+                        }
+                    }
+                }
+                #expect(!ToolEnvelope.isError(result), "\(name): \(result)")
+                #expect(result.contains("already loaded and callable"), "\(name): \(result)")
+                #expect(!result.contains("Folder chip"), "\(name): \(result)")
+                #expect(!result.contains("share_artifact"), "\(name): \(result)")
+            }
+        }
+    }
+
+    @Test
+    func workspaceLoad_withoutFolder_inScopedRequest_isStillRefused() async throws {
+        try await withReadOnlyFolderAgent(readOnly: false) { agentId, _ in
+            let scope = ToolExecutionScope(exposed: ToolRegistry.shared.specs(forTools: ["get_current_time"]))
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                    try await CapabilitiesLoadTool().execute(argumentsJSON: #"{"ids":["tool/file_write"]}"#)
+                }
+            }
+            // Folder-chip or sandbox-not-started wording, depending on whether this host can run the sandbox.
+            #expect(ToolEnvelope.isError(result), "\(result)")
+            #expect(!result.contains("already loaded and callable"), "\(result)")
+        }
+    }
+
     @Test
     func announcedRecovery_readOnlyFolder_doesNotClaimNoWorkspace() async throws {
         let exposed: Set<String> = ["file_read", "file_search"]

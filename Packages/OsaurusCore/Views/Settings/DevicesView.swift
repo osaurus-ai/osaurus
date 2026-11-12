@@ -28,6 +28,9 @@ struct DevicesView: View {
     @State private var joinLink = ""
     @State private var isJoining = false
     @State private var phrase: [String]?
+    /// Shown at the top after a removal changes the phrase, so it can't go
+    /// unnoticed at the bottom of the page.
+    @State private var newPhrase: [String]?
     @State private var restoreText = ""
     @State private var isRestoring = false
     @State private var isSigningOut = false
@@ -56,7 +59,11 @@ struct DevicesView: View {
             model.start()
             model.beginWatching()
         }
-        .onDisappear { model.endWatching() }
+        .onDisappear {
+            model.endWatching()
+            phrase = nil
+            newPhrase = nil
+        }
         .onChange(of: keepMacAwake) { _, _ in phones.refreshKeepAwake() }
     }
 
@@ -101,6 +108,19 @@ struct DevicesView: View {
                 ) {
                     SettingsButton(.secondary, "Enter phrase") { isRestoring = true }
                 }
+            }
+        }
+        if let newPhrase {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                SettingsCallout(
+                    icon: "key.horizontal.fill",
+                    title: "Write Down Your New Recovery Phrase",
+                    message: "Removing the device changed your recovery phrase. The old one no longer works.",
+                    tone: .warning
+                ) {
+                    SettingsButton(.secondary, "I Wrote It Down") { self.newPhrase = nil }
+                }
+                phraseGrid(newPhrase)
             }
         }
         if let actionError {
@@ -151,6 +171,24 @@ struct DevicesView: View {
                     title: "Waiting to Send",
                     value: String(format: L("%lld messages"), model.pendingMessages)
                 )
+            }
+            if model.chatsDownloading > 0, model.connectedDeviceCount > 0 {
+                SettingsValueRow(
+                    title: "Older Messages",
+                    value: model.historyPaused
+                        ? L("Paused on this network or in Low Power Mode")
+                        : String(format: L("Downloading for %lld chats"), model.chatsDownloading)
+                )
+            }
+            if model.suggestAnywhere {
+                SettingsCallout(
+                    icon: "wifi.exclamationmark",
+                    title: "Your Devices Aren't Connecting",
+                    message: "Same Network only reaches devices on this Mac's Wi-Fi or Ethernet. If your other devices are somewhere else, use Anywhere (Beta) here and on each of them.",
+                    tone: .info
+                ) {
+                    SettingsButton(.secondary, "Use Anywhere") { model.setNetworkMode(.anywhere) }
+                }
             }
             if model.configuration.networkMode == .anywhere, model.configuration.networkEnabled {
                 SettingsValueRow(
@@ -222,8 +260,10 @@ struct DevicesView: View {
                 if case .offering = model.pairing {
                     SettingsButton(.tertiary, "Cancel") { model.cancelPairing() }
                 } else {
-                    SettingsButton(.secondary, "Show Code") { model.startPairing() }
-                        .disabled(!model.isOpen)
+                    SettingsButton(.secondary, "Show Code") {
+                        asOwner(L("show a code that adds a device to your sync account")) { model.startPairing() }
+                    }
+                    .disabled(!model.isOpen || model.isConfirmingPairing)
                 }
             }
             if case let .offering(offer) = model.pairing {
@@ -250,7 +290,7 @@ struct DevicesView: View {
                         joinLink = ""
                         model.dismissPairingResult()
                     }
-                    .disabled(!model.isOpen)
+                    .disabled(!model.isOpen || model.isConfirmingPairing)
                 }
             }
             if isJoining, model.pairing != .joining {
@@ -264,9 +304,25 @@ struct DevicesView: View {
         }
     }
 
+    /// Joining moves this Mac's chats into the other device's account, so it
+    /// asks first, and only for a link from the user's own screen.
     private func join() {
-        model.join(link: joinLink)
-        isJoining = false
+        let link = joinLink
+        guard SyncStatusModel.isPairingLink(link) else {
+            model.join(link: link)
+            return
+        }
+        guard
+            confirm(
+                L("Join the other device's account?"),
+                L("This Mac's chats move to the account of the device that shows this link, and its chats come here. Only use a link shown on your own device's screen."),
+                action: L("Join")
+            )
+        else { return }
+        asOwner(L("add this Mac to another device's sync account")) {
+            model.join(link: link)
+            isJoining = false
+        }
     }
 
     // MARK: - iPhone
@@ -316,8 +372,7 @@ struct DevicesView: View {
                 }
                 if !device.isSelf, !device.revoked {
                     SettingsOverflowMenu(help: "Device actions") {
-                        Button(L("Remove Device…")) { confirmRevoke(device, rotate: false) }
-                        Button(L("Remove and Change Recovery Phrase…")) { confirmRevoke(device, rotate: true) }
+                        Button(L("Remove Device…")) { confirmRemove(device) }
                     }
                 }
             }
@@ -328,7 +383,11 @@ struct DevicesView: View {
         if device.isSelf { return L("This Mac") }
         let kind = device.devicePlatform.kindLabel
         if device.revoked { return String(format: L("%@ · No longer syncs"), kind) }
-        if model.isConnected(device) { return String(format: L("%@ · Connected now"), kind) }
+        if model.isConnected(device) {
+            return model.isRelayed(device)
+                ? String(format: L("%@ · Connected through a relay server"), kind)
+                : String(format: L("%@ · Connected directly"), kind)
+        }
         guard let ms = device.lastSeenMs else { return String(format: L("%@ · Not seen yet"), kind) }
         let date = Date(timeIntervalSince1970: Double(ms) / 1000)
         let relative = RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
@@ -359,6 +418,41 @@ struct DevicesView: View {
         }
     }
 
+    /// The number goes next to the other device's name, and the question makes
+    /// the user look at that device: approving blindly adds whoever is asking.
+    private func confirmationPanel(_ confirmation: SyncStatusModel.PairingConfirmation) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            SettingsCallout(
+                icon: "number.circle.fill",
+                title: "Check the Number",
+                message: confirmation.confirmed
+                    ? String(format: L("Waiting for you to confirm the same number on %@."), confirmation.name)
+                    : String(format: L("Does %@ show this number? Look at its screen. Only confirm if both show the same number."), confirmation.name),
+                tone: .info
+            ) {
+                if confirmation.confirmed {
+                    SettingsSpinner(size: .small)
+                    SettingsButton(.tertiary, "Cancel") { model.rejectPairing() }
+                } else {
+                    SettingsButton(.primary, "Numbers Match") { model.confirmPairing() }
+                    SettingsButton(.secondary, "They're Different") { model.rejectPairing() }
+                }
+            }
+            HStack(spacing: theme.space.s8) {
+                Text(verbatim: SyncStatusModel.groupedConfirmationCode(confirmation.code))
+                    .font(SettingsFont.detailTitle)
+                    .monospaced()
+                    .foregroundColor(theme.text.primary)
+                Text(verbatim: confirmation.name)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
+            }
+            .padding(theme.space.s12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .settingsChrome(.inset)
+        }
+    }
+
     /// The core may already group the code with dashes; regroup the bare characters.
     private static func grouped(_ code: String) -> String {
         let code = code.filter { $0.isLetter || $0.isNumber }
@@ -372,6 +466,8 @@ struct DevicesView: View {
     @ViewBuilder
     private var pairingResult: some View {
         switch model.pairing {
+        case let .confirming(confirmation):
+            confirmationPanel(confirmation)
         case let .paired(name):
             SettingsCallout(
                 icon: "checkmark.circle.fill",
@@ -475,10 +571,12 @@ struct DevicesView: View {
             phrase = nil
             return
         }
-        do {
-            phrase = try model.recoveryPhrase()
-        } catch {
-            actionError = error.syncUserMessage
+        asOwner(L("show your sync recovery phrase")) {
+            do {
+                phrase = try model.recoveryPhrase()
+            } catch {
+                actionError = error.syncUserMessage
+            }
         }
     }
 
@@ -571,25 +669,49 @@ struct DevicesView: View {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func confirmRevoke(_ device: Device, rotate: Bool) {
-        let title = String(format: L("Remove %@?"), device.name)
-        let message =
-            rotate
-            ? (model.configuration.walletLinked
-                ? L("Use this for a lost or stolen device. Your account gets new keys and its own recovery phrase again, since anyone holding your Osaurus recovery phrase could derive the old one; your other devices pick them up the next time they connect.")
-                : L("Use this for a lost or stolen device. Your account gets new keys and a new recovery phrase; your other devices pick them up the next time they connect. The old phrase stops working."))
-            : device.devicePlatform == .iPhone
-                ? L("Use this for an iPhone you've wiped or given away. It stops receiving your chats and can't allow tools or change agents on this Mac. If it was lost or stolen, use Remove and Change Recovery Phrase instead.")
-                : L("Use this for a device you've wiped or given away. It stops receiving your chats.")
-        guard confirm(title, message, action: L("Remove")) else { return }
-        do {
-            if rotate {
-                phrase = try model.revokeAndRotate(device)
-            } else {
-                try model.revoke(device)
+    /// Runs `action` once Touch ID or the login password confirms the owner
+    /// is at this Mac.
+    private func asOwner(_ reason: String, _ action: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            guard await CredentialReveal.confirmOwner(reason: reason) else { return }
+            action()
+        }
+    }
+
+    /// One flow for every removal. Changing the phrase is the default: a
+    /// removed device that wasn't wiped still holds the account secret.
+    private func confirmRemove(_ device: Device) {
+        let alert = NSAlert()
+        alert.messageText = String(format: L("Remove %@?"), device.name)
+        let phraseNote =
+            model.configuration.walletLinked
+            ? L("Sync then gets its own recovery phrase again, since anyone with your Osaurus recovery phrase could derive the old one.")
+            : L("The old recovery phrase stops working.")
+        alert.informativeText = String(
+            format: L("It stops receiving your chats. Unless it was wiped, it still holds your account's keys, so changing the recovery phrase is what keeps it out. %@ Your other devices pick up the change the next time they connect. Choose Remove Only for a device you've wiped."),
+            phraseNote
+        )
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L("Remove and Change Phrase"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.addButton(withTitle: L("Remove Only"))
+        let rotate: Bool
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: rotate = true
+        case .alertThirdButtonReturn: rotate = false
+        default: return
+        }
+        asOwner(L("remove a device from your sync account")) {
+            do {
+                if rotate {
+                    phrase = nil
+                    newPhrase = try model.revokeAndRotate(device)
+                } else {
+                    try model.revoke(device)
+                }
+            } catch {
+                actionError = error.syncUserMessage
             }
-        } catch {
-            actionError = error.syncUserMessage
         }
     }
 
@@ -601,13 +723,15 @@ struct DevicesView: View {
                 action: L("Restore")
             )
         else { return }
-        do {
-            try model.recover(phrase: restoreText)
-            isRestoring = false
-            restoreText = ""
-            phrase = nil
-        } catch {
-            actionError = error.syncUserMessage
+        asOwner(L("move this Mac to another sync account")) {
+            do {
+                try model.recover(phrase: restoreText)
+                isRestoring = false
+                restoreText = ""
+                phrase = nil
+            } catch {
+                actionError = error.syncUserMessage
+            }
         }
     }
 
@@ -617,7 +741,7 @@ struct DevicesView: View {
             ? L("This Mac's sync account changes to the one your Osaurus recovery phrase restores, and it keeps its chats. Your other devices stop syncing with this Mac until you do the same on each of them.")
             : L("This Mac's sync account changes to the one your Osaurus recovery phrase restores, and it keeps its chats. Your current sync phrase stops working.")
         guard confirm(L("Use your Osaurus recovery phrase for sync?"), message, action: L("Use Phrase")) else { return }
-        useWalletPhrase()
+        asOwner(L("change your sync recovery phrase")) { useWalletPhrase() }
     }
 
     private func useWalletPhrase() {
@@ -645,14 +769,16 @@ struct DevicesView: View {
                 action: L("Remove Chats")
             )
         guard confirmed else { return }
-        isSigningOut = true
-        phrase = nil
-        Task {
-            defer { isSigningOut = false }
-            do {
-                try await model.signOut(keepConversations: keepConversations)
-            } catch {
-                actionError = error.syncUserMessage
+        asOwner(L("sign this Mac out of sync")) {
+            isSigningOut = true
+            phrase = nil
+            Task {
+                defer { isSigningOut = false }
+                do {
+                    try await model.signOut(keepConversations: keepConversations)
+                } catch {
+                    actionError = error.syncUserMessage
+                }
             }
         }
     }

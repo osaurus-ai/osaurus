@@ -53,6 +53,7 @@ struct SyncTurnStreamerTests {
         try mac.addPeerAddress(address: #require(peer.localAddress()))
         try peer.addPeerAddress(address: #require(mac.localAddress()))
         try await peer.pairWithOffer(payload: try mac.pairingOffer(ttlMs: 300_000).payload)
+        try await SyncTestPairing.confirm(host: mac, joiner: peer)
         try await waitUntil("paired") { SyncService.shared.hasOtherDevices }
         return mac
     }

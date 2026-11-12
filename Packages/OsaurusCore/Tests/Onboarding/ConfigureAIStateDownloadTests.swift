@@ -76,7 +76,7 @@ struct ConfigureAIStateDownloadTests {
 
         // `ensureLocalSelection` pre-picks the featured model so the card
         // can show a concrete name and download size on first render.
-        state.ensureLocalSelection(totalMemoryGB: 24)
+        state.ensureLocalSelection()
         #expect(state.selectedModel != nil)
         #expect(state.screen == .home)
     }
@@ -232,35 +232,86 @@ struct ConfigureAIStateDownloadTests {
         #expect(state.screen == .home)
     }
 
-    @Test func ensureLocalSelectionDoesNotDeadEndWhenAllCuratedModelsAreTooLarge() {
+    /// Onboarding offers only the preferred model; another Top Pick already
+    /// on disk does not replace it.
+    @Test func ensureLocalSelectionPicksPreferredModelEvenWhenAnotherTopPickIsOnDisk() throws {
+        let manager = ModelManager.shared
+        let originalSuggested = manager.suggestedModels
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-cfg-ai-\(UUID().uuidString)")
+        defer {
+            manager.suggestedModels = originalSuggested
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let installed = MLXModel(
+            id: "test/installed-top-pick-\(UUID().uuidString)",
+            name: "Installed Top Pick",
+            description: "",
+            downloadURL: "https://example.com/installed",
+            isTopSuggestion: true,
+            downloadSizeBytes: 1024,
+            rootDirectory: root
+        )
+        try markDownloaded(installed)
+        let preferred = MLXModel(
+            id: ConfigureAIState.preferredOnboardingModelId,
+            name: "Raptor",
+            description: "",
+            downloadURL: "https://example.com/raptor",
+            isTopSuggestion: true,
+            downloadSizeBytes: 1024,
+            rootDirectory: root
+        )
+        manager.suggestedModels = [installed, preferred]
+
+        let state = ConfigureAIState()
+        state.ensureLocalSelection()
+
+        #expect(installed.isDownloaded)
+        #expect(state.selectedModel?.id == ConfigureAIState.preferredOnboardingModelId)
+    }
+
+    /// There is no memory-based fallback: the preferred model is offered even
+    /// when it would not fit this Mac, so the card never dead-ends empty.
+    @Test func ensureLocalSelectionKeepsPreferredModelWhenItIsTooLarge() {
         let manager = ModelManager.shared
         let originalSuggested = manager.suggestedModels
         defer { manager.suggestedModels = originalSuggested }
 
         manager.suggestedModels = [
             MLXModel(
-                id: "test/large-a-\(UUID().uuidString)",
-                name: "Large A",
+                id: "test/small-\(UUID().uuidString)",
+                name: "Small",
                 description: "",
-                downloadURL: "https://example.com/large-a",
+                downloadURL: "https://example.com/small",
                 isTopSuggestion: true,
-                downloadSizeBytes: 40 * 1024 * 1024 * 1024
+                downloadSizeBytes: 1024
             ),
             MLXModel(
-                id: "test/large-b-\(UUID().uuidString)",
-                name: "Large B",
+                id: ConfigureAIState.preferredOnboardingModelId,
+                name: "Raptor",
                 description: "",
-                downloadURL: "https://example.com/large-b",
+                downloadURL: "https://example.com/raptor",
                 isTopSuggestion: true,
-                downloadSizeBytes: 48 * 1024 * 1024 * 1024
+                downloadSizeBytes: 400 * 1024 * 1024 * 1024
             ),
         ]
 
         let state = ConfigureAIState()
-        state.ensureLocalSelection(totalMemoryGB: 24)
+        state.ensureLocalSelection()
 
-        #expect(state.selectedModel != nil)
-        #expect(state.selectedModel?.isTopSuggestion == true)
+        #expect(state.selectedModel?.id == ConfigureAIState.preferredOnboardingModelId)
+    }
+
+    /// An existing selection is left alone.
+    @Test func ensureLocalSelectionKeepsAnExistingSelection() {
+        let (state, model) = makeStateWithModel()
+        defer { clear(model) }
+
+        state.ensureLocalSelection()
+
+        #expect(state.selectedModel?.id == model.id)
     }
 
     // MARK: - Pin targets read by finishOnboarding
@@ -308,95 +359,5 @@ struct ConfigureAIStateDownloadTests {
         // Provider-key brain source -> the captured provider id.
         state.selectedBrainSource = .providerKey(.openai)
         #expect(state.providerModelPinTarget == providerId)
-    }
-
-    // MARK: - Model chooser modal
-
-    /// Build a throwaway in-memory model so a test can move the draft to a
-    /// different selection than the seeded one.
-    private func makeModel(_ tag: String) -> MLXModel {
-        MLXModel(
-            id: "cfg-ai/\(tag)-\(UUID().uuidString)",
-            name: "Test \(tag)",
-            description: "",
-            downloadURL: "https://example.com/\(tag)",
-            rootDirectory: FileManager.default.temporaryDirectory
-        )
-    }
-
-    /// Opening the chooser seeds the draft from the current selection (so the
-    /// active model is pre-highlighted) and flips the dialog open.
-    @Test func openModelChooser_seedsDraftFromSelectionAndOpens() {
-        let (state, model) = makeStateWithModel()
-        defer { clear(model) }
-
-        #expect(state.isChoosingModel == false)
-        #expect(state.draftModel == nil)
-
-        state.openModelChooser()
-
-        #expect(state.isChoosingModel == true)
-        #expect(state.draftModel?.id == model.id)
-    }
-
-    /// Tapping a row only moves the draft — it does not commit the selection or
-    /// close the dialog, so users can browse freely before deciding.
-    @Test func selectDraftModel_updatesDraftWithoutCommitting() {
-        let (state, model) = makeStateWithModel()
-        defer { clear(model) }
-
-        state.openModelChooser()
-        let other = makeModel("other")
-        state.selectDraftModel(other)
-
-        #expect(state.draftModel?.id == other.id)
-        #expect(state.selectedModel?.id == model.id)
-        #expect(state.isChoosingModel == true)
-    }
-
-    /// "Select this model" applies the draft as the active local brain and closes
-    /// the dialog.
-    @Test func commitModelChooser_appliesDraftAndCloses() {
-        let (state, model) = makeStateWithModel()
-        defer { clear(model) }
-
-        state.openModelChooser()
-        let picked = makeModel("picked")
-        state.selectDraftModel(picked)
-        state.commitModelChooser()
-
-        #expect(state.selectedModel?.id == picked.id)
-        #expect(state.isChoosingModel == false)
-        #expect(state.draftModel?.id == picked.id)
-    }
-
-    /// Picking a different model after a failed download must clear the
-    /// "download already started" latch so the new selection can be
-    /// downloaded (and so "Change model" stays available).
-    @Test func selectLocalModel_clearsStartedDownloadLatch() {
-        let (state, model) = makeStateWithModel()
-        defer { clear(model) }
-
-        state.hasStartedLocalDownload = true
-        let replacement = makeModel("replacement")
-        state.selectLocalModel(replacement)
-
-        #expect(state.selectedModel?.id == replacement.id)
-        #expect(state.hasStartedLocalDownload == false)
-    }
-
-    /// Cancel / X / Esc / scrim-tap all route here: the dialog closes and the
-    /// committed selection is untouched even though the draft had moved.
-    @Test func cancelModelChooser_closesWithoutChangingSelection() {
-        let (state, model) = makeStateWithModel()
-        defer { clear(model) }
-
-        state.openModelChooser()
-        state.selectDraftModel(makeModel("other"))
-
-        state.cancelModelChooser()
-
-        #expect(state.isChoosingModel == false)
-        #expect(state.selectedModel?.id == model.id)
     }
 }

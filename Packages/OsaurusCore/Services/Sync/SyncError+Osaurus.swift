@@ -57,6 +57,15 @@ extension SyncError {
     }
 }
 
+extension SyncError {
+    /// An open that failed for a reason that can clear by itself: a locked
+    /// Keychain before first unlock, a quitting copy still holding the
+    /// database, a full or busy disk, or no network yet.
+    var isTransientOpenFailure: Bool {
+        [SyncErrorCode.keyStore, SyncErrorCode.alreadyOpen, SyncErrorCode.storage, SyncErrorCode.network].contains(code)
+    }
+}
+
 extension SyncError: ForwardVersionStoreError {
     public var isForwardVersion: Bool {
         code == SyncErrorCode.newerDatabase || code == SyncErrorCode.incompatibleVersion

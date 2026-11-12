@@ -57,12 +57,22 @@ enum SyncDeviceFeedContract {
         "continue_own_chats",
     ]
 
-    /// Each device's record under `prefix`, keyed by device key.
-    static func perDevice<T: Decodable>(_ type: T.Type, prefix: String, in conversation: Conversation) -> [String: T] {
+    /// Each device's record under `prefix`, keyed by device key. With
+    /// `writtenByThatDevice`, a value another device signed is dropped:
+    /// requests and answers name their writer, results name their reader.
+    static func perDevice<T: Decodable>(
+        _ type: T.Type,
+        prefix: String,
+        in conversation: Conversation,
+        writtenByThatDevice: Bool
+    ) -> [String: T] {
         var result: [String: T] = [:]
         for entry in conversation.appData where entry.namespace.hasPrefix(prefix) {
             let device = String(entry.namespace.dropFirst(prefix.count))
-            guard !device.isEmpty, let decoded = try? JSONDecoder().decode(type, from: entry.bytes) else { continue }
+            guard !device.isEmpty,
+                !writtenByThatDevice || SyncHostedRunContract.isSigned(entry, byNamespaceDevice: device),
+                let decoded = try? JSONDecoder().decode(type, from: entry.bytes)
+            else { continue }
             result[device] = decoded
         }
         return result
@@ -344,12 +354,15 @@ enum SyncDeviceFeedContract {
     }
 
     /// This device's conversation of `kind`, if it made one.
+    /// Synced only: signing out and keeping chats leaves this device's old
+    /// feeds behind as device-local copies that nothing else reads.
     static func conversation(kind: String, device: String, core: SyncCore) throws -> Conversation? {
         let filter = ConversationFilter(
             tags: [
                 Tag(key: SyncConversationMapper.TagKey.kind, value: kind),
                 Tag(key: SyncConversationMapper.TagKey.device, value: device),
             ],
+            replication: .synced,
             limit: 1
         )
         return try core.conversationsFiltered(filter: filter).first

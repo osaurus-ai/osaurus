@@ -131,6 +131,7 @@ struct SyncWalletLinkTests {
             try other.addPeerAddress(address: #require(mac.localAddress()))
             let offer = try other.pairingOffer(ttlMs: 300_000)
             try await mac.pairWithOffer(payload: offer.payload)
+            try await SyncTestPairing.confirm(host: other, joiner: mac)
             try await waitUntil("paired") { try mac.userKey() == other.userKey() }
             try await waitUntil("unlinked by the handoff") { !SyncWalletLink.isLinked }
             try await other.close()

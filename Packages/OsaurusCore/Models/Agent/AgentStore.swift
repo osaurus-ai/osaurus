@@ -183,6 +183,42 @@ public enum AgentStore {
         return sortedForDisplay(Agent.builtInAgents + Array(custom.values))
     }
 
+    /// The identity fields of an agent record this build could not decode.
+    public struct ReservedIdentity: Equatable, Sendable {
+        public let index: UInt32?
+        public let deviceScope: String?
+        public let address: String?
+    }
+
+    private struct IdentityStub: Decodable {
+        let agentIndex: UInt32?
+        let agentDeviceScope: String?
+        let agentAddress: String?
+    }
+
+    /// Identity slots held by agent files `loadAll` skips because they fail
+    /// to decode here (written by a newer or older build). Minting must still
+    /// treat their index and address as taken: reusing them gives a second
+    /// agent the same address once a build that reads both files runs.
+    /// Scans the directory on every call, so it is for minting only.
+    public static func reservedIdentities() -> [ReservedIdentity] {
+        let loadedFiles = Set(loadAll().filter { !$0.isBuiltIn }.map { "\($0.id.uuidString).json" })
+        guard
+            let files = try? FileManager.default.contentsOfDirectory(
+                at: agentsDirectory(), includingPropertiesForKeys: nil)
+        else { return [] }
+        let decoder = JSONDecoder()
+        return files.compactMap { file -> ReservedIdentity? in
+            guard file.pathExtension == "json", !loadedFiles.contains(file.lastPathComponent),
+                let data = try? Data(contentsOf: file),
+                let stub = try? decoder.decode(IdentityStub.self, from: data),
+                stub.agentIndex != nil || stub.agentAddress != nil
+            else { return nil }
+            return ReservedIdentity(
+                index: stub.agentIndex, deviceScope: stub.agentDeviceScope, address: stub.agentAddress)
+        }
+    }
+
     /// Whether the memoized agent set still matches the `.json` records on
     /// disk (by filename). Catches out-of-band file adds/removes; an
     /// out-of-band content edit of an existing record is only picked up on

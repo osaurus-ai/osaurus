@@ -434,6 +434,11 @@ void uniffi_osaurus_sync_ffi_fn_method_synccore_change_role(uint64_t ptr, RustBu
 uint64_t uniffi_osaurus_sync_ffi_fn_method_synccore_close(uint64_t ptr
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_CONFIRM_PAIRING
+#define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_CONFIRM_PAIRING
+void uniffi_osaurus_sync_ffi_fn_method_synccore_confirm_pairing(uint64_t ptr, RustBuffer device, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_CONVERSATION
 #define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_CONVERSATION
 RustBuffer uniffi_osaurus_sync_ffi_fn_method_synccore_conversation(uint64_t ptr, RustBuffer scope, RustCallStatus *_Nonnull out_status
@@ -529,6 +534,11 @@ int8_t uniffi_osaurus_sync_ffi_fn_method_synccore_is_online(uint64_t ptr, RustCa
 void uniffi_osaurus_sync_ffi_fn_method_synccore_leave_conversation(uint64_t ptr, RustBuffer scope, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_LIVE_STATE
+#define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_LIVE_STATE
+RustBuffer uniffi_osaurus_sync_ffi_fn_method_synccore_live_state(uint64_t ptr, RustBuffer scope, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_LOCAL_ADDRESS
 #define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_LOCAL_ADDRESS
 RustBuffer uniffi_osaurus_sync_ffi_fn_method_synccore_local_address(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -597,6 +607,11 @@ RustBuffer uniffi_osaurus_sync_ffi_fn_method_synccore_recovery_phrase(uint64_t p
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_REDEEM_INVITE
 #define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_REDEEM_INVITE
 void uniffi_osaurus_sync_ffi_fn_method_synccore_redeem_invite(uint64_t ptr, RustBuffer token, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_REJECT_PAIRING
+#define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_REJECT_PAIRING
+void uniffi_osaurus_sync_ffi_fn_method_synccore_reject_pairing(uint64_t ptr, RustBuffer device, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_REMOVE
@@ -687,6 +702,11 @@ void uniffi_osaurus_sync_ffi_fn_method_synccore_set_history_mode(uint64_t ptr, R
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_SET_LISTENER
 #define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_SET_LISTENER
 void uniffi_osaurus_sync_ffi_fn_method_synccore_set_listener(uint64_t ptr, RustBuffer listener, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_SET_LIVE_STATE
+#define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_SET_LIVE_STATE
+void uniffi_osaurus_sync_ffi_fn_method_synccore_set_live_state(uint64_t ptr, RustBuffer scope, RustBuffer namespace, RustBuffer bytes, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_FN_METHOD_SYNCCORE_SET_MESSAGE_APP_DATA
@@ -1231,6 +1251,12 @@ uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_close(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_CONFIRM_PAIRING
+#define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_CONFIRM_PAIRING
+uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_confirm_pairing(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_CONVERSATION
 #define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_CONVERSATION
 uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_conversation(void
@@ -1345,6 +1371,12 @@ uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_leave_conversation(voi
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_LIVE_STATE
+#define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_LIVE_STATE
+uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_live_state(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_LOCAL_ADDRESS
 #define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_LOCAL_ADDRESS
 uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_local_address(void
@@ -1426,6 +1458,12 @@ uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_recovery_phrase(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_REDEEM_INVITE
 #define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_REDEEM_INVITE
 uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_redeem_invite(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_REJECT_PAIRING
+#define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_REJECT_PAIRING
+uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_reject_pairing(void
     
 );
 #endif
@@ -1534,6 +1572,12 @@ uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_set_history_mode(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_SET_LISTENER
 #define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_SET_LISTENER
 uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_set_listener(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_SET_LIVE_STATE
+#define UNIFFI_FFIDEF_UNIFFI_OSAURUS_SYNC_FFI_CHECKSUM_METHOD_SYNCCORE_SET_LIVE_STATE
+uint16_t uniffi_osaurus_sync_ffi_checksum_method_synccore_set_live_state(void
     
 );
 #endif

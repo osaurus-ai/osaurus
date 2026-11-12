@@ -5,8 +5,8 @@
 //  Onboarding step 3 — Figma screen 3 ("A private brain that runs on your
 //  Mac"). Left column: title, subtitle, and the step CTA ("Set
 //  up later" until a brain is committed, then "Continue to Osaurus"). Right
-//  panel: the recommended-model card ("Picked for your Mac" badge, meta
-//  chips, Download + Change model) with an in-card downloading state, then
+//  panel: the recommended-model card ("Recommended" badge, meta chips,
+//  Download) with an in-card downloading state, then
 //  the provider chips (OpenAI, Anthropic, xAI, OpenRouter, Gemini, + More)
 //  that drill into a per-provider connect screen whose option rows open the
 //  connect dialog (browser sign-in or pasted API key).
@@ -17,8 +17,7 @@
 //     state (lives at the OnboardingView level so it survives step
 //     transitions).
 //   - `ConfigureAIStepView`: the full-window step layout.
-//   - `ProviderConnectDialog` / `ConfigureModelChooserModal`: window-root
-//     dialogs hosted by `OnboardingView`.
+//   - `ProviderConnectDialog`: window-root dialog hosted by `OnboardingView`.
 //
 //  Apple Intelligence was removed from this step: it's too limited (no tools,
 //  no web, no agent work) to be a first-class first-run option. Users with
@@ -227,7 +226,7 @@ final class ConfigureAIState: ObservableObject {
     @Published var selectedModel: MLXModel? = nil
 
     /// Free bytes on the volume that will host the model download, refreshed
-    /// one-shot (`refreshFreeDiskSpace`) on appear / chooser open / CTA press.
+    /// one-shot (`refreshFreeDiskSpace`) on appear / CTA press.
     /// Deliberately not `SystemMonitorService.availableStorageGB`: subscribing
     /// this deep onboarding tree to the monitor's 2s publishes forced a full
     /// re-render every tick, and the stat lines only need a point-in-time
@@ -236,14 +235,13 @@ final class ConfigureAIState: ObservableObject {
     @Published var freeDiskBytes: Int64? = nil
 
     /// Inline "not enough disk space" warning shown under the local card when
-    /// the CTA-press preflight refuses. Cleared on model change and on a
-    /// passing preflight, so it never sticks to a different selection.
+    /// the CTA-press preflight refuses. Cleared on a passing preflight.
     @Published var diskSpaceWarning: String? = nil
 
     /// Set the moment the Download button starts the background download.
     /// This durable latch keeps the card safe if the user navigates around:
-    /// no model swap, duplicate download, or Cloud-only recommit while bytes
-    /// are already moving.
+    /// no duplicate download or Cloud-only recommit while bytes are already
+    /// moving.
     @Published var hasStartedLocalDownload = false
 
     // API
@@ -280,43 +278,24 @@ final class ConfigureAIState: ObservableObject {
 
     // MARK: Local
 
-    /// Auto-selects the recommended local pick — the best model this Mac can
-    /// run — so the home screen lands on a sensible default the user can just
-    /// accept. The rule is hardware-deterministic:
-    ///
-    ///   1. If a curated top pick is already on disk, keep it. The user
-    ///      downloaded (and presumably ran) it before, so the compat
-    ///      heuristic shouldn't lock them out.
-    ///   2. Otherwise defer to `recommendedLocalPick`: the largest proven
-    ///      base model that *comfortably* fits, using resident footprint to
-    ///      choose between equal-size variants. We never auto-default into
-    ///      the `.tight` band.
-    ///
-    /// `.unknown` (no param info / monitor not yet populated) fails open via
-    /// the final `candidates.first` fallback so onboarding never dead-ends.
-    func ensureLocalSelection(totalMemoryGB: Double) {
+    /// Selects the onboarding local model. Onboarding offers exactly one
+    /// local model on every Mac — other models are added later from the
+    /// Models tab — so there is nothing to choose between, even when another
+    /// model is already on disk.
+    func ensureLocalSelection() {
         guard selectedModel == nil else { return }
-
-        // 1. A curated top pick already on disk wins. Onboarding only shows
-        // top picks, so we don't fall back to ad-hoc downloaded models that
-        // wouldn't appear in the list anyway.
-        let downloaded = ModelManager.shared.installedModels()
-        if let topDownloaded = downloaded.first(where: \.isTopSuggestion) {
-            selectedModel = topDownloaded
-            return
-        }
-
-        // 2. The data-backed default for this Mac's RAM.
-        let candidates = ModelManager.shared.suggestedModels.filter(\.isTopSuggestion)
-        selectedModel =
-            Self.recommendedLocalPick(from: candidates, totalMemoryGB: totalMemoryGB)
-            ?? candidates.first
+        selectedModel = Self.onboardingLocalModel(from: ModelManager.shared.suggestedModels)
     }
 
-    /// Preferred first-run local model. Named explicitly because v0.5 parses
-    /// as 8B and would otherwise beat 0.6's 4B under the largest-parameter
-    /// rule, and Gemma E4B is also a 4B Top Pick that could steal 8 GB.
-    static let preferredOnboardingModelId = "OsaurusAI/Raptor-0.6-4B-JANG_6M"
+    /// The only local model onboarding offers, and the one the full DMG
+    /// bundles (`scripts/build/fetch_bundled_model.sh` pins the same id).
+    static let preferredOnboardingModelId = "OsaurusAI/Raptor-0.7-4B-JANG_6M"
+
+    /// The catalog row for `preferredOnboardingModelId`, or `nil` when the
+    /// catalog does not carry it.
+    static func onboardingLocalModel(from candidates: [MLXModel]) -> MLXModel? {
+        candidates.first { $0.id == preferredOnboardingModelId }
+    }
 
     /// The bundled local brain the full distribution can commit without
     /// showing the Configure AI step, or `nil` when that step must run.
@@ -324,15 +303,14 @@ final class ConfigureAIState: ObservableObject {
     /// All four gates must hold; any miss falls back to the normal step so
     /// the light build, a seed that has not landed yet (cross-volume models
     /// directory still copying), a user who deleted the seeded model, and a
-    /// Mac where Raptor 0.6 only fits in the `.tight` band all get the full
-    /// chooser:
+    /// Mac where Raptor 0.7 only fits in the `.tight` band all get the
+    /// Configure AI step:
     ///
     ///   1. `isFullDistribution` — the app shipped with `BundledModels`.
-    ///   2. The preferred onboarding model is a curated Top Pick (so it is
-    ///      what the chooser would have offered).
+    ///   2. The preferred onboarding model is a curated Top Pick.
     ///   3. It is on disk (`isDownloaded`, i.e. `BundledModelSeeder` finished).
-    ///   4. It fits **comfortably** (`.compatible`) — the same rule
-    ///      `recommendedLocalPick` uses for the auto-default.
+    ///   4. It fits **comfortably** (`.compatible`), so committing it without
+    ///      showing the step never lands the user in the `.tight` band.
     static func bundledLocalBrainReady(
         from candidates: [MLXModel],
         totalMemoryGB: Double,
@@ -369,168 +347,6 @@ final class ConfigureAIState: ObservableObject {
         OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false, surface: telemetrySurface)
     }
 
-    /// Parameter-count floor that marks the large-RAM upgrade lane (Gemma 12B,
-    /// Ornith 35B). Comfortable models at or above this beat the preferred
-    /// Raptor 0.6 default.
-    static let largeRAMOnboardingParameterFloor = 12.0
-
-    /// Pure, testable core of the onboarding default pick. Given the curated
-    /// top-pick `candidates` and the machine RAM, returns the model onboarding
-    /// should pre-select (or `nil` when there are no candidates).
-    ///
-    /// Rule: auto-default to Raptor 0.6 when it **comfortably** fits
-    /// (`.compatible`, never the `.tight` band) and no larger-RAM Top Pick
-    /// (Gemma 12B / Ornith 35B) is also comfortable. Otherwise pick the
-    /// curated Top Pick with the **largest base parameter count** that
-    /// comfortably fits; equal-size variants prefer the larger resident
-    /// footprint. Top Picks are the maintained onboarding recommendation
-    /// set. Raptor v0.5 8B-A1B is retired from the catalog entirely.
-    /// Dense Bonsai 27B, LFM2.5 8B, and dense Ornith 1.5 9B remain catalog
-    /// choices rather than first-run defaults. When nothing is comfortable
-    /// (very low RAM), fall back to the smallest candidate overall so
-    /// onboarding never dead-ends.
-    ///
-    /// This replaced the earlier Gemma-4-QAT auto-default spine: the Gemma 4
-    /// `qat-MXFP4` builds are no longer curated Top Picks, so they are neither
-    /// shown nor auto-selected in onboarding (a recommended Gemma build must be
-    /// a non-QAT/non-MXFP4 precision, e.g. `12B-it-MXFP8` / `E4B-it-8bit`).
-    static func recommendedLocalPick(
-        from candidates: [MLXModel],
-        totalMemoryGB: Double
-    ) -> MLXModel? {
-        let comfortable = candidates.filter {
-            $0.compatibility(totalMemoryGB: totalMemoryGB) == .compatible
-        }
-
-        func strongest(_ pool: [MLXModel]) -> MLXModel? {
-            pool.max { lhs, rhs in
-                let lhsParameters = lhs.parameterCountBillions ?? 0
-                let rhsParameters = rhs.parameterCountBillions ?? 0
-                if lhsParameters != rhsParameters {
-                    return lhsParameters < rhsParameters
-                }
-                return (lhs.estimatedMemoryGB ?? 0) < (rhs.estimatedMemoryGB ?? 0)
-            }
-        }
-        func smallest(_ pool: [MLXModel]) -> MLXModel? {
-            pool.min(by: {
-                ($0.estimatedMemoryGB ?? .greatestFiniteMagnitude)
-                    < ($1.estimatedMemoryGB ?? .greatestFiniteMagnitude)
-            })
-        }
-
-        if let preferred = comfortable.first(where: { $0.id == preferredOnboardingModelId }) {
-            let hasLargerRAMTier = comfortable.contains {
-                ($0.parameterCountBillions ?? 0) >= largeRAMOnboardingParameterFloor
-            }
-            if !hasLargerRAMTier {
-                return preferred
-            }
-        }
-
-        return strongest(comfortable) ?? smallest(candidates)
-    }
-
-    /// Collapses same-family quant variants — rows whose titles collapse to
-    /// the same `simplifiedName`, e.g. the MXFP8 and QAT builds of one model —
-    /// to a single pick per family, so the chooser never shows what reads as
-    /// a duplicate. Group order follows the first occurrence in `candidates`
-    /// (catalog order). Within a family the app chooses for the user:
-    ///
-    ///   1. The active selection (`selectedId`) — the committed model must
-    ///      never vanish from the list.
-    ///   2. A downloaded variant that can still run here — never steer the
-    ///      user into re-downloading a near-duplicate of bits already on
-    ///      disk. Largest wins if several are on disk.
-    ///   3. The variant `recommendedLocalPick` chose — the tuned auto-default
-    ///      must survive dedupe, or the "Picked for your Mac"
-    ///      badge would point at a hidden row.
-    ///   4. Quality first, comfort permitting: the largest (highest-
-    ///      precision) build inside the best compatibility band a variant
-    ///      reaches (comfortable beats tight).
-    ///   5. If every variant is too large, the smallest one — the disabled
-    ///      row then documents the family's floor.
-    static func dedupedTopPicks(
-        from candidates: [MLXModel],
-        totalMemoryGB: Double,
-        selectedId: String?
-    ) -> [MLXModel] {
-        let recommendedId = recommendedLocalPick(
-            from: candidates,
-            totalMemoryGB: totalMemoryGB
-        )?.id
-        var order: [String] = []
-        var groups: [String: [MLXModel]] = [:]
-        for model in candidates {
-            let key = model.simplifiedName
-            if groups[key] == nil { order.append(key) }
-            groups[key, default: []].append(model)
-        }
-        return order.compactMap { key in
-            guard let variants = groups[key] else { return nil }
-            return bestVariant(
-                of: variants,
-                totalMemoryGB: totalMemoryGB,
-                selectedId: selectedId,
-                recommendedId: recommendedId
-            )
-        }
-    }
-
-    /// Representative of one same-name variant group; see `dedupedTopPicks`
-    /// for the preference order.
-    private static func bestVariant(
-        of variants: [MLXModel],
-        totalMemoryGB: Double,
-        selectedId: String?,
-        recommendedId: String?
-    ) -> MLXModel? {
-        if let selected = variants.first(where: { $0.id == selectedId }) {
-            return selected
-        }
-
-        func sizeBytes(_ model: MLXModel) -> Int64 { model.downloadSizeBytes ?? 0 }
-        func comfortRank(_ model: MLXModel) -> Int {
-            switch model.compatibility(totalMemoryGB: totalMemoryGB) {
-            case .compatible, .unknown: return 0
-            case .tight: return 1
-            case .tooLarge: return 2
-            }
-        }
-
-        let runnable = variants.filter { comfortRank($0) < 2 }
-        if let downloaded = runnable.filter(\.isDownloaded)
-            .max(by: { sizeBytes($0) < sizeBytes($1) })
-        {
-            return downloaded
-        }
-        if let recommended = variants.first(where: { $0.id == recommendedId }) {
-            return recommended
-        }
-        if let best = runnable.min(by: { lhs, rhs in
-            let (lhsRank, rhsRank) = (comfortRank(lhs), comfortRank(rhs))
-            if lhsRank != rhsRank { return lhsRank < rhsRank }
-            return sizeBytes(lhs) > sizeBytes(rhs)
-        }) {
-            return best
-        }
-        return variants.min(by: { sizeBytes($0) < sizeBytes($1) })
-    }
-
-    /// Tapping a local model row (in the chooser) makes it the active
-    /// local brain. Kept side-effect-light (no `withAnimation`) so the CTA
-    /// doesn't morph through the shared transaction. Clears any disk-space
-    /// warning raised for the previous selection — the new model has its own
-    /// footprint and gets its own preflight at the next CTA press.
-    func selectLocalModel(_ model: MLXModel) {
-        selectedModel = model
-        diskSpaceWarning = nil
-        // A new pick is a fresh download candidate. Clearing this latch
-        // unsticks the "Change model" affordance after a failed download of
-        // the previous selection (the latch otherwise hid it forever).
-        hasStartedLocalDownload = false
-    }
-
     // MARK: Machine specs (free storage)
 
     /// One-shot query of the free bytes on the volume that hosts the models
@@ -549,36 +365,13 @@ final class ConfigureAIState: ObservableObject {
         return OsaurusPaths.volumeFreeBytes(forPath: probe.path)
     }
 
-    // MARK: Resource stat formatting
-
-    /// Why a chooser row is disabled: "Needs about 24 GB; this Mac has 16 GB."
-    /// Nil when either number is unknown.
-    nonisolated static func tooLargeReason(estimatedMemoryGB: Double?, totalMemoryGB: Double) -> String? {
-        guard let needed = estimatedMemoryGB, needed > 0, totalMemoryGB > 0 else { return nil }
-        return L("Needs about \(Int(needed.rounded(.up))) GB; this Mac has \(Int(totalMemoryGB.rounded())) GB.")
-    }
-
-    /// Chooser-row stat line ("Download: 7.5 GB · Est. memory while running:
-    /// 9.4 GB"). Explicit labels keep disk space and RAM from reading as one
-    /// interchangeable size. `nil` when neither stat is known.
-    static func chooserStatsLine(for model: MLXModel) -> String? {
-        var parts: [String] = []
-        if let size = model.formattedDownloadSize {
-            parts.append(model.isDownloaded ? L("On disk: \(size)") : L("Download: \(size)"))
-        }
-        if let memory = model.formattedEstimatedMemory {
-            parts.append(L("Est. memory while running: \(memory)"))
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
     /// Plain-language one-liner for a model, derived from the curated
     /// use case instead of the catalog description. The raw descriptions are
     /// written for the Models tab and lean on exactly the vocabulary
     /// first-timers shouldn't have to parse (MoE, MXFP8, context windows);
     /// this keeps the row to "what is it for". `nil` when the model carries
     /// no use case — no subtitle beats a jargon leak.
-    static func chooserSubtitle(for model: MLXModel) -> String? {
+    static func modelSubtitle(for model: MLXModel) -> String? {
         guard let useCase = model.useCase else { return nil }
         switch useCase {
         case .general: return L("A great everyday model for chat and writing.")
@@ -601,45 +394,15 @@ final class ConfigureAIState: ObservableObject {
         }
     }
 
-    /// Why the app picked `model`, in terms of this Mac. `nil` when the
-    /// person chose it themselves or the Mac's memory is unknown.
-    static func pickReason(for model: MLXModel, recommendedId: String?, totalMemoryGB: Double) -> String? {
+    /// Why `model` suits this Mac. `nil` when the Mac's memory is unknown or
+    /// the model does not fit comfortably.
+    static func pickReason(for model: MLXModel, totalMemoryGB: Double) -> String? {
         if model.isDownloaded { return L("It's already on this Mac, so there's nothing to download.") }
-        guard model.id == recommendedId, totalMemoryGB > 0 else { return nil }
+        guard totalMemoryGB > 0,
+            model.compatibility(totalMemoryGB: totalMemoryGB) == .compatible
+        else { return nil }
         let memoryGB = Int(totalMemoryGB.rounded())
-        if model.compatibility(totalMemoryGB: totalMemoryGB) == .compatible {
-            return L("It runs smoothly with your Mac's \(memoryGB) GB of memory and leaves room for your other apps.")
-        }
-        return L("It's the lightest option, the best fit for your Mac's \(memoryGB) GB of memory.")
-    }
-
-    /// The chooser's two signposts among the models that run smoothly here:
-    /// the lightest one, and the largest (the smartest that fits). `nil`s
-    /// when fewer than two run smoothly, since one model is both.
-    static func standouts(
-        in models: [MLXModel],
-        totalMemoryGB: Double
-    ) -> (lightestId: String?, smartestId: String?) {
-        let smooth = models.filter { $0.compatibility(totalMemoryGB: totalMemoryGB) == .compatible }
-        guard smooth.count > 1 else { return (nil, nil) }
-        let lightest = smooth.min {
-            ($0.estimatedMemoryGB ?? .greatestFiniteMagnitude) < ($1.estimatedMemoryGB ?? .greatestFiniteMagnitude)
-        }
-        let smartest = smooth.max { lhs, rhs in
-            let (lp, rp) = (lhs.parameterCountBillions ?? 0, rhs.parameterCountBillions ?? 0)
-            if lp != rp { return lp < rp }
-            return (lhs.estimatedMemoryGB ?? 0) < (rhs.estimatedMemoryGB ?? 0)
-        }
-        guard lightest?.id != smartest?.id else { return (nil, nil) }
-        return (lightest?.id, smartest?.id)
-    }
-
-    /// The model onboarding would pick for this Mac from the live Top Picks.
-    func recommendedModelId(totalMemoryGB: Double) -> String? {
-        Self.recommendedLocalPick(
-            from: ModelManager.shared.suggestedModels.filter(\.isTopSuggestion),
-            totalMemoryGB: totalMemoryGB
-        )?.id
+        return L("It runs smoothly with your Mac's \(memoryGB) GB of memory and leaves room for your other apps.")
     }
 
     // MARK: Disk-space preflight
@@ -666,38 +429,8 @@ final class ConfigureAIState: ObservableObject {
         else { return nil }
         let free = freeBytes.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
         return L(
-            "Not enough free disk space — this model needs \(needed) and this Mac has \(free) free. Free up space or choose a smaller model."
+            "Not enough free disk space — this model needs \(needed) and this Mac has \(free) free. Free up space and try again."
         )
-    }
-
-    // MARK: Model chooser state
-
-    // Draft-then-confirm state for `ConfigureModelChooserModal`, opened by
-    // the featured model card's "Change model" button (only before a download
-    // has started — switching models mid-download would orphan the bytes in
-    // flight).
-    @Published var isChoosingModel: Bool = false
-    @Published var draftModel: MLXModel? = nil
-
-    func openModelChooser() {
-        refreshFreeDiskSpace()
-        draftModel = selectedModel
-        isChoosingModel = true
-    }
-
-    func selectDraftModel(_ model: MLXModel) {
-        draftModel = model
-    }
-
-    func commitModelChooser() {
-        if let model = draftModel {
-            selectLocalModel(model)
-        }
-        isChoosingModel = false
-    }
-
-    func cancelModelChooser() {
-        isChoosingModel = false
     }
 
     /// The Osaurus Cloud card (and Skip setup with nothing chosen): start on
@@ -1053,17 +786,6 @@ struct ConfigureAIStepView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// `totalMemoryGB` is populated synchronously in
-    /// `SystemMonitorService.init`, so the first onboarding frame can select a
-    /// hardware-appropriate local default.
-    /// Non-observing on purpose. We only ever read `totalMemoryGB` — total
-    /// physical RAM, a runtime constant. Observing via `@ObservedObject`
-    /// subscribed this deep onboarding tree to the service's 2s CPU/memory
-    /// publishes, forcing a full re-render every tick. A plain reference reads
-    /// the same constant without subscribing to publishes that can never change
-    /// our output.
-    private let systemMonitor = SystemMonitorService.shared
-
     var body: some View {
         Group {
 
@@ -1079,7 +801,7 @@ struct ConfigureAIStepView: View {
         .padding(.bottom, OnboardingLayout.contentPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
-            state.ensureLocalSelection(totalMemoryGB: systemMonitor.totalMemoryGB)
+            state.ensureLocalSelection()
             state.refreshFreeDiskSpace()
         }
 
@@ -1206,11 +928,7 @@ private struct ConfigureAILeftColumn: View {
         case .home:
             return L("Pick one to get started. You can change it any time in Settings.")
         case .local:
-            let memoryGB = Int(SystemMonitorService.shared.totalMemoryGB.rounded())
-            guard memoryGB > 0 else {
-                return L("Picked to run smoothly on your Mac, so Osaurus can work privately, even offline.")
-            }
-            return L("Picked for your Mac's \(memoryGB) GB of memory, so Osaurus can work privately, even offline.")
+            return L("Picked to run smoothly on your Mac, so Osaurus can work privately, even offline.")
         case .keys, .byok:
             return L("Connect the AI provider you already use. Your key is stored on this Mac.")
         case .claudeCode:
@@ -1296,25 +1014,16 @@ private struct ConfigureAIPathsPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// The pick and why, in terms of this Mac: "Picked for your 32 GB Mac:
-    /// Gemma 4 12B, a one-time 8 GB download."
+    /// The local model and its cost: "Raptor 0.7 4B, a one-time 3.7 GB
+    /// download."
     private var localDetail: String? {
         guard let model = state.selectedModel else { return nil }
-        let memoryGB = Int(SystemMonitorService.shared.totalMemoryGB.rounded())
         let name = model.simplifiedName
         if model.isDownloaded {
             return L("\(name) is already on this Mac, ready to go.")
         }
-        switch (memoryGB > 0, model.formattedDownloadSize) {
-        case (true, let size?):
-            return L("Picked for your \(memoryGB) GB Mac: \(name), a one-time \(size) download.")
-        case (true, nil):
-            return L("Picked for your \(memoryGB) GB Mac: \(name).")
-        case (false, let size?):
-            return L("Picked for your Mac: \(name), a one-time \(size) download.")
-        case (false, nil):
-            return L("Picked for your Mac: \(name).")
-        }
+        guard let size = model.formattedDownloadSize else { return name }
+        return L("\(name), a one-time \(size) download.")
     }
 
     private var localStatus: String? {
@@ -1607,9 +1316,9 @@ private struct ConfigureAIKeysPanel: View {
 
 // MARK: - Recommended model card
 
-/// The elevated recommended-model card: "Picked for your Mac" badge, model
+/// The elevated recommended-model card: "Recommended" badge, model
 /// name, plain-language description, then a per-download-state block —
-/// meta chips + Download/Change buttons, in-card progress, pause/failure
+/// meta chips + Download button, in-card progress, pause/failure
 /// recovery, or the already-on-disk state. Isolated so only the card
 /// re-renders on `ModelManager`'s frequent progress publishes.
 private struct RecommendedModelCard: View {
@@ -1626,7 +1335,7 @@ private struct RecommendedModelCard: View {
 
         if let model = state.selectedModel {
             VStack(alignment: .leading, spacing: theme.space.s0) {
-                OnboardingPickedBadge(text: "Picked for your Mac")
+                OnboardingPickedBadge(text: "Recommended")
 
                 Spacer().frame(height: 12)
 
@@ -1634,7 +1343,7 @@ private struct RecommendedModelCard: View {
 
                 Spacer().frame(height: 6)
 
-                if let subtitle = ConfigureAIState.chooserSubtitle(for: model) {
+                if let subtitle = ConfigureAIState.modelSubtitle(for: model) {
                     Text(subtitle)
                         .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
                         .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
@@ -1715,12 +1424,6 @@ private struct RecommendedModelCard: View {
                         leadingSymbol: "arrow.down.circle",
                         action: { state.chooseLocalAndContinue(onComplete: {}) }
                     )
-                    OnboardingPillButton(
-                        title: "Change model",
-                        style: .text,
-                        size: .compact,
-                        action: { state.openModelChooser() }
-                    )
                 }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap")
             }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap")
 
@@ -1778,12 +1481,6 @@ private struct RecommendedModelCard: View {
                         size: .compact,
                         action: { state.startLocalDownload() }
                     )
-                    OnboardingPillButton(
-                        title: "Change model",
-                        style: .text,
-                        size: .compact,
-                        action: { state.openModelChooser() }
-                    )
                 }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap3")
             }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap4")
 
@@ -1804,14 +1501,6 @@ private struct RecommendedModelCard: View {
                         size: .compact,
                         action: { state.chooseLocalAndContinue(onComplete: onComplete) }
                     )
-                    if !state.hasStartedLocalDownload {
-                        OnboardingPillButton(
-                            title: "Change model",
-                            style: .text,
-                            size: .compact,
-                            action: { state.openModelChooser() }
-                        )
-                    }
                 }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap5")
             }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap5")
         }
@@ -1831,11 +1520,7 @@ private struct RecommendedModelCard: View {
     private var totalMemoryGB: Double { SystemMonitorService.shared.totalMemoryGB }
 
     private func pickReason(_ model: MLXModel) -> String? {
-        ConfigureAIState.pickReason(
-            for: model,
-            recommendedId: state.recommendedModelId(totalMemoryGB: totalMemoryGB),
-            totalMemoryGB: totalMemoryGB
-        )
+        ConfigureAIState.pickReason(for: model, totalMemoryGB: totalMemoryGB)
     }
 
     /// "341.3 MB of 13.39 GB · 38.5 MB/s" from the live download metrics, or
@@ -2229,327 +1914,6 @@ struct ProviderConnectDialog: View {
         }
         if case .failure = state.testResult { return "Try again" }
         return "Connect"
-    }
-}
-
-// MARK: - Model chooser modal
-
-/// Centered "Choose your model" dialog, hosted at the OnboardingView window
-/// root over the scrim. Forgiving draft-then-confirm so brand-new users can
-/// browse without committing: tapping a row only highlights it
-/// (`state.draftModel`); "Select this model" commits, while Cancel / X / Esc /
-/// scrim-tap dismiss without touching the active selection. Copy and rows
-/// are written for first-timers — no `LLM`/`VLM` jargon, one
-/// hardware-chosen build per model family, a "Picked for your Mac" pill on
-/// the safe default, and per-row cost stats read against this Mac's specs.
-struct ConfigureModelChooserModal: View {
-    @Environment(\.theme) private var inheritedTheme
-    @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
-    @ObservedObject var state: ConfigureAIState
-
-    @ObservedObject private var modelManager = ModelManager.shared
-
-    /// See `ConfigureAIStepView.systemMonitor`: a plain reference (not an
-    /// `@ObservedObject`) so the dialog doesn't re-render on every 2s
-    /// CPU/memory publish — `totalMemoryGB` is constant for the session.
-    private let systemMonitor = SystemMonitorService.shared
-
-    var body: some View {
-        Group {
-
-        OnboardingDialog(width: 520, closeInsets: closeInsets, onClose: { state.cancelModelChooser() }) {
-            VStack(spacing: theme.space.s0) {
-                header
-                modelList
-                footer
-            }
-        }
-    
-        }.environment(\.theme, theme)
-}
-
-    /// The dialog's one edge inset: sides, top (to the title's cap height)
-    /// and bottom (to the buttons).
-    private var inset: CGFloat { theme.space.s16 + theme.space.s4 }
-
-    /// Space between the title's line box and its cap height, so the header
-    /// can place the visible glyphs `inset` from the top edge.
-    private var titleCapInset: CGFloat {
-        let font = theme.nsFont(.heading)
-        let box = max(0, theme.lineHeight(.heading) - ThemeTextMetrics.naturalLineHeight(for: font)) / 2
-        return box + font.ascender - font.capHeight
-    }
-
-    private var titleTop: CGFloat { max(0, inset - titleCapInset) }
-
-    /// The close button centred on the title's first line, `inset` from the side.
-    private var closeInsets: EdgeInsets {
-        let line = max(theme.lineHeight(.heading), ThemeTextMetrics.naturalLineHeight(for: theme.nsFont(.heading)))
-        let top = max(0, titleTop + (line - OnboardingLayout.glassButtonDiameter) / 2)
-        return EdgeInsets(top: top, leading: 0, bottom: 0, trailing: inset)
-    }
-
-    // MARK: Header
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.header.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s6, theme))) {
-            Text("Choose your model", bundle: .module)
-                .catalogTypography(.heading, theme: theme, fallback: OnboardingTypography.cardTitle)
-                .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelWhite))
-            Text(
-                "Bigger models give smarter answers but need more memory and a longer download. Lighter ones reply faster and leave room for your other apps. Not sure? Keep the one picked for your Mac.",
-                bundle: .module
-            )
-            .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
-            .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
-            .fixedSize(horizontal: false, vertical: true)
-        }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.header.verticalGap")
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.header.paddingX", inheriting: inset)).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.header.paddingX")
-        .padding(.top, titleTop)
-        .padding(.trailing, OnboardingLayout.glassButtonDiameter + theme.space.s12)
-        .padding(.bottom, theme.space.s16)
-    }
-
-    // MARK: List
-
-    private var modelList: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s8, theme))) {
-                ForEach(pickerModels, id: \.model.id) { pair in
-                    modelRow(pair.model, compatibility: pair.compatibility)
-                }
-            }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.verticalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX", inheriting: inset)).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY")
-        }
-        .sidebarScrollEdgeFade(length: theme.space.s24)
-        .frame(maxHeight: 360)
-    }
-
-    /// One selectable model row. Too-large models stay visible so the tag can
-    /// explain why, but can't be selected — committing to a model that won't
-    /// run is the one unsafe choice this list can offer.
-    private func modelRow(_ model: MLXModel, compatibility: ModelCompatibility) -> some View {
-        let isSelected = state.draftModel?.id == model.id
-        let isDisabled = compatibility == .tooLarge
-        return Button {
-            state.selectDraftModel(model)
-        } label: {
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s4, theme))) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s8, theme))) {
-                    Text(model.simplifiedName)
-                        .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.optionTitle)
-                        .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
-                    if model.id == recommendedRowId {
-                        OnboardingPickedBadge(text: "Picked for your Mac", isBrand: true)
-                    } else if model.id == standouts.smartestId {
-                        OnboardingPickedBadge(text: "Smartest that fits")
-                    } else if model.id == standouts.lightestId {
-                        OnboardingPickedBadge(text: "Lightest")
-                    }
-                    if model.isDownloaded {
-                        OnboardingMetaChip(text: L("Downloaded"))
-                    }
-                    Spacer(minLength: 0)
-                    if isSelected {
-                        Image(systemName: "checkmark.circle")
-                            .glyphSize(.label, weight: .semibold)
-                            .foregroundColor(theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.dinoGreen))
-                    }
-                }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.horizontalGap")
-                if let subtitle = ConfigureAIState.chooserSubtitle(for: model) {
-                    Text(subtitle)
-                        .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
-                        .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
-                }
-                fitLine(model, compatibility: compatibility)
-                if isDisabled,
-                    let reason = ConfigureAIState.tooLargeReason(
-                        estimatedMemoryGB: model.estimatedMemoryGB, totalMemoryGB: systemMonitor.totalMemoryGB)
-                {
-                    Text(reason)
-                        .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
-                        .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
-                }
-            }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.verticalGap")
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingY")
-            .background(
-                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
-                    .fill(isSelected ? theme.assignedColor("component.library.55.selected", fallback: OnboardingPalette.fill5) : theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill2))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
-                    .strokeBorder(
-                        isSelected && !theme.isDark
-                            ? theme.selectionBorder
-                            : theme.assignedColor("component.library.55.border", fallback: isSelected ? OnboardingPalette.dinoGreen : OnboardingPalette.fill8),
-                        lineWidth: isSelected ? theme.selectionStroke : theme.stroke.default
-                    )
-            )
-            .contentShape(
-                RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
-            )
-        }
-        .buttonStyle(OnboardingPressableButtonStyle(pressedScale: 0.985))
-        .disabled(isDisabled)
-        .opacity(isDisabled ? 0.45 : 1)
-    }
-
-    /// "● Runs smoothly here · Download: 8 GB · …": the fit for this Mac
-    /// first, in its color, then the cost.
-    @ViewBuilder
-    private func fitLine(_ model: MLXModel, compatibility: ModelCompatibility) -> some View {
-        let stats = ConfigureAIState.chooserStatsLine(for: model)
-        if let fit = ConfigureAIState.fitLabel(compatibility) {
-            HStack(spacing: theme.space.s6) {
-                Circle()
-                    .fill(fitColor(compatibility))
-                    .frame(width: theme.space.s6, height: theme.space.s6)
-                Text(fit)
-                    .font(OnboardingTypography.badge)
-                    .foregroundColor(fitColor(compatibility))
-                if let stats {
-                    Text(verbatim: "· \(stats)")
-                        .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
-                        .foregroundColor(OnboardingPalette.labelSecondary)
-                        .lineLimit(1)
-                }
-            }
-        } else if let stats {
-            Text(stats)
-                .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
-                .foregroundColor(OnboardingPalette.labelSecondary)
-        }
-    }
-
-    private func fitColor(_ compatibility: ModelCompatibility) -> Color {
-        switch compatibility {
-        case .compatible: return OnboardingPalette.dinoGreenText
-        case .tight: return OnboardingPalette.fitTight
-        case .tooLarge, .unknown: return OnboardingPalette.labelSecondary
-        }
-    }
-
-    private var standouts: (lightestId: String?, smartestId: String?) {
-        ConfigureAIState.standouts(in: dedupedTopPicks, totalMemoryGB: systemMonitor.totalMemoryGB)
-    }
-
-    // MARK: Footer
-
-    private var footer: some View {
-        VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s12, theme))) {
-            Text(footerHint)
-                .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
-                .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s10, theme))) {
-                Spacer(minLength: 0)
-                OnboardingPillButton(
-                    title: "Cancel",
-                    style: .secondary,
-                    size: .compact,
-                    action: { state.cancelModelChooser() }
-                )
-                OnboardingPillButton(
-                    title: "Select this model",
-                    style: .primary,
-                    size: .compact,
-                    isEnabled: state.draftModel != nil,
-                    action: { state.commitModelChooser() }
-                )
-            }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.horizontalGap")
-        }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.verticalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.paddingX", inheriting: inset)).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.footer.paddingX")
-        .padding(.top, theme.space.s12)
-        .padding(.bottom, inset)
-    }
-
-    /// Footer hint carrying the Mac's actual specs, so every row's download /
-    /// memory numbers above are readable against real capacity. Degrades to
-    /// the generic wording when the monitor hasn't reported RAM yet.
-    private var footerHint: String {
-        let totalMemoryGB = systemMonitor.totalMemoryGB
-        guard totalMemoryGB > 0 else {
-            return L("Bigger models are smarter but use more memory.")
-        }
-        let memoryGB = Int(totalMemoryGB.rounded())
-        if let free = state.freeDiskBytes {
-            let freeText = free.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
-            return L(
-                "Your Mac has \(memoryGB) GB of memory and \(freeText) of free storage. Models that run smoothly here leave room for your other apps."
-            )
-        }
-        return L(
-            "Your Mac has \(memoryGB) GB of memory. Models that run smoothly here leave room for your other apps."
-        )
-    }
-
-    // MARK: Catalog (modal-local)
-
-    /// The curated top picks with same-family quant variants collapsed to a
-    /// single, hardware-chosen build (`ConfigureAIState.dedupedTopPicks`) —
-    /// the raw catalog ships e.g. two "Qwen3.6 27B" builds that read as
-    /// duplicates once titles are simplified. Keyed on the committed
-    /// `selectedModel` (stable while the dialog is open, unlike the draft) so
-    /// rows don't reshuffle as the user taps around.
-    private var dedupedTopPicks: [MLXModel] {
-        ConfigureAIState.dedupedTopPicks(
-            from: modelManager.suggestedModels.filter(\.isTopSuggestion),
-            totalMemoryGB: systemMonitor.totalMemoryGB,
-            selectedId: state.selectedModel?.id
-        )
-    }
-
-    /// Onboarding is intentionally opinionated — it surfaces only our curated
-    /// top picks (downloaded ones still appear, tagged "Downloaded"), so the
-    /// first-run list never balloons with ad-hoc / auto-fetched models on disk.
-    /// The full catalog lives in the Models tab. Each row is paired with its
-    /// compatibility verdict (`.unknown` fails open so the list isn't blank
-    /// before the system monitor reports), and the hardware-aware
-    /// recommendation is pinned first so the safe default is the first thing
-    /// a first-timer sees; everything else keeps catalog order, except LFM
-    /// rows, which always sink to the bottom (the recommendation pin wins
-    /// when LFM itself is the hardware pick — the "Picked for your Mac"
-    /// badge must stay on the first row).
-    private var pickerModels: [(model: MLXModel, compatibility: ModelCompatibility)] {
-        let totalMemoryGB = systemMonitor.totalMemoryGB
-        var items = dedupedTopPicks.map {
-            (model: $0, compatibility: $0.compatibility(totalMemoryGB: totalMemoryGB))
-        }
-        if let recommendedId = recommendedRowId {
-            let recommended = items.filter { $0.model.id == recommendedId }
-            let rest = items.filter { $0.model.id != recommendedId }
-            items = recommended + rest
-        }
-        let lfm = items.filter { $0.model.id != recommendedRowId && isLFM($0.model) }
-        return items.filter { $0.model.id == recommendedRowId || !isLFM($0.model) } + lfm
-    }
-
-    private func isLFM(_ model: MLXModel) -> Bool {
-        model.id.lowercased().contains("lfm")
-    }
-
-    /// The row carrying the "Picked for your Mac" pill — the exact build
-    /// `recommendedLocalPick` chose, and only when dedupe kept it visible
-    /// (it always does unless a family sibling is selected or already on
-    /// disk). No family-level fallback: badging a sibling the policy didn't
-    /// pick would contradict the home card's "picked for your specs" line,
-    /// which requires an exact id match.
-    private var recommendedRowId: String? {
-        guard
-            let recommended = ConfigureAIState.recommendedLocalPick(
-                from: modelManager.suggestedModels.filter(\.isTopSuggestion),
-                totalMemoryGB: systemMonitor.totalMemoryGB
-            )
-        else { return nil }
-        return dedupedTopPicks.contains(where: { $0.id == recommended.id })
-            ? recommended.id : nil
     }
 }
 

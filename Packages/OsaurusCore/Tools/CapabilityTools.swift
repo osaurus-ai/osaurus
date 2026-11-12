@@ -1283,10 +1283,19 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // under `isBuiltIn` was dead code, and depending on whether a folder
         // was ever mounted this process they'd otherwise hit "not registered",
         // "not enabled for this agent", or a false "loaded — callable NOW".
-        // Keyed on the NAME so the answer is state-independent. The refusal
-        // stands (the execution boundary does not move on a model's say-so);
-        // it just names the one real next step, which is user-facing.
+        // Keyed on the NAME and this request's exposure, never on registration
+        // state. The refusal stands (the execution boundary does not move on a
+        // model's say-so); it just names the one real next step, which is
+        // user-facing.
         if isWorkspaceTool {
+            // The session store can still list workspace tools from a turn
+            // whose folder was since cleared, so it is not consulted here.
+            let exposedToThisRequest =
+                ChatExecutionContext.toolExecutionScope?.permits(toolId)
+                ?? (ChatExecutionContext.currentFolderRoot != nil)
+            if exposedToThisRequest {
+                return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
+            }
             let agentId = ChatExecutionContext.currentAgentId
             if let refusal = await MainActor.run(body: {
                 ToolRegistry.sandboxNotReadyRefusal(tool: toolId, agentId: agentId)

@@ -71,6 +71,18 @@ struct SyncAppDataFixtureTests {
         )
     }
 
+    /// One core imports the whole fixture and signs every value. In a real
+    /// feed each device signs its own namespace, which reads like unsigned.
+    private func asEachDeviceWroteIt(_ conversation: Conversation) -> Conversation {
+        var copy = conversation
+        copy.appData = copy.appData.map {
+            var entry = $0
+            entry.authorDevice = nil
+            return entry
+        }
+        return copy
+    }
+
     @Test
     func fullFixtureReadsIntoASession() async throws {
         try await ChatHistoryTestStorage.run {
@@ -164,8 +176,9 @@ struct SyncAppDataFixtureTests {
             #expect(pending.tool == "file_write")
             #expect(pending.arguments == #"{"path":"RELEASE_NOTES.md"}"#)
             #expect(pending.expiresMs == 1_767_485_460_000)
-            let answers = Contract.answers(in: conversation)
+            let answers = Contract.answers(in: asEachDeviceWroteIt(conversation))
             #expect(answers.keys.sorted() == [answerer])
+            #expect(Contract.answers(in: conversation).isEmpty, "an answer signed by another device is dropped")
             #expect(answers[answerer]?.answers[pending.id] == Contract.AnswerEntry(answer: .approved, answeredMs: 1_767_484_870_000))
             let decisions = Contract.firstAnswers(answers, deviceNames: [answerer: "MacBook Air"])
             #expect(decisions.map(\.id) == [pending.id])
@@ -362,14 +375,14 @@ struct SyncAppDataFixtureTests {
             let conversation = try #require(try core.conversation(scope: scope))
 
             let answers = SyncAttentionFeed.answers(
-                in: conversation, deviceNames: [phone: "Sam's iPhone", secondPhone: "Work iPhone"],
+                in: asEachDeviceWroteIt(conversation), deviceNames: [phone: "Sam's iPhone", secondPhone: "Work iPhone"],
                 legacyLabel: "Your iPhone")
             #expect(answers.map(\.deviceLabel) == ["Work iPhone", "Your iPhone", "Sam's iPhone"])
             #expect(answers.map(\.answer.action) == ["approve_rest", "deny", "approve"])
             #expect(answers[2].answer.redact == ["B1000000-0000-4000-8000-000000000001"])
             #expect(SyncDeviceFeedContract.outcome(for: "approve_rest") == .allowedForConversation)
             let known = SyncAttentionFeed.answers(
-                in: conversation, deviceNames: [phone: "Sam's iPhone"], legacyLabel: "Your iPhone")
+                in: asEachDeviceWroteIt(conversation), deviceNames: [phone: "Sam's iPhone"], legacyLabel: "Your iPhone")
             #expect(known.count == 2, "a device not in the account is skipped")
 
             let feed = try object(conversation.appData(SyncDeviceFeedContract.attentionNamespace))
@@ -415,8 +428,9 @@ struct SyncAppDataFixtureTests {
             typealias Feed = SyncDeviceFeedContract
 
             let requests = try #require(
-                Feed.perDevice(Feed.ManageRequests.self, prefix: Feed.manageRequestNamespacePrefix, in: conversation)[
-                    phone]
+                Feed.perDevice(
+                    Feed.ManageRequests.self, prefix: Feed.manageRequestNamespacePrefix, in: asEachDeviceWroteIt(conversation),
+                    writtenByThatDevice: true)[phone]
             ).requests
             #expect(
                 requests.map(\.op) == [
@@ -429,7 +443,9 @@ struct SyncAppDataFixtureTests {
 
             let unsupported = await SyncManageFeed.perform(requests[7])
             let results = try #require(
-                Feed.perDevice(Feed.ManageResults.self, prefix: Feed.manageResultNamespacePrefix, in: conversation)[phone]
+                Feed.perDevice(
+                    Feed.ManageResults.self, prefix: Feed.manageResultNamespacePrefix, in: conversation,
+                    writtenByThatDevice: false)[phone]
             ).results
             #expect(results["r17"]?.error == unsupported.error && results["r17"]?.message == unsupported.message)
             #expect(results["r10"]?.data == .object(["favorites": .array([.string("local:OsaurusAI/gemma-4-qat-mxfp4")])]))

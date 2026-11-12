@@ -65,7 +65,7 @@ struct OnboardingPillButton: View {
         case primary
         /// Faint white fill, light label — secondary actions ("Cancel").
         case secondary
-        /// No fill — text-only actions ("Change model").
+        /// No fill — text-only actions.
         case text
     }
 
@@ -313,7 +313,7 @@ struct OnboardingSelectableCard: View {
 
 // MARK: - Chips & badge
 
-/// Cyan-on-blue-tint "Picked for your Mac" badge, or dino green on its own
+/// Cyan-on-blue-tint "Recommended" badge, or dino green on its own
 /// wash for the recommended path (`isBrand`).
 struct OnboardingPickedBadge: View {
     @Environment(\.theme) private var inheritedTheme

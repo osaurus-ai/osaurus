@@ -41,13 +41,18 @@ struct SyncNetworkDirectoryTests {
     }
 
     @Test
-    func bundledDefaultIsNumber0AndValid() {
+    func bundledDefaultIsTheOsaurusServersAndValid() {
         let bundled = SyncNetworkDirectory.bundledDefault
-        let n0 = n0PublicNetworkConfig()
         #expect(bundled.isValid)
-        #expect(bundled.relays == n0.relays)
-        #expect(bundled.discoveryServer == n0.discoveryServer)
-        #expect(bundled.discoveryOrigin == n0.discoveryOrigin)
+        #expect(bundled.relays.count == 3)
+        #expect(bundled.relays.allSatisfy { URL(string: $0)?.host?.hasSuffix(".sync.osaurus.ai") == true })
+        #expect(bundled.discoveryServer == "https://dns.sync.osaurus.ai/pkarr")
+        #expect(bundled.discoveryOrigin == "dns.sync.osaurus.ai")
+        #expect(bundled.relays != n0PublicNetworkConfig().relays)
+
+        var net = defaultNetworkConfig()
+        bundled.apply(to: &net)
+        #expect(net.publish == .relayOnly, "a user device's record mustn't reveal its addresses")
     }
 
     @Test
@@ -102,6 +107,43 @@ struct SyncNetworkDirectoryTests {
             #expect(!(await SyncNetworkDirectoryStore.refresh(fetch: { _ in throw URLError(.notConnectedToInternet) })))
             #expect(SyncNetworkDirectoryStore.current() == Self.published)
         }
+    }
+
+    @Test
+    func aFailedFetchIsRetriedLaterAndASuccessEndsTheLaunchsFetches() async throws {
+        try await withRoot {
+            SyncNetworkDirectoryStore._resetForTesting()
+            defer { SyncNetworkDirectoryStore._resetForTesting() }
+            let start = Date()
+            let offline: SyncNetworkDirectoryStore.Fetch = { _ in throw URLError(.notConnectedToInternet) }
+            await SyncNetworkDirectoryStore.scheduleRefresh(now: start, fetch: offline)?.value
+            #expect(
+                SyncNetworkDirectoryStore.scheduleRefresh(now: start.addingTimeInterval(60), fetch: offline) == nil,
+                "too soon after a failure")
+
+            let later = start.addingTimeInterval(SyncNetworkDirectoryStore.retryInterval)
+            await SyncNetworkDirectoryStore.scheduleRefresh(now: later, fetch: Self.fetching(Self.published))?.value
+            #expect(SyncNetworkDirectoryStore.current() == Self.published)
+            #expect(
+                SyncNetworkDirectoryStore.scheduleRefresh(
+                    now: later.addingTimeInterval(SyncNetworkDirectoryStore.retryInterval),
+                    fetch: Self.fetching(Self.published)) == nil,
+                "one successful fetch per launch")
+        }
+    }
+
+    @Test
+    func theOverrideURLMustBeHTTPS() {
+        let published = URL(string: "https://osaurus.ai/sync/network.json")!
+        #expect(SyncNetworkDirectoryStore.remoteURL(override: nil) == published)
+        #expect(
+            SyncNetworkDirectoryStore.remoteURL(override: "https://staging.osaurus.ai/n.json")
+                == URL(string: "https://staging.osaurus.ai/n.json"))
+        #expect(SyncNetworkDirectoryStore.remoteURL(override: "http://evil.example.com/n.json") == published)
+        #expect(SyncNetworkDirectoryStore.remoteURL(override: "file:///tmp/n.json") == published)
+        #expect(
+            SyncNetworkDirectoryStore.remoteURL(override: "http://localhost:8080/n.json")
+                == URL(string: "http://localhost:8080/n.json"))
     }
 
     @Test
