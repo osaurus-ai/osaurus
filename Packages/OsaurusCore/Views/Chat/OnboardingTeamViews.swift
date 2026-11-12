@@ -133,7 +133,8 @@ struct OnboardingTeammateAvatar: View {
             diameter: size,
             customImageURL: imageURL,
             monogramFontSize: size * 0.45,
-            borderWidth: 0
+            borderWidth: 0,
+            followsLibrarySize: false
         )
         .overlay(alignment: .bottomTrailing) {
             if let roleSymbol {
