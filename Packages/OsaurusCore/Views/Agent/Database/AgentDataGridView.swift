@@ -115,18 +115,15 @@ struct AgentDataGridRepresentable: NSViewRepresentable {
     }
 
     private func apply(to coordinator: Coordinator) {
-        #if OSAURUS_DESIGN_SYSTEM
         coordinator.isInteractionEnabled = inspectionEnabled
         coordinator.tableView?.isEnabled = inspectionEnabled
-        #endif
         let palette = DataGridThemeColors(theme: theme)
         let changed = coordinator.theme?.renderFingerprint != palette.renderFingerprint
         coordinator.theme = palette
-        #if OSAURUS_DESIGN_SYSTEM
         if let table = coordinator.tableView, changed {
             let scoped = palette.resolvedTheme
             table.rowHeight = max(scoped.assignedMetric("component.library.53.height", fallback: 28), max(scoped.assignedLineHeight("component.library.53.text", fallback: 16), scoped.assignedLineHeight("component.library.53.caption", fallback: 14)) + 2 * palette.padding)
-            table.intercellSpacing = NSSize(width: scoped.assignedMetric("component.library.53.gap", fallback: 0), height: 0)
+            table.intercellSpacing = NSSize(width: scoped.assignedMetric("component.library.53.gap", fallback: scoped.space.s0), height: 0)
             table.backgroundColor = NSColor(scoped.surface.raised)
             if let scroll = table.enclosingScrollView {
                 scroll.wantsLayer = true
@@ -143,7 +140,6 @@ struct AgentDataGridRepresentable: NSViewRepresentable {
             // Style-only updates must repaint existing rows even when data is unchanged.
             table.reloadData()
         }
-        #endif
         coordinator.onRowOpen = onRowOpen
         coordinator.onNeedsMoreRows = onNeedsMoreRows
         coordinator.showsSelectionColumn = showsSelectionColumn
@@ -160,24 +156,16 @@ struct AgentDataGridRepresentable: NSViewRepresentable {
     private var effectiveColumns: [GridColumnSpec] {
         var specs: [GridColumnSpec] = []
         if showsSelectionColumn {
-            #if OSAURUS_DESIGN_SYSTEM
             let width = max(30, theme.assignedMetric("component.library.4.indicatorSize", fallback: 24) + 8)
             specs.append(GridColumnSpec(id: Coordinator.selectionColumnId, title: "", width: width, resizable: false))
-            #else
-            specs.append(GridColumnSpec(id: Coordinator.selectionColumnId, title: "", width: 30, resizable: false))
-            #endif
         }
         if showsStatusColumn {
-            #if OSAURUS_DESIGN_SYSTEM
             let scoped = theme
             let font = scoped.assignedNativeFont("component.library.53.caption", fallback: scoped.nsFont(.caption))
             let textWidth = (L("Deleted") as NSString).size(withAttributes: [.font: font]).width
-            let width = max(70, ceil(textWidth) + 2 * scoped.assignedMetric("component.library.53.padding", fallback: 8)
-                + scoped.assignedMetric("component.library.53.gap", fallback: 0))
+            let width = max(70, ceil(textWidth) + 2 * scoped.assignedMetric("component.library.53.padding", fallback: scoped.space.s8)
+                + scoped.assignedMetric("component.library.53.gap", fallback: scoped.space.s0))
             specs.append(GridColumnSpec(id: Coordinator.statusColumnId, title: "", width: width, resizable: false))
-            #else
-            specs.append(GridColumnSpec(id: Coordinator.statusColumnId, title: "", width: 70, resizable: false))
-            #endif
         }
         for (index, column) in columns.enumerated() {
             specs.append(
@@ -225,21 +213,15 @@ struct DataGridThemeColors: Equatable {
 
     init(theme: ThemeProtocol) {
         resolvedTheme = theme
-        padding = theme.assignedMetric("component.library.53.padding", fallback: 8)
-        #if OSAURUS_DESIGN_SYSTEM
+        padding = theme.assignedMetric("component.library.53.padding", fallback: theme.space.s8)
         codeFont = theme.assignedNativeFont("component.library.53.text", fallback: theme.nsFont(.footnote, family: .code))
         headerFont = theme.assignedNativeFont("component.library.53.label", fallback: theme.nsFont(.micro, weight: .semibold, family: .code))
         captionFont = theme.assignedNativeFont("component.library.53.caption", fallback: theme.nsFont(.micro, weight: .semibold))
-        #else
-        codeFont = theme.nsFont(.footnote, family: .code)
-        headerFont = theme.nsFont(.micro, weight: .semibold, family: .code)
-        captionFont = theme.nsFont(.micro, weight: .semibold)
-        #endif
         renderFingerprint = theme.renderFingerprint
         textPrimary = NSColor(theme.text.primary)
         textTertiary = NSColor(theme.text.tertiary)
         accent = NSColor(theme.text.link)
-        zebra = NSColor(theme.surface.raised).withAlphaComponent(0.5)
+        zebra = NSColor(theme.surface.subtle)
         headerBackground = NSColor(theme.surface.hover)
         warning = NSColor(theme.status.warning.foreground)
     }
@@ -299,14 +281,12 @@ extension AgentDataGridRepresentable {
             let currentTitles = tableView.tableColumns.map(\.title)
             let targetTitles = columns.map(\.title)
             guard currentIds != targetIds || currentTitles != targetTitles else {
-                #if OSAURUS_DESIGN_SYSTEM
                 for (column, spec) in zip(tableView.tableColumns, columns) where !spec.resizable {
                     column.minWidth = 0
                     column.maxWidth = spec.width
                     column.width = spec.width
                     column.minWidth = spec.width
                 }
-                #endif
                 columnSpecs = columns
                 return
             }
@@ -323,9 +303,7 @@ extension AgentDataGridRepresentable {
                 // Match the monospaced cell text so column names read as
                 // part of the data, and keep truncated titles hoverable.
                 column.headerCell.font = theme?.headerFont
-                #if OSAURUS_DESIGN_SYSTEM
                 styleHeader(column)
-                #endif
                 if !spec.title.isEmpty {
                     column.headerToolTip = spec.title
                 }
@@ -335,7 +313,6 @@ extension AgentDataGridRepresentable {
             tableView.reloadData()
         }
 
-        #if OSAURUS_DESIGN_SYSTEM
         func styleHeader(_ column: NSTableColumn) {
             guard let palette = theme else { return }
             let cell = (column.headerCell as? DataGridInspectionHeaderCell) ?? DataGridInspectionHeaderCell(textCell: column.title)
@@ -347,7 +324,6 @@ extension AgentDataGridRepresentable {
             cell.attributedStringValue = NSAttributedString(string: column.title, attributes: [.font: palette.headerFont, .foregroundColor: palette.textPrimary, .kern: palette.resolvedTheme.assignedTracking("component.library.53.label") ?? 0, .paragraphStyle: paragraph])
             column.headerCell = cell
         }
-        #endif
 
         // MARK: Row application (append-aware)
 
@@ -387,9 +363,7 @@ extension AgentDataGridRepresentable {
                 if let cell = tableView.view(atColumn: columnIndex, row: row, makeIfNecessary: false) as? DataGridCheckboxCell
                 {
                     cell.setSelection(selectedKeys.contains(rows[row].key))
-                    #if OSAURUS_DESIGN_SYSTEM
                     (tableView.rowView(atRow: row, makeIfNecessary: false) as? DataGridRowView)?.inspectionSelected = selectedKeys.contains(rows[row].key)
-                    #endif
                 }
             }
         }
@@ -413,10 +387,8 @@ extension AgentDataGridRepresentable {
                 }()
             let isDeleted = row < rows.count && rows[row].isDeleted
             rowView.zebraColor = (row % 2 == 1) ? theme?.zebra : nil
-            #if OSAURUS_DESIGN_SYSTEM
             rowView.palette = theme
             rowView.inspectionSelected = row < rows.count && selectedKeys.contains(rows[row].key)
-            #endif
             rowView.alphaValue = isDeleted ? 0.55 : 1
             return rowView
         }
@@ -433,9 +405,7 @@ extension AgentDataGridRepresentable {
             case Self.selectionColumnId:
                 let cell = reusableCell(tableView, id: "sel-cell") { DataGridCheckboxCell() }
                 guard let checkboxCell = cell as? DataGridCheckboxCell else { return cell }
-                #if OSAURUS_DESIGN_SYSTEM
                 checkboxCell.applyInspection(theme)
-                #endif
                 checkboxCell.configure(
                     isOn: selectedKeys.contains(rowData.key),
                     enabled: isInteractionEnabled && rowData.selectable,
@@ -458,9 +428,7 @@ extension AgentDataGridRepresentable {
                     color: theme?.warning ?? .systemOrange,
                     font: theme?.captionFont ?? CustomizableTheme.light().nsFont(.micro, weight: .semibold)
                 )
-                #if OSAURUS_DESIGN_SYSTEM
                 textCell.applyInspection(theme, property: "caption")
-                #endif
                 return textCell
             case Self.openColumnId:
                 let cell = reusableCell(tableView, id: "open-cell") { DataGridOpenButtonCell() }
@@ -480,9 +448,7 @@ extension AgentDataGridRepresentable {
                     color: theme?.textPrimary ?? .labelColor,
                     font: theme?.codeFont ?? CustomizableTheme.light().nsFont(.footnote, family: .code)
                 )
-                #if OSAURUS_DESIGN_SYSTEM
                 textCell.applyInspection(theme, property: "text")
-                #endif
                 return textCell
             }
         }
@@ -567,7 +533,6 @@ extension AgentDataGridRepresentable {
 // MARK: - Row view (zebra striping)
 
 private final class DataGridRowView: NSTableRowView {
-    #if OSAURUS_DESIGN_SYSTEM
     var palette: DataGridThemeColors? { didSet { needsDisplay = true } }
     var inspectionSelected = false { didSet { needsDisplay = true } }
     private var inspectionHovered = false { didSet { needsDisplay = true } }
@@ -580,20 +545,17 @@ private final class DataGridRowView: NSTableRowView {
     }
     override func mouseEntered(with event: NSEvent) { inspectionHovered = true }
     override func mouseExited(with event: NSEvent) { inspectionHovered = false }
-    #endif
     var zebraColor: NSColor? {
         didSet { needsDisplay = true }
     }
 
     override func drawBackground(in dirtyRect: NSRect) {
-        #if OSAURUS_DESIGN_SYSTEM
         if let palette {
             let t = palette.resolvedTheme
             NSColor(inspectionSelected ? t.surface.selected : inspectionHovered ? t.surface.hover : t.surface.raised).setFill()
             dirtyRect.fill()
             return
         }
-        #endif
         if let zebraColor {
             zebraColor.setFill()
             dirtyRect.fill()
@@ -606,14 +568,12 @@ private final class DataGridRowView: NSTableRowView {
 
 private final class DataGridTextCell: NSView {
     private var horizontalInset: CGFloat = 8
-    #if OSAURUS_DESIGN_SYSTEM
     func applyInspection(_ palette: DataGridThemeColors?, property: String) {
         guard let palette else { return }
         horizontalInset = palette.padding
         NativeComponentInspectionStyle.label(label, family: 53, property: property, theme: palette.resolvedTheme)
         needsLayout = true
     }
-    #endif
     private let label: NSTextField = {
         let tf = NSTextField(labelWithString: "")
         tf.isEditable = false
@@ -656,7 +616,6 @@ private final class DataGridTextCell: NSView {
 }
 
 private final class DataGridCheckboxCell: NSView {
-    #if OSAURUS_DESIGN_SYSTEM
     private let hosting = NSHostingView(rootView: AnyView(EmptyView()))
     private var palette: DataGridThemeColors?
     private var isOn = false
@@ -682,22 +641,11 @@ private final class DataGridCheckboxCell: NSView {
             .frame(width: size, height: size)
             .frame(maxWidth: .infinity, maxHeight: .infinity))
     }
-    #else
-    private let checkbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-    #endif
     private var onToggle: ((Bool) -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        #if OSAURUS_DESIGN_SYSTEM
         addSubview(hosting)
-        #else
-        checkbox.target = self
-        checkbox.action = #selector(didToggle)
-        checkbox.controlSize = .small
-        checkbox.setAccessibilityLabel(L("Select row"))
-        addSubview(checkbox)
-        #endif
     }
 
     @available(*, unavailable)
@@ -705,42 +653,17 @@ private final class DataGridCheckboxCell: NSView {
 
     func configure(isOn: Bool, enabled: Bool, visible: Bool = true, onToggle: @escaping (Bool) -> Void) {
         self.onToggle = onToggle
-        #if OSAURUS_DESIGN_SYSTEM
         self.isOn = isOn; self.enabled = enabled; self.visible = visible
         updateControl()
-        #else
-        checkbox.state = isOn ? .on : .off
-        checkbox.isEnabled = enabled
-        checkbox.isHidden = !visible
-        #endif
     }
 
     func setSelection(_ selected: Bool) {
-        #if OSAURUS_DESIGN_SYSTEM
         isOn = selected; updateControl()
-        #else
-        checkbox.state = selected ? .on : .off
-        #endif
     }
-    #if !OSAURUS_DESIGN_SYSTEM
-    @objc private func didToggle() {
-        onToggle?(checkbox.state == .on)
-    }
-    #endif
 
     override func layout() {
         super.layout()
-        #if OSAURUS_DESIGN_SYSTEM
         hosting.frame = bounds
-        #else
-        let size = checkbox.intrinsicContentSize
-        checkbox.frame = NSRect(
-            x: (bounds.width - size.width) / 2,
-            y: (bounds.height - size.height) / 2,
-            width: size.width,
-            height: size.height
-        )
-        #endif
     }
 }
 
@@ -791,7 +714,6 @@ private final class DataGridOpenButtonCell: NSView {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 /// Keep native column sizing/accessibility while drawing the assigned opaque header.
 private final class DataGridInspectionHeaderCell: NSTableHeaderCell {
     var palette: DataGridThemeColors?
@@ -819,4 +741,3 @@ private final class DataGridInspectionHeaderCell: NSTableHeaderCell {
         }
     }
 }
-#endif

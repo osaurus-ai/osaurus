@@ -26,7 +26,7 @@ enum ToolPolicyStyle {
     static func color(for policy: ToolPermissionPolicy, theme: ThemeProtocol) -> Color {
         switch policy {
         case .auto: theme.status.success.foreground
-        case .ask: .orange
+        case .ask: theme.status.warning.foreground
         case .deny: theme.status.error.foreground
         }
     }
@@ -57,32 +57,16 @@ enum ToolPolicyStyle {
 /// label's own layout. A custom `ButtonStyle` passes `configuration.label`
 /// through verbatim, so the label's spacing/padding survive — unlike
 /// `.bordered`, which re-lays out the label and ignores its `HStack` spacing.
-private struct PillButtonStyle: ButtonStyle {
-    let chrome: SettingsChrome
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .settingsChrome(chrome)
-            .contentShape(Rectangle())
-            .opacity(configuration.isPressed ? 0.65 : 1)
-    }
-}
-
-/// A compact dropdown whose visible chrome is a fully custom `label`. It is
-/// a real `Menu` (so clicking works) rendered as a button with `PillButtonStyle`
-/// and the system menu indicator hidden — the label owns all spacing, padding,
-/// background, and colors.
+/// A compact dropdown on the kit's compact button chrome, with the system
+/// menu indicator hidden so the label can draw its own chevron.
 struct MenuPill<MenuContent: View, Label: View>: View {
-    let chrome: SettingsChrome
     private let menuContent: () -> MenuContent
     private let label: () -> Label
 
     init(
-        chrome: SettingsChrome,
         @ViewBuilder menuContent: @escaping () -> MenuContent,
         @ViewBuilder label: @escaping () -> Label
     ) {
-        self.chrome = chrome
         self.menuContent = menuContent
         self.label = label
     }
@@ -94,7 +78,7 @@ struct MenuPill<MenuContent: View, Label: View>: View {
             label()
         }
         .menuStyle(.button)
-        .buttonStyle(PillButtonStyle(chrome: chrome))
+        .assignedSettingsButtonStyle(.secondary, size: .compact)
         .menuIndicator(.hidden)
     }
 }
@@ -120,7 +104,7 @@ struct ToolPolicyMenu: View {
     }
 
     var body: some View {
-        MenuPill(chrome: .tinted(color)) {
+        MenuPill {
             ForEach(offeredPolicies, id: \.self) { policy in
                 Button {
                     ToolRegistry.shared.setPolicy(policy, for: toolName)
@@ -136,19 +120,17 @@ struct ToolPolicyMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: ToolPolicyStyle.icon(for: info.effectivePolicy))
-                    .glyphSize(9, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
                 Text(ToolPolicyStyle.compactTitle(for: info.effectivePolicy))
                     .font(SettingsFont.chip)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .glyphSize(7, weight: .bold)
-                    .opacity(0.7)
+                    .glyphSize(.tiny, weight: .bold)
+                    .opacity(theme.isDark ? 0.7 : 1)
             }
             .foregroundStyle(color)
-            .padding(.horizontal, theme.space.s8)
-            .padding(.vertical, theme.space.s6)
         }
         .fixedSize()
         .help(Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module))
@@ -223,9 +205,9 @@ struct ToolSectionDisclosureHeader: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.text.link)
                     .frame(width: 16)
 
@@ -238,7 +220,7 @@ struct ToolSectionDisclosureHeader: View {
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(theme.text.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
@@ -265,9 +247,9 @@ struct ShowAllToolsButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                 if isExpanded {
                     Text("Show fewer", bundle: .module)
                         .font(SettingsFont.compactLabel)
@@ -307,7 +289,7 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
     @Binding var selection: Option
 
     var body: some View {
-        MenuPill(chrome: .control) {
+        MenuPill {
             ForEach(options, id: \.self) { option in
                 Button {
                     selection = option
@@ -321,19 +303,17 @@ struct ToolFilterMenu<Option: ToolCatalogFilterOption>: View {
                 }
             }
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: icon)
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                 Text(selection.title)
                     .font(SettingsFont.smallLabel)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .glyphSize(7, weight: .bold)
+                    .glyphSize(.tiny, weight: .bold)
                     .foregroundColor(theme.text.tertiary)
             }
             .foregroundColor(theme.text.primary)
-            .padding(.horizontal, theme.space.s12)
-            .padding(.vertical, theme.space.s8)
         }
         .fixedSize()
         .accessibilityLabel(Text("\(accessibilityTitle): \(selection.title)"))
@@ -360,15 +340,15 @@ struct RuntimeManagedToolEntryRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s10) {
                 ToolRowIcon(systemName: "terminal", showsWarning: hasMissingSystemPermissions)
                 toolInfo
                     .frame(maxWidth: .infinity, alignment: .leading)
                 policyMenu
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 ToolSourceBadge(title: badge)
                 Spacer(minLength: 8)
             }
@@ -379,8 +359,8 @@ struct RuntimeManagedToolEntryRow: View {
     }
 
     private var toolInfo: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(spacing: theme.space.s4) {
                 Text(entry.name)
                     .font(SettingsFont.rowTitle)
                     .foregroundColor(theme.text.primary)
@@ -418,15 +398,15 @@ struct ToolEntryRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s10) {
                 ToolRowIcon(systemName: "function", showsWarning: hasMissingSystemPermissions)
                 toolInfo
                     .frame(maxWidth: .infinity, alignment: .leading)
                 policyMenu
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 if let sourceLabel {
                     ToolSourceBadge(title: sourceLabel)
                 }
@@ -440,8 +420,8 @@ struct ToolEntryRow: View {
     }
 
     private var toolInfo: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(spacing: theme.space.s4) {
                 Text(entry.name)
                     .font(SettingsFont.rowTitle)
                     .foregroundColor(theme.text.primary)
@@ -490,15 +470,15 @@ struct RemoteToolRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s10) {
                 ToolRowIcon(systemName: "function", showsWarning: false)
                 toolInfo
                     .frame(maxWidth: .infinity, alignment: .leading)
                 policyMenu
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 ToolSourceBadge(title: providerName)
                 Spacer(minLength: 8)
                 ToolEnableToggle(entry: entry, onChange: onChange)
@@ -510,8 +490,8 @@ struct RemoteToolRow: View {
     }
 
     private var toolInfo: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(spacing: theme.space.s4) {
                 Text(displayName)
                     .font(SettingsFont.rowTitle)
                     .foregroundColor(theme.text.primary)
@@ -558,12 +538,12 @@ private struct ToolRowIcon: View {
                         ? theme.status.warning.background : theme.status.info.background
                 )
             Image(systemName: systemName)
-                .glyphSize(11, weight: .medium)
+                .glyphSize(.footnote, weight: .medium)
                 .foregroundColor(showsWarning ? theme.status.warning.foreground : theme.text.link)
 
             if showsWarning {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .glyphSize(8)
+                    .glyphSize(.tiny)
                     .foregroundColor(theme.status.warning.foreground)
                     .offset(x: 10, y: -10)
             }

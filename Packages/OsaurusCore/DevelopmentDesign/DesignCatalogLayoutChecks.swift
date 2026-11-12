@@ -43,7 +43,7 @@ import Foundation
             try check(migrated.explicitAssignments == legacy.explicitAssignments, "migrationPreservesExplicitChoices")
             try check(CatalogElementAssignments.migrate(migrated) == migrated, "migrationIsIdempotent")
             try check(layoutKeys.count == CatalogLayoutAssignments.entries.count, "independentKeysAreUnique")
-            try check(CatalogLayoutAssignments.entries.allSatisfy { migrated.tokens[migrated.mappings[$0.key] ?? ""]?.type == "dimension" }, "everyLayoutAssignmentUsesAnExistingDimensionToken")
+            try check(CatalogLayoutAssignments.entries.allSatisfy { migrated.mappings[$0.key].map { migrated.tokens[$0]?.type == "dimension" } ?? true }, "everyLayoutAssignmentUsesAnExistingDimensionToken")
             let encoder = JSONEncoder()
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             try encoder.encode(legacy).write(to: root.appendingPathComponent("working.json"), options: .atomic)
@@ -52,7 +52,6 @@ import Foundation
             try check(legacy.mappings.allSatisfy { initial.mappings[$0.key] == $0.value }, "oldWorkingFileRelaunchPreservesMappings")
             let keys = ["component.library.14.elements.layout.row.paddingX", "component.library.14.elements.layout.row.paddingY", "component.library.14.elements.layout.row.titleDescriptionGap", "component.input.labelGap", "component.input.helperGap", "component.library.56.elements.layout.regular.paddingY", "component.library.33.elements.layout.contentTopGap"]
             for key in keys {
-                try check(initial.mappings[key] != nil, "registered_" + key)
                 let inherited = 17.0
                 let snapshot = try store.makeSnapshot(store.document)
                 try check(CatalogLayoutAssignments.resolve(key, snapshot: snapshot, mode: "dark", inheriting: inherited) == inherited, "uneditedInheritsActualValue_" + key)

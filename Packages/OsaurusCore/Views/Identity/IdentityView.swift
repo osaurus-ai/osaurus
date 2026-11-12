@@ -455,7 +455,7 @@ private struct IdentityDriftBanner: View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: "exclamationmark.octagon.fill")
-                    .glyphSize(14, weight: .semibold)
+                    .glyphSize(.body, weight: .semibold)
                     .foregroundColor(theme.status.error.foreground)
                 VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Identity drift detected", bundle: .module)
@@ -575,7 +575,7 @@ private struct IdentitySetupCard: View {
             Spacer().frame(height: 40)
 
             Image(systemName: "person.badge.key.fill")
-                .glyphSize(48)
+                .glyphSize(.jumbo)
                 .foregroundStyle(theme.text.link)
 
             VStack(spacing: theme.space.s8) {
@@ -869,7 +869,7 @@ private struct AgentAddressesSection: View {
     private func unassignedRow(for agent: Agent) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: "person.fill")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundColor(theme.text.link)
                 .frame(width: 16)
 

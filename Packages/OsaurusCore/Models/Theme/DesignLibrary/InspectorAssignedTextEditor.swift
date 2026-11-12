@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import AppKit
 import SwiftUI
 
@@ -126,4 +125,3 @@ final class InspectorEditorScrollView: NSScrollView {
         didLayout?()
     }
 }
-#endif

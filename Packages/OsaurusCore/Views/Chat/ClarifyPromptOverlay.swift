@@ -53,7 +53,6 @@ struct ClarifyPromptOverlay: View {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension ClarifyPromptOverlay {
     @MainActor static func inspectionCard(mode: Int, report: @escaping (String) -> Void) -> some View {
         ClarifyPromptCard(
@@ -64,7 +63,6 @@ extension ClarifyPromptOverlay {
         )
     }
 }
-#endif
 
 // MARK: - Mode
 
@@ -103,7 +101,7 @@ private struct ClarifyPromptCard: View {
     @State private var selectedOptions: Set<String> = []
     @State private var isInputFocused: Bool = false
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
 
     private var mode: ClarifyMode {
         ClarifyMode(options: state.options, allowMultiple: state.allowMultiple)
@@ -252,71 +250,22 @@ private struct ClarifyPromptCard: View {
 /// it needs.
 private struct FlowChips: View {
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
     let options: [String]
     let selected: Set<String>
     let allowMultiple: Bool
     let onTap: (String) -> Void
 
     var body: some View {
-        ChipFlowLayout(spacing: PromptInspectionStyle.metric("gap", 8, theme), lineSpacing: PromptInspectionStyle.metric("gap", 8, theme)) {
+        ChipFlowLayout(spacing: PromptInspectionStyle.metric("gap", theme.space.s8, theme), lineSpacing: PromptInspectionStyle.metric("gap", theme.space.s8, theme)) {
             ForEach(options, id: \.self) { option in
-                OptionChip(
-                    label: option,
-                    isSelected: selected.contains(option),
-                    showsCheckmark: allowMultiple,
-                    action: { onTap(option) }
-                )
+                FilterChip(
+                    option,
+                    icon: allowMultiple ? (selected.contains(option) ? "checkmark.circle.fill" : "circle") : nil,
+                    isSelected: selected.contains(option)
+                ) { onTap(option) }
             }
         }
-    }
-}
-
-/// One chip in the flow strip. Extracted so `FlowChips` stays a tiny
-/// loop and the visual recipe lives in one place.
-private struct OptionChip: View {
-    let label: String
-    let isSelected: Bool
-    let showsCheckmark: Bool
-    let action: () -> Void
-    @State private var inspectorHovered = false
-    @Environment(\.isEnabled) private var componentEnabled
-
-    @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, authoritative: true) }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.optionChip.body.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 6, theme))) {
-                if showsCheckmark {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .glyphSize(11, weight: .semibold)
-                        .foregroundColor(isSelected ? theme.text.primary : theme.text.tertiary)
-                }
-                Text(label)
-                    .promptText(.label, fallback: .label, theme: theme)
-                    .foregroundColor(theme.text.primary)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }.catalogLayoutTarget("component.library.36.elements.layout.optionChip.body.horizontalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.optionChip.body.paddingX", inheriting: PromptInspectionStyle.metric("padding", 11, theme))).catalogLayoutTarget("component.library.36.elements.layout.optionChip.body.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.optionChip.body.paddingY", inheriting: PromptInspectionStyle.metric("padding", 7, theme))).catalogLayoutTarget("component.library.36.elements.layout.optionChip.body.paddingY")
-            .frame(minHeight: PromptInspectionStyle.metric("height", 0, theme))
-            .background(
-                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .fill(PromptInspectionStyle.fill(hovered: inspectorHovered, enabled: componentEnabled, selected: isSelected, theme: theme, fallback: isSelected ? theme.surface.selected : theme.surface.raised))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .strokeBorder(
-                        isSelected ? theme.border.strong : theme.border.default,
-                        lineWidth: theme.stroke.default
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { inspectorHovered = $0 }
-        .pointingHandCursor()
     }
 }
 

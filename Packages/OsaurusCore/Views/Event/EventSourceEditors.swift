@@ -573,16 +573,16 @@ struct WebhookSourceEditor: View {
 
     private var sampleBodyField: some View {
         VStack(alignment: .leading, spacing: theme.space.s6) {
-            Text("What does the sender post?", bundle: .module)
-                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
-                .foregroundColor(theme.text.primary)
-            Text(
-                "Optional. Paste an example body. Its fields become values you can pass to a workflow, and Run Now sends it.",
-                bundle: .module
-            )
-            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-            .foregroundColor(theme.text.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
+            SettingsRowText(compact: true) {
+                Text("What does the sender post?", bundle: .module)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+            } description: {
+                Text(
+                    "Optional. Paste an example body. Its fields become values you can pass to a workflow, and Run Now sends it.",
+                    bundle: .module
+                )
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            }
             EventMultilineField(
                 text: $draft.sampleBody, placeholder: #"{"issue": {"title": "Login fails", "number": 42}}"#,
                 minHeight: 70, straightQuotes: true)

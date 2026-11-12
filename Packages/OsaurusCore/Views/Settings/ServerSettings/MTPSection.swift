@@ -107,8 +107,8 @@ struct MTPSection: View {
                 hint:
                     "The drafter must match the target model. A compatible selected or bundled DFlash 2 or DSpark drafter takes priority over native MTP. Incompatible folders are ignored; the resolved model state is shown below."
             ) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    HStack(spacing: theme.space.s8) {
                         Button(drafterInfo == nil ? L("Choose Folder…") : L("Change…")) {
                             chooseDrafterFolder()
                         }
@@ -140,9 +140,9 @@ struct MTPSection: View {
                     }
 
                     if let problem = drafterProblem {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .glyphSize(10)
+                                .glyphSize(.micro)
                             Text(problem).font(SettingsFont.rowDescription)
                         }
                         .foregroundColor(theme.status.error.foreground)
@@ -201,7 +201,7 @@ struct MTPSection: View {
     /// On is a request, not proof of activation. Show the engine's resolved
     /// strategy and reason rather than inferring activation from the picker.
     private var resolvedStateRows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             // Models still warming: by-WEIGHT detection shown NOW, so the
             // section is never blank for the whole multi-minute load. The
             // resolved row replaces this the moment the engine reports it.
@@ -259,11 +259,11 @@ struct MTPSection: View {
     }
 
     private func resolvedRow(label: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
                 Text(label)
                     .font(SettingsFont.smallLabel)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.text.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
@@ -273,7 +273,7 @@ struct MTPSection: View {
             }
             Text(detail)
                 .font(SettingsFont.footnote)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }

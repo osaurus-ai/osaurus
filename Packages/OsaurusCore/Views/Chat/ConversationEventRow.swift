@@ -19,9 +19,9 @@ struct ConversationEventRow: View {
     var body: some View {
         HStack(spacing: theme.space.s8) {
             line
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: icon)
-                    .glyphSize(8, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
                     .accessibilityHidden(true)
                 Text(text)
                     .textStyle(.footnote, weight: 500)
@@ -32,7 +32,7 @@ struct ConversationEventRow: View {
             }
             .foregroundColor(theme.text.tertiary)
             .padding(.horizontal, theme.space.s8)
-            .padding(.vertical, 3)
+            .padding(.vertical, theme.space.s2)
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                     .fill(theme.surface.hover)
@@ -52,14 +52,12 @@ struct ConversationEventRow: View {
             }
             line
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, theme.space.s2)
         .accessibilityElement(children: .contain)
     }
 
     private var line: some View {
-        Rectangle()
-            .fill(theme.border.subtle)
-            .frame(height: 1)
+        ThemeHairlineDivider()
             .frame(minWidth: 12, maxWidth: .infinity)
     }
 }

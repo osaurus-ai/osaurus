@@ -43,7 +43,7 @@ struct AgentTemplateCard: View {
     @State private var showDeleteConfirm = false
     @State private var confirmTakeDown = false
 
-    private var accent: Color { agentColorFor(template.name) }
+    private var accent: Color { theme.dataInk(seed: template.name) }
 
     var body: some View {
         LibraryCard(

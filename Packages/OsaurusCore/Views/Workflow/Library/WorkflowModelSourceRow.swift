@@ -89,8 +89,8 @@ struct WorkflowModelSourceRow: View {
         let state = downloads.downloadStates[repo] ?? .notStarted
         switch state {
         case .downloading(let progress):
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s8) {
                     Text(verbatim: L("Downloading \(name)"))
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(theme.text.primary)
@@ -101,9 +101,7 @@ struct WorkflowModelSourceRow: View {
                     button(L("Pause"), icon: "pause.fill", primary: false) { ModelManager.shared.pauseDownload(repo) }
                     button(L("Cancel"), icon: "xmark", primary: false) { ModelManager.shared.cancelDownload(repo) }
                 }
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .tint(theme.action.primary.default.background)
+                SettingsProgressBar(value: progress, tint: theme.action.primary.default.background)
                 if let line = downloads.downloadMetrics[repo]?.formattedLine {
                     Text(verbatim: line)
                         .font(SettingsFont.monoSmall)
@@ -129,7 +127,7 @@ struct WorkflowModelSourceRow: View {
                     + sizeNote) + fallbackNote
             ) {
                 if isResolving {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 } else {
                     button(L("Download"), icon: "arrow.down", primary: true) { download(repo) }
                 }
@@ -179,7 +177,7 @@ struct WorkflowModelSourceRow: View {
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.status.info.foreground)
             Text(verbatim: text)
                 .font(SettingsFont.rowDescription)

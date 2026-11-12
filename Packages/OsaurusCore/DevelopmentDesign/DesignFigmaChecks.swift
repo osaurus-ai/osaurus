@@ -3,6 +3,9 @@ import AppKit
 import Foundation
 
 @MainActor enum DesignFigmaChecks {
+    static func reassigned(_ snapshot: DesignThemeSnapshot) -> Set<String> {
+        (snapshot.document.editedAssignments ?? []).union(snapshot.document.explicitAssignments ?? [])
+    }
     /// Focused default-selection persistence check in a disposable store.
     static func runAppDefaults(_ live: DesignWorkingStore) {
         var results: [String: Bool] = [:]
@@ -38,10 +41,10 @@ import Foundation
             store.reset()
             let key = "component.library.13.elements.container.radius"
             let role = baseline.mappings[key]!
-            results["uneditedUsesAppDefault"] = !(try store.makeSnapshot(baseline)).reassignedProperties.contains(key)
+            results["uneditedUsesAppDefault"] = !Self.reassigned(try store.makeSnapshot(baseline)).contains(key)
             store.assign(key, to: role)
             let selected = store.document
-            results["sameTokenSelectionIsExplicit"] = (try store.makeSnapshot(selected)).reassignedProperties.contains(key)
+            results["sameTokenSelectionIsExplicit"] = Self.reassigned(try store.makeSnapshot(selected)).contains(key)
             results["valuesAndMappingsPreserved"] = selected.mappings == baseline.mappings && selected.tokens == baseline.tokens && selected.primitives == baseline.primitives
             store.undo(); results["undoRestoresAppDefault"] = store.document == baseline
             store.redo(); results["redoRestoresSelection"] = store.document == selected

@@ -95,7 +95,7 @@ private struct MemoizedMarkdownView: View {
                     .foregroundColor(theme.text.primary)
                     .textSelection(.enabled)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     ForEach(Array(cachedSegments.enumerated()), id: \.element.id) { index, segment in
                         segmentView(for: segment, isFirst: index == 0)
                     }
@@ -120,7 +120,7 @@ private struct MemoizedMarkdownView: View {
                 currentParseTask?.cancel()
                 currentParseTask = nil
                 let blocks = parseBlocks(text)
-                let segments = groupBlocksIntoSegments(blocks)
+                let segments = groupBlocksIntoSegments(blocks, space: theme.space)
                 cachedBlocks = blocks
                 cachedSegments = segments
                 lastParsedText = text
@@ -161,9 +161,10 @@ private struct MemoizedMarkdownView: View {
             // Run parsing on a background thread
             // Note: We always do a full parse to avoid the complexity and bugs of incremental parsing.
             // The debouncing and background execution provide sufficient performance improvement.
+            let space = theme.space
             let (newBlocks, newSegments) = await Task.detached(priority: .userInitiated) {
                 let blocks = parseBlocks(textSnapshot)
-                let segments = groupBlocksIntoSegments(blocks)
+                let segments = groupBlocksIntoSegments(blocks, space: space)
                 return (blocks, segments)
             }.value
 
@@ -189,7 +190,7 @@ private struct MemoizedMarkdownView: View {
 
     @ViewBuilder
     private func segmentView(for segment: ContentSegment, isFirst: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             // Add spacing before non-first segments
             if !isFirst {
                 Spacer()
@@ -297,7 +298,7 @@ private func isProseFenceLanguage(_ lang: String?) -> Bool {
 /// Groups consecutive text blocks into segments for efficient rendering with NSTextView.
 /// Code blocks, images, and math blocks break the text group into separate segments.
 /// Horizontal rules and tables are kept inline for continuous selection.
-func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
+func groupBlocksIntoSegments(_ blocks: [MessageBlock], space: ThemeSpaceScale) -> [ContentSegment] {
     var segments: [ContentSegment] = []
     var currentTextBlocks: [SelectableTextBlock] = []
     var segmentIndex = 0
@@ -347,7 +348,7 @@ func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
                 }
             } else {
                 flushTextGroup()
-                let spacing: CGFloat = segments.isEmpty ? 0 : 14
+                let spacing: CGFloat = segments.isEmpty ? space.s0 : space.s14
                 segments.append(
                     ContentSegment(
                         id: "code-\(segmentIndex)",

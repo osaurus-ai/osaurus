@@ -15,7 +15,7 @@ struct BatchDiagnosticsView: View {
 
     var body: some View {
         if let snapshot {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 stat("Active slots", value: "\(snapshot.activeCount)")
                 stat("Queued", value: "\(snapshot.pendingCount)")
                 stat(
@@ -98,7 +98,7 @@ struct BatchDiagnosticsView: View {
                 )
             }
         } else {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "moon.zzz")
                     .foregroundColor(theme.text.tertiary)
                 Text(

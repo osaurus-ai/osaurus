@@ -86,7 +86,7 @@ struct N8nSettingsView: View {
             sectionStatus: sectionStatus(for:),
             onBack: onBack
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch N8nSetupSection(rawValue: sectionId) {
                 case .basics:
                     basicsSectionContent
@@ -399,7 +399,7 @@ struct N8nSettingsView: View {
     // MARK: - 1. Name it
 
     private var basicsSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             orientationCard
             identitySection
         }
@@ -407,9 +407,9 @@ struct N8nSettingsView: View {
 
     /// The one sentence that answers "where do I enter my n8n URL?".
     private var orientationCard: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: "arrow.left.arrow.right.circle")
-                .glyphSize(13, weight: .semibold)
+                .glyphSize(.label, weight: .semibold)
                 .foregroundColor(theme.text.link)
                 .padding(.top, theme.space.s2)
             Text(
@@ -426,7 +426,7 @@ struct N8nSettingsView: View {
     }
 
     private var identitySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Name it"),
                 detail: L("A name you will recognize in the channel list. The id below follows it and appears in the webhook URL.")
@@ -455,8 +455,8 @@ struct N8nSettingsView: View {
     // MARK: - 2. Where is your n8n?
 
     private var locationSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 AgentChannelSectionHeading(
                     L("Where is your n8n?"),
                     detail: L(
@@ -474,7 +474,7 @@ struct N8nSettingsView: View {
                     )
                 }
 
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(AgentChannelN8nCallerLocation.allCases, id: \.self) { location in
                         locationChoice(location)
                     }
@@ -495,19 +495,16 @@ struct N8nSettingsView: View {
                 draft.callerLocation = location
             }
         } label: {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .glyphSize(14)
+                    .glyphSize(.body)
                     .foregroundColor(selected ? theme.text.link : theme.text.tertiary)
                     .padding(.top, theme.space.s2)
-                VStack(alignment: .leading, spacing: 3) {
+                SettingsRowText {
                     Text(location.title)
-                        .font(SettingsFont.rowTitle)
-                        .foregroundColor(theme.text.primary)
+                } description: {
                     Text(location.summary)
-                        .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
@@ -521,7 +518,7 @@ struct N8nSettingsView: View {
 
     @ViewBuilder
     private func locationConsequences(_ location: AgentChannelN8nCallerLocation) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("What this means"))
 
             switch location {
@@ -588,9 +585,9 @@ struct N8nSettingsView: View {
         case .success: color = theme.status.success.foreground
         case .warning: color = theme.status.warning.foreground
         }
-        return HStack(alignment: .top, spacing: 8) {
+        return HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(color)
                 .frame(width: 14)
                 .padding(.top, theme.space.s2)
@@ -605,11 +602,11 @@ struct N8nSettingsView: View {
         Button {
             jump(to: section)
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Text(title)
                     .font(SettingsFont.smallLabel)
                 Image(systemName: "arrow.right")
-                    .glyphSize(9, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
             }
             .foregroundColor(theme.text.link)
         }
@@ -619,7 +616,7 @@ struct N8nSettingsView: View {
     /// Only meaningful for LAN callers. Remote uses Secure Channel; This Mac
     /// and Docker Desktop are loopback.
     private var transportPolicySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             SettingsToggle(
                 title: "Allow plaintext HTTP from other machines",
                 description: L(
@@ -630,9 +627,9 @@ struct N8nSettingsView: View {
             .settingsLandingAnchor("agentChannels.n8n.plaintextAllowed")
 
             if draft.plaintextAllowed {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.status.warning.foreground)
                         .padding(.top, theme.space.s2)
                     Text(
@@ -653,7 +650,7 @@ struct N8nSettingsView: View {
     // MARK: - 3. Who answers?
 
     private var replySectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             dispatchSection
             if draft.callerLocation == .remote || (draft.callerLocation == .lan && shareableAgent != nil) {
                 relaySection
@@ -663,7 +660,7 @@ struct N8nSettingsView: View {
     }
 
     private var dispatchSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Who answers?"),
                 detail: L(
@@ -697,7 +694,7 @@ struct N8nSettingsView: View {
     /// Relay control for the bound agent, right where the choice is made, so
     /// a remote setup never requires a detour through another settings pane.
     private var relaySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Relay for \(shareableAgent?.name ?? L("the bound agent"))"),
                 detail: draft.callerLocation == .remote
@@ -710,8 +707,8 @@ struct N8nSettingsView: View {
             case .connected(let url)?:
                 consequenceRow(icon: "checkmark.circle.fill", tone: .success, text: L("Relay connected — \(url)"))
             case .connecting?:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
+                HStack(spacing: theme.space.s8) {
+                    SettingsSpinner()
                     Text("Connecting Relay… the pairing code appears in Pair when it is live.", bundle: .module)
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)
@@ -736,9 +733,9 @@ struct N8nSettingsView: View {
         Button {
             showRelayConfirmation = true
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .glyphSize(10)
+                    .glyphSize(.micro)
                 Text(title)
                     .font(SettingsFont.smallLabel)
             }
@@ -749,11 +746,11 @@ struct N8nSettingsView: View {
     }
 
     private var outboundSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if pushBlockedByKillSwitch {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.status.warning.foreground)
                         .padding(.top, theme.space.s2)
                     Text(
@@ -800,7 +797,7 @@ struct N8nSettingsView: View {
     // MARK: - 4. Pair
 
     private var connectSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             Text(
                 "Install the @osaurus/n8n-nodes-osaurus community node in n8n, then paste this one pairing code into its Osaurus Channel credential and press Test.",
                 bundle: .module
@@ -811,7 +808,7 @@ struct N8nSettingsView: View {
 
             pairingSection
             AgentChannelAdvancedSection {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     secretSection
                     verificationSection
                     manualRecipeContent
@@ -821,7 +818,7 @@ struct N8nSettingsView: View {
     }
 
     private var pairingSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Pair with n8n"),
                 detail: L(
@@ -838,11 +835,11 @@ struct N8nSettingsView: View {
                     onCopied: { showStatus(L("Pairing code copied"), isError: false) }
                 )
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     ForEach(pairingCode.urls, id: \.self) { url in
-                        HStack(spacing: 6) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "arrow.turn.down.right")
-                                .glyphSize(9)
+                                .glyphSize(.tiny)
                                 .foregroundColor(theme.text.tertiary)
                             Text(url)
                                 .font(SettingsFont.monoSmall)
@@ -903,10 +900,10 @@ struct N8nSettingsView: View {
             )
             action = (L("Review Where is your n8n?"), .location)
         }
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 Image(systemName: "hand.raised.fill")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                     .padding(.top, theme.space.s2)
                 Text(message)
@@ -922,9 +919,9 @@ struct N8nSettingsView: View {
     }
 
     private func pairingHint(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "info.circle")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.tertiary)
                 .padding(.top, theme.space.s2)
             Text(text)
@@ -935,7 +932,7 @@ struct N8nSettingsView: View {
     }
 
     private var secretSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Channel secret"),
                 detail: L(
@@ -953,11 +950,11 @@ struct N8nSettingsView: View {
             )
             .settingsLandingAnchor("agentChannels.n8n.channelSecret")
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Button(action: generateSecret) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "wand.and.stars")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                         Text(secretSaved ? L("Rotate") : L("Generate"))
                             .font(SettingsFont.smallLabel)
                     }
@@ -976,7 +973,7 @@ struct N8nSettingsView: View {
     }
 
     private var verificationSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Verification", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.primary)
@@ -1008,8 +1005,8 @@ struct N8nSettingsView: View {
     /// raw URLs for the chosen location, copyable HTTP Request / HMAC / curl
     /// fragments, and the osk-v1 key for the Agent resource.
     private var manualRecipeContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 AgentChannelSectionHeading(
                     L("Without the Osaurus node"),
                     detail: L(
@@ -1034,7 +1031,7 @@ struct N8nSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 AgentChannelCopyableCommand(
                     command: sampleEnvelope,
                     caption: L("Sample envelope"),
@@ -1105,7 +1102,7 @@ struct N8nSettingsView: View {
     }
 
     private var secureChannelSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(
                 L("Access key for the Agent resource"),
                 detail: L(
@@ -1117,9 +1114,9 @@ struct N8nSettingsView: View {
                 Button {
                     showShareSheet = true
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "key.horizontal")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                         Text("Generate an access key", bundle: .module)
                             .font(SettingsFont.smallLabel)
                     }
@@ -1142,16 +1139,16 @@ struct N8nSettingsView: View {
     // MARK: - 5. Prove it
 
     private var liveSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             approvalsSection
             verifySection
             AgentChannelAdvancedSection {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     manualAllowlistSection
                     Button(action: revealConfigurationFile) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: "folder")
-                                .glyphSize(10)
+                                .glyphSize(.micro)
                             Text("Open configuration file", bundle: .module)
                                 .font(SettingsFont.smallLabel)
                         }
@@ -1167,7 +1164,7 @@ struct N8nSettingsView: View {
     /// Approve-on-first-contact: the workflow's real identifiers arrive with
     /// its first run; the operator recognizes them instead of predicting them.
     private var approvalsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Who may speak"),
                 detail: draft.isNew
@@ -1181,7 +1178,7 @@ struct N8nSettingsView: View {
             .settingsLandingAnchor("agentChannels.n8n.pendingApprovals")
 
             if !pendingContacts.isEmpty {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(pendingContacts) { contact in
                         pendingContactRow(contact)
                     }
@@ -1203,12 +1200,12 @@ struct N8nSettingsView: View {
     }
 
     private func pendingContactRow(_ contact: AgentChannelN8nPendingContact) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             Image(systemName: "bell.badge.fill")
-                .glyphSize(13, weight: .semibold)
+                .glyphSize(.label, weight: .semibold)
                 .foregroundColor(theme.status.warning.foreground)
                 .padding(.top, theme.space.s2)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(
                     "Workflow '\(contact.conversationId)' (sender '\(contact.senderId)') wants to use \(channelDisplayName)",
                     bundle: .module
@@ -1227,7 +1224,7 @@ struct N8nSettingsView: View {
                 .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 AgentChannelSheetActionButton(
                     title: L("Deny"),
                     busyTitle: L("Deny"),
@@ -1249,7 +1246,7 @@ struct N8nSettingsView: View {
     }
 
     private var approvedChips: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             chipGroup(title: L("Allowed conversations"), values: allowedConversations) { value in
                 revoke(conversationId: value)
             }
@@ -1260,7 +1257,7 @@ struct N8nSettingsView: View {
     }
 
     private func chipGroup(title: String, values: [String], onRemove: @escaping (String) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text(title)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
@@ -1275,7 +1272,7 @@ struct N8nSettingsView: View {
     }
 
     private var verifySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Verify an incoming event"),
                 detail: draft.isNew
@@ -1330,7 +1327,7 @@ struct N8nSettingsView: View {
     /// Manual allowlist editing for operators who prefer to type ids ahead
     /// of time. Saved with the rest of the draft.
     private var manualAllowlistSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Edit allowlists by hand"),
                 detail: L(
@@ -1338,7 +1335,7 @@ struct N8nSettingsView: View {
                 )
             )
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 AgentChannelMultilineSettingsField(
                     title: L("Allowed Conversations"),
                     text: $draft.conversationAllowlistText,
@@ -1799,18 +1796,16 @@ struct N8nSettingsView: View {
 
 /// Wrapping row of removable id chips for the approved allowlists.
 private struct FlowChips: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let values: [String]
     let onRemove: (String) -> Void
-
-    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
         // Non-lazy wrap: this sits inside the sheet's ScrollView next to the
         // pending-approval cards, and a lazy grid there can hold a stale
         // layout when a sibling is inserted above it.
-        ChipFlowLayout(spacing: 6, lineSpacing: 6) {
+        ChipFlowLayout(spacing: theme.space.s6, lineSpacing: theme.space.s6) {
             ForEach(values, id: \.self) { value in
                 FilterTokenChip(value) { onRemove(value) }
             }

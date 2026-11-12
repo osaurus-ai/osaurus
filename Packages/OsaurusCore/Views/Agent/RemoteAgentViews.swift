@@ -31,7 +31,7 @@ struct RemoteAgentCard: View {
     @ObservedObject private var workspacesService = WorkspacesService.shared
     @ObservedObject private var providers = RemoteProviderManager.shared
 
-    private var color: Color { agentColorFor(remote.name) }
+    private var color: Color { theme.dataInk(seed: remote.name) }
 
     /// Workspace this pairing is managed by, when the roster/pairing recorded
     /// one. A workspace-managed agent can't be meaningfully "removed" here —
@@ -75,15 +75,9 @@ struct RemoteAgentCard: View {
     private var avatar: some View {
         ZStack {
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [color.opacity(0.15), color.opacity(0.05)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(theme.wash(behind: color))
             Circle()
-                .strokeBorder(color.opacity(0.4), lineWidth: theme.stroke.focus)
+                .strokeBorder(theme.rule(around: color), lineWidth: theme.stroke.focus)
             Text(remote.name.prefix(1).uppercased())
                 .font(SettingsFont.detailTitle)
                 .foregroundColor(color)
@@ -206,7 +200,7 @@ struct RemoteAgentDetailView: View {
     @State private var selectedTab: RemoteDetailTab = .overview
 
     private var remote: RemoteAgent? { manager.remoteAgent(for: remoteId) }
-    private var color: Color { agentColorFor(remote?.name ?? "") }
+    private var color: Color { theme.dataInk(seed: remote?.name ?? "") }
 
     /// Workspace that manages this pairing, if any (see `RemoteAgentCard`).
     private var sharingWorkspace: OsaurusRouterWorkspaceSummary? {
@@ -407,7 +401,7 @@ struct RemoteAgentDetailView: View {
     private func phaseColor(_ phase: ConnectionPhase) -> Color {
         switch phase {
         case .connected: return theme.status.success.foreground
-        case .connecting: return .orange
+        case .connecting: return theme.status.warning.foreground
         case .disconnected: return theme.text.tertiary
         case .failed: return theme.status.error.foreground
         }
@@ -450,14 +444,14 @@ struct RemoteAgentDetailView: View {
 
     @ViewBuilder
     private func connectionActionRow(for remote: RemoteAgent, phase: ConnectionPhase) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             if phase == .connected {
                 Button {
                     providerManager.disconnect(providerId: remote.providerId)
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "bolt.slash")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                         Text("Disconnect", bundle: .module)
                     }
                 }
@@ -466,9 +460,9 @@ struct RemoteAgentDetailView: View {
                 Button {
                     connect(remote)
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "bolt")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                         Text("Connect", bundle: .module)
                     }
                 }
@@ -508,7 +502,7 @@ struct RemoteAgentDetailView: View {
                     .foregroundColor(theme.text.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     activityStat(
                         value: "\(activity.requestCount)",
                         label: Text("Requests", bundle: .module)
@@ -529,7 +523,7 @@ struct RemoteAgentDetailView: View {
     }
 
     private func activityStat(value: String, label: Text) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(value)
                 .font(SettingsFont.cardTitle)
                 .foregroundColor(theme.text.primary)
@@ -588,16 +582,16 @@ struct RemoteAgentDetailView: View {
     private func sourceCard(for remote: RemoteAgent) -> some View {
         SettingsSection(title: "Source") {
             if let workspace = sharingWorkspace {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     SettingsValueRow(title: "Shared via", value: workspace.name)
                     Button {
                         RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id)
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Text("Open workspace", bundle: .module)
                                 .font(SettingsFont.smallLabel)
                             Image(systemName: "arrow.up.right")
-                                .glyphSize(9, weight: .semibold)
+                                .glyphSize(.tiny, weight: .semibold)
                         }
                         .foregroundColor(theme.text.link)
                     }
@@ -636,9 +630,9 @@ struct RemoteAgentDetailView: View {
             title: "Your Note",
             accessory: {
                 if noteSaved {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "checkmark.circle.fill")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                         Text("Saved", bundle: .module)
                             .font(SettingsFont.smallLabel)
                     }

@@ -43,7 +43,7 @@ struct ToolPermissionView: View {
     private var alertScope: ThemedAlertScope { .toolPermission(alertScopeId) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
                 .padding(.horizontal, theme.settingsSheetInset)
                 .padding(.top, theme.settingsSheetInset)
@@ -101,7 +101,7 @@ struct ToolPermissionView: View {
     private var header: some View {
         HStack(spacing: theme.space.s12) {
             Image(systemName: presentation.icon)
-                .glyphSize(15, weight: .semibold)
+                .glyphSize(.medium, weight: .semibold)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: theme.space.s32 + theme.space.s4, height: theme.space.s32 + theme.space.s4)
                 .settingsChrome(.subtle)
@@ -371,7 +371,7 @@ private struct CommandWell: View {
                     .clipped()
                     .mask {
                         if collapsed {
-                            VStack(spacing: 0) {
+                            VStack(spacing: theme.space.s0) {
                                 Rectangle()
                                 LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
                                     .frame(height: theme.space.s32)

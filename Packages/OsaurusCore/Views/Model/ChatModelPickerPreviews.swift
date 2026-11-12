@@ -154,7 +154,7 @@ private struct ChatModelPickerPreview: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             Text(verbatim: "Interactive sample data")
                 .textStyle(.label)
             ChatModelPickerCard(
@@ -169,7 +169,7 @@ private struct ChatModelPickerPreview: View {
             .frame(width: cardSize.width, height: cardSize.height)
             .animation(theme.motion.quick, value: cardSize)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text(verbatim: "Selected: \(selectionLabel)")
                 if !lastAction.isEmpty { Text(lastAction) }
                 Text(verbatim: "Models and capabilities are fictional. These controls do not connect an account or load a model.")

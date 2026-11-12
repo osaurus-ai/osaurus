@@ -96,7 +96,7 @@ struct OnboardingSetupStepper: View {
         let isDone = chapter.rawValue < current.rawValue
         return HStack(spacing: theme.space.s4) {
             Image(systemName: isDone ? "checkmark.circle.fill" : isCurrent ? "circle.inset.filled" : "circle")
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundStyle(
                     isDone ? theme.status.success.foreground : isCurrent ? theme.text.primary : theme.text.tertiary
                 )
@@ -112,6 +112,7 @@ struct OnboardingSetupStepper: View {
 /// The teammate's avatar exactly as the sidebar draws it: a still image,
 /// never the animated dino.
 struct OnboardingTeammateAvatar: View {
+    @Environment(\.theme) private var theme
     let mascotId: String?
     let name: String
     var imageURL: URL? = nil
@@ -121,7 +122,7 @@ struct OnboardingTeammateAvatar: View {
         AgentAvatarView(
             mascotId: mascotId,
             name: name,
-            tint: agentColorFor(name),
+            tint: theme.dataInk(seed: name),
             diameter: size,
             customImageURL: imageURL,
             monogramFontSize: size * 0.45,
@@ -139,13 +140,13 @@ struct OnboardingTeamList: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
-                if index > 0 { theme.border.subtle.frame(height: 1) }
+                if index > 0 { ThemeHairlineDivider() }
                 OnboardingPanelRow(action: { onPick(card) }) {
                     HStack(spacing: theme.space.s12) {
                         OnboardingTeammateAvatar(mascotId: card.mascotId, name: card.name, imageURL: card.imageURL)
-                        VStack(alignment: .leading, spacing: 1) {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
                             Text(card.name)
                                 .textStyle(.label, weight: 600)
                                 .foregroundStyle(theme.text.primary)
@@ -184,7 +185,7 @@ struct OnboardingPanelRow<Label: View>: View {
                 label()
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: trailingSymbol)
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundStyle(isHovered ? theme.text.secondary : theme.text.tertiary)
                     .offset(x: isHovered ? 2 : 0)
             }

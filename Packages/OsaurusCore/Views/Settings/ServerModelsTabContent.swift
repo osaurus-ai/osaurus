@@ -158,7 +158,7 @@ struct ServerModelsTabContent: View {
     private var introBanner: some View {
         HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "list.bullet.rectangle")
-                .glyphSize(13, weight: .medium)
+                .glyphSize(.label, weight: .medium)
                 .foregroundColor(theme.text.link)
                 .padding(.top, theme.space.s2)
 
@@ -196,8 +196,7 @@ struct ServerModelsTabContent: View {
 
     private var loadingRow: some View {
         HStack(spacing: theme.space.s8) {
-            ProgressView()
-                .controlSize(.small)
+            SettingsSpinner()
             Text(L("Scanning installed models…"))
                 .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                 .foregroundColor(theme.text.secondary)
@@ -207,30 +206,12 @@ struct ServerModelsTabContent: View {
     }
 
     private func exposureToggleRow(_ row: ExposureModelRow) -> some View {
-        HStack(spacing: theme.space.s12) {
-            VStack(alignment: .leading, spacing: theme.space.s2) {
-                Text(row.title)
-                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
-                    .foregroundColor(theme.text.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if row.subtitle != row.title {
-                    Text(row.subtitle)
-                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-
-            Spacer()
-
-            Toggle("", isOn: exposureBinding(for: row))
-                .settingsSwitch()
-        }
-        .padding(.vertical, theme.space.s8)
-        .padding(.horizontal, theme.space.s12)
-        .settingsChrome(.control)
+        SettingsToggle(
+            title: row.title,
+            description: row.subtitle == row.title ? "" : row.subtitle,
+            verbatim: true,
+            isOn: exposureBinding(for: row)
+        )
     }
 
     // MARK: - State
@@ -357,7 +338,7 @@ private struct ModelExposureSection<Content: View>: View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.text.link)
 
                 Text(title)

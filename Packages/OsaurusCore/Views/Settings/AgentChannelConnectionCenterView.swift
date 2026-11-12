@@ -87,7 +87,7 @@ struct AgentChannelConnectionCenterView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             if page == .outbox {
                 SettingsPageHeader(title: "Outbox", subtitle: headerSubtitle)
                     .settingsBackDestination(L("Channels"), verbatim: true) {
@@ -467,12 +467,12 @@ struct AgentChannelConnectionCenterView: View {
         Button {
             activeSheet = .native(kind)
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 ZStack {
                     RoundedRectangle(cornerRadius: theme.radius.medium)
                         .fill(LinearGradient(colors: kind.brandGradient, startPoint: .topLeading, endPoint: .bottomTrailing))
                     Image(systemName: kind.icon)
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(FixedPalette.onMedia)
                 }
                 .frame(width: 26, height: 26)
@@ -482,7 +482,7 @@ struct AgentChannelConnectionCenterView: View {
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 Image(systemName: "plus")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(theme.text.link)
             }
             .padding(.horizontal, theme.space.s8)

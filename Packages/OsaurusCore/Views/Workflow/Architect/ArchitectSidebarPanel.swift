@@ -55,11 +55,8 @@ struct ArchitectSidebarPanel: View {
 
     private var draft: WorkflowDraft? { drafts.draft(forSession: sessionId?.uuidString) }
 
-    #if OSAURUS_DESIGN_SYSTEM
     var inspectorMenuVerification = false
-    #endif
     @ViewBuilder var body: some View {
-        #if OSAURUS_DESIGN_SYSTEM
         if inspectorMenuVerification {
             let sample = WorkflowRun(workflowID: UUID(), workflowName: "Local input menu", templateID: UUID(), templateVersion: 1, caller: WorkflowCaller(kind: .test), input: .object(["topic": .string("Local saved input")]), nodeIDs: [])
             VStack(alignment: .leading) {
@@ -67,14 +64,11 @@ struct ArchitectSidebarPanel: View {
                 Text("Local form values: " + (testValues["topic"]?.stringValue ?? "empty"))
             }
         } else { normalBody }
-        #else
-        normalBody
-        #endif
     }
     @ViewBuilder private var normalBody: some View {
         if let draft, !Self.hasNothingDrafted(draft.definition) {
             let status = DraftRevisionCache.status(draft, latest: latestRun(draft))
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 VStack(spacing: theme.space.s24) {
                     header(draft, status: status)
                     tabBar
@@ -154,7 +148,7 @@ struct ArchitectSidebarPanel: View {
             .frame(maxWidth: .infinity)
             ScrollView {
                 VStack(spacing: theme.space.s16) {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         ForEach(1...3, id: \.self) { number in
                             if number > 1 {
                                 Rectangle()
@@ -168,7 +162,7 @@ struct ArchitectSidebarPanel: View {
                     }
                     .accessibilityHidden(true)
                     HStack(spacing: theme.space.s8) {
-                        if isGenerating { ProgressView().controlSize(.small) }
+                        if isGenerating { SettingsSpinner() }
                         Text(
                             isGenerating
                                 ? L("The Architect is planning the steps…")
@@ -295,24 +289,17 @@ struct ArchitectSidebarPanel: View {
     }
 
     @ViewBuilder private var tabBar: some View {
-        #if OSAURUS_DESIGN_SYSTEM
         AssignedBaseSegmentedPicker(selection: $tab,
             options: [.init(.design, L("Design"), verbatim: true), .init(.test, L("Test"), verbatim: true)],
             size: .compact, minimumOptionWidth: theme.space.s48 * 2,
             busyValue: isGenerating ? .design : nil)
             .accessibilityLabel(Text("Workflow view", bundle: .module))
-        #else
-        Picker("Workflow view", selection: $tab) {
-            Text("Design", bundle: .module).tag(Tab.design)
-            Text("Test", bundle: .module).tag(Tab.test)
-        }.pickerStyle(.segmented).frame(width: 204)
-        #endif
     }
 
     private func statusPill(_ status: DraftStatus) -> some View {
         HStack(spacing: theme.space.s4) {
             if status.kind == .testing {
-                ProgressView().controlSize(.mini)
+                SettingsSpinner(size: .mini)
             }
             StatusChip(
                 status.title, tone: status.chipTone, showsDot: status.kind != .testing, help: status.detail)
@@ -356,7 +343,7 @@ struct ArchitectSidebarPanel: View {
                         needsAttention ? L("needs attention") : nil,
                     ].compactMap { $0 }.joined(separator: " · ")
             ) {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     if needsAttention { beforeTestingCallout(draft, status: status) }
                     if def.nodes.isEmpty {
                         note(L("None yet"))
@@ -385,11 +372,11 @@ struct ArchitectSidebarPanel: View {
                 if outputs.isEmpty {
                     note(L("None yet"))
                 } else {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
                         ForEach(outputs, id: \.self) { label in
-                            HStack(spacing: 8) {
+                            HStack(spacing: theme.space.s8) {
                                 Image(systemName: "checkmark.circle")
-                                    .glyphSize(11)
+                                    .glyphSize(.footnote)
                                     .foregroundColor(theme.text.link)
                                     .frame(width: 16)
                                 Text(verbatim: label)
@@ -437,16 +424,16 @@ struct ArchitectSidebarPanel: View {
     }
 
     private func beforeTestingCallout(_ draft: WorkflowDraft, status: DraftStatus) -> some View {
-        let tint = status.blockers.isEmpty ? theme.text.secondary : theme.statusInk.warning
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        let tint = status.blockers.isEmpty ? theme.text.secondary : theme.statusInk(.warning)
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: status.blockers.isEmpty ? "hourglass" : "exclamationmark.triangle.fill")
                     .foregroundColor(tint)
                 Text(verbatim: L("Before it can be tested"))
                     .textStyle(.label, weight: 600)
                     .foregroundColor(theme.text.primary)
             }
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 ForEach(status.issues.prefix(4), id: \.self) { line in
                     bullet(line)
                 }
@@ -464,7 +451,7 @@ struct ArchitectSidebarPanel: View {
     }
 
     private func bullet(_ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
             Text(verbatim: "•").foregroundColor(theme.text.tertiary)
             Text(verbatim: text)
                 .foregroundColor(theme.text.secondary)
@@ -486,7 +473,7 @@ struct ArchitectSidebarPanel: View {
                 .input, title: L("Input"),
                 subtitle: fields.isEmpty ? L("None") : Self.inputSummary(fields, values: testValues)
             ) {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
                     if fields.isEmpty {
                         note(L("This workflow takes no input."))
                     } else {
@@ -498,7 +485,7 @@ struct ArchitectSidebarPanel: View {
                     if let testError {
                         Text(testError)
                             .textStyle(.caption)
-                            .foregroundColor(theme.statusInk.error)
+                            .foregroundColor(theme.statusInk(.error))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if shown == nil {
@@ -553,12 +540,12 @@ struct ArchitectSidebarPanel: View {
                     }
                 }
                 .icon(shown.output == nil ? AnyView(runIcon(shown.status)) : AnyView(
-                    Image(systemName: "list.bullet").glyphSize(12).foregroundStyle(theme.text.secondary))))
+                    Image(systemName: "list.bullet").glyphSize(.caption).foregroundStyle(theme.text.secondary))))
         }
         if all.count > 1 {
             panels.append(
                 DraftSection(.history, title: L("Earlier tests"), subtitle: L("\(all.count) tests")) {
-                    VStack(spacing: 4) {
+                    VStack(spacing: theme.space.s4) {
                         ForEach(all) { run in
                             historyRow(run, isShown: run.id == shown?.id, fields: fields, draft: draft)
                         }
@@ -587,10 +574,10 @@ struct ArchitectSidebarPanel: View {
             openRunID = run.id
             testReveal = Self.panel(after: run)
         } label: {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 runIcon(run.status)
                     .frame(width: 16)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     HStack {
                         Text(verbatim: WorkflowRunTabView.testStatusText(run.status))
                             .foregroundColor(theme.text.primary)
@@ -947,7 +934,7 @@ private struct DraftStepList: View {
         let catalog = ConfigModelReference.liveCatalog()
         let steps = WorkflowSummary.steps(def)
         let latest = draft.testRunIDs.last.flatMap { runs.run(id: $0) }
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                 if let node = def.node(step.id) {
                     if index > 0 {
@@ -967,7 +954,7 @@ private struct DraftStepList: View {
 
     private func connector(passed: Bool) -> some View {
         Rectangle()
-            .fill(passed ? theme.statusInk.success : theme.border.default)
+            .fill(passed ? theme.statusInk(.success) : theme.border.default)
             .frame(width: theme.stroke.default, height: theme.space.s12)
             .padding(.leading, theme.space.s24)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -978,7 +965,7 @@ private struct DraftStepList: View {
         let isOpen = draft.selectedNodeID == node.id
         let isPlaceholder = node.kind == nil
         let isChanged = draft.lastPatchedNodeIDs.contains(node.id)
-        return VStack(alignment: .leading, spacing: 0) {
+        return VStack(alignment: .leading, spacing: theme.space.s0) {
             Button {
                 withAnimation(reduceMotion ? nil : theme.motion.quick) {
                     drafts.select(nodeID: isOpen ? nil : node.id, in: draft.id)
@@ -1009,9 +996,9 @@ private struct DraftStepList: View {
                                 .multilineTextAlignment(.leading)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: metadataIcon(node, catalog: catalog))
-                                .glyphSize(9)
+                                .glyphSize(.tiny)
                             Text(verbatim: DraftStepDetail.meta(node, in: draft))
                                 .lineLimit(1)
                         }
@@ -1024,8 +1011,8 @@ private struct DraftStepList: View {
                         }
                         if !visibleBadges.isEmpty { WorkflowStepBadgesView(badges: visibleBadges) }
                         ForEach(Array(WorkflowFlowLayout.branchLines(node, in: draft.definition).enumerated()), id: \.offset) { _, line in
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.turn.down.right").glyphSize(9)
+                            HStack(spacing: theme.space.s4) {
+                                Image(systemName: "arrow.turn.down.right").glyphSize(.tiny)
                                 Text(verbatim: line).lineLimit(2)
                             }
                             .textStyle(.footnote)
@@ -1034,7 +1021,7 @@ private struct DraftStepList: View {
                     }
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.right")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isOpen ? 90 : 0))
                         .padding(.top, theme.space.s4)
@@ -1113,14 +1100,14 @@ struct DraftStepDetail: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if case .inference(let spec) = node.kind {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     label(L("Runs on"))
                     WorkflowStepModelMenu(draftID: draft.id, node: node, slotID: spec.modelSlot)
                 }
                 if !spec.instructions.isEmpty {
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: theme.space.s4) {
                         label(L("Instructions"))
                         Text(verbatim: spec.instructions)
                             .textStyle(.caption)
@@ -1227,11 +1214,11 @@ private struct DraftFieldsList: View {
                 .textStyle(.caption)
                 .foregroundColor(theme.text.tertiary)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(fields) { field in
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(systemName: Self.icon(field.type))
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                             .foregroundColor(theme.text.tertiary)
                             .frame(width: 16)
                         Text(field.label)
@@ -1320,12 +1307,12 @@ private struct DraftSaveForm: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if saved != nil {
                 Label {
                     Text(verbatim: L("\(draft.name) is saved"))
                 } icon: {
-                    Image(systemName: "checkmark.circle.fill").foregroundColor(theme.statusInk.success)
+                    Image(systemName: "checkmark.circle.fill").foregroundColor(theme.statusInk(.success))
                 }
                 .textStyle(.body, weight: 600)
                 .foregroundColor(theme.text.primary)
@@ -1367,7 +1354,7 @@ private struct DraftSaveForm: View {
                 if let error {
                     Text(error)
                         .textStyle(.caption)
-                        .foregroundColor(theme.statusInk.error)
+                        .foregroundColor(theme.statusInk(.error))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
@@ -1541,7 +1528,7 @@ struct DraftSectionList<ID: Hashable>: View {
                         heading(section)
                         Spacer(minLength: theme.space.s4)
                         Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                             .foregroundColor(theme.text.secondary)
                     }
                     .frame(minHeight: theme.space.s24)
@@ -1612,7 +1599,7 @@ private struct DraftChangeList: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             ForEach(Array(draft.history.enumerated().reversed()), id: \.offset) { index, edit in
                 row(edit, isNewest: index == draft.history.count - 1)
             }
@@ -1622,10 +1609,10 @@ private struct DraftChangeList: View {
 
     private func row(_ edit: WorkflowDraftEdit, isNewest: Bool) -> some View {
         let lines = edit.lines.isEmpty ? edit.summary.components(separatedBy: "; ").filter { !$0.isEmpty } : edit.lines
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        return VStack(alignment: .leading, spacing: theme.space.s4) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: edit.source == .architect ? "wand.and.stars" : "person")
-                    .glyphSize(9)
+                    .glyphSize(.tiny)
                     .foregroundColor(theme.text.tertiary)
                 Text(edit.source == .architect ? "The Architect" : "You", bundle: .module)
                     .textStyle(.caption, weight: 600)
@@ -1645,7 +1632,7 @@ private struct DraftChangeList: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Array(lines.prefix(8).enumerated()), id: \.offset) { _, line in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                     Text(verbatim: "•").foregroundColor(theme.text.tertiary)
                     Text(verbatim: line).fixedSize(horizontal: false, vertical: true)
                 }

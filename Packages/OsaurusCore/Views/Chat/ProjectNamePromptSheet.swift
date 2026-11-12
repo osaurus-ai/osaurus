@@ -30,10 +30,10 @@ struct ProjectNamePromptSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if showsIntro {
                 intro
-                Divider().opacity(0.5)
+                ThemeHairlineDivider()
             }
 
             TextField(text: $name, prompt: Text(placeholder, bundle: .module)) {
@@ -44,8 +44,8 @@ struct ProjectNamePromptSheet: View {
             .foregroundColor(theme.text.primary)
             .focused($isFocused)
             .onSubmit(submit)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s6)
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                     .fill(theme.surface.canvas)
@@ -82,7 +82,7 @@ struct ProjectNamePromptSheet: View {
     /// Short explainer + the three things a project bundles, so the create
     /// dialog teaches what a project is instead of just asking for a name.
     private var intro: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             Text(
                 "Group related chats so they share the same instructions, knowledge, and memory across every agent.",
                 bundle: .module
@@ -91,7 +91,7 @@ struct ProjectNamePromptSheet: View {
             .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 featureRow(
                     icon: "list.bullet.rectangle",
                     title: "Instructions",
@@ -116,16 +116,16 @@ struct ProjectNamePromptSheet: View {
         title: LocalizedStringKey,
         subtitle: LocalizedStringKey
     ) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.text.primary)
                 .frame(width: 26, height: 26)
                 .background(
                     RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                         .fill(theme.surface.pressed)
                 )
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(title, bundle: .module)
                     .textStyle(.caption, weight: 600)
                     .foregroundColor(theme.text.primary)

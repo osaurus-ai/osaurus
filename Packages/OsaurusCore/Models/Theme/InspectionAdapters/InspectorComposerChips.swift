@@ -22,58 +22,33 @@ extension EnvironmentValues {
 
 extension View {
     @ViewBuilder func composerChipButtonStyle() -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         buttonStyle(InspectorComposerChipButtonStyle())
-        #else
-        buttonStyle(.plain)
-        #endif
     }
     @ViewBuilder func composerChipOriginalWeight(_ weight: Font.Weight) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         self
-        #else
-        fontWeight(weight)
-        #endif
     }
     /// Replace a chip's complete text recipe only in the design build.
     @ViewBuilder func composerChipTextStyle(_ role: ThemeTextStyleRole,
         monospacedDigit: Bool = false, weight: Int? = nil,
         family: ThemeFontFamilyRole? = nil, property: String = "label") -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         self.modifier(SharedChipTypography(property: property,
             fallback: SettingsFont(role: role, weightOverride: weight, familyOverride: family)))
             .monospacedDigitIfNeeded(monospacedDigit)
-        #else
-        self.textStyle(role, monospacedDigit: monospacedDigit, weight: weight, family: family)
-        #endif
     }
 
     func composerChipInk(_ property: String, fallback: Color) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(InspectorComposerChipInk(property: property, fallback: fallback))
-        #else
-        foregroundColor(fallback)
-        #endif
     }
 
     @ViewBuilder func composerChipSurface(selected: Bool = false, invalid: Bool = false, capsule: Bool = false) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(InspectorComposerChipSurface(selected: selected, invalid: invalid, capsule: capsule))
-        #else
-        self
-        #endif
     }
 
     @ViewBuilder func composerChipFocus() -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(InspectorComposerChipFocus())
-        #else
-        self
-        #endif
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 /// PlainButtonStyle adds its own disabled opacity on macOS. The chip's ink
 /// and surface already resolve explicit disabled assignments.
 private struct InspectorComposerChipButtonStyle: ButtonStyle {
@@ -130,8 +105,8 @@ private struct InspectorComposerChipSurface: ViewModifier {
         let border = theme.assignedColor(key + (invalid ? "error" : selected ? "accent" : "border"), fallback: theme.border.default)
         let borderWidth = theme.assignedMetric(key + "borderWidth", fallback: theme.stroke.default)
         content
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.56.elements.layout.\(size.rawValue).paddingX", inheriting: theme.assignedMetric(sizeKey + "padding", fallback: 10)))
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.56.elements.layout.\(size.rawValue).paddingY", inheriting: theme.assignedMetric(sizeKey + "gap", fallback: 5)))
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.56.elements.layout.\(size.rawValue).paddingX", inheriting: theme.assignedMetric(sizeKey + "padding", fallback: theme.space.s10)))
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.56.elements.layout.\(size.rawValue).paddingY", inheriting: theme.assignedMetric(sizeKey + "gap", fallback: theme.space.s4)))
             .frame(minHeight: theme.assignedMetric(sizeKey + "height", fallback: 0))
             .assignedInteractionBackground(key, state: !enabled ? "disabledBackground" : selected ? "selected" : hovered ? "hover" : "background", fallback: theme.surface.subtle, in: shape)
             .clipShape(shape)
@@ -156,7 +131,6 @@ private struct SharedChipTypography: ViewModifier {
         content.assignedTypography("component.library.56.elements.\(size.rawValue).label", fallback: fallback)
     }
 }
-#endif
 
 struct SharedChipContent<Content: View>: View {
     @Environment(\.theme) private var theme

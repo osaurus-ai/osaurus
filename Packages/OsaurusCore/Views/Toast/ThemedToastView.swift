@@ -48,30 +48,18 @@ struct ThemedToastView: View {
     }
 
     var body: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.themedToastView.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: 10))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.themedToastView.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s10))) {
             ToastIcon(iconName: type.iconName, tone: tone, size: 24)
 
             Text(message)
-                #if OSAURUS_DESIGN_SYSTEM
                 .assignedTypography("component.library.18.text", fallback: SettingsFont.caption)
-                #else
-                .textStyle(.caption, weight: 500)
-                #endif
                 .foregroundColor(theme.text.primary)
                 .lineLimit(2)
         }.catalogLayoutTarget("component.library.18.elements.layout.themedToastView.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.18.elements.layout.themedToastView.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: 14))).catalogLayoutTarget("component.library.18.elements.layout.themedToastView.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.18.elements.layout.themedToastView.body.paddingY", inheriting: theme.catalogMetric("padding", fallback: 10))).catalogLayoutTarget("component.library.18.elements.layout.themedToastView.body.paddingY")
-        #if OSAURUS_DESIGN_SYSTEM
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.18.elements.layout.themedToastView.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: theme.space.s14))).catalogLayoutTarget("component.library.18.elements.layout.themedToastView.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.18.elements.layout.themedToastView.body.paddingY", inheriting: theme.catalogMetric("padding", fallback: theme.space.s10))).catalogLayoutTarget("component.library.18.elements.layout.themedToastView.body.paddingY")
         .frame(minHeight: theme.catalogMetric("height", fallback: 0))
         .assignedBaseChrome(18)
-        #else
-        .background(ToastBackground())
-        .clipShape(RoundedRectangle(cornerRadius: ToastStyle.compactCornerRadius, style: .continuous))
-        .overlay(
-            ToastBorder(cornerRadius: ToastStyle.compactCornerRadius, tone: tone, isHovering: isHovering)
-        )
-        #endif
         .toastShadow(theme: theme, isHovering: isHovering)
         .onHover { hovering in
             withAnimation(theme.motion.quick) {
@@ -94,8 +82,10 @@ struct ThemedToastView: View {
 
 #if DEBUG
     struct ThemedToastView_Previews: PreviewProvider {
+        @MainActor private static var theme: any ThemeProtocol { ThemeManager.shared.currentTheme }
+
         static var previews: some View {
-            VStack(spacing: 16) {
+            VStack(spacing: theme.space.s16) {
                 ThemedToastView("Theme saved successfully", type: .success)
                 ThemedToastView("Failed to load configuration", type: .error)
                 ThemedToastView("Connection is unstable", type: .warning)

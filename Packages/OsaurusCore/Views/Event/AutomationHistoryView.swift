@@ -189,9 +189,9 @@ private struct AutomationHistoryMessageRow: View {
     let channelName: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(
                     record.status == .failed
                         ? theme.status.error.foreground
@@ -199,8 +199,8 @@ private struct AutomationHistoryMessageRow: View {
                             ? theme.status.info.foreground : theme.status.warning.foreground
                 )
                 .frame(width: 18)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(title)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -233,7 +233,7 @@ private struct AutomationHistoryMessageRow: View {
                 ManagementStateManager.shared.pendingChannelConnectionId = record.connectionId
                 AppDelegate.shared?.showManagementWindow(initialTab: .agentChannels)
             } label: {
-                Image(systemName: "arrow.up.right.square").glyphSize(11)
+                Image(systemName: "arrow.up.right.square").glyphSize(.footnote)
             }
             .buttonStyle(.plain)
             .foregroundColor(theme.text.link)

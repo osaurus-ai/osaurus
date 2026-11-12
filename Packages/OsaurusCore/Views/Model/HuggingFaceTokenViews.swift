@@ -25,8 +25,8 @@ struct HuggingFaceTokenPromptSheet: View {
     @State private var tokenInput: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
+            HStack(spacing: theme.space.s10) {
                 Text("🤗")
                     .font(SettingsFont.pageTitle)
                 Text("Faster downloads with a Hugging Face token", bundle: .module)
@@ -42,7 +42,7 @@ struct HuggingFaceTokenPromptSheet: View {
             .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 stepRow(1, text: Text("Sign in (or sign up free) at huggingface.co", bundle: .module))
                 // Markdown link deep-links straight to Hugging Face's
                 // new-token form with the Read type preselected.
@@ -61,7 +61,7 @@ struct HuggingFaceTokenPromptSheet: View {
 
             HuggingFaceTokenField(tokenInput: $tokenInput) { save() }
 
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Button(action: { dismiss() }) {
                     Text("Cancel", bundle: .module)
                 }
@@ -83,7 +83,7 @@ struct HuggingFaceTokenPromptSheet: View {
     }
 
     private func stepRow(_ number: Int, text: Text) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
             Text("\(number)")
                 .font(SettingsFont.monoSmall)
                 .foregroundColor(theme.text.link)

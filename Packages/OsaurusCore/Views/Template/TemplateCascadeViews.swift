@@ -23,7 +23,7 @@ struct CascadeWorkflowRow<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: theme.space.s12) {
             Image(systemName: "flowchart")
-                .glyphSize(13, weight: .medium)
+                .glyphSize(.label, weight: .medium)
                 .foregroundColor(theme.text.secondary)
             VStack(alignment: .leading, spacing: theme.settingsTitleToDescription) {
                 HStack(spacing: theme.space.s6) {
@@ -57,10 +57,10 @@ struct CascadeWorkflowList<Item: Identifiable, Row: View>: View {
     @ViewBuilder var row: (Item) -> Row
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 row(item)
-                if index < items.count - 1 { Divider().opacity(0.4) }
+                if index < items.count - 1 { ThemeHairlineDivider() }
             }
         }
         .settingsChrome(.card)

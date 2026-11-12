@@ -116,7 +116,7 @@ struct AgentDraftPanel: View {
     private func builder(_ draft: AgentDraft) -> some View {
         let shown = shownSections(draft)
         let upcoming = Section.allCases.filter { !shown.contains($0) }
-        return VStack(spacing: 0) {
+        return VStack(spacing: theme.space.s0) {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: theme.space.s16) {
@@ -162,7 +162,7 @@ struct AgentDraftPanel: View {
     }
 
     private func card(_ draft: AgentDraft, shown: [Section]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             identity(draft)
                 .id(Section.identity)
             ForEach(shown.filter { $0 != .identity }) { section in
@@ -205,7 +205,7 @@ struct AgentDraftPanel: View {
         return VStack(alignment: .leading, spacing: theme.space.s8) {
             WorkflowSectionHeader(title: L("Installs When You Create"))
             if !items.isEmpty {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         if index > 0 { ThemeHairlineDivider(color: theme.border.subtle) }
                         importRow(item, draft: draft)
@@ -222,7 +222,7 @@ struct AgentDraftPanel: View {
                     ForEach(steps) { step in
                         HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                             Image(systemName: "hand.point.right")
-                                .glyphSize(10, weight: .medium)
+                                .glyphSize(.micro, weight: .medium)
                                 .foregroundStyle(theme.text.tertiary)
                                 .accessibilityHidden(true)
                             Text(verbatim: step.name)
@@ -246,7 +246,7 @@ struct AgentDraftPanel: View {
         VStack(alignment: .leading, spacing: theme.space.s4) {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: Self.importIcon(item.kind))
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                     .foregroundStyle(theme.text.tertiary)
                     .accessibilityHidden(true)
                 Text(verbatim: item.name)
@@ -343,6 +343,7 @@ struct AgentDraftPanel: View {
         }
         .padding(theme.space.s16)
         .background(highlighted == .identity ? theme.surface.selected : Color.clear)
+        .overlay(Rectangle().strokeBorder(highlighted == .identity ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke).allowsHitTesting(false))
     }
 
     @ViewBuilder
@@ -353,12 +354,12 @@ struct AgentDraftPanel: View {
                 .frame(width: Self.avatarSize, height: Self.avatarSize)
                 .overlay {
                     Image(systemName: "sparkles")
-                        .glyphSize(16, weight: .medium)
+                        .glyphSize(.medium, weight: .medium)
                         .foregroundStyle(theme.text.tertiary)
                 }
                 .accessibilityHidden(true)
         } else {
-            AgentAvatarView(mascotId: agent.avatar, name: name, tint: agentColorFor(name), diameter: Self.avatarSize)
+            AgentAvatarView(mascotId: agent.avatar, name: name, tint: theme.dataInk(seed: name), diameter: Self.avatarSize)
                 .animation(theme.motion.springAnimation, value: agent.avatar)
         }
     }
@@ -401,7 +402,7 @@ struct AgentDraftPanel: View {
             store.applyUserEdit(draft.id, .avatar) { $0.avatar = mascotId }
         } label: {
             AgentAvatarView(
-                mascotId: mascotId, name: draft.agent.name, tint: agentColorFor(draft.agent.name), diameter: 28,
+                mascotId: mascotId, name: draft.agent.name, tint: theme.dataInk(seed: draft.agent.name), diameter: 28,
                 monogramFontSize: 12, borderWidth: theme.stroke.default)
                 .overlay(
                     Circle()
@@ -423,7 +424,7 @@ struct AgentDraftPanel: View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: section.icon)
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                     .foregroundStyle(theme.text.tertiary)
                     .accessibilityHidden(true)
                 Text(verbatim: section.title)
@@ -446,6 +447,7 @@ struct AgentDraftPanel: View {
         .padding(theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(highlighted == section ? theme.surface.selected : Color.clear)
+        .overlay(Rectangle().strokeBorder(highlighted == section ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke).allowsHitTesting(false))
     }
 
     private func editButton(_ section: Section) -> some View {
@@ -582,7 +584,7 @@ struct AgentDraftPanel: View {
     // MARK: - Tools sheet
 
     private func toolsSheet(_ draft: AgentDraft) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(icon: Section.tools.icon, title: "Tools", onClose: { customizingTools = false })
             AgentCapabilityManagerView(
                 draftMode: Binding(
@@ -685,8 +687,8 @@ struct AgentDraftPanel: View {
         return HStack(spacing: theme.space.s12) {
             HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                 Image(systemName: blocker == nil ? "checkmark.circle.fill" : "info.circle")
-                    .glyphSize(11, weight: .semibold)
-                    .foregroundStyle(blocker == nil ? theme.statusInk.success : theme.text.tertiary)
+                    .glyphSize(.footnote, weight: .semibold)
+                    .foregroundStyle(blocker == nil ? theme.statusInk(.success) : theme.text.tertiary)
                     .accessibilityHidden(true)
                 Text(verbatim: blocker ?? L("Ready. Keep refining, or create it now."))
                     .font(SettingsFont.rowDescription)
@@ -772,7 +774,7 @@ struct AgentDraftPanel: View {
         let setup = SetupChecker.check(agent)
         return ScrollView {
             VStack(spacing: theme.space.s16) {
-                AgentAvatarView(mascotId: agent.avatar, name: agent.name, tint: agentColorFor(agent.name), diameter: 64)
+                AgentAvatarView(mascotId: agent.avatar, name: agent.name, tint: theme.dataInk(seed: agent.name), diameter: 64)
                 VStack(spacing: theme.space.s4) {
                     Text("\(agent.name) is ready", bundle: .module)
                         .font(SettingsFont.cardTitle)

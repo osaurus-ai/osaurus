@@ -111,7 +111,7 @@ struct SettingsKitLintTests {
         },
         // Page-pattern rules: one look per job across every page.
         Rule(id: "familyThemeWrapper", fix: "the inherited theme (product families re-skin a page off the kit)") { lines in
-            codeTally(lines, hints: ["authoritative:"], /catalogFamily\([^()\n]*authoritative:\s*true/)
+            codeTally(lines, hints: ["catalogFamily("], /catalogFamily\((2[1-9]|[3-9]\d|\d{3})\b/)
         },
         Rule(id: "inspectionSpacing", fix: "theme.space.s* / settingsSectionGap / settingsPageInset") { lines in
             codeTally(
@@ -138,7 +138,7 @@ struct SettingsKitLintTests {
         // Title + description stacked by hand beside a control: SettingsRow
         // owns that layout, its type roles, and the group inset.
         Rule(id: "handRolledRow", fix: "SettingsRow (title, description, trailing control)") { lines in
-            countFollowed(lines, hints: ["VStack(alignment: .leading"], by: /VStack\(alignment: \.leading, spacing: [0-9]\)/, within: 8) { window in
+            countFollowed(lines, hints: ["VStack(alignment: .leading"], by: /VStack\(alignment: \.leading, spacing: (theme\.space\.s)?[0-9]\)/, within: 8) { window in
                 window.contains(/SettingsFont\.(compactLabel|rowTitle)/) && window.contains("SettingsFont.rowDescription")
             }
         },

@@ -144,9 +144,7 @@ struct CellRenderingContext {
 final class NativeHeaderView: NSView {
 
     private let avatarImageView = NSImageView()
-    #if OSAURUS_DESIGN_SYSTEM
     private var sharedAvatarHost: NSHostingView<AnyView>?
-    #endif
     private let nameLabel = NSTextField(labelWithString: "")
     private let actionStack = NSStackView()
     private var isEditing = false
@@ -182,9 +180,7 @@ final class NativeHeaderView: NSView {
     private var currentTheme: (any ThemeProtocol)?
     /// The ellipsis "…" control, kept so its overflow menu can anchor to it.
     private weak var overflowControl: HeaderCircleActionControl?
-    #if OSAURUS_DESIGN_SYSTEM
     private let assignedMenu = AssignedMenuPanelPresenter()
-    #endif
 
     /// Formats the message timestamp for the overflow menu header, e.g.
     /// "Jun 20, 10:17 PM". Localized template so order/separators follow locale.
@@ -283,16 +279,14 @@ final class NativeHeaderView: NSView {
         self.onEdit = onEdit
         self.onDelete = onDelete
         self.storedOnCancelEdit = onCancelEdit
-        let theme = theme.catalogFamily(30, authoritative: true)
+        let theme = theme.catalogFamily(30)
         self.currentRole = role
         self.currentTheme = theme
-        #if OSAURUS_DESIGN_SYSTEM
         catalogAssignmentTarget(["avatarNameGap", "headerActionsGap", "headerPaddingY"].map { MessageHeaderInspectionStyle.key + "elements.layout." + $0 } + [AgentContentSurfaceAssignments.key(30, "agentHeader")], name: "Agent identity header", theme: theme)
         wantsLayer = true
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(30, "agentHeader", theme)).cgColor
-        #endif
-        actionStack.spacing = MessageHeaderInspectionStyle.layout("headerActionsGap", "gap", 4, theme)
-        nameLeadingToAvatar?.constant = MessageHeaderInspectionStyle.layout("avatarNameGap", "gap", 6, theme)
+        actionStack.spacing = MessageHeaderInspectionStyle.layout("headerActionsGap", "gap", theme.space.s4, theme)
+        nameLeadingToAvatar?.constant = MessageHeaderInspectionStyle.layout("avatarNameGap", "gap", theme.space.s6, theme)
         actionStackWidth = MessageHeaderInspectionStyle.side(theme)
 
         // Resolve theme-driven sizing + visibility first so avatar generation
@@ -313,7 +307,7 @@ final class NativeHeaderView: NSView {
         // which avatar mode the user picked, unless the theme opts out via
         // `showInlineAvatar`. User messages hide the avatar. The monogram uses
         // the agent's own colour, the same tint the sidebar row gives it.
-        let agentTint = agentColorFor(name)
+        let agentTint = theme.dataInk(seed: name)
         avatarSource =
             role == .assistant && theme.showInlineAvatar
             ? AvatarSource(
@@ -321,7 +315,7 @@ final class NativeHeaderView: NSView {
                 avatar: avatar,
                 customAvatarPath: customAvatarPath,
                 tint: NSColor(agentTint),
-                background: NSColor(agentTint.opacity(0.18))
+                background: NSColor(theme.dataWash(seed: name))
             )
             : nil
         let resolved = resolveAvatarImage()
@@ -341,7 +335,6 @@ final class NativeHeaderView: NSView {
         nameLabel.stringValue = nameVisible ? name : ""
         nameLabel.font = theme.nsFont(.label)
         nameLabel.textColor = NSColor(role == .user ? theme.text.primary : theme.text.secondary)
-        #if OSAURUS_DESIGN_SYSTEM
         nameLabel.attributedStringValue = MessageHeaderInspectionStyle.text(nameLabel.stringValue, property: "label", color: NSColor(theme.text.primary), theme: theme)
         // Reuse the actual shared avatar component, including saved shape/color.
         let avatarHost = sharedAvatarHost ?? NSHostingView(rootView: AnyView(EmptyView()))
@@ -356,7 +349,6 @@ final class NativeHeaderView: NSView {
         avatarImageView.image = nil
         avatarImageView.layer?.borderWidth = 0
         avatarImageView.layer?.masksToBounds = false
-        #endif
 
         rebuildActionButtons(role: role, theme: theme, onCancelEdit: onCancelEdit)
         invalidateIntrinsicContentSize()
@@ -599,11 +591,7 @@ final class NativeHeaderView: NSView {
         // opens downward like the assistant overflow menu. The button is a
         // non-flipped NSView, so its bottom edge is y == 0 and the 4pt gap sits
         // below it at a negative y.
-        #if OSAURUS_DESIGN_SYSTEM
         assignedMenu.showContextMenu(menu, from: anchor, theme: currentTheme ?? CustomizableTheme.light())
-        #else
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: anchor)
-        #endif
     }
 
     @objc private func inspectResponseFromMenu() {
@@ -687,7 +675,6 @@ final class HeaderCircleActionControl: NSView {
     private var fillBase: NSColor = .clear
     private var fillHover: NSColor = .clear
     private var tracking: NSTrackingArea?
-    #if OSAURUS_DESIGN_SYSTEM
     private var inspectionTheme: (any ThemeProtocol)?
     private var inspectedHover = false
     private var inspectedSelected = false
@@ -724,7 +711,6 @@ final class HeaderCircleActionControl: NSView {
                 .accessibilityLabel(button.toolTip ?? "Message action").environment(\.theme, theme))
         }
     }
-    #endif
 
     init(action: @escaping () -> Void) {
         self.block = action
@@ -762,23 +748,19 @@ final class HeaderCircleActionControl: NSView {
         fillBase = NSColor(theme.action.secondary.default.background)
         fillHover = NSColor(theme.action.secondary.hover.background)
         layer?.backgroundColor = fillBase.cgColor
-        #if OSAURUS_DESIGN_SYSTEM
         inspectionTheme = theme
         sharedSymbolName = symbolName
         // The disabled token already supplies its intended ink; avoid a second
         // AppKit dimming pass over the symbol.
         (button.cell as? NSButtonCell)?.imageDimsWhenDisabled = false
         refreshInspectionChrome()
-        #endif
     }
 
     override func layout() {
         super.layout()
         let side = min(bounds.width, bounds.height)
         layer?.cornerRadius = side > 0 ? side / 2 : 0
-        #if OSAURUS_DESIGN_SYSTEM
         refreshInspectionChrome()
-        #endif
     }
 
     override func updateTrackingAreas() {
@@ -799,17 +781,13 @@ final class HeaderCircleActionControl: NSView {
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
         layer?.backgroundColor = fillHover.cgColor
-        #if OSAURUS_DESIGN_SYSTEM
         inspectedHover = true; refreshInspectionChrome()
-        #endif
     }
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
         layer?.backgroundColor = fillBase.cgColor
-        #if OSAURUS_DESIGN_SYSTEM
         inspectedHover = false; refreshInspectionChrome()
-        #endif
     }
 
     @objc private func fire() { block() }
@@ -865,9 +843,7 @@ final class NativeAssistantActionsView: NSView {
     /// Image-generation turns render as just the produced image, so Read-aloud
     /// (nothing to speak) and the overflow "…" Inspect (no request log) collapse
     /// away — only Copy and Regenerate stay.
-    #if OSAURUS_DESIGN_SYSTEM
     private let assignedMenu = AssignedMenuPanelPresenter()
-    #endif
     private var hideSecondaryActions = false
     private var actionSizeConstraints: [NSLayoutConstraint] = []
     private var regenerateLeadingConstraint: NSLayoutConstraint?
@@ -1082,9 +1058,7 @@ final class NativeAssistantActionsView: NSView {
             "clock.arrow.circlepath", accessibilityDescription: nil
         )?.withSymbolConfiguration(cfg)
         fileChangesButton.contentTintColor = tint
-        #if OSAURUS_DESIGN_SYSTEM
         fileChangesButton.attributedTitle = MessageHeaderInspectionStyle.text(title, property: "caption", color: tint, theme: theme)
-        #endif
         fileChangesButton.toolTip = L("Show in File Changes")
         fileChangesButton.setAccessibilityLabel(title)
         setFileChangesVisible(true)
@@ -1122,17 +1096,15 @@ final class NativeAssistantActionsView: NSView {
         self.onSpeak = onSpeak
         self.onDeleteMessage = onDeleteMessage
         self.responseStatsForTurn = responseStatsForTurn
-        let theme = theme.catalogFamily(30, authoritative: true)
+        let theme = theme.catalogFamily(30)
         self.currentTheme = theme
         let side = MessageHeaderInspectionStyle.side(theme)
         actionSizeConstraints.forEach { $0.constant = side }
-        #if OSAURUS_DESIGN_SYSTEM
         catalogAssignmentTarget(["footerActionsGap", "fileChangesGap", "actionsPaddingX"].map { MessageHeaderInspectionStyle.key + "elements.layout." + $0 } + [AgentContentSurfaceAssignments.key(30, "replyActions")], name: "Reply action row", theme: theme)
         wantsLayer = true
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(30, "replyActions", theme)).cgColor
-        #endif
-        regenerateLeadingConstraint?.constant = MessageHeaderInspectionStyle.layout("footerActionsGap", "gap", 4, theme)
-        fileChangesLeadingConstraint?.constant = MessageHeaderInspectionStyle.layout("fileChangesGap", "gap", 10, theme)
+        regenerateLeadingConstraint?.constant = MessageHeaderInspectionStyle.layout("footerActionsGap", "gap", theme.space.s4, theme)
+        fileChangesLeadingConstraint?.constant = MessageHeaderInspectionStyle.layout("fileChangesGap", "gap", theme.space.s10, theme)
 
         let pointSize = theme.pointSize(.caption)
         let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
@@ -1238,11 +1210,7 @@ final class NativeAssistantActionsView: NSView {
         // non-flipped NSView, so its bottom edge is y == 0 and the 4pt gap sits
         // below it at a negative y.
         let origin = NSPoint(x: 0, y: -4)
-        #if OSAURUS_DESIGN_SYSTEM
         assignedMenu.showContextMenu(menu, from: overflowButton, theme: currentTheme ?? CustomizableTheme.light())
-        #else
-        menu.popUp(positioning: nil, at: origin, in: overflowButton)
-        #endif
     }
 
     @objc private func inspectFromMenu() {
@@ -1308,9 +1276,7 @@ final class NativeAssistantActionsView: NSView {
             iconTint: nil,
             symbolName: symbolName
         )
-        #if OSAURUS_DESIGN_SYSTEM
         speakButton.setInspectionSelected(isThisTurnPlaying)
-        #endif
     }
 
     private func applyTTSVisibility() {
@@ -1444,9 +1410,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private let hintLabel = NSTextField(labelWithString: "")
     private var cancelButton: PaddedInlineButton!
     private var confirmButton: PaddedInlineButton!
-    #if OSAURUS_DESIGN_SYSTEM
     private let inspectorActions = NSHostingView(rootView: AnyView(EmptyView()))
-    #endif
 
     private var getText: () -> String = { "" }
     private var setText: (String) -> Void = { _ in }
@@ -1575,14 +1539,9 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         addSubview(editBox)
         editBox.addSubview(scrollView)
         addSubview(buttonStack)
-        #if OSAURUS_DESIGN_SYSTEM
         inspectorActions.translatesAutoresizingMaskIntoConstraints = false
         inspectorActions.setContentHuggingPriority(.required, for: .horizontal)
         buttonPair.addArrangedSubview(inspectorActions)
-        #else
-        buttonPair.addArrangedSubview(cancelButton)
-        buttonPair.addArrangedSubview(confirmButton)
-        #endif
         buttonStack.addArrangedSubview(hintLabel)
         buttonStack.addArrangedSubview(spacer)
         buttonStack.addArrangedSubview(buttonPair)
@@ -1628,18 +1587,12 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         self.onCancel = onCancel
         self.onHeightChanged = onHeightChanged
         lastTheme = theme
-        #if OSAURUS_DESIGN_SYSTEM
-        let padding = theme.assignedMetric("component.library.3.padding", fallback: 8)
+        let padding = theme.assignedMetric("component.library.3.padding", fallback: theme.space.s8)
         textView.textContainerInset = NSSize(width: padding, height: padding)
-        buttonStack.spacing = MessageBubbleInspectionStyle.layout(28, "actionButtonsGap", fallback: 12, theme: theme)
-        buttonsTopConstraint?.constant = MessageBubbleInspectionStyle.layout(28, "editorActionsGap", fallback: 10, theme: theme)
-        #endif
+        buttonStack.spacing = MessageBubbleInspectionStyle.layout(28, "actionButtonsGap", fallback: theme.space.s12, theme: theme)
+        buttonsTopConstraint?.constant = MessageBubbleInspectionStyle.layout(28, "editorActionsGap", fallback: theme.space.s10, theme: theme)
 
-        #if OSAURUS_DESIGN_SYSTEM
-        let fieldTheme = theme.catalogFamily(3, authoritative: true)
-        #else
-        let fieldTheme = theme
-        #endif
+        let fieldTheme = theme.catalogFamily(3)
         let radius = CGFloat(fieldTheme.radius.medium)
         editBox.layer?.cornerRadius = radius
         // Input chrome (matches the composer / prompt-card fields) with
@@ -1655,16 +1608,13 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         textView.insertionPointColor = NSColor(fieldTheme.assignedColor("component.library.3.accent", fallback: fieldTheme.cursor))
         textView.defaultParagraphStyle = fieldTheme.paragraphStyle(.body)
         textView.typingAttributes = bodyAttributes
-        #if OSAURUS_DESIGN_SYSTEM
         editBox.layer?.borderColor = NSColor(fieldTheme.assignedColor("component.library.3.border", fallback: fieldTheme.border.default)).cgColor
         editBox.catalogAssignmentTarget(["background", "border", "borderWidth", "radius", "padding"].map { "component.library.3." + $0 }, name: "Shared multiline editor", theme: fieldTheme)
         textView.catalogAssignmentTarget(["text", "foreground"].map { "component.library.3." + $0 }, name: "Shared multiline editor text", theme: fieldTheme)
         buttonStack.catalogAssignmentTarget(["component.library.28.elements.layout.editorActionsGap", "component.library.28.elements.layout.actionButtonsGap"], name: "Editor action row spacing", theme: theme)
-        #endif
 
         hintLabel.font = theme.nsFont(.footnote)
         hintLabel.textColor = NSColor(theme.text.tertiary)
-        #if OSAURUS_DESIGN_SYSTEM
         let hintFont = theme.assignedNativeFont(UserMessageInspectionStyle.key + "caption", fallback: theme.nsFont(.footnote))
         let hintParagraph = NSMutableParagraphStyle()
         hintParagraph.minimumLineHeight = theme.assignedLineHeight(UserMessageInspectionStyle.key + "caption", fallback: theme.lineHeight(.footnote))
@@ -1672,7 +1622,6 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         hintLabel.font = hintFont
         hintLabel.attributedStringValue = NSAttributedString(string: hintLabel.stringValue, attributes: [
             .font: hintFont, .paragraphStyle: hintParagraph, .kern: theme.assignedTracking(UserMessageInspectionStyle.key + "caption") ?? 0, .foregroundColor: NSColor(theme.text.secondary)])
-        #endif
 
         if textView.string != getText() {
             textView.string = getText()
@@ -1753,15 +1702,13 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private func updateConfirmButtons(theme: any ThemeProtocol) {
         let empty = textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         confirmButton.isEnabled = !empty
-        #if OSAURUS_DESIGN_SYSTEM
-        inspectorActions.rootView = AnyView(HStack(spacing: MessageBubbleInspectionStyle.layout(28, "actionButtonsGap", fallback: 8, theme: theme)) {
+        inspectorActions.rootView = AnyView(HStack(spacing: MessageBubbleInspectionStyle.layout(28, "actionButtonsGap", fallback: theme.space.s8, theme: theme)) {
             SettingsButton(.secondary, L("Cancel"), verbatim: true) { [weak self] in self?.cancelTapped() }
             SettingsButton(.primary, L("Save & Regenerate"), icon: "arrow.clockwise", verbatim: true) { [weak self] in self?.confirmTapped() }
                 .disabled(empty)
         }.fixedSize().environment(\.theme, theme))
         inspectorActions.invalidateIntrinsicContentSize()
         return
-        #endif
         // `button.radius` = `radius.medium`; caption labels keep the edit
         // box's buttons subordinate to the text being edited.
         let cancelFont = theme.nsFont(.caption, weight: .medium)
@@ -1913,10 +1860,8 @@ final class NativeStatsView: NSView {
             : (unclosedReasoning ? L("⚠ thinking didn't close — answer may be in reasoning above") : "")
         label.font = theme.nsFont(.caption, monospacedDigit: true)
         label.textColor = NSColor(theme.text.tertiary)
-        #if OSAURUS_DESIGN_SYSTEM
-        let scoped = theme.catalogFamily(30, authoritative: true)
+        let scoped = theme.catalogFamily(30)
         label.attributedStringValue = MessageHeaderInspectionStyle.text(label.stringValue, property: "caption", color: NSColor(unclosedReasoning ? scoped.status.error.foreground : scoped.text.secondary), theme: scoped)
-        #endif
     }
 
     /// Response metrics for the Inspect response menu, without a view hierarchy.
@@ -2001,17 +1946,11 @@ final class NativeEmptyResponseNoticeView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let retryButton = NSButton()
-    #if OSAURUS_DESIGN_SYSTEM
     private var retryHost: NSHostingView<AnyView>?
-    #endif
     static func inspectionHeight(_ theme: any ThemeProtocol) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         let label = theme.assignedLineHeight(NativeComponentInspectionStyle.key(40, "label"), fallback: 18)
         let caption = theme.assignedLineHeight(NativeComponentInspectionStyle.key(40, "caption"), fallback: 16)
-        return max(NativeComponentInspectionStyle.metric(40, "height", 36, theme), label + caption + NativeComponentInspectionStyle.metric(40, "gap", 1, theme) + 2 * NativeComponentInspectionStyle.metric(40, "padding", 0, theme))
-        #else
-        return 36
-        #endif
+        return max(NativeComponentInspectionStyle.metric(40, "height", 36, theme), label + caption + NativeComponentInspectionStyle.metric(40, "gap", theme.space.s2, theme) + 2 * NativeComponentInspectionStyle.metric(40, "padding", theme.space.s0, theme))
     }
 
     private var turnId: UUID = UUID()
@@ -2049,14 +1988,10 @@ final class NativeEmptyResponseNoticeView: NSView {
 
         addSubview(iconView)
         addSubview(textStack)
-        #if OSAURUS_DESIGN_SYSTEM
         let host = NSHostingView(rootView: AnyView(EmptyView()))
         host.translatesAutoresizingMaskIntoConstraints = false
         retryHost = host
         let actionView: NSView = host
-        #else
-        let actionView: NSView = retryButton
-        #endif
         addSubview(actionView)
 
         NSLayoutConstraint.activate([
@@ -2087,12 +2022,10 @@ final class NativeEmptyResponseNoticeView: NSView {
         theme: any ThemeProtocol,
         onRetry: ((UUID) -> Void)?
     ) {
-        let theme = theme.catalogFamily(40, authoritative: true)
-        #if OSAURUS_DESIGN_SYSTEM
+        let theme = theme.catalogFamily(40)
         wantsLayer = true
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(40, "emptyResponse", theme)).cgColor
         catalogAssignmentTarget([AgentContentSurfaceAssignments.key(40, "emptyResponse")], name: "Empty agent response notice", theme: theme)
-        #endif
         self.turnId = turnId
         self.onRetry = onRetry
 
@@ -2123,20 +2056,18 @@ final class NativeEmptyResponseNoticeView: NSView {
         detailLabel.textColor = NSColor(theme.text.tertiary)
         NativeComponentInspectionStyle.label(titleLabel, family: 40, property: "label", theme: theme)
         NativeComponentInspectionStyle.label(detailLabel, family: 40, property: "caption", theme: theme)
-        #if OSAURUS_DESIGN_SYSTEM
         retryHost?.rootView = AnyView(Button(L("Retry")) { [weak self] in self?.retryTapped() }.assignedSettingsButtonStyle(.secondary, size: .compact).environment(\.theme, theme))
         wantsLayer = true
         layer?.backgroundColor = NSColor(theme.surface.raised).cgColor
         layer?.borderColor = NSColor(theme.border.default).cgColor
         layer?.borderWidth = theme.stroke.default
         layer?.cornerRadius = theme.radius.medium
-        let pad = NativeComponentInspectionStyle.metric(40, "padding", 0, theme)
+        let pad = NativeComponentInspectionStyle.metric(40, "padding", theme.space.s0, theme)
         for c in constraints {
             if c.firstItem as? NSView === iconView, c.firstAttribute == .leading { c.constant = pad }
             if c.firstItem as? NSView === retryHost, c.firstAttribute == .trailing { c.constant = -pad }
         }
-        if let stack = titleLabel.superview as? NSStackView { stack.spacing = NativeComponentInspectionStyle.metric(40, "gap", 1, theme) }
-        #endif
+        if let stack = titleLabel.superview as? NSStackView { stack.spacing = NativeComponentInspectionStyle.metric(40, "gap", theme.space.s2, theme) }
     }
 }
 
@@ -2613,7 +2544,7 @@ final class NativeMessageCellView: NSTableCellView {
             messageHeaderInsetConstraints.append(bottomGap)
         }
         nativeHeaderHeightConstraint?.constant = NativeCellHeightEstimator.headerInnerHeight(for: context.theme)
-        let paddingY = MessageHeaderInspectionStyle.layout("headerPaddingY", "padding", 8, context.theme)
+        let paddingY = MessageHeaderInspectionStyle.layout("headerPaddingY", "padding", context.theme.space.s8, context.theme)
         for c in messageHeaderInsetConstraints { c.constant = paddingY }
 
         let displayName = role == .user ? "You" : (name.isEmpty ? L("Osaurus") : name)
@@ -2682,7 +2613,7 @@ final class NativeMessageCellView: NSTableCellView {
         label.configure(
             text: text,
             font: font,
-            baseColor: NSColor(context.theme.text.primary).withAlphaComponent(0.4),
+            baseColor: NSColor(context.theme.text.tertiary),
             highlightColor: NSColor(context.theme.text.primary)
         )
         label.start()
@@ -2701,11 +2632,9 @@ final class NativeMessageCellView: NSTableCellView {
         context: CellRenderingContext,
         sameKind: Bool
     ) {
-        let theme = role == .assistant ? context.theme.catalogFamily(29, authoritative: true) : context.theme
+        let theme = role == .assistant ? context.theme.catalogFamily(29) : context.theme
         let insetX = context.rowHorizontalInset
-        #if OSAURUS_DESIGN_SYSTEM
         catalogAssignmentTarget(["component.library.29.elements.layout.contentInset"], name: "Agent reply text layout", theme: theme)
-        #endif
         let contentWidth = max(1, context.width - 2 * insetX)
         let minimumHeight = role == .assistant ? AssistantMessageInspectionStyle.metric("height", 0, theme) : 0
         // While an image is generating, the assistant "body" is a transient
@@ -2790,14 +2719,12 @@ final class NativeMessageCellView: NSTableCellView {
         // continues compositing across frames during streaming
         let bgChanged = !cgColorsEqual(lastBubbleBackgroundCGColor, targetBg)
         let radiusChanged = lastBubbleCornerRadius != targetRadius
-        #if OSAURUS_DESIGN_SYSTEM
         if role == .assistant {
-            catalogAssignmentTarget(["background", "radius", "border", "borderWidth", "padding", "height"].map { AssistantMessageInspectionStyle.key + $0 }, name: "Assistant message block", theme: theme)
+            catalogAssignmentTarget(["background", "radius", "padding", "height"].map { AssistantMessageInspectionStyle.key + $0 } + ["border", "borderWidth"].map { MessageBubbleInspectionStyle.key(29, $0) }, name: "Assistant message block", theme: theme)
             nativeMarkdownView?.catalogAssignmentTarget(["text", "foreground", "accent"].map { AssistantMessageInspectionStyle.key + $0 }, name: "Assistant message text", theme: theme)
         }
-        #endif
         let borderWidth = role == .assistant ? MessageBubbleInspectionStyle.borderWidth(29, theme: theme) : 0
-        let borderColor = borderWidth > 0 ? NSColor(theme.border.default).cgColor : nil
+        let borderColor = borderWidth > 0 ? NSColor(theme.assignedColor(MessageBubbleInspectionStyle.key(29, "border"), fallback: theme.border.default)).cgColor : nil
         let borderChanged = layer?.borderWidth != borderWidth || !cgColorsEqual(layer?.borderColor, borderColor)
         if bgChanged || radiusChanged || borderChanged {
             CATransaction.begin()
@@ -2830,7 +2757,7 @@ final class NativeMessageCellView: NSTableCellView {
     /// Text inset above and below a paragraph. Assistant paragraphs paint the
     /// reply surface on the cell, so they need room inside it.
     static func paragraphVerticalInset(for role: MessageRole, theme: (any ThemeProtocol)? = nil) -> CGFloat {
-        if role == .assistant, let theme { return theme.catalogLayoutMetric("component.library.29.elements.layout.contentInset", inheriting: AssistantMessageInspectionStyle.metric("padding", 12, theme)) }
+        if role == .assistant, let theme { return theme.catalogLayoutMetric("component.library.29.elements.layout.contentInset", inheriting: AssistantMessageInspectionStyle.metric("padding", theme.space.s12, theme)) }
         return role == .assistant ? 12 : 4
     }
 
@@ -3067,16 +2994,14 @@ final class NativeMessageCellView: NSTableCellView {
     ) {
         let images = attachments.filter(\.isImage)
         let documents = attachments.filter(\.isDocument)
-        let theme = context.theme.catalogFamily(28, authoritative: true)
-        let insetX = theme.catalogLayoutMetric("component.library.28.elements.layout.bubblePaddingX", inheriting: UserMessageInspectionStyle.metric("padding", 12, theme))
+        let theme = context.theme.catalogFamily(28)
+        let insetX = theme.catalogLayoutMetric("component.library.28.elements.layout.bubblePaddingX", inheriting: UserMessageInspectionStyle.metric("padding", theme.space.s12, theme))
         let insetY = theme.catalogLayoutMetric("component.library.28.elements.layout.bubblePaddingY", inheriting: UserMessageInspectionStyle.metric("padding", Self.userBubbleTextInset, theme))
         userBubbleHorizontalInset = insetX
         userBubbleBottomInset = insetY
         userBubbleTopInset = insetY - Self.leadingAboveGlyphs(theme)
-        userOuterTopGap = MessageBubbleInspectionStyle.layout(28, "topGap", fallback: 8, theme: theme)
-        #if OSAURUS_DESIGN_SYSTEM
+        userOuterTopGap = MessageBubbleInspectionStyle.layout(28, "topGap", fallback: theme.space.s8, theme: theme)
         catalogAssignmentTarget(["component.library.28.elements.layout.bubblePaddingX", "component.library.28.elements.layout.bubblePaddingY", "component.library.28.elements.layout.topGap"] + (attachments.isEmpty ? [] : ["component.library.28.elements.layout.attachmentTextGap"]), name: "User message layout", theme: theme)
-        #endif
         let innerWidth = max(context.width - 2 * context.rowHorizontalInset, 100)
 
         // An enveloped turn (channel message, delegated task, …) paints the
@@ -3136,7 +3061,7 @@ final class NativeMessageCellView: NSTableCellView {
             // fittingSize measurement later): badge row, documents, images,
             // and the 6pt gaps between them. Mirrors
             // `NativeCellHeightEstimator.estimatedHeight(.userMessage)`.
-            let innerGap = images.isEmpty && documents.isEmpty ? 6 : AttachmentInspectionStyle.metric("gap", 6, theme)
+            let innerGap = images.isEmpty && documents.isEmpty ? 6 : AttachmentInspectionStyle.metric("gap", theme.space.s6, theme)
             let outerTopGap = userOuterTopGap
             var attachH: CGFloat = 0
             if !badges.isEmpty { attachH += NativeDispatchBadgeRow.height(for: theme) }
@@ -3222,9 +3147,7 @@ final class NativeMessageCellView: NSTableCellView {
                     container.topAnchor.constraint(equalTo: cellTopAnchor, constant: nextGap),
                     wc,
                 ])
-                #if OSAURUS_DESIGN_SYSTEM
                 container.heightAnchor.constraint(greaterThanOrEqualToConstant: UserMessageInspectionStyle.metric("height", 0, theme)).isActive = true
-                #endif
                 userBubbleWidthConstraint = wc
                 userMessageContainer = container
 
@@ -3307,15 +3230,10 @@ final class NativeMessageCellView: NSTableCellView {
             container.layer?.cornerRadius = radius
             container.layer?.backgroundColor = bubbleColor.cgColor
             container.layer?.masksToBounds = true
-            #if OSAURUS_DESIGN_SYSTEM
-            container.catalogAssignmentTarget(["background", "radius", "border", "borderWidth", "padding", "height"].map { UserMessageInspectionStyle.key + $0 }, name: "User message bubble", theme: theme)
+            container.catalogAssignmentTarget(["background", "radius", "padding", "height"].map { UserMessageInspectionStyle.key + $0 } + ["border", "borderWidth"].map { MessageBubbleInspectionStyle.key(28, $0) }, name: "User message bubble", theme: theme)
             userTextView?.catalogAssignmentTarget(["text", "foreground", "accent"].map { UserMessageInspectionStyle.key + $0 }, name: "User message text", theme: theme)
             container.layer?.borderWidth = MessageBubbleInspectionStyle.borderWidth(28, theme: theme)
-            container.layer?.borderColor = NSColor(theme.assignedColor(UserMessageInspectionStyle.key + "border", fallback: theme.border.default)).cgColor
-            #else
-            container.layer?.borderWidth = 0
-            container.layer?.borderColor = nil
-            #endif
+            container.layer?.borderColor = NSColor(theme.assignedColor(MessageBubbleInspectionStyle.key(28, "border"), fallback: theme.border.default)).cgColor
 
             userBubbleCornerRadius = radius
         }
@@ -3591,11 +3509,9 @@ final class NativeMessageCellView: NSTableCellView {
             assistantActionInsetConstraints = constraints.filter { $0.firstItem as? NSView === av && [.leading, .trailing].contains($0.firstAttribute) }
         }
         assistantActionHeightConstraint?.constant = MessageHeaderInspectionStyle.side(context.theme)
-        for c in assistantActionInsetConstraints { c.constant = (c.firstAttribute == .trailing ? -1 : 1) * MessageHeaderInspectionStyle.layout("actionsPaddingX", "padding", 16, context.theme) }
-        assistantActionsTopConstraint?.constant = MessageBubbleInspectionStyle.layout(29, "actionsGap", fallback: 8, theme: context.theme)
-        #if OSAURUS_DESIGN_SYSTEM
+        for c in assistantActionInsetConstraints { c.constant = (c.firstAttribute == .trailing ? -1 : 1) * MessageHeaderInspectionStyle.layout("actionsPaddingX", "padding", context.theme.space.s16, context.theme) }
+        assistantActionsTopConstraint?.constant = MessageBubbleInspectionStyle.layout(29, "actionsGap", fallback: context.theme.space.s8, theme: context.theme)
         catalogAssignmentTarget(["component.library.29.elements.layout.actionsGap"], name: "Space between agent reply and actions", theme: context.theme)
-        #endif
         nativeAssistantActionsView?.configure(
             turnId: turnId,
             timestamp: timestamp,
@@ -4048,7 +3964,6 @@ private final class UserAttachmentThumbnailView: NSView {
         let rect = bounds
         guard rect.width > 0, rect.height > 0 else { return }
 
-        #if OSAURUS_DESIGN_SYSTEM
         if let theme = inspectionTheme {
             let shape = NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
             NSColor(AttachmentInspectionStyle.imageColor(hovered ? "hover" : "background", theme.surface.subtle, theme)).setFill()
@@ -4070,7 +3985,6 @@ private final class UserAttachmentThumbnailView: NSView {
             stroke.stroke()
             return
         }
-        #endif
         guard let img = image else { return }
 
         NSGraphicsContext.saveGraphicsState()
@@ -4134,13 +4048,9 @@ private final class UserDocumentChipView: NSView {
         let nameW = min(nameField.intrinsicContentSize.width, 130)
         let sizeW = sizeField.intrinsicContentSize.width
         let w = chipPadding * 2 + 14 + chipGap * 2 + nameW + sizeW
-        #if OSAURUS_DESIGN_SYSTEM
         // Keep the original filename cap, but let edited type and insets fit
         // alongside metadata instead of collapsing the name to an ellipsis.
         return NSSize(width: w, height: chipHeight)
-        #else
-        return NSSize(width: min(w, max(220, chipPadding * 2 + 24)), height: chipHeight)
-        #endif
     }
 
     override init(frame frameRect: NSRect) {
@@ -4214,12 +4124,11 @@ private final class UserDocumentChipView: NSView {
         sizeField.stringValue = summary?.chipDetailLabel ?? attachment.fileSizeFormatted ?? ""
         sizeField.textColor = NSColor(theme.text.tertiary)
 
-        #if OSAURUS_DESIGN_SYSTEM
         nameField.font = theme.assignedNativeFont(AttachmentInspectionStyle.key + "text", fallback: theme.nsFont(.footnote))
         sizeField.font = theme.assignedNativeFont(AttachmentInspectionStyle.key + "caption", fallback: theme.nsFont(.micro))
         chipHeight = AttachmentInspectionStyle.documentHeight(theme)
-        chipPadding = AttachmentInspectionStyle.metric("padding", 8, theme)
-        chipGap = AttachmentInspectionStyle.metric("gap", 5, theme)
+        chipPadding = AttachmentInspectionStyle.metric("padding", theme.space.s8, theme)
+        chipGap = AttachmentInspectionStyle.metric("gap", theme.space.s4, theme)
         chipHeightConstraint.constant = chipHeight
         iconLeadingConstraint.constant = chipPadding
         nameLeadingConstraint.constant = chipGap
@@ -4234,17 +4143,14 @@ private final class UserDocumentChipView: NSView {
         layer?.borderWidth = AttachmentInspectionStyle.metric("borderWidth", theme.stroke.default, theme)
         layer?.borderColor = NSColor(AttachmentInspectionStyle.color("border", theme.border.default, theme)).cgColor
         updateInspectionBackground()
-        #endif
 
         textBaselineConstraint.constant = (nameField.font?.capHeight ?? 0) / 2
         invalidateIntrinsicContentSize()
     }
 
     private func updateInspectionBackground() {
-        #if OSAURUS_DESIGN_SYSTEM
         guard let theme = inspectionTheme else { return }
         layer?.backgroundColor = NSColor(AttachmentInspectionStyle.color(hovered && onTap != nil ? "hover" : "background", theme.surface.subtle, theme)).cgColor
-        #endif
     }
 
     // Tracking-area + `cursorUpdate` rather than `resetCursorRects`: cursor
@@ -4351,7 +4257,7 @@ enum NativeCellHeightEstimator {
     /// without the cell's 8pt top and bottom padding. Must match the constraints
     /// installed by `configureAsHeader`.
     @MainActor static func headerInnerHeight(for theme: any ThemeProtocol) -> CGFloat {
-        let theme = theme.catalogFamily(30, authoritative: true)
+        let theme = theme.catalogFamily(30)
         let clampedAvatar = max(
             NativeHeaderView.minAvatarSize,
             min(NativeHeaderView.maxAvatarSize, MessageHeaderInspectionStyle.avatarSide(theme))
@@ -4374,13 +4280,13 @@ enum NativeCellHeightEstimator {
 
         case .header:
             // 8 top + header content + 8 bottom; content grows with avatar size
-            return 2 * MessageHeaderInspectionStyle.layout("headerPaddingY", "padding", 8, theme) + headerInnerHeight(for: theme)
+            return 2 * MessageHeaderInspectionStyle.layout("headerPaddingY", "padding", theme.space.s8, theme) + headerInnerHeight(for: theme)
 
         case .generationStats:
             return MessageHeaderInspectionStyle.captionHeight(theme)
 
         case .assistantActions:
-            return MessageBubbleInspectionStyle.layout(29, "actionsGap", fallback: 8, theme: theme) + MessageHeaderInspectionStyle.side(theme) + 8
+            return MessageBubbleInspectionStyle.layout(29, "actionsGap", fallback: theme.space.s8, theme: theme) + MessageHeaderInspectionStyle.side(theme) + 8
 
         case .emptyResponseNotice:
             // 4 top gap + 36 notice + 8 bottom gap
@@ -4394,31 +4300,27 @@ enum NativeCellHeightEstimator {
             // Mirrors a single running group row (node + shimmer title) so the
             // pending → group transition doesn't change height: 8pt top inset +
             // node row + 8pt bottom inset, node centered at the same Y as a group row.
-            #if OSAURUS_DESIGN_SYSTEM
             return ActivityInspectionStyle.headerHeight(theme) + 16
-            #else
-            return NativeToolCallRowView.rowHeaderHeight + 8
-            #endif
 
         case let .thinking(_, text, _, _):
-            if !isExpanded { return ThinkingInspectionStyle.headerHeight(theme) + ThinkingInspectionStyle.metric("padding", 4, theme) + 8 }
-            let innerW = max(width - 2 * rowInset - 2 * ThinkingInspectionStyle.metric("padding", 14, theme), 100)
+            if !isExpanded { return ThinkingInspectionStyle.headerHeight(theme) + ThinkingInspectionStyle.metric("padding", theme.space.s4, theme) + 8 }
+            let innerW = max(width - 2 * rowInset - 2 * ThinkingInspectionStyle.metric("padding", theme.space.s14, theme), 100)
             let charsPerLine = max(Int(innerW / 7), 20)
             let lines = max(1, (text.count + charsPerLine - 1) / charsPerLine)
-            return ThinkingInspectionStyle.headerHeight(theme) + ThinkingInspectionStyle.metric("borderWidth", 1, theme) + ThinkingInspectionStyle.layout("contentTopGap", "gap", 8, theme) + ThinkingInspectionStyle.layout("contentBottomPadding", "padding", 10, theme) + min(CGFloat(lines) * CGFloat(theme.catalogFamily(33, authoritative: true).lineHeight(.body)) + 8, 356) + 8
+            return ThinkingInspectionStyle.headerHeight(theme) + ThinkingInspectionStyle.metric("borderWidth", 1, theme) + ThinkingInspectionStyle.layout("contentTopGap", "gap", theme.space.s8, theme) + ThinkingInspectionStyle.layout("contentBottomPadding", "padding", theme.space.s10, theme) + min(CGFloat(lines) * CGFloat(theme.catalogFamily(33).lineHeight(.body)) + 8, 356) + 8
 
         case let .compactionMarker(_, _, summaryText):
             // Collapsed: 4 top inset + 32 header + 8 cell gap. Expanded adds
             // the summary text, estimated like thinking; the cell corrects
             // via the measured-height report.
             if !isExpanded { return NativeCompactionMarkerView.inspectionHeaderHeight(theme) + 12 }
-            let innerW = max(width - 2 * rowInset - 2 * NativeComponentInspectionStyle.metric(40, "padding", 14, theme), 100)
+            let innerW = max(width - 2 * rowInset - 2 * NativeComponentInspectionStyle.metric(40, "padding", theme.space.s14, theme), 100)
             let charsPerLine = max(Int(innerW / 7), 20)
             let lines = max(1, (summaryText.count + charsPerLine - 1) / charsPerLine)
             return 44 + 8 + CGFloat(lines) * 22 + 10
 
         case let .paragraph(_, text, _, role):
-            let theme = role == .assistant ? theme.catalogFamily(29, authoritative: true) : theme
+            let theme = role == .assistant ? theme.catalogFamily(29) : theme
             let minimumHeight = role == .assistant ? AssistantMessageInspectionStyle.metric("height", 0, theme) : 0
             let innerW = max(width - 2 * rowInset, 1)
             let insets =
@@ -4433,13 +4335,13 @@ enum NativeCellHeightEstimator {
             return max(minimumHeight, CGFloat(lines) * theme.lineHeight(.body) + insets)
 
         case let .userMessage(rawText, attachments, _, _, envelope, author):
-            let theme = theme.catalogFamily(28, authoritative: true)
-            let insetX = theme.catalogLayoutMetric("component.library.28.elements.layout.bubblePaddingX", inheriting: UserMessageInspectionStyle.metric("padding", 12, theme))
+            let theme = theme.catalogFamily(28)
+            let insetX = theme.catalogLayoutMetric("component.library.28.elements.layout.bubblePaddingX", inheriting: UserMessageInspectionStyle.metric("padding", theme.space.s12, theme))
             let insetY = theme.catalogLayoutMetric("component.library.28.elements.layout.bubblePaddingY", inheriting: UserMessageInspectionStyle.metric("padding", NativeMessageCellView.userBubbleTextInset, theme))
             // Enveloped turns paint the human-authored text under a badge row.
             let text = envelope?.displayText ?? rawText
             let hasBadges = !DispatchEnvelope.badges(for: envelope, author: author).isEmpty
-            var h = MessageBubbleInspectionStyle.layout(28, "topGap", fallback: 8, theme: theme)  // outerTopGap
+            var h = MessageBubbleInspectionStyle.layout(28, "topGap", fallback: theme.space.s8, theme: theme)  // outerTopGap
             let innerW = max(width - 2 * rowInset, 100)
 
             // Stacked above the bubble (fixed heights, 6pt gaps), mirroring
@@ -4448,10 +4350,10 @@ enum NativeCellHeightEstimator {
             let imageCount = attachments.filter(\.isImage).count
             var above: CGFloat = 0
             if hasBadges { above += NativeDispatchBadgeRow.height(for: theme) }
-            if docCount > 0 { above += (above > 0 ? AttachmentInspectionStyle.metric("gap", 6, theme) : 0) + AttachmentInspectionStyle.documentHeight(theme) }
-            if imageCount > 0 { above += (above > 0 ? AttachmentInspectionStyle.metric("gap", 6, theme) : 0) + AttachmentInspectionStyle.imageHeight(theme) }
+            if docCount > 0 { above += (above > 0 ? AttachmentInspectionStyle.metric("gap", theme.space.s6, theme) : 0) + AttachmentInspectionStyle.documentHeight(theme) }
+            if imageCount > 0 { above += (above > 0 ? AttachmentInspectionStyle.metric("gap", theme.space.s6, theme) : 0) + AttachmentInspectionStyle.imageHeight(theme) }
             h += above
-            if above > 0 && !text.isEmpty { h += MessageBubbleInspectionStyle.layout(28, "attachmentTextGap", fallback: docCount + imageCount > 0 ? AttachmentInspectionStyle.metric("gap", 6, theme) : 6, theme: theme) }  // gap to bubble
+            if above > 0 && !text.isEmpty { h += MessageBubbleInspectionStyle.layout(28, "attachmentTextGap", fallback: docCount + imageCount > 0 ? AttachmentInspectionStyle.metric("gap", theme.space.s6, theme) : 6, theme: theme) }  // gap to bubble
 
             // Text bubble: equal glyph insets above and below the text
             if !text.isEmpty {
@@ -4486,13 +4388,13 @@ enum NativeCellHeightEstimator {
         case let .activityGroup(children):
             // collapsed: 44pt header + 4pt inset + 8pt cell gap (matches thinking)
             let header = ActivityInspectionStyle.headerHeight(theme, fallback: 44, property: "heading")
-            if !isExpanded { return header + ActivityInspectionStyle.metric("padding", 4, theme) + 8 }
+            if !isExpanded { return header + ActivityInspectionStyle.metric("padding", theme.space.s4, theme) + 8 }
             // expanded: header + separator/gaps + children estimated collapsed;
             // per-child expansion is corrected by the measured-height report
             let childrenH = children.reduce(CGFloat(0)) { acc, child in
-                acc + estimatedHeight(for: child, width: width - 2 * ActivityInspectionStyle.metric("padding", 14, theme), theme: theme, isExpanded: false)
+                acc + estimatedHeight(for: child, width: width - 2 * ActivityInspectionStyle.metric("padding", theme.space.s14, theme), theme: theme, isExpanded: false)
             }
-            return header + ActivityInspectionStyle.metric("borderWidth", 1, theme) + ActivityInspectionStyle.layout("contentTopGap", "gap", 8, theme) + childrenH + ActivityInspectionStyle.layout("contentBottomPadding", "padding", 10, theme) + 8
+            return header + ActivityInspectionStyle.metric("borderWidth", 1, theme) + ActivityInspectionStyle.layout("contentTopGap", "gap", theme.space.s8, theme) + childrenH + ActivityInspectionStyle.layout("contentBottomPadding", "padding", theme.space.s10, theme) + 8
 
         case let .sharedArtifact(artifact):
             // matches NativeArtifactCardView: inner top 12 + bottom 8 (footerVerticalGap), symmetric gap above/below footer row
@@ -4544,7 +4446,7 @@ enum NativeCellHeightEstimator {
             // match that.
             let header = NativeFileDiffView.inspectionHeaderHeight(theme)
             if !isExpanded { return header + 12 }
-            let innerW = max(width - 2 * rowInset - 2 * NativeComponentInspectionStyle.metric(38, "padding", 11, theme) - DiffBackgroundView.markerWidth, 100)
+            let innerW = max(width - 2 * rowInset - 2 * NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme) - DiffBackgroundView.markerWidth, 100)
             let chars = max(Int(innerW / 7), 20)
             var lineRows = 0
             for line in diff.lines {

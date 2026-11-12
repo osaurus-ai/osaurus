@@ -33,7 +33,7 @@ struct SettingsPage<Header: View, Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
@@ -521,7 +521,7 @@ struct SettingsTabsRow<Tab: AnimatedTabItem, Trailing: View>: View where Tab.All
             if needsStackedLayout {
                 VStack(alignment: .leading, spacing: theme.space.s8) {
                     tabSelector
-                    HStack(spacing: 0) {
+                    HStack(spacing: theme.space.s0) {
                         SearchField(text: $searchText, placeholder: searchPlaceholder, fillsAvailableWidth: true)
                         measuredTrailing
                     }
@@ -531,7 +531,7 @@ struct SettingsTabsRow<Tab: AnimatedTabItem, Trailing: View>: View where Tab.All
                     tabSelector
                     Spacer(minLength: theme.settingsInlineGap)
                     if showSearch || hasTrailing {
-                        HStack(spacing: 0) {
+                        HStack(spacing: theme.space.s0) {
                             if showSearch {
                                 SearchField(text: $searchText, placeholder: searchPlaceholder)
                             }
@@ -554,7 +554,7 @@ struct SettingsTabsRow<Tab: AnimatedTabItem, Trailing: View>: View where Tab.All
             ScrollView(.horizontal, showsIndicators: false) { measuredSelector }
                 // Fades the cut-off edge so the hidden tabs read as scrollable.
                 .mask(
-                    HStack(spacing: 0) {
+                    HStack(spacing: theme.space.s0) {
                         Rectangle()
                         LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
                             .frame(width: 32)

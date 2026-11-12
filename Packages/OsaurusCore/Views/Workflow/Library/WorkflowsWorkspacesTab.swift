@@ -273,7 +273,7 @@ struct HostedWorkflowRunStatus: View {
     var body: some View {
         if let run = center.runs(for: link.id).last {
             HStack(spacing: theme.space.s4) {
-                ProgressView().controlSize(.mini)
+                SettingsSpinner(size: .mini)
                 Text(verbatim: HostedWorkflowRunCenter.phaseLabel(run.phase, hostLabel: link.hostLabel))
                     .textStyle(.caption)
                     .foregroundStyle(theme.text.secondary)
@@ -286,7 +286,7 @@ struct HostedWorkflowRunStatus: View {
         } else if let outcome = center.lastOutcome[link.id] {
             Text(verbatim: outcome.message)
                 .textStyle(.caption)
-                .foregroundStyle(outcome.succeeded ? theme.text.tertiary : theme.statusInk.error)
+                .foregroundStyle(outcome.succeeded ? theme.text.tertiary : theme.statusInk(.error))
                 .lineLimit(1)
                 .help(outcome.message)
         }

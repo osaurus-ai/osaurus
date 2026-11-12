@@ -11,30 +11,30 @@ import Testing
 @MainActor
 struct ThemeAppearanceModeTests {
     @Test
-    func canonicalDefaultsUseHandoffSemanticPalettes() {
+    func canonicalDefaultsUseLibraryPalettes() throws {
+        let tokens = try #require(DesignLibraryRuntime.bundledSnapshot()).document.tokens
+        func token(_ name: String, _ mode: String) -> String? { tokens[name]?[mode].designString?.lowercased() }
+
         let dark = CustomTheme.darkDefault
         #expect(dark.metadata.name == "Dark")
         #expect(dark.schemaVersion == CustomTheme.currentSchemaVersion)
-        #expect(dark.colors.surface.canvas.lowercased() == "#1c1c1e")
-        // Handoff primary action is monochrome: white on dark, black on light.
-        #expect(dark.colors.action.primary.default.background.lowercased() == "#ffffff")
-        #expect(dark.colors.action.primary.default.foreground.lowercased() == "#000000")
-        #expect(dark.colors.text.link.lowercased() == "#ffffff")
+        #expect(dark.colors.surface.canvas.lowercased() == token("color.surface.canvas", "dark"))
+        #expect(dark.colors.action.primary.default.background.lowercased() == token("color.action.primary.default.background", "dark"))
+        #expect(dark.colors.text.link.lowercased() == token("color.text.link", "dark"))
         #expect(dark.windowMaterial.nativeMaterial == .underWindowBackground)
         #expect(dark.windowMaterial.blending == .behindWindow)
-        #expect(dark.windowMaterial.tintOpacity == 0.75)
+        #expect(dark.windowMaterial.tintOpacity == tokens["material.window.tintOpacity"]?.dark.designNumber)
         #expect(dark.isDark)
 
         let light = CustomTheme.lightDefault
         #expect(light.metadata.name == "Light")
         #expect(light.schemaVersion == CustomTheme.currentSchemaVersion)
-        #expect(light.colors.surface.canvas.lowercased() == "#f5f5f7")
-        #expect(light.colors.action.primary.default.background.lowercased() == "#000000")
-        #expect(light.colors.action.primary.default.foreground.lowercased() == "#ffffff")
-        #expect(light.colors.text.link.lowercased() == "#000000")
+        #expect(light.colors.surface.canvas.lowercased() == token("color.surface.canvas", "light"))
+        #expect(light.colors.action.primary.default.background.lowercased() == token("color.action.primary.default.background", "light"))
+        #expect(light.colors.text.link.lowercased() == token("color.text.link", "light"))
         #expect(light.windowMaterial.nativeMaterial == .underWindowBackground)
         #expect(light.windowMaterial.blending == .behindWindow)
-        #expect(light.windowMaterial.tintOpacity == 0.75)
+        #expect(light.windowMaterial.tintOpacity == tokens["material.window.tintOpacity"]?.light.designNumber)
         #expect(!light.isDark)
     }
 

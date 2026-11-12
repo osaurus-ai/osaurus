@@ -928,14 +928,14 @@ enum ModelUseCase: String, Codable, CaseIterable {
     /// Tint for the badge chrome. Vision reuses the existing VLM purple
     /// so the visual language stays consistent with the model detail
     /// type badge.
-    var tintColor: Color {
+    var ink: DataInk {
         switch self {
-        case .general: return Color(hex: "3B82F6")  // blue
-        case .vision: return Color(hex: "A855F7")  // purple (matches VLM pill)
-        case .reasoning: return Color(hex: "F97316")  // orange
-        case .coding: return Color(hex: "22C55E")  // green
-        case .smallest: return Color(hex: "14B8A6")  // teal
-        case .bestQuality: return Color(hex: "EAB308")  // gold
+        case .general: .blue
+        case .vision: .purple
+        case .reasoning: .orange
+        case .coding: .green
+        case .smallest: .teal
+        case .bestQuality: .indigo
         }
     }
 }

@@ -51,7 +51,7 @@ private struct LocalModelCell: View {
     private var modelCell: some View {
         HStack(spacing: theme.settingsControlGap) {
             Image(systemName: item.icon)
-                .glyphSize(13, weight: .medium)
+                .glyphSize(.label, weight: .medium)
                 .foregroundColor(theme.text.tertiary)
                 .frame(width: theme.space.s16)
                 .accessibilityHidden(true)
@@ -64,7 +64,7 @@ private struct LocalModelCell: View {
                         .truncationMode(.middle)
                     if item.isTopPick {
                         Image(systemName: "star.fill")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                             .foregroundColor(theme.status.warning.foreground)
                             .help(Text("Top Pick", bundle: .module))
                             .accessibilityLabel(Text("Top Pick", bundle: .module))
@@ -141,7 +141,7 @@ struct LocalModelStatusCell: View {
                 } else {
                     HStack(spacing: theme.space.s4) {
                         Image(systemName: "checkmark.circle.fill")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                             .foregroundColor(theme.status.success.foreground)
                         Text("On this Mac", bundle: .module)
                             .font(SettingsFont.caption)
@@ -196,7 +196,7 @@ struct LocalModelStatusCell: View {
                 if let progress {
                     SettingsProgressBar(value: progress, tint: isPaused ? theme.text.tertiary : nil)
                 } else {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 }
                 Text(verbatim: progressLabel(progress: progress, isPaused: isPaused))
                     .font(SettingsFont.caption.monospacedDigit())

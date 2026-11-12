@@ -38,7 +38,7 @@ struct WorkspacePoolActivityView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "creditcard.fill",
                 title: "Credit Activity",
@@ -110,7 +110,7 @@ struct WorkspacePoolActivityView: View {
             } label: {
                 HStack(spacing: theme.space.s6) {
                     Image(systemName: "arrow.clockwise")
-                        .glyphSize(10.5, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                     Text("Refresh", bundle: .module)
                 }
             }
@@ -147,11 +147,11 @@ struct WorkspacePoolActivityView: View {
                     )
                 }
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(activityRows) { row in
                         usageRow(row)
                         if row.id != activityRows.last?.id {
-                            Divider().opacity(0.5)
+                            ThemeHairlineDivider()
                         }
                     }
                 }
@@ -256,11 +256,11 @@ struct WorkspacePoolActivityView: View {
                     )
                 }
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(transactions) { item in
                         transactionRow(item)
                         if item.id != transactions.last?.id {
-                            Divider().opacity(0.5)
+                            ThemeHairlineDivider()
                         }
                     }
                 }
@@ -272,7 +272,7 @@ struct WorkspacePoolActivityView: View {
         let isCredit = !item.amountMicro.hasPrefix("-")
         return HStack(spacing: theme.space.s12) {
             Image(systemName: entryTypeIcon(item.entryType))
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(isCredit ? theme.status.success.foreground : theme.text.secondary)
                 .frame(width: 22)
 
@@ -379,7 +379,6 @@ struct WorkspacePoolActivityView: View {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension WorkspacePoolActivityView {
     static func inspectionSample() -> Self {
         var view = Self(workspace: .init(id: "local-display", name: "Local workspace", role: "owner"))
@@ -390,4 +389,3 @@ extension WorkspacePoolActivityView {
         return view
     }
 }
-#endif

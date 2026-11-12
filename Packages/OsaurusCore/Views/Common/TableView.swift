@@ -91,11 +91,7 @@ private struct TableCell: View {
         if isHeader {
             return theme.surface.subtle
         }
-        #if OSAURUS_DESIGN_SYSTEM
         return rowIndex % 2 == 0 ? theme.surface.raised : theme.surface.hover
-        #else
-        return rowIndex % 2 == 0 ? theme.surface.canvas : theme.surface.hover
-        #endif
     }
 
     private func renderMarkdown(_ text: String) -> Text {
@@ -103,9 +99,6 @@ private struct TableCell: View {
 
         guard var attributed = try? AttributedString(markdown: text, options: options) else {
             var plain = AttributedString(text)
-            #if !OSAURUS_DESIGN_SYSTEM
-            plain.font = theme.textStyle(.body).weight(isHeader ? .bold : .regular)
-            #endif
             plain.foregroundColor = theme.text.primary
             return Text(plain)
         }
@@ -113,20 +106,13 @@ private struct TableCell: View {
         // Apply base font and color
         let monoFont = theme.textStyle(.code)
 
-        #if !OSAURUS_DESIGN_SYSTEM
-        attributed.font = theme.textStyle(.body).weight(isHeader ? .bold : .regular)
-        #endif
         attributed.foregroundColor = theme.text.primary
 
         // Style inline code runs
         for run in attributed.runs {
             if let traits = run.inlinePresentationIntent, traits.contains(.code) {
                 attributed[run.range].font = monoFont
-                #if OSAURUS_DESIGN_SYSTEM
                 attributed[run.range].foregroundColor = baseComponentEnabled ? theme.action.primary.default.background : theme.text.disabled
-                #else
-                attributed[run.range].foregroundColor = theme.action.primary.default.background
-                #endif
             }
         }
 

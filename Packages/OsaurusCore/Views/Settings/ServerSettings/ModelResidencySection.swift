@@ -18,10 +18,10 @@ struct ModelResidencySection: View {
             status: .hostOwned,
             blurb:
                 "When to evict a loaded model from RAM, and how long to keep it warm after the last request.",
-            spacing: 16
+            spacing: theme.space.s16
         ) {
             SettingsFieldRow(label: "Eviction Policy") {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     AssignedBaseSegmentedPicker(
                         selection: $draft.modelEvictionPolicy,
                         options: ModelEvictionPolicy.allCases.map { .init($0, $0.displayName, verbatim: true) }
@@ -36,7 +36,7 @@ struct ModelResidencySection: View {
             }
 
             SettingsFieldRow(label: "Model Residency") {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Toggle("Keep Model Loaded", isOn: $draft.modelIdleResidencyPolicy.keepsModelLoaded)
                         .settingsCheckbox()
                         .accessibilityIdentifier("server.residency.keepLoaded")

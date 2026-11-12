@@ -30,7 +30,7 @@ extension MemoryView {
     ///   * distill running but skipping   → log full of "skipped" rows
     ///   * distill calling an unhealthy model → log full of "error" rows
     var diagnosticsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             pipelineCard
             perAgentMemoryCard
             recentProcessingLogCard
@@ -76,7 +76,7 @@ extension MemoryView {
             }
             .disabled(probeBufferRunning)
         } content: {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 pipelineHeadlineBanner
 
                 if backfillRunning {
@@ -92,7 +92,7 @@ extension MemoryView {
                     statusRows
                 }
 
-                Divider().opacity(0.4)
+                ThemeHairlineDivider()
 
                 diagnosticSubsection(L("Activity")) {
                     activityRows
@@ -106,7 +106,7 @@ extension MemoryView {
     /// own always-expanded tab.
     private var pipelineHeadlineBanner: some View {
         let summary = diagnosticHeadline()
-        return HStack(spacing: 8) {
+        return HStack(spacing: theme.space.s8) {
             Circle()
                 .fill(summary.color)
                 .frame(width: 8, height: 8)
@@ -118,14 +118,7 @@ extension MemoryView {
         }
         .padding(theme.space.s8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: theme.radius.medium)
-                .fill(summary.color.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: theme.radius.medium)
-                        .stroke(summary.color.opacity(0.22), lineWidth: theme.stroke.default)
-                )
-        )
+        .settingsChrome(.tinted(summary.color))
     }
 
     /// Uppercase sub-header + grouped content, matching the per-agent /
@@ -135,7 +128,7 @@ extension MemoryView {
         _ title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(title)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
@@ -167,23 +160,18 @@ extension MemoryView {
         case .done, .cancelled:
             stageText = "Wrapping up..."
         }
-        return HStack(alignment: .top, spacing: 10) {
-            ProgressView().controlSize(.small)
-            VStack(alignment: .leading, spacing: 4) {
+        return HStack(alignment: .top, spacing: theme.space.s10) {
+            SettingsSpinner()
+            SettingsRowText(compact: true) {
                 Text(stageText)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 if let title = p.lastSessionTitle, !title.isEmpty {
                     Text(localized: "Last: \(title)")
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
                 Text(
                     "buffered \(p.turnsBuffered) turn\(p.turnsBuffered == 1 ? "" : "s") · skipped \(p.sessionsSkipped) session\(p.sessionsSkipped == 1 ? "" : "s")"
                 )
-                .font(SettingsFont.rowDescription)
-                .foregroundColor(theme.text.tertiary)
             }
             Spacer()
             Button {
@@ -200,7 +188,7 @@ extension MemoryView {
     func backfillSummaryBanner(_ message: String) -> some View {
         diagnosticBanner(
             icon: "checkmark.circle.fill",
-            iconColor: .green,
+            iconColor: theme.status.success.foreground,
             text: message,
             monospaced: false,
             onDismiss: { backfillSummary = nil }
@@ -252,7 +240,7 @@ extension MemoryView {
     func bufferProbeResultBanner(_ outcome: BufferProbeOutcome) -> some View {
         diagnosticBanner(
             icon: outcome.isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
-            iconColor: outcome.isSuccess ? .green : .orange,
+            iconColor: outcome.isSuccess ? theme.status.success.foreground : theme.status.warning.foreground,
             text: outcome.displayText,
             monospaced: true,
             onDismiss: { probeBufferResult = nil }
@@ -282,13 +270,14 @@ extension MemoryView {
         diagnosticRow(
             label: "Memory enabled",
             value: config.enabled ? L("yes") : L("no"),
-            statusColor: config.enabled ? .green : .red
+            statusColor: config.enabled ? theme.status.success.foreground : theme.status.error.foreground
         )
         memoryDBStatusRow
         diagnosticRow(
             label: "Extraction mode",
             value: extractionModeDescription(config.extractionMode),
-            statusColor: config.extractionMode == .sessionEnd ? .green : .orange,
+            statusColor: config.extractionMode == .sessionEnd
+                ? theme.status.success.foreground : theme.status.warning.foreground,
             detail: config.extractionMode == .manual
                 ? L("Manual mode never auto-distills. Use 'Distill pending' or set to sessionEnd.")
                 : nil
@@ -310,16 +299,16 @@ extension MemoryView {
     @ViewBuilder
     var memoryDBStatusRow: some View {
         if memoryDBOpen {
-            diagnosticRow(label: "Memory DB open", value: L("yes"), statusColor: .green)
+            diagnosticRow(label: "Memory DB open", value: L("yes"), statusColor: theme.status.success.foreground)
         } else {
             let issue = PersistenceHealth.shared.storeIssue(
                 for: StorageRecoveryService.Store.memory.rawValue
             )
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 diagnosticRow(
                     label: "Memory DB open",
                     value: L("no"),
-                    statusColor: .red,
+                    statusColor: theme.status.error.foreground,
                     detail: memoryDBFailureDetail(issue)
                 )
                 memoryRecoveryControls
@@ -367,7 +356,7 @@ extension MemoryView {
 
     /// Retry / Reset buttons shown under a closed memory DB row.
     private var memoryRecoveryControls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             recoveryButton(
                 title: L("Retry open"),
                 icon: "arrow.clockwise",
@@ -385,7 +374,7 @@ extension MemoryView {
                 showMemoryResetConfirm = true
             }
             if memoryRecoveryRunning {
-                ProgressView().controlSize(.small)
+                SettingsSpinner()
             }
             Spacer(minLength: 0)
         }
@@ -458,9 +447,9 @@ extension MemoryView {
             HStack {
                 Spacer()
                 Button(action: runDistillPending) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "wand.and.stars")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                         Text(isDistilling ? L("Distilling...") : L("Distill pending"))
                             .font(SettingsFont.compactLabel)
                     }
@@ -482,12 +471,12 @@ extension MemoryView {
         diagnosticRow(
             label: "Episodes",
             value: "\(totalEpisodes)",
-            statusColor: totalEpisodes == 0 ? .red : .green
+            statusColor: totalEpisodes == 0 ? theme.status.error.foreground : theme.status.success.foreground
         )
         diagnosticRow(
             label: "Pinned facts",
             value: "\(totalPinned)",
-            statusColor: totalPinned == 0 ? .gray : .green
+            statusColor: totalPinned == 0 ? theme.text.tertiary : theme.status.success.foreground
         )
         // The two coordinators added in 2026-05 to make
         // distillation safe on heavy MLX core models. "Live chat"
@@ -499,7 +488,7 @@ extension MemoryView {
         diagnosticRow(
             label: "Live chat",
             value: chatActive ? L("active") : L("idle"),
-            statusColor: chatActive ? .orange : .green,
+            statusColor: chatActive ? theme.status.warning.foreground : theme.status.success.foreground,
             detail: chatActive
                 ? L(
                     """
@@ -525,16 +514,18 @@ extension MemoryView {
     }
 
     private var distillQueueStatusColor: Color {
-        if distillSnapshot.active { return .blue }
-        if distillSnapshot.queued > 0 { return .orange }
-        return .gray
+        if distillSnapshot.active { return theme.status.info.foreground }
+        if distillSnapshot.queued > 0 { return theme.status.warning.foreground }
+        return theme.text.tertiary
     }
 
     private var pendingSignalsStatusColor: Color {
-        if pendingSignals.deadLetteredSignals > 0 { return deadLetterNeedsAttention ? .red : .orange }
-        if pendingSignals.allTimeSignals == 0 { return .red }
-        if pendingSignals.totalSignals == 0 { return .green }
-        return .orange
+        if pendingSignals.deadLetteredSignals > 0 {
+            return deadLetterNeedsAttention ? theme.status.error.foreground : theme.status.warning.foreground
+        }
+        if pendingSignals.allTimeSignals == 0 { return theme.status.error.foreground }
+        if pendingSignals.totalSignals == 0 { return theme.status.success.foreground }
+        return theme.status.warning.foreground
     }
 
     private var pendingSignalsStatusDetail: String? {
@@ -586,12 +577,12 @@ extension MemoryView {
     }
 
     private var processingResultsStatusColor: Color {
-        if deadLetterNeedsAttention { return .red }
-        if processingErrorNeedsAttention { return .red }
-        if processingEmptyNeedsAttention { return .orange }
-        if processingStats.skippedCount > 0 && processingStats.successCount == 0 { return .orange }
-        if processingStats.successCount > 0 { return .green }
-        return .gray
+        if deadLetterNeedsAttention { return theme.status.error.foreground }
+        if processingErrorNeedsAttention { return theme.status.error.foreground }
+        if processingEmptyNeedsAttention { return theme.status.warning.foreground }
+        if processingStats.skippedCount > 0 && processingStats.successCount == 0 { return theme.status.warning.foreground }
+        if processingStats.successCount > 0 { return theme.status.success.foreground }
+        return theme.text.tertiary
     }
 
     private var processingResultsDetail: String? {
@@ -647,7 +638,7 @@ extension MemoryView {
                     (per-agent disableMemory, hasContent=false, or a non-default chat path).
                     """
                 )
-            color = .red
+            color = theme.status.error.foreground
         } else if t.insertSuccesses == 0 {
             let buckets = [
                 t.earlyReturnsEmptyMessage > 0 ? "\(t.earlyReturnsEmptyMessage) empty msg" : nil,
@@ -660,11 +651,11 @@ extension MemoryView {
             detail =
                 "bufferTurn ran but every call bailed (\(buckets.isEmpty ? "no breakdown" : buckets))."
                 + (t.lastError.map { " Last error: \($0)" } ?? "")
-            color = .orange
+            color = theme.status.warning.foreground
         } else {
             valueText = "\(t.insertSuccesses)/\(t.attempts) successful"
             detail = nil
-            color = .green
+            color = theme.status.success.foreground
         }
         return diagnosticRow(
             label: "Buffer telemetry (this run)",
@@ -687,7 +678,7 @@ extension MemoryView {
                     .foregroundColor(theme.text.tertiary)
                     .padding(.vertical, theme.space.s2)
             } else {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     ForEach(agentManager.agents, id: \.id) { agent in
                         perAgentMemoryRow(agent)
                     }
@@ -704,16 +695,16 @@ extension MemoryView {
         let stateColor: Color
         if globalDisabled {
             stateText = "off (global)"
-            stateColor = .red
+            stateColor = theme.status.error.foreground
         } else if perAgentDisabled {
             stateText = "off (this agent)"
-            stateColor = .orange
+            stateColor = theme.status.warning.foreground
         } else {
             stateText = "on"
-            stateColor = .green
+            stateColor = theme.status.success.foreground
         }
         let canEnableHere = perAgentDisabled && !agent.isBuiltIn
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             Circle()
                 .fill(stateColor)
                 .frame(width: 7, height: 7)
@@ -765,11 +756,11 @@ extension MemoryView {
                 .foregroundColor(theme.text.tertiary)
                 .padding(.vertical, theme.space.s2)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     ForEach(recentLogs) { row in
                         processingLogRow(row)
                         if row.id != recentLogs.last?.id {
-                            Divider().opacity(0.3)
+                            ThemeHairlineDivider()
                         }
                     }
                 }
@@ -778,10 +769,10 @@ extension MemoryView {
     }
 
     private func processingLogRow(_ row: ProcessingLogRow) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             StatusChip(processingLogStatusBadge(row.status), tint: processingLogStatusColor(row.status))
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(row.taskType)
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(theme.text.primary)
@@ -803,7 +794,7 @@ extension MemoryView {
                 }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 1) {
+            VStack(alignment: .trailing, spacing: theme.space.s2) {
                 Text(MemoryView.formatRelativeDate(row.createdAt))
                     .font(SettingsFont.footnote)
                     .foregroundColor(theme.text.tertiary)
@@ -832,9 +823,9 @@ extension MemoryView {
         monospaced: Bool,
         onDismiss: @escaping () -> Void
     ) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(14, weight: .medium)
+                .glyphSize(.body, weight: .medium)
                 .foregroundColor(iconColor)
             Text(text)
                 .font(monospaced ? SettingsFont.monoSmall : SettingsFont.rowDescription)
@@ -854,8 +845,8 @@ extension MemoryView {
         statusColor: Color,
         detail: String? = nil
     ) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(spacing: theme.space.s10) {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
@@ -898,9 +889,9 @@ extension MemoryView {
 
     private func coreModelStatusColor(_ status: CoreModelStatus) -> Color {
         switch status {
-        case .available: return .green
-        case .unset, .unavailable: return .red
-        case .breakerOpen: return .orange
+        case .available: return theme.status.success.foreground
+        case .unset, .unavailable: return theme.status.error.foreground
+        case .breakerOpen: return theme.status.warning.foreground
         }
     }
 
@@ -932,12 +923,12 @@ extension MemoryView {
 
     private func processingLogStatusColor(_ status: String) -> Color {
         switch status.lowercased() {
-        case "success": return .green
-        case "error": return .red
-        case "empty": return .orange
-        case "skipped": return .gray
-        case "dead_letter": return .red
-        default: return .blue
+        case "success": return theme.status.success.foreground
+        case "error": return theme.status.error.foreground
+        case "empty": return theme.status.warning.foreground
+        case "skipped": return theme.text.tertiary
+        case "dead_letter": return theme.status.error.foreground
+        default: return theme.status.info.foreground
         }
     }
 
@@ -950,52 +941,52 @@ extension MemoryView {
 
     func diagnosticHeadline() -> DiagnosticHeadline {
         if !config.enabled {
-            return DiagnosticHeadline(text: L("Memory disabled globally."), color: .red)
+            return DiagnosticHeadline(text: L("Memory disabled globally."), color: theme.status.error.foreground)
         }
         if case .unavailable = coreModelStatus {
-            return DiagnosticHeadline(text: L("Core model unavailable."), color: .red)
+            return DiagnosticHeadline(text: L("Core model unavailable."), color: theme.status.error.foreground)
         }
         if case .unset = coreModelStatus {
-            return DiagnosticHeadline(text: L("Core model not configured."), color: .red)
+            return DiagnosticHeadline(text: L("Core model not configured."), color: theme.status.error.foreground)
         }
         if pendingSignals.totalSignals == 0 && totalEpisodes == 0 {
             if deadLetterNeedsAttention {
-                return DiagnosticHeadline(text: L("Memory signals dead-lettered after repeated failures."), color: .red)
+                return DiagnosticHeadline(text: L("Memory signals dead-lettered after repeated failures."), color: theme.status.error.foreground)
             }
             if processingErrorNeedsAttention {
-                return DiagnosticHeadline(text: L("Distillation is failing before writing episodes."), color: .red)
+                return DiagnosticHeadline(text: L("Distillation is failing before writing episodes."), color: theme.status.error.foreground)
             }
             if processingEmptyNeedsAttention {
-                return DiagnosticHeadline(text: L("Distillation ran but produced no usable episode."), color: .orange)
+                return DiagnosticHeadline(text: L("Distillation ran but produced no usable episode."), color: theme.status.warning.foreground)
             }
             if processingStats.skippedCount > 0 && processingStats.successCount == 0 {
-                return DiagnosticHeadline(text: L("Turns reached memory, but distillation is skipping."), color: .orange)
+                return DiagnosticHeadline(text: L("Turns reached memory, but distillation is skipping."), color: theme.status.warning.foreground)
             }
             return DiagnosticHeadline(
                 text: L("No buffered turns and no episodes — check per-agent memory."),
-                color: .orange
+                color: theme.status.warning.foreground
             )
         }
         if pendingSignals.totalSignals > 0 && latestProcessingStatus != "success" {
             if let latest = recentLogs.first {
                 switch latest.status.lowercased() {
                 case "error":
-                    return DiagnosticHeadline(text: L("Buffered turns are blocked by a distillation error."), color: .red)
+                    return DiagnosticHeadline(text: L("Buffered turns are blocked by a distillation error."), color: theme.status.error.foreground)
                 case "dead_letter":
-                    return DiagnosticHeadline(text: L("Buffered turns reached the retry cap."), color: .red)
+                    return DiagnosticHeadline(text: L("Buffered turns reached the retry cap."), color: theme.status.error.foreground)
                 case "empty":
-                    return DiagnosticHeadline(text: L("Latest distillation produced no usable episode."), color: .orange)
+                    return DiagnosticHeadline(text: L("Latest distillation produced no usable episode."), color: theme.status.warning.foreground)
                 case "skipped":
-                    return DiagnosticHeadline(text: L("Buffered turns are pending because distillation skipped."), color: .orange)
+                    return DiagnosticHeadline(text: L("Buffered turns are pending because distillation skipped."), color: theme.status.warning.foreground)
                 default:
                     break
                 }
             }
             return DiagnosticHeadline(
                 text: L("\(pendingSignals.totalSignals) buffered turns waiting on distillation."),
-                color: .orange
+                color: theme.status.warning.foreground
             )
         }
-        return DiagnosticHeadline(text: L("Pipeline healthy."), color: .green)
+        return DiagnosticHeadline(text: L("Pipeline healthy."), color: theme.status.success.foreground)
     }
 }

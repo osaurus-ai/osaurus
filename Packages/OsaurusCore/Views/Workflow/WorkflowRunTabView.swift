@@ -67,7 +67,7 @@ struct WorkflowResultCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if showsTitle {
                 Text("Result", bundle: .module)
                     .textStyle(.body, weight: 600)
@@ -75,11 +75,10 @@ struct WorkflowResultCard: View {
             }
             if let fields = WorkflowOutputLayout.fields(output, schema: schema), !fields.isEmpty {
                 ForEach(fields) { field in
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: theme.space.s4) {
                         HStack {
                             Text(verbatim: field.label)
-                                .textStyle(.caption)
-                                .fontWeight(.semibold)
+                                .textStyle(.caption, weight: 600)
                                 .foregroundColor(theme.text.secondary)
                             Spacer()
                             SettingsIconButton("doc.on.doc", help: "Copy", size: .compact) { copy(field.text) }

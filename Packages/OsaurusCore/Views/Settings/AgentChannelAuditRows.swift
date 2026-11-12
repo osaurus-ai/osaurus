@@ -17,10 +17,10 @@ struct AgentChannelAuditDecisionRow: View {
     let event: AgentChannelAuditRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                 Image(systemName: statusIcon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(statusColor)
                     .frame(width: 18)
                 Text(event.status.rawValue.capitalized)
@@ -44,7 +44,7 @@ struct AgentChannelAuditDecisionRow: View {
                     .lineLimit(2)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Label(scopeLabel, systemImage: "app.connected.to.app.below.fill")
                 if let roomId = event.roomId {
                     Label(roomId, systemImage: "number")
@@ -95,10 +95,10 @@ struct AgentChannelInboxMessageRow: View {
     let message: AgentChannelInboxMessage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                 Image(systemName: message.direction == .inbound ? "tray.and.arrow.down" : "paperplane")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(themeManager.currentTheme.text.link)
                     .frame(width: 18)
                 Text(message.direction == .inbound ? L("Received") : L("Sent"))
@@ -120,7 +120,7 @@ struct AgentChannelInboxMessageRow: View {
                 .foregroundColor(themeManager.currentTheme.text.secondary)
                 .lineLimit(2)
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Label(scopeLabel, systemImage: "app.connected.to.app.below.fill")
                 if let authorDisplay = message.authorDisplay, !authorDisplay.isEmpty {
                     Label(authorDisplay, systemImage: "person")

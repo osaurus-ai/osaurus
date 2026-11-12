@@ -56,7 +56,7 @@ struct HelloChapterView: View {
     private var greetingTop: CGFloat { OnboardingLayout.stageTopInset + theme.space.s16 }
 
     private var greeting: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             ForEach(stage.greetingLines, id: \.self) { line in
                 Text(verbatim: line)
                     .font(OnboardingTypography.greeting)
@@ -91,16 +91,13 @@ struct HelloChapterView: View {
     // MARK: Card
 
     private var card: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             Text(
                 "Build a team of AI agents for life and work. Your chats, files, and keys can stay private on your Mac. No account or cloud required.",
                 bundle: .module
             )
             .font(OnboardingTypography.subtitle)
             .foregroundColor(OnboardingPalette.labelPrimary)
-            #if !OSAURUS_DESIGN_SYSTEM
-            .lineSpacing(1.5)
-            #endif
             .fixedSize(horizontal: false, vertical: true)
 
             Spacer().frame(height: theme.space.s24)

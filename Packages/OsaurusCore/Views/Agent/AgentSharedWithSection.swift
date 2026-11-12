@@ -69,7 +69,7 @@ struct AgentSharedWithSection: View {
                         : "Teammates in a workspace can chat with this agent while it runs on this Mac."
                 )
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(sharedWorkspaces) { workspace in
                         workspaceRow(workspace)
                     }
@@ -90,17 +90,17 @@ struct AgentSharedWithSection: View {
             rosterStore.agent(forAddress: addr, workspaceId: workspace.id)?.displayName
         }
         let isBusy = address.map { workspacesService.isBusy("agent.\($0.lowercased())") } ?? false
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             AgentAvatarView(
                 mascotId: nil,
                 name: workspace.name,
-                tint: agentColorFor(workspace.name),
+                tint: theme.dataInk(seed: workspace.name),
                 diameter: 28,
                 monogramFontSize: 12,
                 borderWidth: 1.5
             )
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(workspace.name)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)

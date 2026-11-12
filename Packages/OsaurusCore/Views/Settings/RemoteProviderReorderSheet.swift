@@ -16,7 +16,7 @@ struct RemoteProviderReorderSheet: View {
     @State private var hasPendingReorder = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "arrow.up.arrow.down",
                 title: "Reorder Providers",
@@ -53,20 +53,20 @@ struct RemoteProviderReorderSheet: View {
     // MARK: - Row
 
     private func row(for provider: RemoteProvider) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             ZStack {
                 if let preset = ProviderPreset.matching(provider: provider) {
                     ProviderIcon(preset: preset, size: 16, color: theme.action.primary.default.background)
                 } else {
                     Image(systemName: "cloud.fill")
-                        .glyphSize(14)
+                        .glyphSize(.body)
                         .foregroundColor(theme.text.link)
                 }
             }
             .frame(width: 28, height: 28)
             .settingsChrome(.selected)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(provider.name)
                     .font(SettingsFont.rowTitle)
                     .foregroundColor(theme.text.primary)
@@ -82,7 +82,7 @@ struct RemoteProviderReorderSheet: View {
             Spacer(minLength: 0)
 
             Image(systemName: "line.3.horizontal")
-                .glyphSize(13, weight: .medium)
+                .glyphSize(.label, weight: .medium)
                 .foregroundColor(theme.text.tertiary)
         }
         .padding(.vertical, theme.space.s6)

@@ -136,13 +136,13 @@ struct ToolAdvancedDiagnosticsSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             headerButton
 
             if isExpanded {
                 Divider()
 
-                FlowLayout(spacing: 6) {
+                FlowLayout(spacing: theme.space.s6) {
                     exposureCountChip(.exposed)
                     exposureCountChip(.loadable)
                     exposureCountChip(.hidden)
@@ -151,7 +151,7 @@ struct ToolAdvancedDiagnosticsSection: View {
                     exposureCountChip(.unavailable)
                 }
 
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     ToolFilterMenu(
                         icon: "square.grid.2x2",
                         accessibilityTitle: L("Exposure source filter"),
@@ -202,10 +202,10 @@ struct ToolAdvancedDiagnosticsSection: View {
                 isExpanded.toggle()
             }
         } label: {
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: theme.space.s12) {
 SettingsIconTile(icon: "slider.horizontal.3", size: 36)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Advanced diagnostics", bundle: .module)
                         .font(SettingsFont.cardTitle)
                         .foregroundColor(theme.text.primary)
@@ -221,7 +221,7 @@ SettingsIconTile(icon: "slider.horizontal.3", size: 36)
                     .fixedSize()
 
                 Image(systemName: "chevron.right")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.text.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
@@ -234,9 +234,9 @@ SettingsIconTile(icon: "slider.horizontal.3", size: 36)
 
     private var exportButton: some View {
         Button(action: exportReport) {
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "square.and.arrow.up")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                 Text("Export", bundle: .module)
                     .font(SettingsFont.smallLabel)
             }
@@ -273,7 +273,7 @@ SettingsIconTile(icon: "slider.horizontal.3", size: 36)
     private var rowsList: some View {
         let rows = filteredRows
         if rows.isEmpty {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .foregroundColor(theme.text.tertiary)
                 Text("No exposure rows match the current filters", bundle: .module)
@@ -288,7 +288,7 @@ SettingsIconTile(icon: "slider.horizontal.3", size: 36)
             let cap = toolGroupRenderCapValue
             let shown = (showAllRows || rows.count <= cap) ? rows : Array(rows.prefix(cap))
 
-            VStack(spacing: 4) {
+            VStack(spacing: theme.space.s4) {
                 ForEach(shown) { row in
                     diagnosticRow(row)
                 }
@@ -306,9 +306,9 @@ SettingsIconTile(icon: "slider.horizontal.3", size: 36)
     }
 
     private func diagnosticRow(_ row: ToolExposureDiagnostic.Row) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: ToolExposureStateStyle.icon(for: row.state))
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(ToolExposureStateStyle.color(for: row.state, theme: theme))
                 .frame(width: 16)
 

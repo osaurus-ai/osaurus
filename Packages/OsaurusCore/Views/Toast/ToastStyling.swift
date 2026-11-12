@@ -63,22 +63,7 @@ struct ToastDismissButton: View {
     let action: () -> Void
 
     var body: some View {
-        #if OSAURUS_DESIGN_SYSTEM
         SettingsIconButton("xmark", help: "Dismiss notification", size: .compact, action: action)
-        #else
-        Button(action: action) {
-            Image(systemName: "xmark")
-                .glyphSize(10, weight: .semibold)
-                .foregroundColor(theme.text.tertiary)
-                .frame(width: 20, height: 20)
-                .background(
-                    Circle().fill(
-                        isHovering ? theme.action.secondary.hover.background : theme.action.secondary.default.background)
-                )
-                .overlay(Circle().strokeBorder(theme.action.border, lineWidth: theme.stroke.default))
-        }
-        .buttonStyle(.plain)
-        #endif
     }
 
 }
@@ -104,7 +89,7 @@ struct ToastIcon: View {
                 .frame(width: size, height: size)
 
             Image(systemName: iconName)
-                .glyphSize(size * 0.5, weight: .semibold)
+                .glyphSize(points: size * 0.5, weight: .semibold)
                 .foregroundColor(tone.foreground)
         }
     }

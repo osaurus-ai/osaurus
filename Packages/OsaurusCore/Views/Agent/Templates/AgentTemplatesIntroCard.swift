@@ -79,7 +79,7 @@ struct AgentTemplatesIntroCard: View {
     private static let copyWidth: CGFloat = 220
 
     var body: some View {
-        HStack(alignment: .top, spacing: 24) {
+        HStack(alignment: .top, spacing: theme.space.s24) {
             copy
                 .frame(width: Self.copyWidth, alignment: .leading)
 
@@ -104,10 +104,10 @@ struct AgentTemplatesIntroCard: View {
     // MARK: - Copy and steps
 
     private var copy: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "square.on.square.dashed")
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundStyle(theme.text.link)
                 Text(L("What is a template?"))
                     .font(SettingsFont.cardTitle)
@@ -118,7 +118,7 @@ struct AgentTemplatesIntroCard: View {
                 .foregroundStyle(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 ForEach(AgentTemplatesIntroStage.allCases) { candidate in
                     stepRow(candidate)
                 }
@@ -147,7 +147,7 @@ struct AgentTemplatesIntroCard: View {
         return Button {
             advance(to: candidate)
         } label: {
-            HStack(alignment: .center, spacing: 10) {
+            HStack(alignment: .center, spacing: theme.space.s10) {
                 ZStack {
                     Circle()
                         .fill(selected ? theme.action.primary.default.background : theme.surface.pressed)
@@ -156,7 +156,7 @@ struct AgentTemplatesIntroCard: View {
                         .font(SettingsFont.chip)
                         .foregroundStyle(selected ? theme.action.primary.default.foreground : theme.text.secondary)
                 }
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(candidate.title)
                         .textStyle(.caption, weight: selected ? 600 : 500)
                         .foregroundStyle(selected ? theme.text.primary : theme.text.secondary)
@@ -415,9 +415,9 @@ private struct AgentTemplatesIntroCanvas: View {
     /// once the copy has peeled.
     private var stayPill: some View {
         let visible = stage == .save && phase >= 2
-        return HStack(spacing: 7) {
+        return HStack(spacing: theme.space.s6) {
             Image(systemName: "lock.fill")
-                .glyphSize(10, weight: .bold)
+                .glyphSize(.micro, weight: .bold)
                 .foregroundStyle(theme.status.success.foreground)
             Text(L("Files, keys, and chats stay on your Mac"))
                 .font(SettingsFont.smallLabel)
@@ -478,10 +478,10 @@ private struct AgentTemplatesIntroCanvas: View {
     }
 
     private func templateCopy(channel: Channel?) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
+        VStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: channel?.glyph ?? "square.on.square.dashed")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundStyle(channel == nil ? theme.text.link : theme.status.info.foreground)
                     .contentTransition(.symbolEffect(.replace))
                 Text(channel?.label ?? L("Template"))
@@ -492,11 +492,11 @@ private struct AgentTemplatesIntroCanvas: View {
             }
             .padding(.horizontal, theme.space.s12)
             .frame(height: 28)
-            VStack(spacing: 5) {
+            VStack(spacing: theme.space.s4) {
                 ForEach(Self.rows) { row in
-                    HStack(spacing: 7) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: row.glyph)
-                            .glyphSize(10, weight: .semibold)
+                            .glyphSize(.micro, weight: .semibold)
                             .foregroundStyle(theme.text.secondary)
                             .frame(width: 14)
                         Text(row.label)
@@ -539,9 +539,9 @@ private struct AgentTemplatesIntroCanvas: View {
                 .fill(theme.status.success.foreground)
                 .frame(width: 120, height: 6)
                 .position(x: Layout.center.x, y: Layout.baseY)
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "laptopcomputer")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                 Text(L("Another Mac"))
                     .font(SettingsFont.smallLabel)
             }
@@ -580,10 +580,10 @@ private struct AgentTemplatesIntroCanvas: View {
         tint: Color,
         rowState: @escaping (Row) -> RowState
     ) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 7) {
+        VStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: glyph)
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundStyle(tint)
                 Text(title)
                     .font(SettingsFont.compactLabel)
@@ -604,7 +604,7 @@ private struct AgentTemplatesIntroCanvas: View {
         .settingsChrome(.surface)
         .overlay(
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .stroke(tint.opacity(0.5), lineWidth: theme.stroke.default)
+                .stroke(theme.rule(around: tint), lineWidth: theme.stroke.default)
         )
         .themeElevation(theme.elevation.raised)
     }
@@ -612,9 +612,9 @@ private struct AgentTemplatesIntroCanvas: View {
     private func settingRow(_ row: Row, state: RowState) -> some View {
         let shown = state != .hidden
         let asking = state == .asking
-        return HStack(spacing: 8) {
+        return HStack(spacing: theme.space.s8) {
             Image(systemName: row.glyph)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundStyle(asking ? theme.status.warning.foreground : theme.text.link)
                 .frame(width: 14)
             Text(row.label)
@@ -623,7 +623,7 @@ private struct AgentTemplatesIntroCanvas: View {
                 .lineLimit(1)
             Spacer(minLength: 0)
             Image(systemName: asking ? "questionmark.circle.fill" : "checkmark.circle.fill")
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundStyle(asking ? theme.status.warning.foreground : theme.status.success.foreground)
                 .contentTransition(.symbolEffect(.replace))
                 .scaleEffect(shown ? 1 : 0.4)

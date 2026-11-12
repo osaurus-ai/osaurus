@@ -106,7 +106,7 @@ struct SkillEditorSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Header
             headerView
 
@@ -166,12 +166,12 @@ struct SkillEditorSheet: View {
 
     private var formView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 // Identity Section
                 SkillEditorSection(title: L("editor.section.identity"), icon: "sparkles") {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: theme.space.s16) {
                         // Name
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: theme.space.s6) {
                             Text("Name", bundle: .module)
                                 .font(SettingsFont.smallLabel)
                                 .foregroundColor(themeManager.currentTheme.text.secondary)
@@ -185,7 +185,7 @@ struct SkillEditorSheet: View {
                         }
 
                         // Description
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: theme.space.s6) {
                             Text("Description", bundle: .module)
                                 .font(SettingsFont.smallLabel)
                                 .foregroundColor(themeManager.currentTheme.text.secondary)
@@ -202,10 +202,10 @@ struct SkillEditorSheet: View {
 
                 // Metadata Section
                 SkillEditorSection(title: L("Metadata"), icon: "tag.fill") {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: theme.space.s16) {
+                        HStack(spacing: theme.space.s12) {
                             // Category
-                            VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: theme.space.s6) {
                                 Text("Category", bundle: .module)
                                     .font(SettingsFont.smallLabel)
                                     .foregroundColor(themeManager.currentTheme.text.secondary)
@@ -219,7 +219,7 @@ struct SkillEditorSheet: View {
                             }
 
                             // Version
-                            VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: theme.space.s6) {
                                 Text("Version", bundle: .module)
                                     .font(SettingsFont.smallLabel)
                                     .foregroundColor(themeManager.currentTheme.text.secondary)
@@ -235,7 +235,7 @@ struct SkillEditorSheet: View {
                         }
 
                         // Author
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: theme.space.s6) {
                             Text("Author", bundle: .module)
                                 .font(SettingsFont.smallLabel)
                                 .foregroundColor(themeManager.currentTheme.text.secondary)
@@ -252,7 +252,7 @@ struct SkillEditorSheet: View {
                         // searches. Built-in skills ship rich keyword lists;
                         // custom skills without them are only found by name +
                         // description.
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: theme.space.s6) {
                             Text("Keywords", bundle: .module)
                                 .font(SettingsFont.smallLabel)
                                 .foregroundColor(themeManager.currentTheme.text.secondary)
@@ -283,11 +283,11 @@ struct SkillEditorSheet: View {
     // MARK: - Instructions Editor
 
     private var instructionsEditor: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             // Editor header
             HStack {
                 Image(systemName: "doc.text")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(themeManager.currentTheme.text.link)
 
                 Text("Instructions", bundle: .module)
@@ -418,11 +418,11 @@ private struct SkillEditorSection<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             // Section header
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(themeManager.currentTheme.text.link)
 
                 Text(title)
@@ -450,10 +450,10 @@ private struct SkillStyledTextField: View {
     @State private var isFocused = false
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             if let icon = icon {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .medium)
+                    .glyphSize(.caption, weight: .medium)
                     .foregroundColor(
                         isFocused
                             ? themeManager.currentTheme.action.primary.default.background

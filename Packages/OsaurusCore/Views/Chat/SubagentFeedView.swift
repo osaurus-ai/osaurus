@@ -145,19 +145,19 @@ struct SubagentFeedView: View {
     @StateObject private var observer: SubagentFeedObserver
     @State private var expandedEvents: Set<UUID> = []
 
-    private var theme: ThemeProtocol { baseTheme.catalogFamily(35, authoritative: true) }
+    private var theme: ThemeProtocol { baseTheme.catalogFamily(35) }
 
     init(feed: SubagentFeed) {
         _observer = StateObject(wrappedValue: SubagentFeedObserver(feed: feed))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
             Rectangle().fill(theme.border.subtle).frame(height: AgentProgressInspectionStyle.metric("borderWidth", ThemeStrokes.hairline(forBackingScale: NSScreen.main?.backingScaleFactor ?? 2), theme))
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.body.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", 6, theme))) {
+                    LazyVStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.body.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s6, theme))) {
                         if observer.truncatedEventCount > 0 {
                             truncationRow(observer.truncatedEventCount)
                         }
@@ -165,7 +165,7 @@ struct SubagentFeedView: View {
                             eventRow(event).id(event.id)
                         }
                     }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.body.verticalGap")
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.body.padding.horizontal", inheriting: AgentProgressInspectionStyle.metric("padding", 10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.body.padding.vertical", inheriting: AgentProgressInspectionStyle.metric("padding", 10, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.body.padding.horizontal").catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.body.padding.vertical")
+                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.body.padding.horizontal", inheriting: AgentProgressInspectionStyle.metric("padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.body.padding.vertical", inheriting: AgentProgressInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.body.padding.horizontal").catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.body.padding.vertical")
                 }
                 // Follow the tail WITHOUT animation: an animated scroll runs
                 // inside a SwiftUI transaction, forcing the lazy stack to lay
@@ -183,12 +183,8 @@ struct SubagentFeedView: View {
         .environment(\.theme, theme)
         .background(
             RoundedRectangle(cornerRadius: theme.radius.medium)
-                #if OSAURUS_DESIGN_SYSTEM
                 .fill(AgentContentSurfaceAssignments.color(35, "subagentFeed", theme))
                 .nativeCatalogTarget([AgentContentSurfaceAssignments.key(35, "subagentFeed")], "Subagent activity feed")
-                #else
-                .fill(theme.surface.raised)
-                #endif
                 .overlay(
                     RoundedRectangle(cornerRadius: theme.radius.medium)
                         .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
@@ -204,9 +200,9 @@ struct SubagentFeedView: View {
     }
 
     private var header: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", 8, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s8, theme))) {
             statusIndicator
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", 1, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s2, theme))) {
                 Text(kindLabel)
                     .agentProgressText(.heading, fallback: .footnote, weight: 600, theme: theme)
                     .foregroundColor(theme.text.primary)
@@ -223,41 +219,17 @@ struct SubagentFeedView: View {
             Spacer()
             elapsedLabel
             if let sessionId = observer.delegatedSessionId {
-                Button(action: { Self.openDelegatedChat(sessionId) }) {
-                    HStack(spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.horizontalGap2", inheriting: AgentProgressInspectionStyle.metric("gap", 4, theme))) {
-                        Image(systemName: "bubble.left.and.text.bubble.right")
-                            .glyphSize(9)
-                        Text("Open Chat", bundle: .module)
-                            .agentProgressText(.label, fallback: .footnote, weight: 500, theme: theme)
-                    }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.horizontalGap2")
-                    .foregroundColor(theme.status.info.foreground)
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingX", inheriting: AgentProgressInspectionStyle.metric("padding", 8, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingX")
-                    .padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingY", inheriting: AgentProgressInspectionStyle.metric("padding", 4, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingY")
-                    .background(
-                        Capsule().fill(theme.status.info.background)
-                    )
+                SettingsButton(.secondary, "Open Chat", icon: "bubble.left.and.text.bubble.right", size: .compact) {
+                    Self.openDelegatedChat(sessionId)
                 }
-                .buttonStyle(PlainButtonStyle())
                 .help(Text("Open the delegated agent's chat session", bundle: .module))
             }
             if observer.isRunning {
-                Button(action: { observer.stop() }) {
-                    HStack(spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.horizontalGap3", inheriting: AgentProgressInspectionStyle.metric("gap", 4, theme))) {
-                        Image(systemName: "stop.fill").glyphSize(9)
-                        Text("Stop", bundle: .module).agentProgressText(.label, fallback: .footnote, weight: 500, theme: theme)
-                    }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.horizontalGap3")
-                    .foregroundColor(theme.status.error.foreground)
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingX2", inheriting: AgentProgressInspectionStyle.metric("padding", 8, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingX2")
-                    .padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingY2", inheriting: AgentProgressInspectionStyle.metric("padding", 4, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingY2")
-                    .background(
-                        Capsule().fill(theme.status.error.background)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsButton(.destructive, "Stop", icon: "stop.fill", size: .compact) { observer.stop() }
             }
         }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingX3", inheriting: AgentProgressInspectionStyle.metric("padding", 10, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingX3")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingY3", inheriting: AgentProgressInspectionStyle.metric("padding", 8, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingY3")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingX3", inheriting: AgentProgressInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingX3")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingY3", inheriting: AgentProgressInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingY3")
     }
 
     /// Wall-clock readout for the run. While running it ticks ~10x/sec via a
@@ -290,15 +262,13 @@ struct SubagentFeedView: View {
     private var statusIndicator: some View {
         switch observer.status {
         case .running:
-            ProgressView().tint(theme.status.info.foreground)
-                #if OSAURUS_DESIGN_SYSTEM
+            SettingsSpinner(size: .large, tint: theme.status.info.foreground)
                 .controlSize(.large)
-                #endif
                 .assignedProgressIndicator(tintOverride: theme.status.info.foreground)
                 .scaleEffect(0.5).frame(width: 14, height: 14)
         case .finished(let success, _):
             Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .glyphSize(13)
+                .glyphSize(.label)
                 .foregroundColor(success ? theme.status.success.foreground : theme.status.warning.foreground)
         }
     }
@@ -318,9 +288,9 @@ struct SubagentFeedView: View {
     /// Placeholder for history trimmed by the observer's render window, so a
     /// long run doesn't silently appear to start mid-flight.
     private func truncationRow(_ count: Int) -> some View {
-        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.truncationRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", 8, theme))) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.truncationRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s8, theme))) {
             Image(systemName: "ellipsis")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.tertiary)
                 .frame(width: 16)
             Text(count == 1 ? L("1 earlier step") : L("\(count) earlier steps"))
@@ -331,12 +301,12 @@ struct SubagentFeedView: View {
     }
 
     private func eventRow(_ event: SubagentActivityEvent) -> some View {
-        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.eventRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", 8, theme))) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.eventRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s8, theme))) {
             Image(systemName: event.iconName)
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(color(for: event))
                 .frame(width: 16)
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.eventRow.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", 2, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.eventRow.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s2, theme))) {
                 Text(event.title)
                     .agentProgressText(.body, fallback: .footnote, theme: theme)
                     .foregroundColor(theme.text.secondary)
@@ -354,16 +324,14 @@ struct SubagentFeedView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if event.kind == .progress, let fraction = event.fraction {
-                    ProgressView(value: max(0, min(1, fraction)))
-                        .progressViewStyle(.linear)
-                        .tint(theme.status.info.foreground)
+                    SettingsProgressBar(value: fraction, tint: theme.status.info.foreground)
                         .frame(maxWidth: 160)
                 }
             }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.eventRow.verticalGap")
             Spacer(minLength: 0)
             if let text = event.expandableText, !text.isEmpty {
                 Image(systemName: expandedEvents.contains(event.id) ? "chevron.down" : "chevron.right")
-                    .glyphSize(9)
+                    .glyphSize(.tiny)
                     .foregroundColor(theme.text.tertiary)
             }
         }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.eventRow.horizontalGap")

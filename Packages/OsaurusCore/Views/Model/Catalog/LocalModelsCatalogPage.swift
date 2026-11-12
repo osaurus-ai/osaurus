@@ -50,12 +50,12 @@ struct LocalModelsCatalogPage: View {
         let selectedItem = selection.flatMap { id in source.items.first { $0.id == id } }
         let inspectorCovers = regionWidth > 0 && regionWidth - Self.inspectorWidth < Self.minTableWidth
 
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header(searched: searched)
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
             LiveSystemStatusBar()
                 .opacity(hasAppeared ? 1 : 0)
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 ScrollView {
                     SettingsPageContent {
                         if let banner = source.banner(scope: scope) {

@@ -20,7 +20,7 @@ struct MCPElicitationView: View {
     @State private var openedURL = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
                 .padding([.top, .horizontal], theme.space.s24)
 
@@ -48,9 +48,7 @@ struct MCPElicitationView: View {
             .padding(.top, theme.space.s12)
             .padding(.horizontal, theme.space.s24)
 
-            Rectangle()
-                .fill(theme.border.subtle)
-                .frame(height: 1)
+            ThemeHairlineDivider()
                 .padding(.top, theme.space.s16)
 
             buttons
@@ -72,16 +70,16 @@ struct MCPElicitationView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Circle()
                 .fill(theme.status.info.background)
                 .frame(width: 40, height: 40)
                 .overlay(
                     Image(systemName: isURLMode ? "safari" : "list.bullet.rectangle")
-                        .glyphSize(17, weight: .semibold)
+                        .glyphSize(.large, weight: .semibold)
                         .foregroundColor(theme.text.link)
                 )
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(
                     isURLMode
                         ? L("\(request.providerName) wants you to finish in your browser")
@@ -107,9 +105,9 @@ struct MCPElicitationView: View {
     // MARK: Form mode
 
     private func formBody(_ form: MCPElicitationForm) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     ForEach(form.fields) { field in
                         fieldRow(field)
                     }
@@ -136,7 +134,7 @@ struct MCPElicitationView: View {
 
     @ViewBuilder
     private func fieldRow(_ field: MCPElicitationField) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             if case .boolean = field.kind {
                 Toggle(isOn: flagBinding(field.key)) {
                     fieldLabel(field)
@@ -171,7 +169,7 @@ struct MCPElicitationView: View {
     }
 
     private func fieldLabel(_ field: MCPElicitationField) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: theme.space.s2) {
             Text(field.title)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.primary)
@@ -243,8 +241,8 @@ struct MCPElicitationView: View {
     // MARK: URL mode
 
     private func urlBody(_ url: URL) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(url.host ?? "")
                     .font(SettingsFont.cardTitle)
                     .foregroundColor(theme.text.primary)
@@ -273,7 +271,7 @@ struct MCPElicitationView: View {
     // MARK: Buttons
 
     private var buttons: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             if openedURL {
                 ElicitationButton(title: L("Done"), isPrimary: true, color: theme.action.primary.default.background) {
                     onAction(.done)
@@ -324,7 +322,7 @@ private struct ElicitationButton: View {
         Button(action: action) {
             Text(title)
                 .font(SettingsFont.sectionTitle)
-                .foregroundColor(isPrimary ? .white : color)
+                .foregroundColor(isPrimary ? theme.action.primary.default.foreground : color)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, theme.space.s8)

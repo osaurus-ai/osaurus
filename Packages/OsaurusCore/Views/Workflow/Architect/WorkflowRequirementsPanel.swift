@@ -68,7 +68,7 @@ struct WorkflowRequirementsPanel: View {
     var body: some View {
         let template = DraftRevisionCache.template(draft)
         let reqs = template.requirements
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             ForEach(reqs.secrets) { secret in
                 line(secret.label, icon: "key", detail: secret.help, help: secret.key)
             }
@@ -94,12 +94,12 @@ struct WorkflowRequirementsPanel: View {
     }
 
     private func line(_ text: String, icon: String, detail: String? = nil, help: String? = nil) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.tertiary)
                 .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(verbatim: text)
                     .textStyle(.bodySmall)
                     .foregroundColor(theme.text.secondary)

@@ -252,7 +252,7 @@ struct AgentTemplatesView: View {
 
     private var filterChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 ForEach(AgentTemplateFilter.allCases) { option in
                     if option != .published || hasPublished {
                         FilterChip(

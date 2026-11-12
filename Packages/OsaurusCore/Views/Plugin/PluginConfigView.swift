@@ -43,7 +43,7 @@ struct PluginConfigView: View {
     @State private var keyNames: [String: String] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             ForEach(Array(configSpec.sections.enumerated()), id: \.offset) { _, section in
                 configSection(section)
             }
@@ -53,9 +53,9 @@ struct PluginConfigView: View {
                     Spacer()
 
                     if let indicator = saveIndicator {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: "checkmark.circle.fill")
-                                .glyphSize(10)
+                                .glyphSize(.micro)
                             Text(indicator)
                                 .font(SettingsFont.smallLabel)
                         }
@@ -105,7 +105,7 @@ struct PluginConfigView: View {
 
     @ViewBuilder
     private func configField(_ field: PluginManifest.ConfigField) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             switch field.type {
             case .text:
                 textField(field)

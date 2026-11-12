@@ -23,7 +23,7 @@ struct ServerSettingsSidebarNav: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 ForEach(ServerSettingsSectionGroup.allCases, id: \.self) { group in
                     groupBlock(group)
                 }
@@ -37,7 +37,7 @@ struct ServerSettingsSidebarNav: View {
     }
 
     private func groupBlock(_ group: ServerSettingsSectionGroup) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(LocalizedStringKey(group.title), bundle: .module)
                 .font(SettingsFont.chip)
                 .foregroundColor(theme.text.tertiary)
@@ -56,7 +56,7 @@ struct ServerSettingsSidebarNav: View {
         Button {
             selection = section
         } label: {
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 Rectangle()
                     .fill(isSelected ? theme.action.primary.default.background : .clear)
                     .frame(width: 2)

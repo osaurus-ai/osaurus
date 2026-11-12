@@ -89,13 +89,13 @@ struct GlobalProxySection: View {
     }
 
     private var proxyStatusRow: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Circle()
                 .fill(proxyStatusColor)
                 .frame(width: 8, height: 8)
                 .padding(.top, theme.space.s6)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(LocalizedStringKey(proxyStatus.titleKey), bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(proxyStatusColor)

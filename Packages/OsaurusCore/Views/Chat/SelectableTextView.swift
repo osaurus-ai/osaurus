@@ -389,7 +389,7 @@ struct SelectableTextView: NSViewRepresentable {
                 to: attrString,
                 role: .body,
                 spacingBefore: spacing,
-                leftIndent: RichTextInspectionStyle.metric("padding", 20, theme)
+                leftIndent: RichTextInspectionStyle.metric("padding", theme.space.s20, theme)
             )
             return attrString
 
@@ -577,11 +577,9 @@ struct SelectableTextView: NSViewRepresentable {
         leftIndent: CGFloat = 0
     ) {
         let paragraphStyle = theme.paragraphStyle(role)
-        #if OSAURUS_DESIGN_SYSTEM
         attrString.enumerateAttribute(.inspectionMinimumLineHeight, in: NSRange(location: 0, length: attrString.length)) { value, _, _ in
             if let value = value as? CGFloat { paragraphStyle.minimumLineHeight = max(paragraphStyle.minimumLineHeight, value) }
         }
-        #endif
         paragraphStyle.paragraphSpacingBefore = spacingBefore
         paragraphStyle.firstLineHeadIndent = leftIndent
         paragraphStyle.headIndent = leftIndent
@@ -601,16 +599,14 @@ struct SelectableTextView: NSViewRepresentable {
         indentLevel: Int = 0
     ) {
         let paragraphStyle = theme.paragraphStyle(role)
-        #if OSAURUS_DESIGN_SYSTEM
         attrString.enumerateAttribute(.inspectionMinimumLineHeight, in: NSRange(location: 0, length: attrString.length)) { value, _, _ in
             if let value = value as? CGFloat { paragraphStyle.minimumLineHeight = max(paragraphStyle.minimumLineHeight, value) }
         }
-        #endif
         paragraphStyle.paragraphSpacingBefore = spacingBefore
 
         // Base indent for the list, plus additional indent per nesting level
-        let baseIndent = RichTextInspectionStyle.metric("padding", 24, theme)
-        let indentPerLevel = RichTextInspectionStyle.metric("padding", 20, theme)
+        let baseIndent = RichTextInspectionStyle.metric("padding", theme.space.s24, theme)
+        let indentPerLevel = RichTextInspectionStyle.metric("padding", theme.space.s20, theme)
         let totalIndent = baseIndent + (CGFloat(indentLevel) * indentPerLevel)
 
         // Hanging indent: bullet at left margin, text indented
@@ -868,10 +864,8 @@ struct SelectableTextView: NSViewRepresentable {
                 let isBoldCode = traits.contains(.bold) || intent.contains(.stronglyEmphasized)
                 attrString.addAttribute(.font, value: isBoldCode ? font(.code, bold: true) : codeFont, range: range)
                 attrString.addAttribute(.foregroundColor, value: accentColor, range: range)
-                #if OSAURUS_DESIGN_SYSTEM
                 attrString.addAttribute(.kern, value: theme.assignedTracking(RichTextInspectionStyle.key + "code") ?? 0, range: range)
                 attrString.addAttribute(.inspectionMinimumLineHeight, value: theme.assignedLineHeight(RichTextInspectionStyle.key + "code", fallback: CGFloat(theme.lineHeight(.code))), range: range)
-                #endif
                 // A code span naming a real knowledge document becomes a
                 // clickable link to it (existence-gated, so ordinary
                 // path-shaped spans are untouched).
@@ -904,7 +898,6 @@ struct SelectableTextView: NSViewRepresentable {
                 }
             }
 
-            #if OSAURUS_DESIGN_SYSTEM
             if [.body, .bodySmall].contains(role), intent.contains(.stronglyEmphasized) || (traits.contains(.bold) && !baseIsBold) {
                 let key = RichTextInspectionStyle.key + "emphasis"
                 newFont = theme.assignedNativeFont(key, fallback: boldFont)
@@ -912,7 +905,6 @@ struct SelectableTextView: NSViewRepresentable {
                 attrString.addAttribute(.kern, value: theme.assignedTracking(key) ?? 0, range: range)
                 attrString.addAttribute(.inspectionMinimumLineHeight, value: theme.assignedLineHeight(key, fallback: CGFloat(theme.lineHeight(role))), range: range)
             }
-            #endif
             attrString.addAttribute(.font, value: newFont, range: range)
 
             // Style links
@@ -959,9 +951,7 @@ struct SelectableTextView: NSViewRepresentable {
 /// Code blocks are now rendered as standalone `CodeBlockView` / `CodeNSTextView` — no code-block
 /// drawing happens here.
 final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
-    #if OSAURUS_DESIGN_SYSTEM
     private let knowledgeMenuPresenter = AssignedMenuPanelPresenter()
-    #endif
 
     /// Slice of the thread-wide cross-block selection (see ChatCrossSelection).
     /// Painted at the top of `draw(_:)` — drawsBackground is false here, so
@@ -1141,13 +1131,9 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
         copyPath.representedObject = fileURL
         menu.addItem(copyPath)
 
-        #if OSAURUS_DESIGN_SYSTEM
         knowledgeMenuPresenter.showContextMenu(menu, from: self,
             theme: ThemeManager.shared.currentTheme, at: point)
         return nil
-        #else
-        return menu
-        #endif
     }
 
     /// One item per app that can open the file, default handler first.

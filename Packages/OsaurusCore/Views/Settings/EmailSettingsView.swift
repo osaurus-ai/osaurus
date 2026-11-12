@@ -112,7 +112,7 @@ struct EmailSettingsView: View {
                     connect: connectNewAccount)
                 : nil
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch AgentChannelProviderSetupSection(rawValue: sectionId) {
                 case .connect:
                     connectSectionContent
@@ -240,7 +240,7 @@ struct EmailSettingsView: View {
     // MARK: - Connect
 
     private var connectSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             Text(
                 "Email reads mail from accounts you already have: an account in the Mail app (no password needed), or an IMAP server with an app password kept in the Keychain. Each watched mailbox becomes a room and each mail thread a conversation.",
                 bundle: .module
@@ -287,7 +287,7 @@ struct EmailSettingsView: View {
     }
 
     private var accountsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Choose the mail account"))
 
             if mailAccounts.isEmpty {
@@ -295,7 +295,7 @@ struct EmailSettingsView: View {
                     .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.tertiary)
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(mailAccounts) { account in
                         accountRow(account)
                     }
@@ -330,11 +330,11 @@ struct EmailSettingsView: View {
     private func accountRow(_ account: SourceConnection) -> some View {
         let watched = draft.connectionId == account.id
         let usedBy = mailAccountsInUse[account.id]
-        return HStack(spacing: 9) {
+        return HStack(spacing: theme.space.s8) {
             Image(systemName: account.type == .mailApp ? "envelope.fill" : "server.rack")
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(theme.text.secondary)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(verbatim: account.displayName)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.primary)
@@ -364,7 +364,7 @@ struct EmailSettingsView: View {
     }
 
     private var receiveToggleSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Turn on receiving"))
 
             SettingsToggle(
@@ -387,7 +387,7 @@ struct EmailSettingsView: View {
     // MARK: - Mailboxes and senders
 
     private var receivingSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             sendersSection
             if hasMailAccount {
                 mailboxSection($draft)
@@ -404,7 +404,7 @@ struct EmailSettingsView: View {
     }
 
     private var sendersSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Choose who can reach agents"))
             AgentChannelMultilineSettingsField(
                 title: L("Allowed Senders"),
@@ -415,7 +415,7 @@ struct EmailSettingsView: View {
                 )
             )
             if senders.isEmpty, hasMailAccount {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.status.warning.foreground)
@@ -431,7 +431,7 @@ struct EmailSettingsView: View {
     private func mailboxSection(_ account: Binding<EmailChannelAccount>) -> some View {
         let id = account.wrappedValue.connectionId
         let connection = mailAccounts.first { $0.id == id }
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(connection?.displayName ?? id)
 
             mailboxField(account)
@@ -488,7 +488,7 @@ struct EmailSettingsView: View {
             set: { account.wrappedValue.mailboxes = EventSourceDrafts.list($0) }
         )
         return EventEditorLabeled(L("Mailboxes (comma separated; empty = Inbox)")) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 HStack(spacing: theme.space.s8) {
                     SettingsTextField(placeholder: L("Inbox"), text: text, icon: "tray")
                     SettingsButton(
@@ -506,7 +506,7 @@ struct EmailSettingsView: View {
                 }
                 if let options = mailboxOptions[id], !options.isEmpty {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: theme.space.s4) {
                             ForEach(options, id: \.self) { name in
                                 Toggle(isOn: membership(name, in: account)) {
                                     Text(verbatim: EmailMailboxName.display(name))
@@ -557,9 +557,9 @@ struct EmailSettingsView: View {
     // MARK: - Sending
 
     private var sendingSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             SettingsFieldRow(label: "Sending") {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     SettingsToggle(
                         title: "Allow Sending Email",
                         description: L(
@@ -603,7 +603,7 @@ struct EmailSettingsView: View {
     // MARK: - Verify
 
     private var verifySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Verify an incoming message"))
 
             Text(

@@ -56,32 +56,9 @@ struct ChatImportReviewView: View {
 
             HStack(spacing: theme.space.s8) {
                 Spacer()
-                Button(action: onCancel) {
-                    Text("Cancel", bundle: .module)
-                        .textStyle(.label)
-                        .foregroundColor(theme.text.secondary)
-                        .padding(.horizontal, theme.space.s12)
-                        .padding(.vertical, theme.space.s6)
-                        .background(
-                            RoundedRectangle(cornerRadius: theme.radius.medium)
-                                .fill(theme.surface.hover)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: theme.radius.medium)
-                                        .stroke(theme.border.strong, lineWidth: theme.stroke.default)))
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsButton(.secondary, "Cancel", action: onCancel)
                 .keyboardShortcut(.cancelAction)
-                Button(action: onInstall) {
-                    Text(installTitle)
-                        .textStyle(.label, weight: 600)
-                        .foregroundColor(theme.action.primary.default.foreground)
-                        .padding(.horizontal, theme.space.s12)
-                        .padding(.vertical, theme.space.s6)
-                        .background(
-                            RoundedRectangle(cornerRadius: theme.radius.medium)
-                                .fill(theme.action.primary.default.background))
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsButton(.primary, installTitle, verbatim: true, action: onInstall)
                 .keyboardShortcut(.defaultAction)
                 .disabled(includedCount == 0)
             }
@@ -186,7 +163,7 @@ struct ChatImportReviewView: View {
 
     private func callout(_ text: String, icon: String, color: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: theme.space.s4) {
-            Image(systemName: icon).glyphSize(9).foregroundColor(color)
+            Image(systemName: icon).glyphSize(.tiny).foregroundColor(color)
             Text(text)
                 .textStyle(.caption)
                 .foregroundColor(color)

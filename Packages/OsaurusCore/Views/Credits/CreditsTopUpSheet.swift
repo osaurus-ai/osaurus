@@ -25,7 +25,7 @@ struct CreditsTopUpSheet: View {
     @FocusState private var amountFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "creditcard.fill",
                 title: "Add Credits",

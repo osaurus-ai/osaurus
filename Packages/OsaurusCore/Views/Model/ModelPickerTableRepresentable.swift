@@ -154,9 +154,7 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
         coordinator.onToggleFavorite = onToggleFavorite
         coordinator.onDismiss = onDismiss
         coordinator.isFavoritesTab = isFavoritesTab
-        #if OSAURUS_DESIGN_SYSTEM
         coordinator.inspectionEnabled = inspectorEnabled
-        #endif
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
         coordinator.applyRows(rows)
@@ -165,18 +163,14 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        #if OSAURUS_DESIGN_SYSTEM
         defer { scrollView.updateCatalogInspection(context.environment.nativeCatalogInspection, selection: context.environment.nativeCatalogSelection) }
-        #endif
         let coordinator = context.coordinator
         coordinator.onSelectModel = onSelectModel
         coordinator.onSwitchTab = onSwitchTab
         coordinator.onToggleFavorite = onToggleFavorite
         coordinator.onDismiss = onDismiss
         coordinator.updateFavoritesTab(isFavoritesTab)
-        #if OSAURUS_DESIGN_SYSTEM
         coordinator.inspectionEnabled = inspectorEnabled
-        #endif
         coordinator.updateColorsIfNeeded(from: theme)
         coordinator.updateSelectedModelId(selectedModelId)
         coordinator.applyRows(rows)
@@ -369,7 +363,6 @@ private final class PickerBadgeView: NSView {
         frame.size = CGSize(width: ceil(w), height: ceil(label.frame.height + vPad * 2))
     }
 
-    #if OSAURUS_DESIGN_SYSTEM
     func applyInspection(_ recipe: InspectorNativeModelPickerRecipe, color: NSColor) {
         catalogAssignmentTarget(["selected", "radius", "border", "borderWidth"].map { "component.library.26.elements.badge." + $0 }, name: "Badge “" + label.stringValue + "”")
         label.catalogAssignmentTarget(["caption", "secondary", "accent"].map { "component.library.26.elements.badge." + $0 }, name: "Badge text “" + label.stringValue + "”")
@@ -386,7 +379,6 @@ private final class PickerBadgeView: NSView {
         layer?.borderColor = recipe.badgeBorder.cgColor
         needsLayout = true
     }
-    #endif
 
     var textBaselineFromTop: CGFloat {
         vPad + label.firstBaselineOffsetFromTop
@@ -417,7 +409,6 @@ private enum RowAccessoryKind: Equatable {
 /// Model row cell with hover/selection background.
 @MainActor
 private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelegate {
-    #if OSAURUS_DESIGN_SYSTEM
     private var inspectionRecipe: InspectorNativeModelPickerRecipe?
     func applyInspection(_ recipe: InspectorNativeModelPickerRecipe, row: ModelPickerRow, enabled: Bool) {
         inspectionRecipe = recipe
@@ -442,7 +433,6 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         accessoryButton.isEnabled = enabled
         needsLayout = true
     }
-    #endif
     private let bgLayer = CALayer()
     private let nameLabel = makeLabel()
     private let vlmBadge = PickerBadgeView()
@@ -853,21 +843,12 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         super.layout()
         let w = bounds.width
         let h = bounds.height
-        #if OSAURUS_DESIGN_SYSTEM
         let pad: CGFloat = inspectionRecipe?.padding ?? 12
         let nameH: CGFloat = inspectionRecipe?.labelHeight ?? 16
         let metaH: CGFloat = inspectionRecipe?.metaHeight ?? 16
         let lineGap: CGFloat = inspectionRecipe?.gap ?? 4
         let descH: CGFloat = inspectionRecipe?.textHeight ?? 14
         let detailsGap: CGFloat = inspectionRecipe?.gap ?? 2
-        #else
-        let pad: CGFloat = 12
-        let nameH: CGFloat = 16
-        let metaH: CGFloat = 16
-        let lineGap: CGFloat = 4
-        let descH: CGFloat = 14
-        let detailsGap: CGFloat = 2
-        #endif
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -882,11 +863,7 @@ private final class ModelRowCellView: NSTableCellView, NSGestureRecognizerDelega
         // Name-only rows center the name line vertically.
         let hasMeta = hasDesc || hasBadges
         let hasMediaDetailsLine = hasMedia && hasDesc
-        #if OSAURUS_DESIGN_SYSTEM
         let nameY: CGFloat = hasMeta ? pad : (h - nameH) / 2
-        #else
-        let nameY: CGFloat = hasMediaDetailsLine ? 7 : (hasMeta ? 10 : (h - nameH) / 2)
-        #endif
 
         let contentX = pad + 14 + 6
 
@@ -1096,11 +1073,9 @@ extension ModelPickerTableRepresentable {
         // MARK: Cached Theme Colors & Images
 
         private var colors = ThemeColorCache(theme: CustomizableTheme.light())
-        #if OSAURUS_DESIGN_SYSTEM
         var inspectionEnabled = true
         private var previousInspectionEnabled = true
         private var inspectionRecipe: InspectorNativeModelPickerRecipe?
-        #endif
         private var lastThemeFingerprint: Int?
 
         // MARK: Cached Fonts
@@ -1261,9 +1236,7 @@ extension ModelPickerTableRepresentable {
         }
 
         private func selectHighlighted() {
-            #if OSAURUS_DESIGN_SYSTEM
             guard inspectionEnabled else { return }
-            #endif
             guard let index = highlightedIndex, index < rowIds.count,
                 let row = rowLookup[rowIds[index]],
                 row.isMLXFormat
@@ -1274,13 +1247,9 @@ extension ModelPickerTableRepresentable {
         // MARK: Theme
 
         func updateColorsIfNeeded(from theme: ThemeProtocol) {
-            #if OSAURUS_DESIGN_SYSTEM
             guard theme.renderFingerprint != lastThemeFingerprint || previousInspectionEnabled != inspectionEnabled else { return }
             previousInspectionEnabled = inspectionEnabled
             inspectionRecipe = InspectorNativeModelPickerRecipe(theme: theme)
-            #else
-            guard theme.renderFingerprint != lastThemeFingerprint else { return }
-            #endif
             lastThemeFingerprint = theme.renderFingerprint
             colors = ThemeColorCache(theme: theme)
             regularFont = theme.nsFont(.caption, weight: .medium)
@@ -1288,12 +1257,10 @@ extension ModelPickerTableRepresentable {
             descFont = theme.nsFont(.micro)
             badgeFont = theme.nsFont(.micro, weight: .medium)
             badgeFontSmall = theme.nsFont(.micro, weight: .medium)
-            #if OSAURUS_DESIGN_SYSTEM
             reconfigureVisibleCells()
             if let tableView, !rowIds.isEmpty {
                 tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<rowIds.count))
             }
-            #endif
         }
 
         // MARK: Selection
@@ -1459,22 +1426,16 @@ extension ModelPickerTableRepresentable {
                 badgeFontSmall: badgeFontSmall,
                 onSelect: { [weak self] in
                     guard row.isMLXFormat else { return }
-                    #if OSAURUS_DESIGN_SYSTEM
                     guard self?.inspectionEnabled == true else { return }
-                    #endif
                     self?.onSelectModel?(id)
                 },
                 onAccessory: { [weak self] in
-                    #if OSAURUS_DESIGN_SYSTEM
                     guard self?.inspectionEnabled == true else { return }
-                    #endif
                     self?.onToggleFavorite?(row)
                 }
             )
-            #if OSAURUS_DESIGN_SYSTEM
             cell.alphaValue = 1
             if let inspectionRecipe { cell.applyInspection(inspectionRecipe, row: row, enabled: inspectionEnabled) }
-            #endif
         }
 
         // MARK: Hover
@@ -1524,9 +1485,7 @@ extension ModelPickerTableRepresentable {
 
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
             guard row < rowIds.count, let rowData = rowLookup[rowIds[row]] else { return 36 }
-            #if OSAURUS_DESIGN_SYSTEM
             if let inspectionRecipe { return inspectionRecipe.rowHeight(rowData) }
-            #endif
             return Self.rowHeight(for: rowData)
         }
 

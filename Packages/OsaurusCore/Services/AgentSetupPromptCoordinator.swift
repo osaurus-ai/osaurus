@@ -149,35 +149,35 @@ struct AgentSetupChecklistView: View {
     let report: SetupReport
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             ForEach(report.items) { item in
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
                     Image(systemName: item.isBlocking ? "exclamationmark.circle.fill" : "info.circle")
-                        .font(.system(size: 13, weight: .semibold))
+                        .glyphSize(.label, weight: .semibold)
                         .foregroundColor(
                             item.isBlocking ? theme.status.warning.foreground : theme.status.info.foreground
                         )
                         .frame(width: 16)
-                        .padding(.top, 1)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
+                        .padding(.top, theme.space.s2)
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: item.kind.icon)
-                                .font(.system(size: 10, weight: .medium))
+                                .glyphSize(.micro, weight: .medium)
                                 .foregroundColor(theme.text.tertiary)
                             Text(item.title)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(SettingsFont.caption.weight(.semibold))
                                 .foregroundColor(theme.text.primary)
                         }
                         Text(item.detail)
-                            .font(.system(size: 11))
+                            .font(SettingsFont.rowDescription)
                             .foregroundColor(theme.text.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(theme.surface.hover.opacity(0.6)))
+        .background(theme.surface.subtle, in: RoundedRectangle(cornerRadius: theme.radius.medium))
     }
 }

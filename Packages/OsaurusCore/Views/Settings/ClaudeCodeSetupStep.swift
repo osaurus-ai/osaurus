@@ -40,9 +40,9 @@ struct ClaudeCodeSetupStep: View {
     private var overlay: [String: String] { runtime?.environment ?? [:] }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     backButton
                     title
 
@@ -72,9 +72,9 @@ struct ClaudeCodeSetupStep: View {
 
     private var backButton: some View {
         Button(action: onBack) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "chevron.left")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                 Text("Back", bundle: .module)
                     .font(SettingsFont.body)
             }
@@ -84,7 +84,7 @@ struct ClaudeCodeSetupStep: View {
     }
 
     private var title: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             ZStack {
                 Circle()
                     .fill(
@@ -96,11 +96,11 @@ struct ClaudeCodeSetupStep: View {
                     )
                     .frame(width: 40, height: 40)
                 Image(systemName: "terminal.fill")
-                    .glyphSize(16, weight: .medium)
+                    .glyphSize(.medium, weight: .medium)
                     .foregroundColor(FixedPalette.onMedia)
             }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Claude Code", bundle: .module)
                     .font(SettingsFont.pageTitle)
                     .foregroundColor(theme.text.primary)
@@ -115,8 +115,8 @@ struct ClaudeCodeSetupStep: View {
 
     private var probingCard: some View {
         card {
-            HStack(spacing: 12) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s12) {
+                SettingsSpinner()
                 Text("Checking Claude Code…", bundle: .module)
                     .font(SettingsFont.body)
                     .foregroundColor(theme.text.secondary)
@@ -125,7 +125,7 @@ struct ClaudeCodeSetupStep: View {
     }
 
     private func notInstalledCard(searchedPath: String) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             card {
                 statusRow(
                     icon: "exclamationmark.triangle.fill",
@@ -138,7 +138,7 @@ struct ClaudeCodeSetupStep: View {
                 )
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Text("Install it, then come back:", bundle: .module)
                     .font(SettingsFont.rowTitle)
                     .foregroundColor(theme.text.secondary)
@@ -174,7 +174,7 @@ struct ClaudeCodeSetupStep: View {
     }
 
     private var signedOutCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             card {
                 statusRow(
                     icon: "person.crop.circle.badge.questionmark",
@@ -188,9 +188,9 @@ struct ClaudeCodeSetupStep: View {
             }
 
             Button(action: signIn) {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     if isSigningIn {
-                        ProgressView().controlSize(.small)
+                        SettingsSpinner()
                     } else {
                         Image(systemName: "person.crop.circle.badge.checkmark")
                     }
@@ -222,7 +222,7 @@ struct ClaudeCodeSetupStep: View {
     }
 
     private func statusUnavailableCard(cliVersion: String?) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             card {
                 statusRow(
                     icon: "terminal.fill",
@@ -239,7 +239,7 @@ struct ClaudeCodeSetupStep: View {
                 detailRow(label: Text("Installed version", bundle: .module), value: cliVersion)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Text("Open Claude Code and complete sign-in:", bundle: .module)
                     .font(SettingsFont.rowTitle)
                     .foregroundColor(theme.text.secondary)
@@ -262,7 +262,7 @@ struct ClaudeCodeSetupStep: View {
     }
 
     private func signedInCard(_ status: ClaudeCodeAuthStatus) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             card {
                 statusRow(
                     icon: "checkmark.circle.fill",
@@ -272,7 +272,7 @@ struct ClaudeCodeSetupStep: View {
                 )
             }
 
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 if let email = status.email {
                     detailRow(label: Text("Account", bundle: .module), value: email)
                 }
@@ -314,7 +314,7 @@ struct ClaudeCodeSetupStep: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Spacer()
 
             Button(action: { Task { await probe() } }) {
@@ -354,13 +354,13 @@ struct ClaudeCodeSetupStep: View {
         title: Text,
         detail: Text?
     ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             Image(systemName: icon)
-                .glyphSize(16, weight: .semibold)
+                .glyphSize(.medium, weight: .semibold)
                 .foregroundColor(tint)
                 .frame(width: 24)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 title
                     .textStyle(.label, weight: 600)
                     .foregroundColor(theme.text.primary)

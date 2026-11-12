@@ -234,7 +234,7 @@ struct ShareWorkflowSheet: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(icon: headerIcon, title: headerTitle, subtitleText: template.name, onClose: onDone)
             Group {
                 if case .manage = phase {
@@ -378,7 +378,7 @@ struct ShareWorkflowSheet: View {
     // MARK: - Choose
 
     private var chooser: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             ShareOptionRow(
                 icon: "doc.badge.arrow.up", title: L("Save as a file"),
                 detail: L("A .osaurustemplate anyone can review and install. No account needed."),
@@ -434,7 +434,7 @@ struct ShareWorkflowSheet: View {
     // MARK: - File
 
     private var fileOptions: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             Text("Saves a .osaurustemplate file you can send to someone.", bundle: .module)
                 .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.tertiary)
@@ -448,7 +448,7 @@ struct ShareWorkflowSheet: View {
     // MARK: - Publish
 
     private var publishOptions: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             if !canSign { needsIdentity }
             listingSection
             if !models.isEmpty || !hints.isEmpty { suggestions }
@@ -461,20 +461,20 @@ struct ShareWorkflowSheet: View {
     }
 
     private var listingSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsFieldLabel("Listing Details")
                 ListingDetailsFields(
                     name: $listingName, summary: $listingSummary, kind: template.kind,
                     templateName: templateDetails.name, templateSummary: templateDetails.summary)
             }
             .settingsLandingAnchor(isAgent ? "agents.templates.listingDetails" : "workflows.listingDetails")
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsFieldLabel("Topics")
                 ListingTopicPicker(selection: $topics)
             }
             .settingsLandingAnchor(isAgent ? "agents.templates.topics" : "workflows.topics")
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsFieldLabel("Example Runs")
                 if editsExamplesHere {
                     ListingExamplesEditor(
@@ -495,7 +495,7 @@ struct ShareWorkflowSheet: View {
     }
 
     private var whoCanSeeIt: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             SettingsFieldLabel("Who can see it")
             ForEach(WorkflowVisibility.allCases, id: \.self) { option in
                 ShareOptionRow(
@@ -504,7 +504,7 @@ struct ShareWorkflowSheet: View {
                     action: { withAnimation(theme.motion.quick) { visibility = option } })
             }
             if visibility == .password {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     SettingsTextField(
                         placeholder: L("Password"), text: $password, icon: "lock", isSecure: true, revealable: true,
                         autofocus: true)
@@ -549,7 +549,7 @@ struct ShareWorkflowSheet: View {
             .fixedSize(horizontal: false, vertical: true)
         } icon: {
             Image(systemName: "checkmark.shield")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.status.info.foreground)
         }
         .padding(.leading, theme.space.s2)
@@ -561,7 +561,7 @@ struct ShareWorkflowSheet: View {
         let plan = cascadePlan
         if !plan.isEmpty {
             let agentVisibility = effectiveVisibility
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsFieldLabel("Also publishes")
                 if plan.mayPublish, let shared = plan.visibility {
                     option(
@@ -584,11 +584,11 @@ struct ShareWorkflowSheet: View {
     }
 
     private var needsIdentity: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: "person.badge.key")
-                .glyphSize(14)
+                .glyphSize(.body)
                 .foregroundColor(theme.status.warning.foreground)
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text(
                     "Publishing needs an Osaurus ID. It signs what you publish so people know who made it.",
                     bundle: .module
@@ -611,7 +611,7 @@ struct ShareWorkflowSheet: View {
     }
 
     private var suggestions: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             SettingsFieldLabel("Make it easier to set up")
             if !models.isEmpty {
                 option(
@@ -636,7 +636,7 @@ struct ShareWorkflowSheet: View {
     }
 
     private var signing: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             SettingsFieldLabel("Author")
             option(
                 $signPreferred, title: L("Sign with my Osaurus ID"),
@@ -646,7 +646,7 @@ struct ShareWorkflowSheet: View {
     }
 
     private var publishAuthor: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if canSign {
                 SettingsFieldLabel("Author")
                 Text(
@@ -674,7 +674,7 @@ struct ShareWorkflowSheet: View {
     }
 
     private func review(_ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(verbatim: label)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
@@ -693,24 +693,14 @@ struct ShareWorkflowSheet: View {
     }
 
     private func option(_ isOn: Binding<Bool>, title: String, detail: String) -> some View {
-        Toggle(isOn: isOn) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: title)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-                Text(verbatim: detail)
-                    .font(SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .settingsSwitch(showsLabel: true)
+        SettingsToggle(title: title, description: detail, verbatim: true, isOn: isOn)
+            .environment(\.settingsInGroup, true)
     }
 
     // MARK: - Publishing / live / failure
 
     private var publishingView: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             Spacer().frame(height: 60)
             Text(effectiveVisibility == .public ? "Submitting…" : "Publishing…", bundle: .module)
                 .font(SettingsFont.cardTitle)
@@ -734,10 +724,10 @@ struct ShareWorkflowSheet: View {
             L("Published by \(handle(for: record))"), L("Version \(published.version)"),
             review.isUnlistedUntilApproved ? L("Unlisted until approved") : record.visibility.title,
         ].joined(separator: " · ")
-        return VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s20) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Image(systemName: submitted ? statusGlyph(review) : "checkmark.seal.fill")
-                    .glyphSize(28)
+                    .glyphSize(.display)
                     .foregroundColor(submitted ? statusTint(review) : theme.status.success.foreground)
                 Text(verbatim: submitted ? submittedTitle(review, name: listedName(record)) : L("\(listedName(record)) is live."))
                     .font(SettingsFont.pageTitle)
@@ -750,7 +740,7 @@ struct ShareWorkflowSheet: View {
             .padding(.top, theme.space.s8)
 
             if submitted {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: theme.space.s14) {
                     SettingsStepTracker(steps: review.steps(uploadedVersion: published.version))
                     Text(verbatim: review.detail())
                         .font(SettingsFont.caption)
@@ -763,7 +753,7 @@ struct ShareWorkflowSheet: View {
                                 .foregroundColor(theme.text.tertiary)
                         } icon: {
                             Image(systemName: "bell.badge")
-                                .glyphSize(11)
+                                .glyphSize(.footnote)
                                 .foregroundColor(theme.text.tertiary)
                         }
                     }
@@ -775,11 +765,11 @@ struct ShareWorkflowSheet: View {
             }
 
             if let error = outcome.visibilityError {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(13)
+                        .glyphSize(.label)
                         .foregroundColor(theme.status.warning.foreground)
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
                         Text(
                             visibility == .workspace
                                 ? "Published as Unlisted. Sharing with the workspaces didn't go through."
@@ -805,7 +795,7 @@ struct ShareWorkflowSheet: View {
                 .settingsChrome(.status(.warning))
             }
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 if let shareCard {
                     Image(nsImage: shareCard)
                         .resizable()
@@ -818,16 +808,16 @@ struct ShareWorkflowSheet: View {
                     Color.clear
                         .aspectRatio(WorkflowShareCardView.size.width / WorkflowShareCardView.size.height, contentMode: .fit)
                         .settingsChrome(.subtle, radius: theme.radius.large)
-                        .overlay(ProgressView().controlSize(.small))
+                        .overlay(SettingsSpinner())
                 }
                 ShareCardActions(image: shareCard, pageURL: published.url, suggestedName: "\(published.slug)-card.png")
             }
             .onAppear { renderShareCard(record: record) }
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsFieldLabel("Link")
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: theme.space.s14) {
+                    VStack(alignment: .leading, spacing: theme.space.s10) {
                         ShareCopyRow(label: L("Page"), value: published.url.absoluteString)
                         Button {
                             NSWorkspace.shared.open(published.url)
@@ -848,7 +838,7 @@ struct ShareWorkflowSheet: View {
             if !outcome.cascade.isEmpty { cascadeResults(outcome) }
 
             DisclosureGroup {
-                VStack(spacing: 10) {
+                VStack(spacing: theme.space.s10) {
                     ShareCopyRow(label: L("Install Link"), value: published.deepLink.absoluteString)
                     ShareCopyRow(label: L("Template File"), value: published.rawURL.absoluteString)
                     ShareCopyRow(label: L("Registry ID"), value: published.id)
@@ -870,7 +860,7 @@ struct ShareWorkflowSheet: View {
 
     private func cascadeResults(_ outcome: WorkflowShareOutcome) -> some View {
         let agentVisibility = outcome.record.visibility
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: theme.space.s10) {
             SettingsFieldLabel("Workflows it brings")
             CascadeWorkflowList(items: outcome.cascade) { result in
                 let version = result.record.map { $0.registryLatestVersion ?? $0.version }
@@ -937,10 +927,10 @@ struct ShareWorkflowSheet: View {
     }
 
     private func failureView(message: String, hint: String?) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .glyphSize(16)
+                    .glyphSize(.medium)
                     .foregroundColor(theme.status.error.foreground)
                 Text("Publishing didn't finish", bundle: .module)
                     .font(SettingsFont.cardTitle)

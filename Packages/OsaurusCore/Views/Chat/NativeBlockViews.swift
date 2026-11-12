@@ -90,13 +90,11 @@ final class NativeTypingIndicatorView: NSView {
         phase: TypingIndicatorPhase = .generating,
         prefillProgress: PrefillProgressState? = nil
     ) {
-        #if OSAURUS_DESIGN_SYSTEM
         catalogAssignmentTarget([ThinkingInspectionStyle.key + "elements.layout.statusPaddingY", AgentContentSurfaceAssignments.key(33, "generation")], name: "Generation status row", theme: theme)
         wantsLayer = true
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(33, "generation", theme)).cgColor
-        #endif
         chipTheme = theme
-        let theme = theme.catalogFamily(33, authoritative: true)
+        let theme = theme.catalogFamily(33)
         self.phase = phase
         scopedPrefill = phase == .generating ? prefillProgress : nil
         refreshLoadingPhase()
@@ -263,7 +261,6 @@ final class NativeTypingIndicatorView: NSView {
         statusLabel.textColor = NSColor(theme.text.secondary)
         statusLabel.font = theme.nsFont(.caption)
         applyMemoryColors(theme)
-        #if OSAURUS_DESIGN_SYSTEM
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(33, "generation", theme)).cgColor
         layer?.borderColor = NSColor(theme.border.default).cgColor
         layer?.borderWidth = ThinkingInspectionStyle.metric("borderWidth", 0, theme)
@@ -274,8 +271,8 @@ final class NativeTypingIndicatorView: NSView {
             c.priority = .init(750); c.isActive = true; inspectionMinimumHeight = c
         }
         inspectionMinimumHeight?.constant = height
-        let pad = ThinkingInspectionStyle.metric("padding", 0, theme)
-        let gap = ThinkingInspectionStyle.metric("gap", 4, theme)
+        let pad = ThinkingInspectionStyle.metric("padding", theme.space.s0, theme)
+        let gap = ThinkingInspectionStyle.metric("gap", theme.space.s4, theme)
         dotStack.spacing = gap; memoryStack?.spacing = gap
         for c in constraints {
             let view = c.firstItem as? NSView
@@ -283,7 +280,6 @@ final class NativeTypingIndicatorView: NSView {
             if (view === statusLabel || view === memoryStack), c.firstAttribute == .leading { c.constant = gap }
         }
         ThinkingInspectionStyle.label(statusLabel, property: "label", color: NSColor(theme.text.primary), theme: theme)
-        #endif
         updatePrefillBadge(scopedPrefill)
     }
 
@@ -370,15 +366,14 @@ final class NativePendingToolCallView: NSView {
         argSize: Int,
         theme: any ThemeProtocol
     ) {
-        let theme = theme.catalogFamily(34, authoritative: true)
-        #if OSAURUS_DESIGN_SYSTEM
+        let theme = theme.catalogFamily(34)
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "pendingTool", theme)).cgColor
         catalogAssignmentTarget([AgentContentSurfaceAssignments.key(34, "pendingTool")], name: "Pending tool call", theme: theme)
         layer?.borderColor = NSColor(theme.border.default).cgColor
         layer?.borderWidth = theme.stroke.default
         layer?.cornerRadius = theme.radius.medium
-        let pad = ActivityInspectionStyle.metric("padding", 16, theme)
-        let gap = ActivityInspectionStyle.metric("gap", 10, theme)
+        let pad = ActivityInspectionStyle.metric("padding", theme.space.s16, theme)
+        let gap = ActivityInspectionStyle.metric("gap", theme.space.s10, theme)
         for c in constraints {
             if c.firstItem as? NSView === node, c.firstAttribute == .leading { c.constant = pad }
             if c.firstItem as? NSView === shimmerLabel, c.firstAttribute == .leading { c.constant = gap }
@@ -386,10 +381,6 @@ final class NativePendingToolCallView: NSView {
         }
         let titleTracking = theme.assignedTracking(ActivityInspectionStyle.key + "label")
         let titleLineHeight: CGFloat? = theme.assignedLineHeight(ActivityInspectionStyle.key + "label", fallback: 18)
-        #else
-        let titleTracking: CGFloat? = nil
-        let titleLineHeight: CGFloat? = nil
-        #endif
         // Running node: accent-colored circle + category glyph. Subagent tools
         // take their glyph from the capability registry (SSOT) instead of the
         // generic gear the substring categorizer would assign.
@@ -413,7 +404,7 @@ final class NativePendingToolCallView: NSView {
             text: ToolDisplayName.friendly(
                 for: toolName, running: true, pendingBytes: argSize),
             font: theme.assignedNativeFont(ActivityInspectionStyle.key + "label", fallback: theme.nsFont(.caption, weight: .semibold)),
-            baseColor: NSColor(theme.text.primary).withAlphaComponent(0.4),
+            baseColor: NSColor(theme.text.tertiary),
             highlightColor: NSColor(theme.text.primary),
             tracking: titleTracking,
             lineHeight: titleLineHeight
@@ -573,11 +564,9 @@ final class NativeCodeBlockView: NSView {
         isStreaming: Bool = false
     ) {
         let theme = CodeBlockInspectionStyle.scope(theme)
-        #if OSAURUS_DESIGN_SYSTEM
         catalogAssignmentTarget(["background", "border", "borderWidth", "radius", "padding"].map { CodeBlockInspectionStyle.key + $0 } + ["codePaddingX", "codeBottomPadding", "gutterGap"].map { CodeBlockInspectionStyle.key + "elements.layout." + $0 }, name: "Code block container and layout", theme: theme)
         headerView.catalogAssignmentTarget(["height"].map { CodeBlockInspectionStyle.key + $0 } + ["headerPaddingX", "headerPaddingY"].map { CodeBlockInspectionStyle.key + "elements.layout." + $0 }, name: "Code block header", theme: theme)
         langLabel.catalogAssignmentTarget(["caption", "secondary"].map { CodeBlockInspectionStyle.key + $0 }, name: "Language label", theme: theme)
-        #endif
         currentTheme = theme
         let codeChanged = code != lastCode || language != lastLang
         let widthChanged = abs(width - lastWidth) > 0.5
@@ -597,7 +586,6 @@ final class NativeCodeBlockView: NSView {
         langLabel.stringValue = language?.lowercased() ?? "code"
         langLabel.font = theme.nsFont(.footnote, weight: .medium, family: .code)
         langLabel.textColor = NSColor(theme.text.tertiary)
-        #if OSAURUS_DESIGN_SYSTEM
         // Complete language-label recipe from32.
         let paragraph = theme.paragraphStyle(.caption)
         langLabel.attributedStringValue = NSAttributedString(string: langLabel.stringValue, attributes: [.font: theme.assignedNativeFont(CodeBlockInspectionStyle.key + "caption", fallback: theme.nsFont(.caption)), .foregroundColor: NSColor(theme.text.secondary), .kern: theme.assignedTracking(CodeBlockInspectionStyle.key + "caption") ?? 0, .paragraphStyle: paragraph])
@@ -605,24 +593,21 @@ final class NativeCodeBlockView: NSView {
         layer?.borderWidth = CodeBlockInspectionStyle.metric("borderWidth", 1, theme)
         copyButton.configureInspection(theme, copied: copiedForInspection)
         copyButton.alphaValue = 1
-        #endif
         headerHeightConstraint?.constant = CodeBlockInspectionStyle.headerHeight(theme)
-        languageInsetConstraint?.constant = theme.catalogLayoutMetric("component.library.32.elements.layout.headerPaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", 12, theme))
-        for c in codeInsetConstraints { c.constant = (c.firstAttribute == .leading ? 1 : -1) * (c.firstAttribute == .bottom ? theme.catalogLayoutMetric("component.library.32.elements.layout.codeBottomPadding", inheriting: CodeBlockInspectionStyle.metric("padding", 8, theme)) : theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", 12, theme))) }
+        languageInsetConstraint?.constant = theme.catalogLayoutMetric("component.library.32.elements.layout.headerPaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme))
+        for c in codeInsetConstraints { c.constant = (c.firstAttribute == .leading ? 1 : -1) * (c.firstAttribute == .bottom ? theme.catalogLayoutMetric("component.library.32.elements.layout.codeBottomPadding", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s8, theme)) : theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme))) }
 
         layer?.backgroundColor = NSColor(theme.surface.code).cgColor
         layer?.cornerRadius = theme.radius.medium
 
         let cv = ensureCodeView(theme: theme)
-        #if OSAURUS_DESIGN_SYSTEM
         cv.catalogAssignmentTarget(["code", "foreground", "selected", "accent"].map { CodeBlockInspectionStyle.key + $0 }, name: "Code text", theme: theme)
-        #endif
         if themeChanged {
             cv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selection.background)]
             cv.insertionPointColor = NSColor(theme.cursor)
         }
         if widthChanged {
-            cv.textContainer?.containerSize = NSSize(width: max(1, width - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", 12, theme))), height: .greatestFiniteMagnitude)
+            cv.textContainer?.containerSize = NSSize(width: max(1, width - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme))), height: .greatestFiniteMagnitude)
         }
         if codeChanged || themeChanged || widthChanged || streamingChanged {
             if isStreaming {
@@ -671,7 +656,7 @@ final class NativeCodeBlockView: NSView {
                 CodeContentView.attributedString(
                     code: code,
                     language: lastLang,
-                    baseWidth: max(1, lastWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", 12, theme))),
+                    baseWidth: max(1, lastWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme))),
                     theme: theme,
                     highlight: false
                 )
@@ -714,7 +699,7 @@ final class NativeCodeBlockView: NSView {
         let tail = CodeContentView.attributedString(
             code: code.substring(from: start),
             language: lastLang,
-            baseWidth: max(1, lastWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", 12, theme))),
+            baseWidth: max(1, lastWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme))),
             theme: theme,
             cacheHighlight: false,
             gutterLineCount: lineCount
@@ -744,7 +729,7 @@ final class NativeCodeBlockView: NSView {
             return max(intrinsicContentSize.height, 60)
         }
         let theme = currentTheme ?? CustomizableTheme.light()
-        let innerW = max(1, outerWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", 12, theme)))
+        let innerW = max(1, outerWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme)))
         // Resizing the container invalidates all of its layout, and restoring
         // it does so again; skip both when the width already matches.
         let target = NSSize(width: innerW, height: CGFloat.greatestFiniteMagnitude)
@@ -763,7 +748,7 @@ final class NativeCodeBlockView: NSView {
         }
         lm.ensureLayout(for: tc)
         let textH = ceil(lm.usedRect(for: tc).height)
-        return CodeBlockInspectionStyle.headerHeight(theme) + max(textH, 1) + theme.catalogLayoutMetric("component.library.32.elements.layout.codeBottomPadding", inheriting: CodeBlockInspectionStyle.metric("padding", 8, theme))
+        return CodeBlockInspectionStyle.headerHeight(theme) + max(textH, 1) + theme.catalogLayoutMetric("component.library.32.elements.layout.codeBottomPadding", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s8, theme))
     }
 
     // MARK: - Private: Build
@@ -821,7 +806,7 @@ final class NativeCodeBlockView: NSView {
         cv.textContainerInset = .zero
         cv.isVerticallyResizable = false
         cv.isHorizontallyResizable = false
-        cv.textContainer?.containerSize = NSSize(width: max(1, lastWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", 12, theme))), height: .greatestFiniteMagnitude)
+        cv.textContainer?.containerSize = NSSize(width: max(1, lastWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme))), height: .greatestFiniteMagnitude)
         cv.textContainer?.widthTracksTextView = false
         cv.textContainer?.lineFragmentPadding = 0
         cv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selection.background)]
@@ -840,7 +825,7 @@ final class NativeCodeBlockView: NSView {
             cv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
         codeInsetConstraints = constraints.filter { $0.firstItem as? NSView === cv && [.leading, .trailing, .bottom].contains($0.firstAttribute) }
-        for c in codeInsetConstraints { c.constant = (c.firstAttribute == .leading ? 1 : -1) * (c.firstAttribute == .bottom ? theme.catalogLayoutMetric("component.library.32.elements.layout.codeBottomPadding", inheriting: CodeBlockInspectionStyle.metric("padding", 8, theme)) : theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", 12, theme))) }
+        for c in codeInsetConstraints { c.constant = (c.firstAttribute == .leading ? 1 : -1) * (c.firstAttribute == .bottom ? theme.catalogLayoutMetric("component.library.32.elements.layout.codeBottomPadding", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s8, theme)) : theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme))) }
         codeView = cv
         return cv
     }
@@ -849,7 +834,7 @@ final class NativeCodeBlockView: NSView {
     override var intrinsicContentSize: NSSize {
         let codeHeight = codeHeightConstraint?.constant ?? 0
         let theme = currentTheme ?? CustomizableTheme.light()
-        let totalHeight = CodeBlockInspectionStyle.headerHeight(theme) + codeHeight + theme.catalogLayoutMetric("component.library.32.elements.layout.codeBottomPadding", inheriting: CodeBlockInspectionStyle.metric("padding", 8, theme))  // header + code + padding
+        let totalHeight = CodeBlockInspectionStyle.headerHeight(theme) + codeHeight + theme.catalogLayoutMetric("component.library.32.elements.layout.codeBottomPadding", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s8, theme))  // header + code + padding
         // ensure minimum visible height even if code hasn't been measured yet
         return NSSize(width: NSView.noIntrinsicMetric, height: max(totalHeight, 60))
     }
@@ -864,7 +849,7 @@ final class NativeCodeBlockView: NSView {
         let attrStr = CodeContentView.attributedString(
             code: code,
             language: language,
-            baseWidth: max(1, lastWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", 12, theme))),
+            baseWidth: max(1, lastWidth - 2 * theme.catalogLayoutMetric("component.library.32.elements.layout.codePaddingX", inheriting: CodeBlockInspectionStyle.metric("padding", theme.space.s12, theme))),
             theme: theme,
             cacheHighlight: cacheHighlight
         )
@@ -1009,10 +994,8 @@ final class NativeCodeBlockView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        #if OSAURUS_DESIGN_SYSTEM
         copyButton.alphaValue = 1
         return
-        #endif
         // keep a non-zero alpha so the control stays hit-testable (alpha 0 can drop clicks through to views below)
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = ThemeManager.shared.currentTheme.motion.quickInterval
@@ -1028,10 +1011,8 @@ final class NativeCodeBlockView: NSView {
         ToastManager.shared.success(L("Code copied to clipboard"))
         copyButton.image = SymbolImageCache.image("checkmark", accessibilityDescription: nil)
         copyButton.contentTintColor = .systemGreen
-        #if OSAURUS_DESIGN_SYSTEM
         copiedForInspection = true
         if let theme = currentTheme { copyButton.configureInspection(theme, copied: true) }
-        #endif
         copyResetTask?.cancel()
         copyResetTask = Task { @MainActor [weak self] in
             // A repeat tap cancels this task. `try?` alone would swallow the
@@ -1042,10 +1023,8 @@ final class NativeCodeBlockView: NSView {
             else { return }
             self.copyButton.image = SymbolImageCache.image("doc.on.doc", accessibilityDescription: nil)
             self.copyButton.contentTintColor = nil
-            #if OSAURUS_DESIGN_SYSTEM
             self.copiedForInspection = false
             if let theme = self.currentTheme { self.copyButton.configureInspection(theme, copied: false) }
-            #endif
         }
     }
 }
@@ -1056,7 +1035,6 @@ final class NativeCodeBlockView: NSView {
 /// `.cursorUpdate` tracking area rather than cursor rects, which don't
 /// survive layer-backed table-cell recycling in the message list.
 private final class PointingHandButton: NSButton {
-    #if OSAURUS_DESIGN_SYSTEM
     private var inspectionTheme: (any ThemeProtocol)?
     private var copied = false
     private var inspectedHover = false
@@ -1074,7 +1052,6 @@ private final class PointingHandButton: NSButton {
     }
     override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); inspectedHover = true; refreshInspection() }
     override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); inspectedHover = false; refreshInspection() }
-    #endif
     private var cursorTrackingArea: NSTrackingArea?
 
     override func updateTrackingAreas() {
@@ -1198,11 +1175,7 @@ final class NativeMarkdownTableView: NSView {
     // Source text currently rendered in each cell, used to skip re-rendering
     // unchanged cells when the grid reconfigures during streaming
     private var cellTexts: [[String]] = []
-    #if OSAURUS_DESIGN_SYSTEM
     private let separator = NSView()
-    #else
-    private let separator = NSBox()
-    #endif
 
     // Per-row measurement cache. A streaming table reconfigures once per
     // delta, and re-running TextKit layout for EVERY row of the whole table
@@ -1225,10 +1198,6 @@ final class NativeMarkdownTableView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
 
-        #if !OSAURUS_DESIGN_SYSTEM
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        #endif
         addSubview(separator)
 
         let hc = heightAnchor.constraint(equalToConstant: 24)
@@ -1244,7 +1213,6 @@ final class NativeMarkdownTableView: NSView {
     func configure(headers: [String], rows: [[String]], width: CGFloat, theme: any ThemeProtocol) {
         let theme = RichTextInspectionStyle.scope(theme)
         currentTheme = theme
-        #if OSAURUS_DESIGN_SYSTEM
         layer?.backgroundColor = NSColor(theme.surface.code).cgColor
         layer?.cornerRadius = theme.radius.medium
         layer?.borderColor = NSColor(theme.border.default).cgColor
@@ -1253,7 +1221,6 @@ final class NativeMarkdownTableView: NSView {
         // view without NSBox's intrinsic sizing or inset content view.
         separator.wantsLayer = true
         separator.layer?.backgroundColor = NSColor(theme.border.default).cgColor
-        #endif
         let fingerprint = theme.renderFingerprint
         let contentChanged = headers != self.headers || rows != self.rows
         let widthChanged = abs(width - lastWidth) > 0.5
@@ -1414,7 +1381,6 @@ final class NativeMarkdownTableView: NSView {
         mutable.addAttribute(.paragraphStyle, value: theme.paragraphStyle(.body), range: fullRange)
 
         // Header row: upgrade every run's font to semibold (preserving italic/monospace).
-        #if OSAURUS_DESIGN_SYSTEM
         if weight == .semibold {
             let k = RichTextInspectionStyle.key + "label"
             mutable.enumerateAttributes(in: fullRange) { attributes, range, _ in
@@ -1425,16 +1391,6 @@ final class NativeMarkdownTableView: NSView {
             let paragraph = theme.paragraphStyle(.label)
             mutable.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
         }
-        #else
-        if weight == .semibold {
-            let fontManager = NSFontManager.shared
-            mutable.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
-                guard let font = value as? NSFont else { return }
-                let bold = fontManager.convert(font, toHaveTrait: .boldFontMask)
-                mutable.addAttribute(.font, value: bold, range: range)
-            }
-        }
-        #endif
         return mutable
     }
 
@@ -1457,9 +1413,9 @@ final class NativeMarkdownTableView: NSView {
         }
 
         let theme = currentTheme ?? CustomizableTheme.light()
-        let pad = RichTextInspectionStyle.metric("padding", 0, theme)
-        let columnGap = RichTextInspectionStyle.metric("gap", 16, theme)
-        let rowGap = RichTextInspectionStyle.metric("gap", 8, theme)
+        let pad = RichTextInspectionStyle.metric("padding", theme.space.s0, theme)
+        let columnGap = RichTextInspectionStyle.metric("gap", theme.space.s16, theme)
+        let rowGap = RichTextInspectionStyle.metric("gap", theme.space.s8, theme)
         let separatorGap: CGFloat = 6
         let headerPaddingBottom: CGFloat = 6
 

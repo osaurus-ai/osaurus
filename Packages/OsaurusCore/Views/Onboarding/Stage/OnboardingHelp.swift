@@ -160,7 +160,7 @@ struct OnboardingDinoHelp: View {
         } label: {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: "questionmark.circle.fill")
-                    .glyphSize(12, weight: .bold)
+                    .glyphSize(.caption, weight: .bold)
                 Text("Click me for help!", bundle: .module)
                     .font(OnboardingTypography.optionTitle)
             }
@@ -245,7 +245,7 @@ struct OnboardingDinoHelp: View {
                 stage.closeHelp()
             } label: {
                 Image(systemName: "xmark")
-                    .glyphSize(9, weight: .bold)
+                    .glyphSize(.tiny, weight: .bold)
                     .foregroundColor(OnboardingPalette.bubbleInk.opacity(0.55))
                     .frame(width: theme.space.s24, height: theme.space.s24)
                     .contentShape(Rectangle())

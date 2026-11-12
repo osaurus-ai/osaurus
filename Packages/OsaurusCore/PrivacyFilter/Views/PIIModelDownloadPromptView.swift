@@ -93,10 +93,10 @@ private struct RampartDownloadProgressContent: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             switch manager.state {
             case .downloading(let progress):
-                ProgressView(value: progress)
+                SettingsProgressBar(value: progress)
                 // Explicit format key: a literal `%` after an interpolation
                 // becomes `%%` in the extracted catalog key, which the i18n
                 // checker's interpolation matcher cannot derive from the
@@ -110,8 +110,7 @@ private struct RampartDownloadProgressContent: View {
                     .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             case .idle, .ready:
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
             }
         }
         .padding(.top, theme.space.s2)

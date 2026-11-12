@@ -112,7 +112,7 @@ struct ShareAgentSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "square.and.arrow.up.circle.fill",
                 title: "Share Agent",
@@ -258,7 +258,7 @@ struct ShareAgentSheet: View {
             SheetHintRow(kind: .error, message: error)
         }
         if isGenerating {
-            SettingsRow(title: "Signing link…", description: "", trailing: { ProgressView().controlSize(.small) })
+            SettingsRow(title: "Signing link…", description: "", trailing: { SettingsSpinner() })
         } else if let url = generatedURL {
             HStack(alignment: .top, spacing: theme.space.s16) {
                 ShareQRCardView(text: url.absoluteString)

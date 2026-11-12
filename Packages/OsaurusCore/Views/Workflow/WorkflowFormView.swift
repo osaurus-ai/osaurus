@@ -205,7 +205,7 @@ struct WorkflowFormView: View {
         if let issue = issues[field.key] {
             Text(verbatim: issue)
                 .textStyle(.caption)
-                .foregroundColor(theme.statusInk.error)
+                .foregroundColor(theme.statusInk(.error))
                 .fixedSize(horizontal: false, vertical: true)
         } else if let help = field.help, !help.isEmpty {
             Text(verbatim: help)
@@ -298,21 +298,11 @@ struct WorkflowFormView: View {
             get: { values[field.key]?.stringValue ?? "" },
             set: { values[field.key] = .string($0) })
         if field.required, Self.choicesFitSideBySide(options) {
-            #if OSAURUS_DESIGN_SYSTEM
             AssignedBaseSegmentedPicker(
                 selection: selection, options: options.map { .init($0, $0, verbatim: true) }, size: .compact,
                 minimumOptionWidth: theme.space.s64)
                 .fixedSize()
                 .accessibilityLabel(Text(verbatim: field.label))
-            #else
-            Picker("", selection: selection) {
-                ForEach(options, id: \.self) { Text(verbatim: $0).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .accessibilityLabel(Text(verbatim: field.label))
-            #endif
         } else {
             SettingsMenuPicker(selection: selection) {
                 if !field.required || values[field.key] == nil {

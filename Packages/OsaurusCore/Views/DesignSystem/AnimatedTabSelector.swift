@@ -78,9 +78,7 @@ struct AnimatedTabSelector<Tab: AnimatedTabItem>: View where Tab.AllCases: Rando
             .labelsHidden()
             .accessibilityLabel(Text("Tabs", bundle: .module))
         }
-        #if OSAURUS_DESIGN_SYSTEM
         .nativeCatalogTarget([NativeCatalogAssignment.key("component.library.6.background", theme: theme)], "Tab track")
-        #endif
     }
 
     private func select(_ tab: Tab) {
@@ -111,8 +109,34 @@ extension ThemeProtocol {
     var segmentedTrackRadius: CGFloat { assignedMetric("component.library.6.radius", fallback: radius.medium) }
     var segmentedSegmentRadius: CGFloat { max(0, segmentedTrackRadius - space.s4) }
     var segmentedSelectionBorder: Color {
-        assignedColor("component.library.6.selectedBorder", fallback: border.default)
+        assignedColor("component.library.6.selectedBorder", fallback: border.strong)
     }
+
+    /// The hairline that marks a selected row, chip or segment. Light themes
+    /// paint `surface.selected` the same as `surface.hover` and barely apart
+    /// from the surfaces around it, so the fill alone does not read; dark
+    /// themes separate the fills and draw no line. Read from the unscoped
+    /// theme: a component family scope remaps `border.strong` to the
+    /// family's own border, which can be too faint to mark selection.
+    var selectionBorder: Color { isDark ? .clear : unscopedTheme.border.strong }
+
+    /// Line width for `selectionBorder`. A family scope can set
+    /// `stroke.default` to zero, which would hide the hairline.
+    var selectionStroke: CGFloat { isDark ? stroke.default : unscopedTheme.stroke.default }
+
+    private var unscopedTheme: any ThemeProtocol {
+        if let scoped = self as? CatalogResolvedTheme { return scoped.base.unscopedTheme }
+        return self
+    }
+
+    /// The unfilled part of a slider, progress or level track. In light
+    /// themes `surface.selected` is too close to raised cards to show how
+    /// long the track is, so it takes the default border colour instead.
+    func emptyTrack(_ assigned: Color) -> Color { isDark ? assigned : border.default }
+
+    /// The hairline between rows of a group or under a table header.
+    /// `border.subtle` nearly vanishes on light raised cards.
+    var rowRule: Color { isDark ? border.subtle : border.default }
 }
 
 // MARK: - Animated Tab Button
@@ -134,12 +158,9 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.6.elements.layout.animatedTabButton.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: 6))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.6.elements.layout.animatedTabButton.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s6))) {
                 Text(tab.title)
                     .assignedTypography("component.library.6.text", fallback: SettingsFont.rowTitle)
-                    #if !OSAURUS_DESIGN_SYSTEM
-                    .fontWeight(isSelected ? .semibold : .medium)
-                    #endif
                     .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
 
                 if let count = count {
@@ -168,11 +189,9 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
                         .allowsHitTesting(false)
                 }
             }
-            #if OSAURUS_DESIGN_SYSTEM
             .nativeCatalogTarget(isSelected ? ["selected", "selectedBorder"].map {
                 NativeCatalogAssignment.key("component.library.6." + $0, theme: theme)
             } : [], "Selected tab")
-            #endif
             .contentShape(RoundedRectangle(cornerRadius: theme.segmentedSegmentRadius, style: .continuous))
         }
         .assignedBasePlainButtonStyle()
@@ -261,12 +280,13 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
 #if DEBUG && canImport(PreviewsMacros)
     #Preview {
         struct PreviewWrapper: View {
+            @Environment(\.theme) private var theme
             @State private var modelTab: ModelListTab = .all
             @State private var toolsTab: ToolsTab = .all
             @State private var pluginsTab: PluginsTab = .installed
 
             var body: some View {
-                VStack(spacing: 40) {
+                VStack(spacing: theme.space.s40) {
                     AnimatedTabSelector(
                         selection: $modelTab,
                         counts: [.all: 150, .downloaded: 3]
@@ -282,7 +302,7 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
                         badges: [.browse: 2]
                     )
                 }
-                .padding(40)
+                .padding(theme.space.s40)
                 .background(CustomizableTheme.light().surface.canvas)
             }
         }

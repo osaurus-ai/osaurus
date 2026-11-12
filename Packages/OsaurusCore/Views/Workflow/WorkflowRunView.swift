@@ -61,7 +61,7 @@ struct WorkflowRunView: View {
     }
 
     private func outputFields(_ fields: [WorkflowOutputLayout.Field], raw: JSONValue) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Output", bundle: .module)
                     .textStyle(.footnote, weight: 600)
@@ -72,14 +72,14 @@ struct WorkflowRunView: View {
                     NSPasteboard.general.setString(raw.prettyJSONString, forType: .string)
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                         .foregroundColor(theme.text.tertiary)
                 }
                 .buttonStyle(.plain)
                 .localizedHelp("Copy JSON")
             }
             ForEach(fields) { field in
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(field.label)
                         .textStyle(.caption, weight: 500)
                         .foregroundColor(theme.text.secondary)
@@ -206,7 +206,7 @@ struct WorkflowRunView: View {
     /// The steps as one list, divided rather than boxed one by one.
     private var stepList: some View {
         let rows = Self.rows(run, definition: definition)
-        return VStack(alignment: .leading, spacing: 0) {
+        return VStack(alignment: .leading, spacing: theme.space.s0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, node in
                 if index > 0 { Divider() }
                 nodeRow(node)
@@ -250,7 +250,7 @@ struct WorkflowRunView: View {
                                         .textStyle(.caption)
                                         .foregroundColor(
                                             node.status == .failed
-                                                ? theme.statusInk.error : theme.text.tertiary)
+                                                ? theme.statusInk(.error) : theme.text.tertiary)
                                 }
                                 if node.reusedFrom != nil {
                                     StatusChip(
@@ -278,7 +278,7 @@ struct WorkflowRunView: View {
                             .fixedSize()
                     }
                     Image(systemName: isOpen ? "chevron.up" : "chevron.down")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .frame(height: theme.space.s16)
                         .opacity(expandable ? 1 : 0)
@@ -294,7 +294,7 @@ struct WorkflowRunView: View {
                 if !isOpen, node.status == .failed, let error = node.error, !error.isEmpty {
                     Text(verbatim: error)
                         .font(SettingsFont.footnote)
-                        .foregroundColor(theme.statusInk.error)
+                        .foregroundColor(theme.statusInk(.error))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -370,7 +370,7 @@ struct WorkflowRunView: View {
                 if step.needsInput {
                     Text(verbatim: L("\(step.agent) needs more information"))
                         .font(SettingsFont.footnote)
-                        .foregroundColor(theme.statusInk.warning)
+                        .foregroundColor(theme.statusInk(.warning))
                 }
                 if let sessionID = step.sessionID {
                     Button {
@@ -403,7 +403,7 @@ struct WorkflowRunView: View {
             if let error = node.error {
                 Text(error)
                     .textStyle(.caption)
-                    .foregroundColor(theme.statusInk.error)
+                    .foregroundColor(theme.statusInk(.error))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -447,7 +447,7 @@ struct WorkflowRunView: View {
     }
 
     private func jsonBlock(title: LocalizedStringKey, value: JSONValue) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             HStack {
                 Text(title, bundle: .module)
                     .textStyle(.footnote, weight: 600)
@@ -458,7 +458,7 @@ struct WorkflowRunView: View {
                     NSPasteboard.general.setString(value.prettyJSONString, forType: .string)
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                         .foregroundColor(theme.text.tertiary)
                 }
                 .buttonStyle(.plain)
@@ -469,7 +469,7 @@ struct WorkflowRunView: View {
     }
 
     private func listBlock(title: LocalizedStringKey, items: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(title, bundle: .module)
                 .textStyle(.footnote, weight: 600)
                 .foregroundColor(theme.text.tertiary)
@@ -485,17 +485,17 @@ struct WorkflowRunView: View {
     }
 
     private func toolCallsBlock(_ records: [WorkflowToolCallRecord]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Tool calls", bundle: .module)
                 .textStyle(.footnote, weight: 600)
                 .foregroundColor(theme.text.tertiary)
             ForEach(Array(records.enumerated()), id: \.offset) { _, record in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: record.isError ? "xmark.circle" : "checkmark.circle")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                             .foregroundColor(
-                                record.isError ? theme.statusInk.error : theme.statusInk.success
+                                record.isError ? theme.statusInk(.error) : theme.statusInk(.success)
                             )
                         Text(record.name)
                             .font(SettingsFont.monoSmall)
@@ -509,7 +509,7 @@ struct WorkflowRunView: View {
                     }
                     toolText(record.arguments, color: theme.text.secondary)
                     if let result = record.resultPreview, !result.isEmpty {
-                        toolText(result, color: record.isError ? theme.statusInk.error : theme.text.tertiary)
+                        toolText(result, color: record.isError ? theme.statusInk(.error) : theme.text.tertiary)
                     }
                 }
                 .padding(theme.space.s6)
@@ -706,7 +706,7 @@ struct WorkflowInsightsLink: View {
                     }
                 } label: {
                     Image(systemName: "chart.bar.doc.horizontal")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                         .foregroundColor(theme.text.tertiary)
                 }
                 .buttonStyle(.plain)

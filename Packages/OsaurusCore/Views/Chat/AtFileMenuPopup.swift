@@ -32,7 +32,7 @@ struct AtFileMenuPopup: View {
     private let maxVisibleRows: Int = 6
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.body.verticalGap", inheriting: SuggestionInspectionStyle.metric("gap", 4, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.body.verticalGap", inheriting: SuggestionInspectionStyle.metric("gap", theme.space.s4, theme))) {
             PickerCardHeading(title: L("Files"), assignmentFamily: 25) {
                 PickerCardKeyHints()
             }
@@ -45,15 +45,13 @@ struct AtFileMenuPopup: View {
             }
         }.catalogLayoutTarget("component.library.40.elements.layout.atFileMenuPopup.body.verticalGap")
         .padding(.horizontal, theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.body.paddingX", inheriting: SuggestionInspectionStyle.metric("padding", PickerCardMetrics.padding, theme))).catalogLayoutTarget("component.library.40.elements.layout.atFileMenuPopup.body.paddingX")
-        .padding(.top, theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.body.paddingY", inheriting: SuggestionInspectionStyle.metric("padding", 14, theme))).catalogLayoutTarget("component.library.40.elements.layout.atFileMenuPopup.body.paddingY")
-        .padding(.bottom, theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.body.paddingY2", inheriting: SuggestionInspectionStyle.metric("padding", 10, theme))).catalogLayoutTarget("component.library.40.elements.layout.atFileMenuPopup.body.paddingY2")
+        .padding(.top, theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.body.paddingY", inheriting: SuggestionInspectionStyle.metric("padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.40.elements.layout.atFileMenuPopup.body.paddingY")
+        .padding(.bottom, theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.body.paddingY2", inheriting: SuggestionInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.40.elements.layout.atFileMenuPopup.body.paddingY2")
         .frame(maxWidth: .infinity)
         .pickerCardSurface(elevated: true, assignmentFamily: 25)
-        #if OSAURUS_DESIGN_SYSTEM
         // Size the surface as well as its content before the composer's
         // overlay proposes the (much smaller) input-card height.
         .fixedSize(horizontal: false, vertical: true)
-        #endif
     }
 
     // MARK: - Denied Access Row
@@ -63,9 +61,9 @@ struct AtFileMenuPopup: View {
     /// on its own after a denial.
     private var deniedRow: some View {
         Button(action: onGrantAccess) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.deniedRow.horizontalGap", inheriting: SuggestionInspectionStyle.metric("gap", 8, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.deniedRow.horizontalGap", inheriting: SuggestionInspectionStyle.metric("gap", theme.space.s8, theme))) {
                 Image(systemName: "lock.fill")
-                    .glyphSize(12, weight: .medium)
+                    .glyphSize(.caption, weight: .medium)
                     .suggestionInk("error", fallback: theme.status.warning.foreground)
                     .frame(width: 16)
                 Text("Can't access \(deniedDirectoryName)", bundle: .module)
@@ -74,11 +72,11 @@ struct AtFileMenuPopup: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
-                HStack(spacing: 3) {
+                HStack(spacing: theme.space.s2) {
                     Text("Click to grant access\u{2026}", bundle: .module)
                     // Slanting arrow signals the row opens an external picker.
                     Image(systemName: "arrow.up.right")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                 }
                 .suggestionTextStyle(.label, property: "caption")
                 .suggestionInk("accent", fallback: theme.text.link)
@@ -94,9 +92,9 @@ struct AtFileMenuPopup: View {
     /// Non-interactive row shown when the directory read fine but has nothing to
     /// list, so the menu reads as "nothing here" rather than looking broken.
     private var emptyRow: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.emptyRow.horizontalGap", inheriting: SuggestionInspectionStyle.metric("gap", 8, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.emptyRow.horizontalGap", inheriting: SuggestionInspectionStyle.metric("gap", theme.space.s8, theme))) {
             Image(systemName: "folder")
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .suggestionInk("secondary", fallback: theme.text.tertiary)
                 .frame(width: 16)
             Text(emptyMessage)
@@ -140,9 +138,9 @@ struct AtFileMenuPopup: View {
         return Button {
             onSelect(item)
         } label: {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.fileRow.horizontalGap", inheriting: SuggestionInspectionStyle.metric("gap", 8, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.atFileMenuPopup.fileRow.horizontalGap", inheriting: SuggestionInspectionStyle.metric("gap", theme.space.s8, theme))) {
                 Image(systemName: item.isDirectory ? "folder" : "doc")
-                    .glyphSize(12, weight: .medium)
+                    .glyphSize(.caption, weight: .medium)
                     .suggestionInk("accent", fallback: isHighlighted ? theme.text.primary : theme.text.secondary)
                     .frame(width: 16)
                 Text(verbatim: item.isDirectory ? "\(item.name)/" : item.name)

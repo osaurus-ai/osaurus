@@ -31,7 +31,7 @@ struct LoginConsentView: View {
                     )
                 )
 
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 header
                     .padding(.top, theme.space.s24)
                     .padding(.horizontal, theme.space.s24)
@@ -44,9 +44,7 @@ struct LoginConsentView: View {
                     .padding(.top, theme.space.s12)
                     .padding(.horizontal, theme.space.s24)
 
-                Rectangle()
-                    .fill(theme.border.subtle)
-                    .frame(height: 1)
+                ThemeHairlineDivider()
                     .padding(.top, theme.space.s16)
 
                 actionButtons
@@ -72,13 +70,13 @@ struct LoginConsentView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             Circle()
                 .fill(theme.status.info.background)
                 .frame(width: 48, height: 48)
                 .overlay(
                     Image(systemName: "person.badge.shield.checkmark.fill")
-                        .glyphSize(20, weight: .semibold)
+                        .glyphSize(.xlarge, weight: .semibold)
                         .foregroundColor(theme.text.link)
                 )
 
@@ -96,7 +94,7 @@ struct LoginConsentView: View {
     }
 
     private var originBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Label {
                 Text("Website", bundle: .module)
             } icon: {
@@ -105,9 +103,9 @@ struct LoginConsentView: View {
             .textStyle(.footnote, weight: 500)
             .foregroundColor(theme.text.secondary)
 
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "lock.fill")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(theme.status.success.foreground)
                 Text(verbatim: request.origin)
                     .textStyle(.code)
@@ -122,7 +120,7 @@ struct LoginConsentView: View {
     }
 
     private var sharedBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("The website will receive:", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.primary)
@@ -143,9 +141,9 @@ struct LoginConsentView: View {
     }
 
     private func sharedRow(_ label: Text) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: "checkmark")
-                .glyphSize(10, weight: .bold)
+                .glyphSize(.micro, weight: .bold)
                 .foregroundColor(theme.status.success.foreground)
             label
                 .textStyle(.caption)
@@ -154,35 +152,10 @@ struct LoginConsentView: View {
     }
 
     private var actionButtons: some View {
-        HStack(spacing: 12) {
-            Button(action: onCancel) {
-                Text("Cancel", bundle: .module)
-                    .font(SettingsFont.sectionTitle)
-                    .foregroundColor(theme.text.primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, theme.space.s8)
-                    .background(theme.surface.hover)
-                    .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous).stroke(theme.border.default, lineWidth: theme.stroke.default)
-                    )
-            }
-            .buttonStyle(.plain)
-
-            Button(action: onContinue) {
-                Label {
-                    Text("Continue", bundle: .module)
-                } icon: {
-                    Image(systemName: "touchid")
-                }
-                .textStyle(.label, weight: 600)
-                .foregroundColor(theme.isDark ? theme.surface.canvas : .white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, theme.space.s8)
-                .background(theme.action.primary.default.background)
-                .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
-            }
-            .buttonStyle(.plain)
+        HStack(spacing: theme.space.s8) {
+            Spacer(minLength: 0)
+            SettingsButton(.secondary, "Cancel", action: onCancel)
+            SettingsButton(.primary, "Continue", icon: "touchid", action: onContinue)
         }
     }
 }

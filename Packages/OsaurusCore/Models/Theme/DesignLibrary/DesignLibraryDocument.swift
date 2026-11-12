@@ -28,16 +28,17 @@ struct DesignWorkingDocument: Codable, Equatable, Sendable {
     var figmaSource: JSONValue? = nil
     // Records deliberate selections even when the chosen token equals an old default.
     var explicitAssignments: Set<String>? = nil
+    /// Assignments and tokens that differ from the handoff baseline. Stored so the
+    /// shipped app never needs the baseline to know what the designer changed.
+    var editedAssignments: Set<String>? = nil
+    var editedTokens: Set<String>? = nil
 }
 struct DesignThemeSnapshot: Sendable {
     let generation = UUID().uuidString
     let light: CustomTheme
     let dark: CustomTheme
     let document: DesignWorkingDocument
-    let reassignedProperties: Set<String>
     let changedTokens: Set<String>
-    let changedAssignments: Set<String>
-
 }
 /// Immutable value snapshots are read by nonisolated theme construction; mutation
 /// stays on the main actor. No view or production persistence lives in this bridge.
@@ -165,13 +166,19 @@ enum DesignLibraryDefinition {
         baseline = try baseline.resolvingColors()
         return (legacyBaseline, baseline)
     }
+    /// The editor's full working document, pruned to what paints against its baseline.
+    static func pruned(_ candidate: DesignWorkingDocument, baseline: DesignWorkingDocument) -> DesignWorkingDocument {
+        DesignLibraryPruning.pruned(candidate,
+            edited: Set(candidate.mappings.compactMap { baseline.mappings[$0.key] != $0.value ? $0.key : nil }).union(candidate.explicitAssignments ?? []),
+            editedTokens: Set(candidate.tokens.compactMap { key, value in baseline.tokens[key] != value ? key : nil }))
+    }
     static func makeSnapshot(_ candidate: DesignWorkingDocument, baseline: DesignWorkingDocument) throws -> DesignThemeSnapshot {
-        DesignThemeSnapshot(light: try resolve(candidate, mode:"light"), dark: try resolve(candidate, mode:"dark"), document:candidate,
-            reassignedProperties: Set(candidate.mappings.compactMap { baseline.mappings[$0.key] != $0.value ? $0.key : nil }).union(candidate.explicitAssignments ?? []),
-            changedTokens: Set(candidate.tokens.compactMap { key, value in baseline.tokens[key] != value ? key : nil }),
-            changedAssignments: Set(candidate.mappings.compactMap { key, role in
-                baseline.mappings[key] != role || candidate.tokens[role] != baseline.tokens[role] || DesignTypographyTokens.roles.contains(role) ? key : nil
-            }))
+        try makeSnapshot(pruned(candidate, baseline: baseline))
+    }
+    /// A pruned document carries its own edit record; no baseline is needed to paint it.
+    static func makeSnapshot(_ document: DesignWorkingDocument) throws -> DesignThemeSnapshot {
+        DesignThemeSnapshot(light: try resolve(document, mode: "light"), dark: try resolve(document, mode: "dark"), document: document,
+            changedTokens: document.editedTokens ?? [])
     }
     private static func resolve(_ doc: DesignWorkingDocument, mode: String) throws -> CustomTheme {
         let base = mode == "dark" ? CustomTheme.darkDefault : CustomTheme.lightDefault

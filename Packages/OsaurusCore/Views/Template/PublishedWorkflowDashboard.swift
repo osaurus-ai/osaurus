@@ -90,7 +90,7 @@ struct PublishedWorkflowDashboard: View {
     var body: some View {
         ScrollView {
             if let record {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     page(record)
                     if showsReview(record) {
                         PublishReviewPanel(
@@ -108,7 +108,7 @@ struct PublishedWorkflowDashboard: View {
                 .padding(theme.space.s16)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                VStack(spacing: 10) {
+                VStack(spacing: theme.space.s10) {
                     Spacer().frame(height: 60)
                     Text("This template isn't published.", bundle: .module)
                         .font(SettingsFont.body)
@@ -190,9 +190,9 @@ struct PublishedWorkflowDashboard: View {
     /// The page as it stands: its card, status, link, and the ways to pass
     /// it on. Taken down or removed, the card and link give way to why.
     private func page(_ record: WorkflowRegistryRecord) -> some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: theme.space.s16) {
             if record.isLive { thumbnail }
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 status(record)
                 if let agent = publishedWith(record) {
                     Text(verbatim: L("Its page came with publishing the \(agent) agent. Taking that agent down leaves this page up."))
@@ -206,7 +206,7 @@ struct PublishedWorkflowDashboard: View {
                     takenDownNotice
                 } else {
                     linkField(record)
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Button {
                             NSWorkspace.shared.open(record.url)
                         } label: {
@@ -253,7 +253,7 @@ struct PublishedWorkflowDashboard: View {
                 theme.status.success.foreground
             )
         }()
-        return HStack(spacing: 7) {
+        return HStack(spacing: theme.space.s6) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(verbatim: title)
                 .font(SettingsFont.sectionTitle)
@@ -265,7 +265,7 @@ struct PublishedWorkflowDashboard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if isLoading { ProgressView().controlSize(.mini) }
+            if isLoading { SettingsSpinner(size: .mini) }
         }
         .frame(height: 20)
     }
@@ -274,9 +274,9 @@ struct PublishedWorkflowDashboard: View {
     private func linkField(_ record: WorkflowRegistryRecord) -> some View {
         let full = record.url.absoluteString
         let shown = full.replacingOccurrences(of: "https://", with: "")
-        return HStack(spacing: 8) {
+        return HStack(spacing: theme.space.s8) {
             Image(systemName: "link")
-                .glyphSize(11, weight: .medium)
+                .glyphSize(.footnote, weight: .medium)
                 .foregroundColor(theme.text.tertiary)
             Text(verbatim: shown)
                 .font(SettingsFont.monoSmall)
@@ -293,7 +293,7 @@ struct PublishedWorkflowDashboard: View {
                 }
             } label: {
                 Image(systemName: linkCopied ? "checkmark" : "doc.on.doc")
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                     .foregroundColor(linkCopied ? theme.status.success.foreground : theme.text.secondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -318,7 +318,7 @@ struct PublishedWorkflowDashboard: View {
     }
 
     private func removedNotice(_ record: WorkflowRegistryRecord) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text("The Osaurus team took this down. It can't be published again.", bundle: .module)
                 .font(SettingsFont.caption)
                 .foregroundColor(theme.text.secondary)
@@ -340,8 +340,8 @@ struct PublishedWorkflowDashboard: View {
         let since = detail?.createdAt ?? record.publishedAt ?? record.sharedAt
         let updated = detail?.updatedAt ?? record.updatedAt ?? record.sharedAt
         let changed = updated.timeIntervalSince(since) > 60
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 0) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(alignment: .top, spacing: theme.space.s0) {
                 figure(L("Installs"), installs.map(String.init) ?? "—")
                     .settingsLandingAnchor(isAgent ? "agents.templates.publishedStats" : "workflows.publishedStats")
                 figureDivider
@@ -370,14 +370,13 @@ struct PublishedWorkflowDashboard: View {
     }
 
     private var figureDivider: some View {
-        Rectangle()
-            .fill(theme.border.default)
-            .frame(width: 1, height: 36)
+        ThemeHairlineDivider(axis: .vertical)
+            .frame(height: 36)
             .padding(.horizontal, theme.space.s12)
     }
 
     private func figure(_ label: String, _ value: String, caption: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(verbatim: label)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.tertiary)
@@ -415,7 +414,7 @@ struct PublishedWorkflowDashboard: View {
         let local = templates.latest(id: template.id)
         let localAhead = local.map { $0.version > publishedLatest } ?? false
         let rows: [WorkflowsRegistryVersion] = detail?.versions ?? []
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: theme.space.s10) {
             HStack(alignment: .firstTextBaseline) {
                 SettingsFieldLabel("Versions")
                 Spacer()
@@ -425,7 +424,7 @@ struct PublishedWorkflowDashboard: View {
                         .foregroundColor(theme.text.tertiary)
                 }
             }
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 if localAhead, let local, !record.removedByAdmin {
                     versionRow(
                         version: local.version, title: L("On this Mac, not published"), changelog: local.changelog,
@@ -439,7 +438,7 @@ struct PublishedWorkflowDashboard: View {
                         .assignedSettingsButtonStyle(.primary, size: .compact)
                         .disabled(banned)
                     }
-                    if !rows.isEmpty { Divider().opacity(0.4) }
+                    if !rows.isEmpty { ThemeHairlineDivider() }
                 }
                 if rows.isEmpty {
                     versionRow(
@@ -454,7 +453,7 @@ struct PublishedWorkflowDashboard: View {
                             changelog: row.changelog, isLive: record.isLive && row.version == publishedLatest,
                             dashed: false, date: row.createdAt
                         ) { reviewChip(version: row.version, record: record) }
-                        if index < rows.count - 1 { Divider().opacity(0.4) }
+                        if index < rows.count - 1 { ThemeHairlineDivider() }
                     }
                 }
             }
@@ -467,28 +466,25 @@ struct PublishedWorkflowDashboard: View {
         version: Int, title: String, changelog: String?, isLive: Bool, dashed: Bool, date: Date? = nil,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: theme.space.s12) {
             Text(verbatim: "v\(version)")
                 .font(SettingsFont.monoSmall)
                 .foregroundColor(isLive ? theme.status.success.foreground : theme.text.secondary)
                 .frame(width: 34, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            SettingsRowText(compact: true) {
+                HStack(spacing: theme.space.s6) {
                     Text(verbatim: title)
-                        .font(SettingsFont.compactLabel)
-                        .foregroundColor(theme.text.primary)
                     if let date {
                         Text(verbatim: "· \(Self.relative(date))")
                             .font(SettingsFont.rowDescription)
                             .foregroundColor(theme.text.tertiary)
                     }
                 }
+            } description: {
                 if let changelog, !changelog.isEmpty {
                     Text(verbatim: changelog)
-                        .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)
                         .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -527,10 +523,10 @@ struct PublishedWorkflowDashboard: View {
 
     private func whoCanSeeIt(_ record: WorkflowRegistryRecord) -> some View {
         let shown = selectedVisibility ?? record.visibility
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: theme.space.s10) {
             SettingsFieldLabel("Who can see it")
             visibilitySegments(selected: shown)
-            HStack(alignment: .center, spacing: 10) {
+            HStack(alignment: .center, spacing: theme.space.s10) {
                 Text(verbatim: shown.detail)
                     .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.secondary)
@@ -546,8 +542,8 @@ struct PublishedWorkflowDashboard: View {
                     .disabled(!canSaveVisibility || isSavingVisibility)
                     .transition(.opacity)
                 } else if visibilitySaved {
-                    HStack(spacing: 5) {
-                        Image(systemName: "checkmark").glyphSize(10, weight: .bold)
+                    HStack(spacing: theme.space.s4) {
+                        Image(systemName: "checkmark").glyphSize(.micro, weight: .bold)
                         Text("Saved", bundle: .module).font(SettingsFont.smallLabel)
                     }
                     .foregroundColor(theme.status.success.foreground)
@@ -556,7 +552,7 @@ struct PublishedWorkflowDashboard: View {
             }
             .frame(minHeight: 28)
             if shown == .password {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     SettingsTextField(
                         placeholder: record.visibility == .password ? L("New password (optional)") : L("Password"),
                         text: $password, icon: "lock", isSecure: true, revealable: true)
@@ -601,7 +597,7 @@ struct PublishedWorkflowDashboard: View {
     /// Public | Unlisted | Password | Workspace as one control; the detail line below
     /// says what the chosen one means.
     private func visibilitySegments(selected: WorkflowVisibility) -> some View {
-        HStack(spacing: 3) {
+        HStack(spacing: theme.space.s2) {
             ForEach(WorkflowVisibility.allCases, id: \.self) { option in
                 let isSelected = option == selected
                 Button {
@@ -611,8 +607,8 @@ struct PublishedWorkflowDashboard: View {
                         visibilityError = nil
                     }
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: option.symbol).glyphSize(11, weight: .semibold)
+                    HStack(spacing: theme.space.s6) {
+                        Image(systemName: option.symbol).glyphSize(.footnote, weight: .semibold)
                         Text(verbatim: option.title).font(SettingsFont.compactLabel)
                     }
                     .foregroundColor(isSelected ? theme.text.link : theme.text.secondary)
@@ -621,6 +617,10 @@ struct PublishedWorkflowDashboard: View {
                     .background(
                         RoundedRectangle(cornerRadius: theme.radius.medium)
                             .fill(isSelected ? theme.surface.selected : Color.clear)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: theme.radius.medium)
+                            .strokeBorder(isSelected ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
                     )
                     .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
                 }
@@ -650,19 +650,14 @@ struct PublishedWorkflowDashboard: View {
         -> some View
     {
         let names = ListFormatter.localizedString(byJoining: followers.map(workflowName))
-        return Toggle(isOn: $workflowsFollow) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Also change its workflows", bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-                Text(verbatim: L("\(names) published with it become \(visibility.title) too, so its page keeps linking to them."))
-                    .font(SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .settingsSwitch(showsLabel: true)
-        .settingsLandingAnchor("agents.templates.visibilityWorkflows")
+        return SettingsToggle(
+            title: L("Also change its workflows"),
+            description: L("\(names) published with it become \(visibility.title) too, so its page keeps linking to them."),
+            anchorId: "agents.templates.visibilityWorkflows",
+            verbatim: true,
+            isOn: $workflowsFollow
+        )
+        .environment(\.settingsInGroup, true)
     }
 
     // MARK: - Listing
@@ -711,20 +706,20 @@ struct PublishedWorkflowDashboard: View {
     }
 
     private func listing(_ record: WorkflowRegistryRecord) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsFieldLabel("Listing Details")
                 ListingDetailsFields(
                     name: $listingName, summary: $listingSummary, kind: template.kind,
                     templateName: templateDetails.name, templateSummary: templateDetails.summary)
             }
             .settingsLandingAnchor(isAgent ? "agents.templates.listingDetails" : "workflows.listingDetails")
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsFieldLabel("Topics")
                 ListingTopicPicker(selection: $topics)
             }
             .settingsLandingAnchor(isAgent ? "agents.templates.topics" : "workflows.topics")
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsFieldLabel("Example Runs")
                 if examplesLoaded {
                     ListingExamplesEditor(
@@ -748,13 +743,13 @@ struct PublishedWorkflowDashboard: View {
     }
 
     private var listingSaveRow: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if listingDirty || listingSaved {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Spacer(minLength: 0)
                     if listingSaved && !listingDirty {
-                        HStack(spacing: 5) {
-                            Image(systemName: "checkmark").glyphSize(10, weight: .bold)
+                        HStack(spacing: theme.space.s4) {
+                            Image(systemName: "checkmark").glyphSize(.micro, weight: .bold)
                             Text("Saved", bundle: .module).font(SettingsFont.smallLabel)
                         }
                         .foregroundColor(theme.status.success.foreground)
@@ -857,7 +852,7 @@ struct PublishedWorkflowDashboard: View {
             template: template, visibility: record.visibility, ownAddress: record.address,
             record: { registryRecords.record(for: $0) }, isBuiltIn: WorkflowShareService.isBuiltInTemplate)
         if !plan.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsFieldLabel("Workflows it brings")
                 CascadeWorkflowList(items: plan.rows) { row in
                     if let page = row.record, page.isLive {
@@ -903,7 +898,7 @@ struct PublishedWorkflowDashboard: View {
     // MARK: - Bottom
 
     private func bottomActions(_ record: WorkflowRegistryRecord) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: theme.space.s14) {
             Button(action: onSaveAsFile) {
                 Label { Text("Save as File…", bundle: .module) } icon: { Image(systemName: "doc.badge.arrow.up") }
                     .font(SettingsFont.compactLabel)
@@ -916,8 +911,8 @@ struct PublishedWorkflowDashboard: View {
                 Button {
                     confirmTakeDown = true
                 } label: {
-                    HStack(spacing: 5) {
-                        if isTakingDown { ProgressView().controlSize(.mini) }
+                    HStack(spacing: theme.space.s4) {
+                        if isTakingDown { SettingsSpinner(size: .mini) }
                         Text("Take Down…", bundle: .module)
                     }
                     .font(SettingsFont.compactLabel)

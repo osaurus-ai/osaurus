@@ -47,7 +47,7 @@ struct RecoverFromMnemonicSheet: View {
     @State private var hasAcknowledgedReplace: Bool = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(icon: "key.fill", title: titleKey, onClose: onCancel)
 
             VStack(alignment: .leading, spacing: theme.space.s16) {
@@ -115,7 +115,7 @@ struct RecoverFromMnemonicSheet: View {
     }
 
     private var description: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             descriptionText
                 .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.secondary)
@@ -130,7 +130,7 @@ struct RecoverFromMnemonicSheet: View {
     }
 
     private var wordCountLine: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             let count = parsedWords.count
             Image(systemName: count == 24 ? "checkmark.circle.fill" : "circle.dotted")
                 .font(SettingsFont.glyphSmall)
@@ -149,8 +149,8 @@ struct RecoverFromMnemonicSheet: View {
     /// acknowledgment required before Restore enables.
     @ViewBuilder
     private func replaceDetails(current: OsaurusID) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 addressLine(label: Text("Current identity", bundle: .module), address: current)
                 addressLine(
                     label: Text("Restored identity", bundle: .module),
@@ -174,7 +174,7 @@ struct RecoverFromMnemonicSheet: View {
     }
 
     private func addressLine(label: Text, address: OsaurusID?) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             label
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
@@ -195,7 +195,7 @@ struct RecoverFromMnemonicSheet: View {
     }
 
     private func statusBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: statusIsError ? "exclamationmark.triangle.fill" : "checkmark.shield.fill")
                 .font(SettingsFont.glyphSmall)
                 .foregroundColor(statusIsError ? theme.status.error.foreground : theme.status.success.foreground)

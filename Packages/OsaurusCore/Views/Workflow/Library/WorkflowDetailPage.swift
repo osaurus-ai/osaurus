@@ -45,7 +45,7 @@ struct WorkflowDetailPage<Actions: View>: View {
     private static var collapsedRunCount: Int { 5 }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             if let workflow = store.workflow(id: workflowID) {
                 let report = SetupChecker.check(workflow, secrets: .install, attended: true)
                 ScrollView {
@@ -224,7 +224,7 @@ struct WorkflowDetailPage<Actions: View>: View {
         VStack(alignment: .leading, spacing: theme.space.s16) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
                     .frame(width: 16)
                 Text(title, bundle: .module)
@@ -273,7 +273,7 @@ struct WorkflowDetailPage<Actions: View>: View {
             }
         }
         let does = flowColumn(L("Osaurus does"), icon: "gearshape.2", hasSurface: false) {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                     if index > 0 {
                         Rectangle()
@@ -331,7 +331,7 @@ struct WorkflowDetailPage<Actions: View>: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             HStack(spacing: theme.space.s6) {
-                Image(systemName: icon).glyphSize(10, weight: .semibold)
+                Image(systemName: icon).glyphSize(.micro, weight: .semibold)
                 Text(verbatim: title).font(SettingsFont.compactLabel)
             }
             .foregroundColor(theme.text.secondary)
@@ -367,8 +367,8 @@ struct WorkflowDetailPage<Actions: View>: View {
                     .textStyle(.label, weight: 500)
                     .foregroundColor(theme.text.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 4) {
-                    Image(systemName: step.icon).glyphSize(9)
+                HStack(spacing: theme.space.s4) {
+                    Image(systemName: step.icon).glyphSize(.tiny)
                     Text(verbatim: step.kind).font(SettingsFont.footnote)
                 }
                 .foregroundColor(theme.isDark ? theme.text.tertiary : theme.text.secondary)
@@ -412,7 +412,7 @@ struct WorkflowDetailPage<Actions: View>: View {
                 .assignedSettingsButtonStyle(.secondary, size: .compact)
             }
         } content: {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 if report.hasBlockers {
                     AgentSetupChecklistView(report: report)
                 } else if SetupChecker.missingKeys(report).isEmpty {
@@ -432,7 +432,7 @@ struct WorkflowDetailPage<Actions: View>: View {
                 if usesNothing {
                     note(L("It needs no models, keys, tools, or internet access."))
                 } else {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         ForEach(reqs.models) { slot in
                             requirementRow(
                                 "cube",
@@ -508,7 +508,7 @@ struct WorkflowDetailPage<Actions: View>: View {
     private func folderGrantRow(
         _ path: String, title: String, symbol: String = "folder.badge.checkmark", remove: @escaping () -> Void
     ) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             LibraryIcon(symbol: symbol, tint: theme.text.secondary, size: 22)
             Text(verbatim: title)
                 .font(SettingsFont.compactLabel)
@@ -571,7 +571,7 @@ struct WorkflowDetailPage<Actions: View>: View {
     private func requirementRow(_ icon: String, _ label: String, _ value: String, isProblem: Bool = false)
         -> some View
     {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             LibraryIcon(symbol: icon, tint: theme.text.secondary, size: 22)
             Text(verbatim: label)
                 .font(SettingsFont.compactLabel)
@@ -581,7 +581,7 @@ struct WorkflowDetailPage<Actions: View>: View {
             Spacer(minLength: 8)
             Text(verbatim: value)
                 .font(SettingsFont.caption)
-                .foregroundColor(isProblem ? theme.statusInk.warning : theme.text.secondary)
+                .foregroundColor(isProblem ? theme.statusInk(.warning) : theme.text.secondary)
                 .multilineTextAlignment(.trailing)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -606,87 +606,43 @@ struct WorkflowDetailPage<Actions: View>: View {
     private func whoCanStart(_ workflow: InstalledWorkflow) -> some View {
         let users = agents.agents.filter { $0.settings.enabledWorkflowIDs.contains(workflow.id) }
         return card("Who Can Start It", icon: "person.2") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Osaurus can run this for you", bundle: .module)
-                            .font(SettingsFont.compactLabel)
-                            .foregroundColor(theme.text.primary)
-                        Text("When you ask in chat, Osaurus may start this workflow on its own.", bundle: .module)
-                            .font(SettingsFont.rowDescription)
-                            .foregroundColor(theme.text.tertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle(
-                        isOn: Binding(
-                            get: { workflow.orchestratorVisible },
-                            set: { on in WorkflowErrorText.saving(L("Couldn’t save the setting")) { try store.setOrchestratorVisible(on, id: workflow.id) } }
-                        )
-                    ) {
-                        Text("Osaurus can run this for you", bundle: .module)
-                    }
-                    .settingsSwitch()
-                }
-                .settingsLandingAnchor("workflows.orchestratorVisible")
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                SettingsToggle(
+                    title: "Osaurus can run this for you",
+                    description: "When you ask in chat, Osaurus may start this workflow on its own.",
+                    anchorId: "workflows.orchestratorVisible",
+                    isOn: Binding(
+                        get: { workflow.orchestratorVisible },
+                        set: { on in WorkflowErrorText.saving(L("Couldn’t save the setting")) { try store.setOrchestratorVisible(on, id: workflow.id) } }
+                    )
+                )
 
-                Divider().opacity(0.5)
+                ThemeHairlineDivider()
 
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Teammates can run this", bundle: .module)
-                            .font(SettingsFont.compactLabel)
-                            .foregroundColor(theme.text.primary)
-                        Text(
-                            "People chatting with an agent you shared may start this workflow through that agent. It runs on this Mac with your keys and folders. Each call asks you first, so the agent needs Require Approval for Teammate Tool Calls turned on.",
-                            bundle: .module
-                        )
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle(
-                        isOn: Binding(
-                            get: { workflow.teammatesCanRun },
-                            set: { on in WorkflowErrorText.saving(L("Couldn’t save the setting")) { try store.setTeammatesCanRun(on, id: workflow.id) } }
-                        )
-                    ) {
-                        Text("Teammates can run this", bundle: .module)
-                    }
-                    .settingsSwitch()
-                }
-                .settingsLandingAnchor("workflows.teammatesCanRun")
+                SettingsToggle(
+                    title: "Teammates can run this",
+                    description: "People chatting with an agent you shared may start this workflow through that agent. It runs on this Mac with your keys and folders. Each call asks you first, so the agent needs Require Approval for Teammate Tool Calls turned on.",
+                    anchorId: "workflows.teammatesCanRun",
+                    isOn: Binding(
+                        get: { workflow.teammatesCanRun },
+                        set: { on in WorkflowErrorText.saving(L("Couldn’t save the setting")) { try store.setTeammatesCanRun(on, id: workflow.id) } }
+                    )
+                )
 
-                Divider().opacity(0.5)
+                ThemeHairlineDivider()
 
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Fix repeated failures automatically", bundle: .module)
-                            .font(SettingsFont.compactLabel)
-                            .foregroundColor(theme.text.primary)
-                        Text(
-                            "When the same step fails \(WorkflowSelfHealMonitor.threshold) runs in a row, the Architect drafts a fix in a background chat and notifies you. Nothing is saved until you review it.",
-                            bundle: .module
-                        )
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle(
-                        isOn: Binding(
-                            get: { workflow.selfHeal },
-                            set: { on in WorkflowErrorText.saving(L("Couldn’t save the setting")) { try store.setSelfHeal(on, id: workflow.id) } }
-                        )
-                    ) {
-                        Text("Fix repeated failures automatically", bundle: .module)
-                    }
-                    .settingsSwitch()
-                }
-                .settingsLandingAnchor("workflows.selfHeal")
+                SettingsToggle(
+                    title: L("Fix repeated failures automatically"),
+                    description: L("When the same step fails \(WorkflowSelfHealMonitor.threshold) runs in a row, the Architect drafts a fix in a background chat and notifies you. Nothing is saved until you review it."),
+                    anchorId: "workflows.selfHeal",
+                    verbatim: true,
+                    isOn: Binding(
+                        get: { workflow.selfHeal },
+                        set: { on in WorkflowErrorText.saving(L("Couldn’t save the setting")) { try store.setSelfHeal(on, id: workflow.id) } }
+                    )
+                )
 
-                Divider().opacity(0.5)
+                ThemeHairlineDivider()
 
                 Text("Agents that can use it", bundle: .module)
                     .font(SettingsFont.smallLabel)
@@ -694,13 +650,13 @@ struct WorkflowDetailPage<Actions: View>: View {
                 if users.isEmpty {
                     note(L("None yet. To give it to an agent, open the agent and turn it on under Workflows."))
                 } else {
-                    FlowLayout(spacing: 8) {
+                    FlowLayout(spacing: theme.space.s8) {
                         ForEach(users) { agent in
-                            HStack(spacing: 6) {
+                            HStack(spacing: theme.space.s6) {
                                 AgentAvatarView(
                                     mascotId: agent.avatar,
                                     name: agent.displayName,
-                                    tint: agentColorFor(agent.displayName),
+                                    tint: theme.dataInk(seed: agent.displayName),
                                     diameter: 20,
                                     customImageURL: agent.customAvatarURL,
                                     monogramFontSize: 9,
@@ -763,8 +719,8 @@ struct WorkflowDetailPage<Actions: View>: View {
 
     private func advanced(_ workflow: InstalledWorkflow) -> some View {
         DisclosureGroup {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s6) {
                     Text("Agents call it as", bundle: .module)
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.tertiary)
@@ -821,7 +777,7 @@ struct WorkflowDetailPage<Actions: View>: View {
                 }
             },
             content: {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     if editingTags {
                         SettingsTextField(placeholder: L("finance, weekly, reports"), text: $tagText, autofocus: true)
                             .onSubmit { commitTags(workflow) }
@@ -853,9 +809,9 @@ struct WorkflowDetailPage<Actions: View>: View {
     // MARK: - Footer
 
     private func footer(_ workflow: InstalledWorkflow) -> some View {
-        VStack(spacing: 0) {
-            Divider().opacity(0.5)
-            HStack(spacing: 10) {
+        VStack(spacing: theme.space.s0) {
+            ThemeHairlineDivider()
+            HStack(spacing: theme.space.s10) {
                 let published = registryRecords.record(for: workflow.templateID)
                 Button {
                     onShare(workflow)

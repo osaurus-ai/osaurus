@@ -78,20 +78,10 @@ struct AccessKeyGeneratorSheet: View {
             }
 
             SettingsFieldRow(label: "Expiration") {
-                #if OSAURUS_DESIGN_SYSTEM
                 AssignedBaseSegmentedPicker(selection: $expiration, options: AccessKeyExpiration.allCases.map {
                     .init($0, $0.displayName, verbatim: true)
                 })
                 .accessibilityLabel(Text("Expiration", bundle: .module))
-                #else
-                Picker("", selection: $expiration) {
-                    ForEach(AccessKeyExpiration.allCases, id: \.rawValue) { option in
-                        Text(option.displayName).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                #endif
             }
 
             if let error {

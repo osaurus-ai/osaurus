@@ -193,9 +193,10 @@ enum MCPElicitationPromptService {
         request: MCPElicitationRequest,
         onAction: @escaping (MCPElicitationAction) -> Void
     ) -> PanelHandles {
+        let theme = ThemeManager.shared.currentTheme
         let view = MCPElicitationView(request: request, onAction: onAction)
-            .padding(24)
-            .environment(\.theme, ThemeManager.shared.currentTheme)
+            .padding(theme.space.s24)
+            .environment(\.theme, theme)
         let hosting = NSHostingController(rootView: view)
         hosting.safeAreaRegions = []
 

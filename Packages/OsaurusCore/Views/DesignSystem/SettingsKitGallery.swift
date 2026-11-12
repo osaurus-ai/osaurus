@@ -84,7 +84,7 @@
         @ViewBuilder var body: some View {
             #if OSAURUS_DESIGN_INSPECTOR
             if catalogPreview {
-                VStack(alignment: .leading, spacing: 20) { focusedComponent }
+                VStack(alignment: .leading, spacing: theme.space.s20) { focusedComponent }
                     .environment(\.inspectorVerificationWidth, 740)
             } else { galleryPage }
             #else
@@ -165,7 +165,7 @@
             case 13: appCardExample; nativeFeatureCards
             case 14: rows
             case 15:
-                Text("Expandable settings content. Used for advanced options; the child controls keep their own base styles.").foregroundStyle(.secondary)
+                Text("Expandable settings content. Used for advanced options; the child controls keep their own base styles.").foregroundColor(theme.text.secondary)
                 SettingsAdvancedDisclosure {
                     SettingsToggle(title: "Expand Thinking While Streaming", description: "Keep the model's reasoning open while it is thinking, then collapse it once the answer begins. Useful for watching long agent tasks.", verbatim: true, isOn: $checkboxOn)
                 }
@@ -224,8 +224,8 @@
 
         // Existing compositions relocated from mixed control galleries.
         private var preservedStepTrackers: some View {
-            VStack(alignment: .leading, spacing: 24) {
-VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s24) {
+VStack(spacing: theme.space.s16) {
                         SettingsStepTracker(steps: [
                             SettingsStep(id: "a", title: "Listing", state: .done),
                             SettingsStep(id: "b", title: "Signed and uploaded", state: .done),
@@ -243,7 +243,7 @@ VStack(spacing: 16) {
             }
         }
         private var preservedStatistics: some View {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: theme.space.s24) {
 SettingsSection(title: "Stat Strip", verbatimTitle: true) {
                     SettingsStatStrip(stats: [
                         SettingsStat(label: "Calls", value: "1,204"),
@@ -274,7 +274,7 @@ SettingsSection(title: "Stat Tiles", layout: .plain, verbatimTitle: true) {
             }
         }
         private var preservedStatusPanel: some View {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: theme.space.s24) {
 SettingsStatusHero(
                     title: "Status Hero",
                     icon: "antenna.radiowaves.left.and.right",
@@ -292,7 +292,7 @@ SettingsStatusHero(
             }
         }
         private var preservedFindings: some View {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: theme.space.s24) {
 SettingsSection(title: "Finding Rows", layout: .plain, verbatimTitle: true) {
                     VStack(spacing: theme.space.s8) {
                         SettingsFindingRow(severity: .ok, title: "Healthy", value: "Granted", detail: "Quiet well.")
@@ -317,7 +317,7 @@ SettingsSection(title: "Finding Rows", layout: .plain, verbatimTitle: true) {
             }
         }
         private var preservedCallouts: some View {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: theme.space.s24) {
 SettingsCallout(
                     icon: "person.badge.key",
                     title: "Callout",
@@ -344,15 +344,15 @@ SettingsCallout(
             }
         }
         private var preservedDrillInRows: some View {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: theme.space.s24) {
 SettingsSection(title: "Drill-In Rows", verbatimTitle: true) {
                     SettingsDrillInRows(items: GalleryDrillIn.allCases, badges: [.second: 2]) { _ in }
                 }
             }
         }
         private var preservedIconTiles: some View {
-            VStack(alignment: .leading, spacing: 24) {
-HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s24) {
+HStack(spacing: theme.space.s8) {
                         SettingsIconTile(icon: "gearshape")
                         SettingsIconTile(icon: "bolt.fill", tint: theme.status.warning.foreground)
                         SettingsIconTile(icon: "sparkles", size: 36, gradient: [theme.status.info.foreground, theme.status.info.background])
@@ -361,13 +361,13 @@ HStack(spacing: 8) {
         }
 
         private var nativeToggleSamples: some View {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 SettingsToggle(title: "Enable feature", description: "Switch description", verbatim: true, isOn: $toggleOn)
                 SettingsToggle(title: "Include selection", style: .checkbox, verbatim: true, isOn: $checkboxOn)
             }
         }
         private var nativeMenuSamples: some View {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 SettingsPickerRow(title: "Mode", style: .menu, selection: $picker, options: Self.pickerOptions)
                 SettingsMenuButton(.secondary, "Actions", verbatim: true) {
                     Button("First action") { sampleMenuActions += 1 }
@@ -379,14 +379,14 @@ HStack(spacing: 8) {
             }
         }
         private var nativeNumberSamples: some View {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 SettingsSlider(title: "Amount", valueText: String(format: "%.2f", sliderValue), description: "Slider description", value: $sliderValue, range: 0...1, step: 0.05)
                 SettingsStepperRow(label: "Count", help: "Stepper description", text: $stepperText, range: 1...64, step: 1, defaultValue: 8)
                 SettingsStepper(value: $stepperValue, range: 0...1440, unit: "min")
             }
         }
         private var nativeDateSamples: some View {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 SettingsDatePicker(label: "Date and time", selection: $date, components: [.date, .hourAndMinute])
                 #if OSAURUS_DESIGN_INSPECTOR
                 SettingsDatePicker(label: "Minimum date", selection: $boundedDate, minimum: Self.verificationMinimumDate, components: [.date, .hourAndMinute])
@@ -479,7 +479,7 @@ HStack(spacing: 8) {
             }
         }
         private var appCardExample: some View {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 Text("Tools & MCP → Add Service · LibraryCard").font(SettingsFont.sectionTitle)
                 Text("The actual directory card. The click action is inactive in this preview.").font(SettingsFont.caption)
                 MCPProviderDirectoryCard(icon: "slider.horizontal.3", title: "Custom Server",
@@ -488,7 +488,7 @@ HStack(spacing: 8) {
             }
         }
         private var nativeFeatureCards: some View {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 Text("Settings → Orchestrator · SettingsFeatureCards").font(SettingsFont.sectionTitle)
                 SettingsFeatureCards(features: [
                     .init(icon: "slider.horizontal.3", title: "Configures Osaurus", caption: "Changes settings, downloads models, and connects providers for you."),
@@ -501,7 +501,7 @@ HStack(spacing: 8) {
         @State private var previewGenerating = false
         @State private var previewKeyError: String?
         private var nativeSheet: some View {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text("Server → Access Keys → Generate Access Key").font(SettingsFont.sectionTitle)
                 Text("Actual AccessKeyGeneratorSheet. This preview cannot generate or save a key. Fields and buttons use their shared base styles.").font(SettingsFont.caption)
                 AccessKeyGeneratorSheet(theme: theme, label: $sampleSheetText,
@@ -518,14 +518,14 @@ HStack(spacing: 8) {
         }
         private var nativeAvatars: some View {
             SettingsSection(title: "Avatars", verbatimTitle: true) {
-                HStack(spacing: 16) {
+                HStack(spacing: theme.space.s16) {
                     AgentAvatarView(mascotId: nil, name: "Research", tint: theme.border.focus, diameter: 32)
                     AgentAvatarView(mascotId: "blue", name: "Osaurus", tint: theme.border.focus, diameter: 32)
                 }
             }
         }
         private var nativePopover: some View {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 Text("Chat composer → Model, context and credits popovers").font(SettingsFont.sectionTitle)
                 Text("Shared outer surface only. The content belongs to each picker; this is not an additional picker configuration.").font(SettingsFont.caption)
                 Text("Popover surface")
@@ -686,7 +686,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Type", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    VStack(alignment: .trailing, spacing: 4) {
+                    VStack(alignment: .trailing, spacing: theme.space.s4) {
                         ForEach(ThemeTextStyleRole.allCases, id: \.self) { role in
                             Text(verbatim: "type.\(role.rawValue)").textStyle(role).foregroundColor(theme.text.primary)
                         }
@@ -695,7 +695,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Chrome", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: theme.space.s8)], spacing: theme.space.s8) {
                         ForEach(Self.chromes, id: \.0) { name, chrome in
                             Text(verbatim: name)
                                 .font(SettingsFont.smallLabel)
@@ -719,7 +719,7 @@ HStack(spacing: 8) {
 
         private var pageChrome: some View {
             SettingsSection(title: "Page Chrome", layout: .plain, verbatimTitle: true) {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     SettingsDetailHeader(icon: "cpu", title: "Detail header", subtitle: "Pushed pages and wizards") {
                         StatusChip("Running", tone: .success, showsDot: true)
                         StatusChip("Local", tone: .neutral, icon: "laptopcomputer")
@@ -767,7 +767,7 @@ HStack(spacing: 8) {
                     SettingsRow(title: "Roles · \(sizeName)", verbatimTitle: true) {
                         EmptyView()
                     } trailing: {
-                        HStack(spacing: 8) {
+                        HStack(spacing: theme.space.s8) {
                             ForEach(Self.roles, id: \.0) { name, role in
                                 SettingsButton(role, name, size: size, verbatim: true) {}
                             }
@@ -777,7 +777,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Every role · disabled", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         ForEach(Self.roles, id: \.0) { name, role in
                             SettingsButton(role, name, verbatim: true) {}.disabled(true)
                         }
@@ -791,7 +791,7 @@ HStack(spacing: 8) {
                 ) {
                     EmptyView()
                 } trailing: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         ForEach(Self.roles, id: \.0) { name, role in
                             Button(action: {}) { Text(verbatim: name) }
                                 .assignedSettingsButtonStyle(role, forceKeyboardFocus: true)
@@ -801,7 +801,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Loading", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         SettingsButton(.primary, "Saving", isLoading: true, verbatim: true) {}
                         SettingsButton(.destructive, "Removing", isLoading: true, verbatim: true) {}
                         Button(action: {}) {
@@ -817,7 +817,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Icon buttons", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         SettingsIconButton("gearshape", help: "Default") {}
                         SettingsIconButton("lock.fill", help: "Active", isActive: true) {}
                         SettingsIconButton("trash", help: "Destructive", isDestructive: true) {}
@@ -839,7 +839,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Status chips", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         StatusChip("Neutral")
                         StatusChip("Accent", tone: .accent)
                         StatusChip("Ready", tone: .success, showsDot: true)
@@ -850,7 +850,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Count badges", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         CountBadge(3)
                         CountBadge(128)
                         CountBadge(2, prominence: .attention)
@@ -1207,7 +1207,7 @@ HStack(spacing: 8) {
                     SettingsButton(.primary, "Revise", size: .compact, verbatim: true) {}
                 }
                 SettingsSection(title: "Sheet Chrome", layout: .plain, verbatimTitle: true) {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         SettingsSheetHeader(icon: "sparkles", title: "Sheet title", subtitle: "Subtitle", onClose: {})
                         Text(verbatim: "Body content")
                             .font(SettingsFont.body)
@@ -1232,8 +1232,8 @@ HStack(spacing: 8) {
 
         private var library: some View {
             SettingsSection(title: "Library", layout: .plain, verbatimTitle: true) {
-                VStack(alignment: .leading, spacing: 12) {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: theme.space.s12)], spacing: theme.space.s12) {
                         ForEach(0 ..< 3) { index in
                             LibraryCard(
                                 title: ["Card", "Selected card", "Placeholder subtitle"][index],
@@ -1312,7 +1312,7 @@ HStack(spacing: 8) {
 
         private var dataTable: some View {
             SettingsSection(title: "Data table", layout: .plain, verbatimTitle: true) {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     controlSwitch("Loading", $dataTableLoading)
                     SettingsDataTable(
                         columns: [
@@ -1387,7 +1387,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Progress", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    VStack(spacing: 8) {
+                    VStack(spacing: theme.space.s8) {
                         SettingsProgressBar(value: 0)
                         SettingsProgressBar(value: 0.4)
                         SettingsProgressBar(value: 1, tint: theme.status.success.foreground)
@@ -1397,9 +1397,9 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Skeleton", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    HStack(spacing: 10) {
+                    HStack(spacing: theme.space.s10) {
                         SettingsSkeletonBar(width: 32, height: 32)
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: theme.space.s6) {
                             SettingsSkeletonBar(width: 140, height: 12)
                             SettingsSkeletonBar(width: 90, height: 9)
                         }
@@ -1409,7 +1409,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Step tracker", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    VStack(spacing: 16) {
+                    VStack(spacing: theme.space.s16) {
                         SettingsStepTracker(steps: [
                             SettingsStep(id: "a", title: "Listing", state: .done),
                             SettingsStep(id: "b", title: "Signed and uploaded", state: .done),
@@ -1429,7 +1429,7 @@ HStack(spacing: 8) {
                 SettingsRow(title: "Icon tiles", verbatimTitle: true) {
                     EmptyView()
                 } trailing: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         SettingsIconTile(icon: "gearshape")
                         SettingsIconTile(icon: "bolt.fill", tint: theme.status.warning.foreground)
                         SettingsIconTile(icon: "sparkles", size: 36, gradient: [theme.status.info.foreground, theme.status.info.background])
@@ -1550,7 +1550,7 @@ HStack(spacing: 8) {
         }
         private var emptyStates: some View {
             SettingsSection(title: "Empty States", layout: .plain, verbatimTitle: true) {
-                VStack(spacing: 12) {
+                VStack(spacing: theme.space.s12) {
                     SettingsEmptyState(
                         inline: "tray",
                         title: "Inline empty",
@@ -1635,7 +1635,7 @@ HStack(spacing: 8) {
                 }
             }
             .sheet(isPresented: $isPresented) {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     SettingsKitGallery()
                     HStack {
                         Spacer()

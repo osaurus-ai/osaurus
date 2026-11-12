@@ -48,13 +48,13 @@ struct ToolSecretsSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Header
             sheetHeader
 
             // Content
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     // Info card
                     infoCard
                         .opacity(hasAppeared ? 1 : 0)
@@ -94,9 +94,9 @@ struct ToolSecretsSheet: View {
     // MARK: - Info Card
 
     private var infoCard: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Image(systemName: "info.circle.fill")
-                .glyphSize(16)
+                .glyphSize(.medium)
                 .foregroundColor(theme.status.info.foreground)
 
             Text(
@@ -115,12 +115,10 @@ struct ToolSecretsSheet: View {
     // MARK: - Secrets Form
 
     private var secretsForm: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             ForEach(Array(secrets.enumerated()), id: \.element.id) { index, spec in
                 if index > 0 {
-                    Rectangle()
-                        .fill(theme.border.default)
-                        .frame(height: 1)
+                    ThemeHairlineDivider()
                         .padding(.horizontal, theme.space.s16)
                 }
 
@@ -205,9 +203,9 @@ private struct SecretFieldRow: View {
     @State private var isFocused = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             // Label
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Text(spec.label)
                     .font(SettingsFont.sectionTitle)
                     .foregroundColor(theme.text.primary)
@@ -223,11 +221,11 @@ private struct SecretFieldRow: View {
                 // External link button
                 if let urlString = spec.url, let url = URL(string: urlString) {
                     Button(action: { NSWorkspace.shared.open(url) }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Text("Get Key", bundle: .module)
                                 .font(SettingsFont.smallLabel)
                             Image(systemName: "arrow.up.right")
-                                .glyphSize(9, weight: .semibold)
+                                .glyphSize(.tiny, weight: .semibold)
                         }
                         .foregroundColor(theme.text.link)
                         .padding(.horizontal, theme.space.s8)
@@ -253,9 +251,9 @@ private struct SecretFieldRow: View {
 
             // Error message
             if hasError {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "exclamationmark.circle.fill")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                     Text("This field is required", bundle: .module)
                         .font(SettingsFont.rowDescription)
                 }

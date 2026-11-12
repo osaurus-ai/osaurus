@@ -18,13 +18,9 @@ import SwiftUI
 struct DatabaseSavedViewsView: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-#if OSAURUS_DESIGN_SYSTEM
     var inspectionTheme: (any ThemeProtocol)?
-#endif
     private var theme: any ThemeProtocol {
-#if OSAURUS_DESIGN_SYSTEM
         if let value = inspectionTheme { return value }
-#endif
         return inheritedTheme
     }
 
@@ -74,7 +70,7 @@ struct DatabaseSavedViewsView: View {
 
     @ViewBuilder
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             HStack {
                 Text("Saved Views", bundle: .module)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
@@ -83,14 +79,14 @@ struct DatabaseSavedViewsView: View {
                 Button {
                     Task { await reload() }
                 } label: {
-                    Image(systemName: "arrow.clockwise").glyphSize(11)
+                    Image(systemName: "arrow.clockwise").glyphSize(.footnote)
                 }
                 .buttonStyle(.borderless)
             }
             .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s8)
             Divider().foregroundColor(theme.border.subtle)
             if isLoading {
-                ProgressView().padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
+                SettingsSpinner(size: .large).padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
                 Spacer(minLength: 0)
             } else if views.isEmpty {
                 Text(
@@ -114,7 +110,7 @@ struct DatabaseSavedViewsView: View {
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(theme.surface.hover)
+        .background(theme.surface.subtle)
     }
 
     @ViewBuilder
@@ -125,10 +121,10 @@ struct DatabaseSavedViewsView: View {
         } label: {
             HStack(alignment: .center, spacing: theme.space.s8) {
                 Image(systemName: view.pinned ? "pin.fill" : "eye")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(
                         view.pinned
-                            ? .orange : (isSelected ? theme.action.primary.default.background : theme.text.secondary)
+                            ? theme.status.warning.foreground : (isSelected ? theme.action.primary.default.background : theme.text.secondary)
                     )
                     .frame(width: 14)
                 VStack(alignment: .leading, spacing: theme.space.s2) {
@@ -155,11 +151,11 @@ struct DatabaseSavedViewsView: View {
     @ViewBuilder
     private var detail: some View {
         if let view = selection {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 detailHeader(view)
                 Divider().foregroundColor(theme.border.subtle)
                 if isRunning {
-                    ProgressView().padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
+                    SettingsSpinner(size: .large).padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
                     Spacer(minLength: 0)
                 } else if let preview = previewRows {
                     if preview.rows.isEmpty {
@@ -228,7 +224,7 @@ struct DatabaseSavedViewsView: View {
                     Task { await drop(view) }
                 } label: {
                     Image(systemName: "trash")
-                        .glyphSize(11, weight: .medium)
+                        .glyphSize(.footnote, weight: .medium)
                 }
                 .assignedSettingsButtonStyle(.destructive, size: .compact)
                 .fixedSize()
@@ -359,7 +355,7 @@ extension DatabaseSavedViewsView {
         var view = DatabaseSavedViewsView(agentId: UUID(uuidString: "ABC00000-0000-4000-8000-000000000053")!)
         view.inspectionTheme = theme
         let item = AgentSavedView(name: "local_notes_with_a_long_saved_view_name", sql: "SELECT id, title FROM local_notes WHERE archived = 0;", renderHint: "table", refresh: "manual", description: "Original saved-view header and SQL display. No query is run.", pinned: true, createdAt: Date(), updatedAt: Date())
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
             view.sidebarRow(item)
             view.detailHeader(item)
         }.allowsHitTesting(false)

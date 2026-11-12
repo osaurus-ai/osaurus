@@ -80,11 +80,9 @@ struct WorkflowsWindowPresentationTests {
     @Test
     func statusInk_readsOnTheCanvas_inLightAndDark() {
         for theme in [CustomizableTheme.light(), CustomizableTheme.dark()] as [ThemeProtocol] {
-            let canvas = WorkflowStatusInk.luminance(theme.surface.canvas)
-            let ink = WorkflowStatusInk(theme)
-            for (name, color) in [("success", ink.success), ("warning", ink.warning), ("error", ink.error), ("info", ink.info)] {
-                let ratio = WorkflowStatusInk.contrast(WorkflowStatusInk.luminance(color), canvas)
-                #expect(ratio >= 3, "\(name) ink is \(ratio):1 on the \(theme.isDark ? "dark" : "light") canvas")
+            for kind in [ThemeStatusKind.success, .warning, .error, .info] {
+                let ratio = ThemeContrast.ratio(theme.statusInk(kind), theme.surface.canvas)
+                #expect(ratio >= 3, "\(kind) ink is \(ratio):1 on the \(theme.isDark ? "dark" : "light") canvas")
             }
         }
     }

@@ -43,66 +43,13 @@ enum WorkflowRunStyle {
     @MainActor
     static func color(_ status: WorkflowRunStatus, theme: ThemeProtocol) -> Color {
         switch status {
-        case .running: return theme.statusInk.info
-        case .awaitingUser, .needsSetup: return theme.statusInk.warning
-        case .completed: return theme.statusInk.success
-        case .failed: return theme.statusInk.error
+        case .running: return theme.statusInk(.info)
+        case .awaitingUser, .needsSetup: return theme.statusInk(.warning)
+        case .completed: return theme.statusInk(.success)
+        case .failed: return theme.statusInk(.error)
         case .cancelled: return theme.text.tertiary
         }
     }
-}
-
-/// Status colours for glyphs, text, and progress drawn straight on the
-/// canvas or a card. A theme's status foreground is the colour for text on
-/// its status fill; where that fill is the solid shade and the foreground a
-/// pale tint, the tint vanishes on a plain surface. Each tone takes the
-/// shade of its set that stands out most from the canvas.
-struct WorkflowStatusInk {
-    let success: Color
-    let warning: Color
-    let error: Color
-    let info: Color
-
-    init(_ theme: ThemeProtocol) {
-        let canvas = Self.luminance(theme.surface.canvas)
-        func ink(_ set: ThemeStatusSet<Color>) -> Color {
-            [set.foreground, set.border, set.background].max { a, b in
-                Self.contrast(Self.luminance(a), canvas) < Self.contrast(Self.luminance(b), canvas)
-            } ?? set.foreground
-        }
-        success = ink(theme.status.success)
-        warning = ink(theme.status.warning)
-        error = ink(theme.status.error)
-        info = ink(theme.status.info)
-    }
-
-    static func luminance(_ color: Color) -> Double {
-        guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return 0 }
-        func linear(_ c: CGFloat) -> Double {
-            let c = Double(c)
-            return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
-        }
-        return 0.2126 * linear(rgb.redComponent) + 0.7152 * linear(rgb.greenComponent)
-            + 0.0722 * linear(rgb.blueComponent)
-    }
-
-    static func contrast(_ a: Double, _ b: Double) -> Double {
-        (max(a, b) + 0.05) / (min(a, b) + 0.05)
-    }
-}
-
-extension ThemeProtocol {
-    @MainActor
-    var statusInk: WorkflowStatusInk {
-        if let cached = WorkflowStatusInk.cache, cached.fingerprint == renderFingerprint { return cached.ink }
-        let ink = WorkflowStatusInk(self)
-        WorkflowStatusInk.cache = (renderFingerprint, ink)
-        return ink
-    }
-}
-
-extension WorkflowStatusInk {
-    @MainActor static var cache: (fingerprint: Int, ink: WorkflowStatusInk)?
 }
 
 /// A step's status glyph, a spinner while it works.
@@ -114,13 +61,13 @@ struct WorkflowStepStatusIcon: View {
     var body: some View {
         switch status {
         case .running?:
-            ProgressView().controlSize(.mini)
+            SettingsSpinner(size: .mini)
         case .done?, .pinned?:
-            Image(systemName: "checkmark.circle.fill").foregroundColor(theme.statusInk.success)
+            Image(systemName: "checkmark.circle.fill").foregroundColor(theme.statusInk(.success))
         case .failed?:
-            Image(systemName: "xmark.circle.fill").foregroundColor(theme.statusInk.error)
+            Image(systemName: "xmark.circle.fill").foregroundColor(theme.statusInk(.error))
         case .awaitingUser?:
-            Image(systemName: "person.crop.circle.badge.questionmark").foregroundColor(theme.statusInk.warning)
+            Image(systemName: "person.crop.circle.badge.questionmark").foregroundColor(theme.statusInk(.warning))
         case .skipped?:
             Image(systemName: "minus.circle").foregroundColor(theme.text.tertiary)
         case nil, .pending?:
@@ -138,10 +85,10 @@ struct WorkflowRunStatusIcon: View {
 
     var body: some View {
         if status == .running {
-            ProgressView().controlSize(.mini)
+            SettingsSpinner(size: .mini)
         } else {
             Image(systemName: WorkflowRunStyle.icon(status))
-                .glyphSize(size, weight: .semibold)
+                .glyphSize(points: size, weight: .semibold)
                 .foregroundColor(WorkflowRunStyle.color(status, theme: theme))
         }
     }

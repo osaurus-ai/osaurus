@@ -24,7 +24,7 @@ struct WorkflowInputBindingEditor: View {
     @State private var editingKinds: [String: WorkflowInputBinding.Kind] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Inputs", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -36,9 +36,9 @@ struct WorkflowInputBindingEditor: View {
                 .foregroundColor(theme.text.tertiary)
                 Spacer()
             }
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 ForEach(Array(fields.enumerated()), id: \.element.key) { index, field in
-                    if index > 0 { Divider().opacity(0.5) }
+                    if index > 0 { ThemeHairlineDivider() }
                     row(field)
                 }
             }
@@ -71,8 +71,8 @@ struct WorkflowInputBindingEditor: View {
     private func row(_ field: DialogField) -> some View {
         let current = kind(field)
         let missing = field.required && WorkflowInputBinding.kind(of: mapping[field.key]) == .unset
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        return VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                 Text(verbatim: field.label)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -95,9 +95,9 @@ struct WorkflowInputBindingEditor: View {
             if let preview = WorkflowInputBinding.preview(
                 field: field.key, mapping: mapping, payload: samplePayload, schema: schema)
             {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s4) {
                     Image(systemName: "eye")
-                        .glyphSize(9)
+                        .glyphSize(.tiny)
                     Text(preview.isEmpty ? L("Sample run: (empty)") : L("Sample run: \(preview)"))
                         .lineLimit(2)
                         .truncationMode(.tail)
@@ -121,9 +121,9 @@ struct WorkflowInputBindingEditor: View {
             EmptyView()
         case .triggerValue(let path):
             let value = triggerValues.first { $0.path == path }
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "bolt.fill")
-                    .glyphSize(9)
+                    .glyphSize(.tiny)
                     .foregroundColor(theme.text.link)
                 Text(verbatim: value?.label ?? path)
                     .font(SettingsFont.smallLabel)

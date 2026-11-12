@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import AppKit
 import SwiftUI
 
@@ -140,4 +139,3 @@ enum SheetKeyEligibility {
         }
     }
 }
-#endif

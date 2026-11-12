@@ -1532,20 +1532,21 @@ private struct ChatWindowRootView: View {
 /// sidebar toggle leading, tab strip centered, the File Changes / History /
 /// Pin row trailing.
 private struct ChatFullScreenHeaderView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: theme.space.s0) {
             if !windowState.isFullScreen {
                 // 58pt native traffic-light group plus 16pt separation.
                 Color.clear.frame(width: 74, height: windowState.theme.assignedMetric("component.button.size.small.height", fallback: 28))
                     .allowsHitTesting(false)
             }
             ChatToolbarSidebarView(windowState: windowState)
-            Spacer(minLength: windowState.theme.assignedMetric("component.library.43.gap", fallback: 8))
+            Spacer(minLength: windowState.theme.assignedMetric("component.library.43.gap", fallback: windowState.theme.space.s8))
             ChatToolbarTrailingView(windowState: windowState)
         }
-        .padding(windowState.theme.assignedMetric("component.library.43.padding", fallback: 8))
+        .padding(windowState.theme.assignedMetric("component.library.43.padding", fallback: windowState.theme.space.s8))
         .frame(height: ChatView.headerHeight(windowState.theme))
         .background(Color.clear)
     }
@@ -1722,9 +1723,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     ]
 
     private weak var windowState: ChatWindowState?
-    #if OSAURUS_DESIGN_SYSTEM
     private var inspectionSizing: AnyCancellable?
-    #endif
 
     init(windowState: ChatWindowState) {
         self.windowState = windowState
@@ -1812,12 +1811,10 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         let minimum = hostingView.widthAnchor.constraint(greaterThanOrEqualToConstant: ChatTabStripView.minimumItemWidth)
         let height = hostingView.heightAnchor.constraint(equalToConstant: ChatTabStripView.stripHeight)
         NSLayoutConstraint.activate([minimum, hostingView.widthAnchor.constraint(lessThanOrEqualToConstant: 10_000), height])
-        #if OSAURUS_DESIGN_SYSTEM
         inspectionSizing = windowState?.$theme.sink { theme in
             minimum.constant = ChatTabStripView.inspectionMinimumItemWidth(theme)
             height.constant = ChatTabStripView.inspectionStripHeight(theme)
         }
-        #endif
         hostingView.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
         hostingView.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         item.view = hostingView
@@ -1915,10 +1912,11 @@ private struct InboxToolbarButton: View {
 /// the unchanged object reference and skips this body when only a
 /// published property (e.g. `fileChangesCount` after an undo) changed.
 private struct ChatToolbarTrailingView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             InboxToolbarButton()
             if windowState.mainSurface == .chat, windowState.hasContextPanel {
                 HeaderActionButton(

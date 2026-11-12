@@ -229,7 +229,7 @@ struct WorkflowPageCard<Trailing: View, Content: View>: View {
         VStack(alignment: .leading, spacing: theme.space.s16) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundStyle(theme.text.secondary)
                     .frame(width: theme.space.s16)
                     .accessibilityHidden(true)
@@ -304,7 +304,7 @@ struct WorkflowStageStepper: View {
             ForEach(WorkflowMakeStage.allCases) { item in
                 if item != .design {
                     Rectangle()
-                        .fill(item <= stage ? theme.statusInk.success : theme.border.default)
+                        .fill(item <= stage ? theme.statusInk(.success) : theme.border.default)
                         .frame(width: compact ? theme.space.s6 : theme.space.s16, height: theme.stroke.default)
                 }
                 HStack(spacing: theme.space.s4) {
@@ -329,15 +329,15 @@ struct WorkflowStageStepper: View {
     private func marker(_ item: WorkflowMakeStage) -> some View {
         if item < stage {
             Image(systemName: "checkmark.circle.fill")
-                .glyphSize(10, weight: .semibold)
-                .foregroundStyle(theme.statusInk.success)
+                .glyphSize(.micro, weight: .semibold)
+                .foregroundStyle(theme.statusInk(.success))
         } else if item == stage {
             Image(systemName: "circle.inset.filled")
-                .glyphSize(10, weight: .semibold)
-                .foregroundStyle(theme.statusInk.info)
+                .glyphSize(.micro, weight: .semibold)
+                .foregroundStyle(theme.statusInk(.info))
         } else {
             Image(systemName: "circle")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundStyle(theme.text.tertiary)
         }
     }
@@ -415,9 +415,7 @@ struct WorkflowPageTabBar<Value: Hashable, Trailing: View>: View {
                 .padding(.bottom, theme.space.s8)
         }
         .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.border.default)
-                .frame(height: theme.stroke.default)
+            ThemeHairlineDivider()
         }
         // One underline that slides between tabs, drawn over the hairline.
         .overlayPreferenceValue(SelectedPageTabBounds.self) { anchor in
@@ -590,10 +588,10 @@ struct WorkflowStepStrip: View {
 
     private func color(_ status: NodeRunStatus) -> Color {
         switch status {
-        case .done, .pinned: return theme.statusInk.success
-        case .running: return theme.statusInk.info
-        case .awaitingUser: return theme.statusInk.warning
-        case .failed: return theme.statusInk.error
+        case .done, .pinned: return theme.statusInk(.success)
+        case .running: return theme.statusInk(.info)
+        case .awaitingUser: return theme.statusInk(.warning)
+        case .failed: return theme.statusInk(.error)
         case .skipped: return theme.border.default
         case .pending: return theme.border.subtle
         }
@@ -638,8 +636,8 @@ struct WorkflowStartedByLabel: View {
         HStack(spacing: theme.space.s4) {
             if let icon = WorkflowRunPresentation.startedByIcon(caller) {
                 Image(systemName: icon)
-                    .glyphSize(9, weight: .semibold)
-                    .foregroundStyle(caller.kind == .event ? theme.statusInk.warning : theme.text.tertiary)
+                    .glyphSize(.tiny, weight: .semibold)
+                    .foregroundStyle(caller.kind == .event ? theme.statusInk(.warning) : theme.text.tertiary)
                     .accessibilityHidden(true)
             }
             Text(verbatim: WorkflowRunHistoryModel.startedBy(caller) { agents.agent(for: $0)?.displayName })
@@ -698,12 +696,10 @@ struct WorkflowHomepageRow<Leading: View, Meta: View, Accessory: View, Actions: 
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
             if isExpanded {
-                Rectangle()
-                    .fill(theme.border.subtle)
-                    .frame(height: theme.stroke.default)
+                ThemeHairlineDivider()
                     .padding(.horizontal, theme.space.s16)
                     .accessibilityHidden(true)
                 expanded()
@@ -717,7 +713,7 @@ struct WorkflowHomepageRow<Leading: View, Meta: View, Accessory: View, Actions: 
             shape.fill(isSelected ? theme.surface.selected : isHovered ? theme.surface.hover : .clear)
         }
         .overlay(
-            shape.strokeBorder(isExpanded ? theme.border.strong : theme.border.default, lineWidth: theme.stroke.default)
+            shape.strokeBorder(isExpanded || (isSelected && !theme.isDark) ? theme.border.strong : theme.border.default, lineWidth: theme.stroke.default)
                 .allowsHitTesting(false)
         )
         .clipShape(shape)
@@ -746,7 +742,7 @@ struct WorkflowHomepageRow<Leading: View, Meta: View, Accessory: View, Actions: 
                 HStack(spacing: theme.space.s8) {
                     if isExpandable {
                         Image(systemName: "chevron.right")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                             .foregroundStyle(theme.text.tertiary)
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                             .accessibilityHidden(true)
@@ -929,7 +925,7 @@ struct WorkflowRunCompactRow: View {
                     }
                     Text(verbatim: WorkflowRunPresentation.progressLine(run, definition: definition))
                         .textStyle(.caption)
-                        .foregroundStyle(run.status == .failed ? theme.statusInk.error : theme.text.secondary)
+                        .foregroundStyle(run.status == .failed ? theme.statusInk(.error) : theme.text.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .help(run.error?.reason ?? "")
@@ -945,7 +941,7 @@ struct WorkflowRunCompactRow: View {
                         WorkflowRunElapsed(run: run).fixedSize()
                     }
                     Image(systemName: "chevron.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundStyle(theme.text.tertiary)
                         .opacity(isHovered ? 1 : 0)
                         .accessibilityHidden(true)

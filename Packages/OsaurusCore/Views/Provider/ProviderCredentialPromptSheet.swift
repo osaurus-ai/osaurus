@@ -131,11 +131,11 @@ struct ProviderCredentialPromptSheet: View {
             RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
                 .fill(cardGradient)
 
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 header
                 bodyDivider
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: theme.space.s16) {
                         if hasBrandedPreset {
                             helpCard
                         } else if let hint = request.instructions.keyFormatHint {
@@ -203,9 +203,7 @@ struct ProviderCredentialPromptSheet: View {
     /// `ToolPermissionView` draws above its action band so every modal
     /// card uses the same separator weight.
     private var bodyDivider: some View {
-        Rectangle()
-            .fill(theme.border.subtle)
-            .frame(height: 1)
+        ThemeHairlineDivider()
     }
 
     /// Ceiling for the scroll area. Picked so the tallest realistic
@@ -217,10 +215,10 @@ struct ProviderCredentialPromptSheet: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: theme.space.s14) {
             brandedIcon
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(headerTitle)
                     .font(SettingsFont.detailTitle)
                     .foregroundColor(theme.text.primary)
@@ -246,7 +244,7 @@ struct ProviderCredentialPromptSheet: View {
                     endPoint: .bottomTrailing
                 )
                 .clipShape(RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous))
-                ProviderIcon(preset: preset, size: 20, color: .white)
+                ProviderIcon(preset: preset, size: 20, color: FixedPalette.onMedia)
             } else {
                 SettingsIconTile(icon: isOAuthFlow ? "person.badge.key.fill" : "key.fill", size: 44)
             }
@@ -273,7 +271,7 @@ struct ProviderCredentialPromptSheet: View {
     // MARK: - Help card
 
     private var helpCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Text(L("Don't have a key?"))
                 .font(SettingsFont.sectionTitle)
                 .foregroundColor(theme.text.secondary)
@@ -295,7 +293,7 @@ struct ProviderCredentialPromptSheet: View {
     }
 
     private func helpStep(number: Int, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Text("\(number).")
                 .font(SettingsFont.monoSmall)
                 .foregroundColor(theme.text.tertiary)
@@ -311,9 +309,9 @@ struct ProviderCredentialPromptSheet: View {
     /// use `inputBackground`, and wrapping this in another rounded rect made
     /// the hint read like an empty input field.
     private func unbrandedHint(_ hint: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s6) {
             Image(systemName: "info.circle")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.tertiary)
                 .padding(.top, theme.space.s2)
             Text(hint)
@@ -326,7 +324,7 @@ struct ProviderCredentialPromptSheet: View {
     // MARK: - API key body
 
     private var apiKeyBody: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if supportsApiKeyAlternative && preferApiKeyEntry {
                 Button {
                     preferApiKeyEntry = false
@@ -372,7 +370,7 @@ struct ProviderCredentialPromptSheet: View {
 
     @ViewBuilder
     private var oauthBody: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if oauthTokens != nil {
                 signedInPill
             } else {
@@ -403,14 +401,12 @@ struct ProviderCredentialPromptSheet: View {
 
     private var oauthSignInButton: some View {
         Button(action: startOAuthSignIn) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 if isSigningIn {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .frame(width: 14, height: 14)
+                    SettingsSpinner()
                 } else {
                     Image(systemName: "person.badge.shield.checkmark.fill")
-                        .glyphSize(12, weight: .medium)
+                        .glyphSize(.caption, weight: .medium)
                 }
                 Text(String(format: L("Sign in with %@"), request.instructions.displayName))
                     .font(SettingsFont.sectionTitle)
@@ -438,9 +434,9 @@ struct ProviderCredentialPromptSheet: View {
     }
 
     private var signedInPill: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "checkmark.circle.fill")
-                .glyphSize(13)
+                .glyphSize(.label)
                 .foregroundColor(theme.status.success.foreground)
             Text(L("Signed in. Ready to save."))
                 .font(SettingsFont.rowTitle)
@@ -452,9 +448,9 @@ struct ProviderCredentialPromptSheet: View {
     }
 
     private func inlineError(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.status.error.foreground)
             Text(text)
                 .font(SettingsFont.caption)
@@ -465,9 +461,9 @@ struct ProviderCredentialPromptSheet: View {
     }
 
     private var rotateFooterNote: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: "arrow.triangle.2.circlepath")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.tertiary)
             Text(String(format: L("Replacing key for %@. Cancel keeps the existing key."), request.providerName))
                 .font(SettingsFont.rowDescription)
@@ -479,13 +475,11 @@ struct ProviderCredentialPromptSheet: View {
     // MARK: - Footer
 
     private var footer: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Single hairline rule above the action band — same weight
             // as `bodyDivider` so the modal card reads as one surface
             // with section dividers rather than stacked panels.
-            Rectangle()
-                .fill(theme.border.subtle)
-                .frame(height: 1)
+            ThemeHairlineDivider()
 
             HStack(spacing: theme.space.s8) {
                 testResultBadge
@@ -534,9 +528,9 @@ struct ProviderCredentialPromptSheet: View {
     }
 
     private func badgePill(icon: String, text: String, tint: Color) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: icon)
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(tint)
             Text(text)
                 .font(SettingsFont.smallLabel)

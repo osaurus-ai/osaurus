@@ -163,7 +163,7 @@ struct ScrollToBottomButton: View {
         if !isPinnedToBottom && hasTurns {
             Button(action: onTap) {
                 Image(systemName: "chevron.down")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
                     .frame(width: 32, height: 32)
                     .background(

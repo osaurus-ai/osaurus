@@ -10703,7 +10703,7 @@ struct ChatView: View {
         if case .hostOffline(let hostName) = composerLock {
             remoteAgentNoticeRow(tone: theme.status.warning) {
                 Image(systemName: "moon.zzz.fill")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                 Text(String(format: L("%@ is offline. You can send when it's awake and online."), hostName))
                     .textStyle(.caption, weight: 500)
@@ -10764,10 +10764,10 @@ struct ChatView: View {
         return HStack(alignment: .center, spacing: theme.space.s8) {
             Group {
                 if status == .connecting || status == .checking {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 } else {
                     Image(systemName: status.symbolName)
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(tint)
                 }
             }
@@ -10888,8 +10888,7 @@ struct ChatView: View {
                 EmptyView()
             case .slow:
                 remoteAgentNoticeRow(tone: theme.status.info) {
-                    ProgressView()
-                        .controlSize(.small)
+                    SettingsSpinner()
                     Text(L("Still working — waiting on the model or a tool…"))
                         .textStyle(.caption, weight: 500)
                         .foregroundColor(theme.assignedColor(NativeComponentInspectionStyle.key(40, "foreground"), fallback: theme.text.primary))
@@ -10897,7 +10896,7 @@ struct ChatView: View {
             case .stalled:
                 remoteAgentNoticeRow(tone: theme.status.warning) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(theme.status.warning.foreground)
                     Text(L("No response for a while — this run may be stuck."))
                         .textStyle(.caption, weight: 500)
@@ -10924,7 +10923,7 @@ struct ChatView: View {
         } else if let sessionId = observedSession.sessionId, let request = hostRunner.runningFor[sessionId] {
             remoteAgentNoticeRow(tone: theme.status.info) {
                 Image(systemName: SyncPhoneDevices.isPhone(deviceKey: request.deviceKey) ? "iphone" : "desktopcomputer")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.status.info.foreground)
                 Text(String(format: L("Answering for %@…"), Self.requesterName(request.deviceKey)))
                     .textStyle(.caption, weight: 500)
@@ -10934,7 +10933,7 @@ struct ChatView: View {
             .help(L("This Mac is running this chat for another of your devices. Its approvals and questions go to that device."))
         } else if let reply = observedSession.remoteReply {
             remoteAgentNoticeRow(tone: theme.status.info) {
-                ProgressView().controlSize(.small)
+                SettingsSpinner()
                 Text(String(format: L("Replying on %@…"), reply.deviceName))
                     .textStyle(.caption, weight: 500)
                     .foregroundColor(theme.text.primary)
@@ -10943,11 +10942,11 @@ struct ChatView: View {
         } else if observedSession.syncPendingCount > 0, !observedSession.isStreaming {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: "clock.arrow.circlepath")
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                 Text(L("Waiting to reach your other devices"))
                     .textStyle(.micro)
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(theme.text.secondary)
             .padding(.bottom, theme.space.s6)
             .help(L("These messages sync the next time one of your other devices is reachable."))
         }
@@ -10968,7 +10967,7 @@ struct ChatView: View {
             .id(prompt.id)
         } else if observedSession.isWaitingOnHost {
             remoteAgentNoticeRow(tone: theme.status.info) {
-                ProgressView().controlSize(.small)
+                SettingsSpinner()
                 Text(
                     String(
                         format: observedSession.hostStopRequest == nil ? L("Running on %@…") : L("Stopping on %@…"),
@@ -10982,7 +10981,7 @@ struct ChatView: View {
         } else if observedSession.hostStopUnconfirmed {
             remoteAgentNoticeRow(tone: theme.status.warning) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                 Text(
                     String(
@@ -10998,11 +10997,11 @@ struct ChatView: View {
         } else {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: "desktopcomputer")
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                 Text(String(format: L("Runs on %@"), hostName))
                     .textStyle(.micro)
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(theme.text.secondary)
             .padding(.bottom, theme.space.s6)
             .help(String(format: L("The agent, its tools and its files are on %@."), hostName))
         }
@@ -11473,7 +11472,6 @@ struct ChatView: View {
     @ViewBuilder
     private var workflowCreationPanePicker: some View {
         Group {
-            #if OSAURUS_DESIGN_SYSTEM
             AssignedBaseSegmentedPicker(
                 selection: $workflowCreationPane,
                 options: [
@@ -11481,14 +11479,6 @@ struct ChatView: View {
                     .init(.workflow, isAgentCreation ? L("Agent") : L("Workflow"), verbatim: true),
                 ],
                 size: .compact, minimumOptionWidth: theme.space.s48 * 2)
-            #else
-            Picker("Workflow creation view", selection: $workflowCreationPane) {
-                Text("Chat", bundle: .module).tag(WorkflowCreationPane.chat)
-                Text(isAgentCreation ? L("Agent") : L("Workflow")).tag(WorkflowCreationPane.workflow)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 204)
-            #endif
         }
         .accessibilityLabel(Text("Workflow creation view", bundle: .module))
         .frame(maxWidth: .infinity)
@@ -11605,13 +11595,13 @@ struct ChatView: View {
                 ? (workflowChatWidth ?? layout.contentWidth - 2 * theme.space.s16) - 2 * theme.space.s16
                 : layout.threadContentWidth
 
-            HStack(alignment: .top, spacing: 0) {
+            HStack(alignment: .top, spacing: theme.space.s0) {
                 if !isEmbedded {
                     MainNavigationRail(windowState: windowState)
                         .padding(.top, topInset)
                 }
                 // Sidebar, docked beside the content (regular and wide).
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     if sidebarDocked {
                         navigatorRail(width: sidebarWidth)
                             .padding(.top, topInset)
@@ -11644,7 +11634,7 @@ struct ChatView: View {
                     }
                     HStack(alignment: .top, spacing: isCreationLayout ? theme.space.s24 : 0) {
                     if !workflowStacked || workflowCreationPane == .chat {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         // Header
                         if !isCreationLayout {
                             chatHeader(contentLeadingX: ChatShellLayout.railWidth + sidebarWidth,
@@ -11672,8 +11662,7 @@ struct ChatView: View {
                                     // A hibernated tab being woken: its
                                     // transcript is on its way, so don't
                                     // flash the new-chat greeting.
-                                    ProgressView()
-                                        .controlSize(.small)
+                                    SettingsSpinner()
                                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 } else if isWorkflowCreation {
                                     architectChatEmptyState
@@ -11715,7 +11704,7 @@ struct ChatView: View {
                             if observedSession.workspaceContext?.isServedForTeammate == false {
                                 Text("The agent owner can review this conversation and its history.", bundle: .module)
                                     .textStyle(.micro)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(theme.text.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .readableColumnRow()
                             }
@@ -11728,8 +11717,8 @@ struct ChatView: View {
                             // card below it to do that.
                             if composerLock != nil {
                                 composerLockNotice
-                                    .padding(.top, 8)
-                                    .padding(.bottom, isReadOnlyConversation ? 12 : 0)
+                                    .padding(.top, theme.space.s8)
+                                    .padding(.bottom, isReadOnlyConversation ? theme.space.s12 : theme.space.s0)
                                     .readableColumnRow()
                                     .animation(theme.motion.springAnimation, value: composerLock)
                             }
@@ -11991,7 +11980,7 @@ struct ChatView: View {
                 // Workflows keeps its rounded canvas; Chat meets the sidebar
                 // with a square corner. Leave the titlebar above it intact.
                 .mask {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         Rectangle().frame(height: topInset)
                         UnevenRoundedRectangle(topLeadingRadius: windowState.mainSurface == .workflows ? theme.radius.xlarge : 0, style: .continuous)
                     }
@@ -13562,7 +13551,7 @@ private struct MainNavigationRail: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             destination(.chat, symbol: "message", label: "Chat")
             destination(.workflows, symbol: "point.forward.to.point.capsulepath", label: "Workflows")
             Spacer(minLength: 8)
@@ -13572,7 +13561,7 @@ private struct MainNavigationRail: View {
             }
             .frame(width: 32, height: 32)
         }
-        .padding(.horizontal, 6).padding(.vertical, 8)
+        .padding(.horizontal, theme.space.s6).padding(.vertical, theme.space.s8)
         .frame(width: 44)
         .frame(maxHeight: .infinity)
         .background(Color.clear)
@@ -13580,7 +13569,6 @@ private struct MainNavigationRail: View {
 
     private func destination(_ surface: ChatWindowState.MainSurface, symbol: String, label: String) -> some View {
         let isSelected = windowState.mainSurface == surface
-        let chip = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
         return SettingsIconButton(symbol, help: label, size: .regular, isActive: isSelected, role: .tertiary) {
             if surface == .workflows, windowState.mainSurface == .workflows, windowState.showsWorkflowLibrary {
                 withAnimation(theme.motion.quick) { windowState.showWorkflowsHome() }
@@ -13589,11 +13577,6 @@ private struct MainNavigationRail: View {
             }
         }
         .frame(width: 32, height: 32)
-        // The rail sits on the sidebar surface, which light themes paint
-        // almost the same as `surface.selected`; the hairline keeps the
-        // selected chip visible there.
-        .background(isSelected ? theme.surface.selected : .clear, in: chip)
-        .overlay(chip.strokeBorder(isSelected ? theme.border.default : .clear, lineWidth: theme.stroke.default))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

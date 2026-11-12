@@ -11,7 +11,7 @@ struct RemoteAgentConnectionStatusNotice: View {
         switch phase {
         case .connecting(let name):
             RemoteAgentNoticeRow(tone: baseTheme.status.info, baseTheme: baseTheme) {
-                ProgressView().controlSize(.small)
+                SettingsSpinner()
                 Text(String(format: L("Connecting to %@…"), name))
                     .textStyle(.caption, weight: 500)
                     .foregroundColor(baseTheme.assignedColor(NativeComponentInspectionStyle.key(40, "foreground"), fallback: baseTheme.text.primary))
@@ -19,7 +19,7 @@ struct RemoteAgentConnectionStatusNotice: View {
         case .failed(let message):
             RemoteAgentNoticeRow(tone: baseTheme.status.warning, baseTheme: baseTheme) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(baseTheme.status.warning.foreground)
                 Text(message)
                     .textStyle(.caption, weight: 500)
@@ -41,7 +41,7 @@ struct RemoteAgentNoticeRow<Content: View>: View {
         self.tone = tone; self.baseTheme = baseTheme; self.content = content()
     }
     var body: some View {
-        let noticeTheme = baseTheme.catalogFamily(40, authoritative: true)
+        let noticeTheme = baseTheme.catalogFamily(40)
         HStack(spacing: noticeTheme.catalogLayoutMetric("component.library.40.elements.layout.remoteAgentNoticeRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(40, "gap", baseTheme.space.s8, noticeTheme))) { content }.catalogLayoutTarget("component.library.40.elements.layout.remoteAgentNoticeRow.body.horizontalGap")
             .padding(.horizontal, noticeTheme.catalogLayoutMetric("component.library.40.elements.layout.remoteAgentNoticeRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(40, "padding", baseTheme.space.s12, noticeTheme))).catalogLayoutTarget("component.library.40.elements.layout.remoteAgentNoticeRow.body.paddingX")
             .padding(.vertical, noticeTheme.catalogLayoutMetric("component.library.40.elements.layout.remoteAgentNoticeRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(40, "padding", baseTheme.space.s6, noticeTheme))).catalogLayoutTarget("component.library.40.elements.layout.remoteAgentNoticeRow.body.paddingY")

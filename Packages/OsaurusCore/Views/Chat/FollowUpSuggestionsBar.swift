@@ -28,7 +28,7 @@ struct FollowUpSuggestionsBar: View {
     let animate: Bool
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(40, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(40) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
     @State private var hoveredIndex: Int? = nil
@@ -64,7 +64,7 @@ struct FollowUpSuggestionsBar: View {
 
                 // One card: the rows share its surface and are told apart by
                 // hairlines, so a list of questions reads as one choice.
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     ForEach(Array(suggestions.enumerated()), id: \.offset) { index, suggestion in
                         if index > 0 {
                             rowDivider
@@ -84,7 +84,7 @@ struct FollowUpSuggestionsBar: View {
             // No horizontal padding: the hosting cell already insets this view
             // by 16pt (matching the assistant markdown's leading/trailing), so
             // the card lines up flush with the message text above.
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.40.elements.layout.followUpSuggestionsBar.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(40, "padding", 8, theme))).catalogLayoutTarget("component.library.40.elements.layout.followUpSuggestionsBar.body.paddingY")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.40.elements.layout.followUpSuggestionsBar.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(40, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.40.elements.layout.followUpSuggestionsBar.body.paddingY")
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             // Reveal cascade starts as soon as the section mounts. `reveal`
@@ -105,7 +105,7 @@ struct FollowUpSuggestionsBar: View {
     private var header: some View {
         HStack(spacing: theme.space.s6) {
             Image(systemName: "text.append")
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundStyle(theme.text.tertiary)
             Text("Follow up", bundle: .module)
                 .componentInspectionText(40, role: .label, fallback: .label, weight: 600, theme: theme)
@@ -120,7 +120,7 @@ struct FollowUpSuggestionsBar: View {
         return Button {
             onSelect(suggestion)
         } label: {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(40, "gap", 8, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(40, "gap", theme.space.s8, theme))) {
                 Text(suggestion)
                     .componentInspectionText(40, role: .body, fallback: .bodySmall, theme: theme)
                     .foregroundStyle(theme.text.primary)
@@ -129,12 +129,12 @@ struct FollowUpSuggestionsBar: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // Sends on click: quiet at rest, nudged forward on hover.
                 Image(systemName: "arrow.right")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundStyle(isHovered ? theme.text.primary : theme.text.tertiary)
                     .offset(x: isHovered ? 2 : 0)
             }.catalogLayoutTarget("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.horizontalGap")
             .padding(.horizontal, rowInset)
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(40, "padding", 10, theme))).catalogLayoutTarget("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.paddingY")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(40, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.40.elements.layout.followUpSuggestionsBar.suggestionRow.paddingY")
             .frame(minHeight: NativeComponentInspectionStyle.metric(40, "height", 0, theme))
             .background(isHovered ? theme.surface.hover : .clear)
             .contentShape(Rectangle())

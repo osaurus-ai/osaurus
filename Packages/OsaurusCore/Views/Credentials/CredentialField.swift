@@ -20,7 +20,7 @@ struct CredentialField: View {
     var isInvalid = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             SettingsTextField(
                 placeholder: isSet ? L("Unchanged") : placeholder,
                 text: $value,

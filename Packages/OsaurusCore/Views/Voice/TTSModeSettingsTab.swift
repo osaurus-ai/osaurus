@@ -118,7 +118,7 @@ struct TTSModeSettingsTab: View {
         SettingsSection(title: "PocketTTS Model") {
             SettingsRow(title: "PocketTTS", description: modelStatusText, verbatimTitle: true, verbatimDescription: true) {
                 Image(systemName: modelIconName)
-                    .glyphSize(16, weight: .medium)
+                    .glyphSize(.medium, weight: .medium)
                     .foregroundColor(modelIconColor)
             } trailing: {
                 modelAction
@@ -133,13 +133,9 @@ struct TTSModeSettingsTab: View {
     @ViewBuilder
     private func downloadProgressBar(fraction: Double?) -> some View {
         if let fraction {
-            ProgressView(value: fraction)
-                .progressViewStyle(.linear)
-                .tint(theme.action.primary.default.background)
+            SettingsProgressBar(value: fraction, tint: theme.action.primary.default.background)
         } else {
-            ProgressView()
-                .progressViewStyle(.linear)
-                .tint(theme.action.primary.default.background)
+            SettingsProgressBar(value: nil, tint: theme.action.primary.default.background)
         }
     }
 
@@ -190,8 +186,7 @@ struct TTSModeSettingsTab: View {
             SettingsButton(.primary, "Download", icon: "arrow.down") { ttsService.ensureModelLoaded() }
 
         case .downloading:
-            ProgressView()
-                .controlSize(.small)
+            SettingsSpinner()
 
         case .ready:
             StatusChip(L("Ready"), tone: .success, showsDot: true)
@@ -305,9 +300,9 @@ struct TTSModeSettingsTab: View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             connectionTestRow
             if let error = ttsService.lastRemoteError {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.triangle")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.status.error.foreground)
                     Text(error)
                         .font(SettingsFont.caption)
@@ -318,23 +313,23 @@ struct TTSModeSettingsTab: View {
     }
 
     private var connectionTestRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             switch connectionTest {
             case .idle, .testing:
                 EmptyView()
             case .success:
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "checkmark.circle.fill")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.status.success.foreground)
                     Text("Connected", bundle: .module)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.status.success.foreground)
                 }
             case .failure(let message):
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: theme.space.s6) {
                     Image(systemName: "xmark.circle.fill")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.status.error.foreground)
                     Text(message)
                         .font(SettingsFont.caption)
@@ -380,7 +375,7 @@ struct TTSModeSettingsTab: View {
 
     private var previewCard: some View {
         SettingsSection(title: "Preview") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 SettingsTextEditor(text: $previewText, minHeight: 60)
 
                 HStack {

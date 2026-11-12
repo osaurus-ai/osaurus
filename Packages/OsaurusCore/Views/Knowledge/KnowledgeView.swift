@@ -81,7 +81,7 @@ struct KnowledgeView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerView
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
@@ -455,15 +455,14 @@ struct KnowledgeView: View {
                 ForEach(pendingProposals) { proposal in
                     HStack(spacing: theme.space.s8) {
                         Image(systemName: "doc.badge.ellipsis")
-                            .glyphSize(13)
+                            .glyphSize(.label)
                             .foregroundColor(theme.text.link)
-                        VStack(alignment: .leading, spacing: theme.space.s2) {
+                        SettingsRowText(compact: true) {
                             Text(String(format: L("Proposal #%lld: %@"), proposal.id, proposal.relPath))
                                 .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
-                                .foregroundColor(theme.text.primary)
+                        } description: {
                             Text(proposal.rationale)
                                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-                                .foregroundColor(theme.text.tertiary)
                                 .lineLimit(2)
                         }
                         Spacer(minLength: 8)
@@ -481,15 +480,14 @@ struct KnowledgeView: View {
                 ForEach(openTickets) { ticket in
                     HStack(spacing: theme.space.s8) {
                         Image(systemName: "exclamationmark.bubble")
-                            .glyphSize(13)
+                            .glyphSize(.label)
                             .foregroundColor(theme.status.warning.foreground)
-                        VStack(alignment: .leading, spacing: theme.space.s2) {
+                        SettingsRowText(compact: true) {
                             Text(String(format: L("Ticket #%lld: %@"), ticket.id, ticket.relPath))
                                 .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
-                                .foregroundColor(theme.text.primary)
+                        } description: {
                             Text(ticket.reason)
                                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-                                .foregroundColor(theme.text.tertiary)
                                 .lineLimit(2)
                             Text("Open this in a chat to have it fixed", bundle: .module)
                                 .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
@@ -755,9 +753,7 @@ private struct KnowledgeCollectionCard: View {
     let onDelete: () -> Void
     let onOpenDetail: () -> Void
 
-#if OSAURUS_DESIGN_SYSTEM
     var inspectionDisplayOnly = false
-#endif
 
     /// OKF conformance, computed on appear so the badge shows status at a
     /// glance rather than hiding it behind a click.
@@ -818,7 +814,7 @@ private struct KnowledgeCollectionCard: View {
         HStack(spacing: theme.space.s6) {
             if agents.isEmpty {
                 Image(systemName: "person.slash")
-                    .glyphSize(10)
+                    .glyphSize(.micro)
                     .foregroundColor(theme.text.tertiary)
                 Text("No agents with access", bundle: .module)
                     .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
@@ -867,7 +863,7 @@ private struct KnowledgeCollectionCard: View {
         if !projects.isEmpty {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: "folder")
-                    .glyphSize(10)
+                    .glyphSize(.micro)
                     .foregroundColor(theme.text.secondary)
                 Text(
                     projects.count == 1
@@ -924,9 +920,7 @@ private struct KnowledgeCollectionCard: View {
     }
 
     private func refreshOKFStatus() async {
-#if OSAURUS_DESIGN_SYSTEM
         if inspectionDisplayOnly { okfStatus = .conformant; return }
-#endif
         let failing = await KnowledgeIndexService.shared
             .uncategorizedDocuments(collectionId: collection.id.uuidString)
         uncategorizedPaths = failing
@@ -1359,7 +1353,7 @@ private struct KnowledgeProposalReviewSheet: View {
                         .foregroundColor(theme.text.tertiary)
                         .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
                 } else {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                         ForEach(diffLines) { line in
                             diffRow(line)
                         }
@@ -1498,7 +1492,7 @@ private struct KnowledgeGrantAgentsSheet: View {
                 .padding(.vertical, theme.space.s24)
             } else {
                 ScrollView {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         ForEach(agents) { agent in
                             agentRow(agent)
                         }
@@ -1546,16 +1540,15 @@ private struct KnowledgeGrantAgentsSheet: View {
         } label: {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .glyphSize(14)
+                    .glyphSize(.body)
                     .foregroundColor(selected ? theme.text.link : theme.text.tertiary)
-                VStack(alignment: .leading, spacing: theme.space.s2) {
+                SettingsRowText {
                     Text(agent.name)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
-                        .foregroundColor(theme.text.primary)
+                } description: {
                     if !agent.displayDescription.isEmpty {
                         Text(agent.displayDescription)
                             .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                     }
                 }
@@ -1631,7 +1624,7 @@ private struct KnowledgeCollectionDetailSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
             Divider()
             ScrollView {
@@ -1732,8 +1725,8 @@ private struct KnowledgeCollectionDetailSheet: View {
             sectionHeader("Location")
             HStack(spacing: theme.space.s6) {
                 Image(systemName: live.folderExistsCached ? "folder.fill" : "folder.badge.questionmark")
-                    .glyphSize(11)
-                    .foregroundColor(live.folderExistsCached ? theme.text.tertiary : .orange)
+                    .glyphSize(.footnote)
+                    .foregroundColor(live.folderExistsCached ? theme.text.tertiary : theme.status.warning.foreground)
                 Text(live.folderPath)
                     .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
                     .foregroundColor(theme.text.secondary)
@@ -1790,7 +1783,7 @@ private struct KnowledgeCollectionDetailSheet: View {
                         text: nonconformingCount == 0
                             ? L("All categorized")
                             : String(format: L("%lld of %lld categorized"), categorized, documents.count),
-                        color: nonconformingCount == 0 ? .green : theme.text.secondary
+                        color: nonconformingCount == 0 ? theme.status.success.foreground : theme.text.secondary
                     )
                 }
                 if isIndexing {
@@ -1816,7 +1809,7 @@ private struct KnowledgeCollectionDetailSheet: View {
                     .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                     .foregroundColor(theme.text.tertiary)
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(editableAgents) { agent in
                         accessRow(agent)
                     }
@@ -1838,14 +1831,13 @@ private struct KnowledgeCollectionDetailSheet: View {
                 monogramFontSize: 11,
                 borderWidth: 0
             )
-            VStack(alignment: .leading, spacing: theme.space.s2) {
+            SettingsRowText {
                 Text(agent.name)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.rowTitle)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 if !agent.displayDescription.isEmpty {
                     Text(agent.displayDescription)
                         .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
             }
@@ -1868,7 +1860,7 @@ private struct KnowledgeCollectionDetailSheet: View {
                     .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                     .foregroundColor(theme.text.tertiary)
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(documents, id: \.id) { doc in
                         documentRow(doc)
                     }
@@ -1881,7 +1873,7 @@ private struct KnowledgeCollectionDetailSheet: View {
     private func documentRow(_ doc: KnowledgeDocument) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: "doc.text")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.text.tertiary)
             VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(doc.title.isEmpty ? doc.relPath : doc.title)

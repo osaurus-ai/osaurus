@@ -21,7 +21,7 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var assignmentFamily: Int { baseTheme.inspectionProductFamily(for: "background", fallback: 13) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled, authoritative: assignmentFamily > 20) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Verbatim (user data).
@@ -105,7 +105,7 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
     }
 
     private var card: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             if hasHero {
                 hero
                     .frame(maxWidth: .infinity)
@@ -123,7 +123,7 @@ struct LibraryCard<Hero: View, Leading: View, Badges: View, Accessory: View, Con
             HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.13.elements.layout.libraryCard.cardBody.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s12))) {
                 leading
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     HStack(spacing: theme.catalogLayoutMetric("component.library.13.elements.layout.libraryCard.cardBody.horizontalGap2", inheriting: theme.catalogMetric("gap", fallback: theme.space.s6))) {
                         Text(verbatim: title)
                             .assignedTypography("component.library.\(assignmentFamily).heading", fallback: SettingsFont.cardTitle)
@@ -167,7 +167,7 @@ struct LibraryCardPreview: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var assignmentFamily: Int { baseTheme.inspectionProductFamily(for: "background", fallback: 13) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled, authoritative: assignmentFamily > 20) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled) }
 
     /// Verbatim.
     let text: String
@@ -188,9 +188,6 @@ struct LibraryCardPreview: View {
         }
         .assignedTypography("component.library.\(assignmentFamily).text", fallback: SettingsFont.caption)
         .lineLimit(lines, reservesSpace: true)
-        #if !OSAURUS_DESIGN_SYSTEM
-        .lineSpacing(2)
-        #endif
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -200,7 +197,7 @@ struct LibraryCardFooter<Actions: View>: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var assignmentFamily: Int { baseTheme.inspectionProductFamily(for: "background", fallback: 13) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled, authoritative: assignmentFamily > 20) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled) }
 
     /// Already-localized facts ("3 steps", "On 2 agents").
     let facts: [String]
@@ -240,12 +237,12 @@ struct LibraryStatRow: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var assignmentFamily: Int { baseTheme.inspectionProductFamily(for: "background", fallback: 13) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled, authoritative: assignmentFamily > 20) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled) }
 
     let stats: [LibraryStat]
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: theme.space.s0) {
             ForEach(Array(stats.enumerated()), id: \.offset) { index, stat in
                 if index > 0 {
                     Circle()
@@ -253,7 +250,7 @@ struct LibraryStatRow: View {
                         .frame(width: 3, height: 3)
                         .padding(.horizontal, theme.catalogLayoutMetric("component.library.13.elements.layout.libraryStatRow.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: theme.space.s8))).catalogLayoutTarget("component.library.13.elements.layout.libraryStatRow.body.paddingX")
                 }
-                HStack(spacing: 3) {
+                HStack(spacing: theme.space.s2) {
                     Image(systemName: stat.icon)
                         .assignedTypography("component.library.\(assignmentFamily).caption", fallback: SettingsFont.footnote)
                     if let text = stat.text {
@@ -283,11 +280,11 @@ struct LibraryIcon: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .glyphSize(size * 0.39, weight: .semibold)
+            .glyphSize(points: size * 0.39, weight: .semibold)
             .foregroundColor(tint)
             .frame(width: size, height: size)
-            .background(Circle().fill(tint.opacity(0.15)))
-            .overlay(Circle().strokeBorder(tint.opacity(0.35), lineWidth: theme.stroke.default))
+            .background(Circle().fill(theme.wash(behind: tint)))
+            .overlay(Circle().strokeBorder(theme.rule(around: tint), lineWidth: theme.stroke.default))
     }
 }
 
@@ -299,7 +296,7 @@ struct LibraryRow<Leading: View, Badges: View, Trailing: View, MenuItems: View, 
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var assignmentFamily: Int { baseTheme.inspectionProductFamily(for: "background", fallback: 20) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled, authoritative: assignmentFamily > 20) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: baseComponentEnabled) }
     @Environment(\.settingsInGroup) private var inGroup
 
     /// Verbatim (user data).
@@ -422,8 +419,10 @@ struct LibraryRow<Leading: View, Badges: View, Trailing: View, MenuItems: View, 
             : isHovering ? theme.surface.hover
             : hasFooter ? theme.surface.raised : .clear
         let bleedsIntoGroup = inGroup && !hasFooter
-        RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+        shape
             .fill(fill)
+            .overlay(shape.strokeBorder(isSelected ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke))
             .padding(.horizontal, bleedsIntoGroup ? -theme.space.s8 : 0)
             .padding(.vertical, bleedsIntoGroup ? -theme.space.s4 : 0)
     }

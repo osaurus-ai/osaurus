@@ -59,7 +59,7 @@ public struct VoiceInputOverlay: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     @State private var showEditHint = false
 
     public init(
@@ -114,7 +114,7 @@ public struct VoiceInputOverlay: View {
     public var body: some View {
         Group {
 
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 10, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s10, theme))) {
             header
 
             // live transcription area is hidden during .sending since the
@@ -129,8 +129,8 @@ public struct VoiceInputOverlay: View {
         .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(45, "padding", PickerCardMetrics.padding, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(45, "padding", PickerCardMetrics.padding, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.body.padding.horizontal").catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.body.padding.vertical")
         .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
         .pickerCardSurface(elevated: true, assignmentFamily: 45)
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 20, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.body.paddingX")
-        .padding(.bottom, 20)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s20, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.body.paddingX")
+        .padding(.bottom, theme.space.s20)
     
         }.environment(\.theme, theme)
 }
@@ -140,11 +140,11 @@ public struct VoiceInputOverlay: View {
     /// Status as the card heading, the live waveform beside it, and a quiet
     /// close control — the same heading row the composer's other cards use.
     private var header: some View {
-        HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.header.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 10, theme))) {
+        HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.header.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s10, theme))) {
             // Hidden while sending: the centred "Processing..." row is then
             // the sole state signal.
             if state != .sending {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.header.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 8, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.header.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s8, theme))) {
                     Circle()
                         .fill(statusColor)
                         .frame(width: 7, height: 7)
@@ -196,7 +196,7 @@ public struct VoiceInputOverlay: View {
     /// The transcript sits on the card itself, inset like the other cards'
     /// row content; a bordered box here read as an editable text field.
     private var transcriptionArea: some View {
-        return HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.transcriptionArea.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 2, theme))) {
+        return HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.transcriptionArea.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s2, theme))) {
             // hide live transcription jitter while recording
             if state == .recording || visibleFullText.isEmpty {
                 Text("Speak now…", bundle: .module)
@@ -223,7 +223,7 @@ public struct VoiceInputOverlay: View {
         }.catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.transcriptionArea.horizontalGap")
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.transcriptionArea.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", PickerCardMetrics.rowInset, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.transcriptionArea.paddingX")
-        .padding(.top, 4)
+        .padding(.top, theme.space.s4)
     }
 
     // MARK: - Action Area
@@ -236,7 +236,7 @@ public struct VoiceInputOverlay: View {
 
         case .recording:
             // Recording controls
-            HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.actionArea.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 10, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.actionArea.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s10, theme))) {
                 // Edit transfers the transcript to the text input.
                 PickerCardTextLink(title: L("Edit"), icon: "pencil", fillsWidth: false) { onEdit?() }
                     .opacity(visibleFullText.isEmpty ? 0.5 : 1)
@@ -281,15 +281,14 @@ public struct VoiceInputOverlay: View {
 
         case .sending:
             // processing indicator (LLM cleanup runs here)
-            HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.actionArea.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 8, theme))) {
-                ProgressView()
-                    .controlSize(.small)
+            HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.actionArea.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s8, theme))) {
+                SettingsSpinner()
                 Text("Processing...", bundle: .module)
                     .componentInspectionText(45, role: .body, fallback: .bodySmall, theme: theme)
                     .foregroundStyle(theme.text.secondary)
             }.catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.actionArea.horizontalGap2")
             .frame(maxWidth: .infinity)
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.actionArea.paddingY", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 10, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.actionArea.paddingY")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.voiceInputOverlay.actionArea.paddingY", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.45.elements.layout.voiceInputOverlay.actionArea.paddingY")
         }
     }
 
@@ -323,14 +322,14 @@ struct VoiceOverlayIconButton: View {
     let action: () -> Void
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     @State private var hovered = false
 
     var body: some View {
         let size = NativeComponentInspectionStyle.metric(45, "height", 24, theme)
         Button(action: action) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundStyle(hovered ? theme.text.primary : theme.text.tertiary)
                 .frame(width: size, height: size)
                 .componentInspectionSurface(45, background: hovered ? theme.surface.hover : .clear, radius: 12)
@@ -349,7 +348,7 @@ struct VoiceOverlayIconButton: View {
 private struct BlinkingCursor: ViewModifier {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     @State private var visible = true
 
     func body(content: Content) -> some View {

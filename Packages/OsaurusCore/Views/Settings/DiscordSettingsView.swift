@@ -111,7 +111,7 @@ struct DiscordSettingsView: View {
                     connect: connectNewAccount)
                 : nil
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch AgentChannelProviderSetupSection(rawValue: sectionId) {
                 case .connect:
                     connectSectionContent
@@ -233,7 +233,7 @@ struct DiscordSettingsView: View {
     // MARK: - Connect section
 
     private var connectSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             if !isPendingAccount {
                 ChannelAccountNameField(connectionId: connectionId, kind: .discord)
             }
@@ -279,7 +279,7 @@ struct DiscordSettingsView: View {
     }
 
     private var accessSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             stepAccessSection
             advancedSection
         }
@@ -290,7 +290,7 @@ struct DiscordSettingsView: View {
     }
 
     private var sendingSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             sendingSection
             ChannelPostingSection(kind: .discord, connectionId: connectionId)
         }
@@ -303,7 +303,7 @@ struct DiscordSettingsView: View {
     // MARK: - Guided setup steps
 
     private var stepCreateBotSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Create the bot app"))
 
             AgentChannelSetupLink(
@@ -322,7 +322,7 @@ struct DiscordSettingsView: View {
     }
 
     private var stepTokenSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Paste the bot token"))
 
             Text(
@@ -352,7 +352,7 @@ struct DiscordSettingsView: View {
     }
 
     private var stepInviteSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Invite the bot to your server"))
 
             if let inviteURL = botInviteURL {
@@ -382,7 +382,7 @@ struct DiscordSettingsView: View {
     }
 
     private var stepAccessSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Choose channels and senders"))
 
             SettingsRow(
@@ -428,7 +428,7 @@ struct DiscordSettingsView: View {
 
     private var sendingSection: some View {
         SettingsFieldRow(label: "Sending") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 SettingsToggle(
                     title: "Allow Sending on Discord",
                     description: "Let agents post to write-allowlisted Discord destinations. The global Sending switch in Channels must also be on.",
@@ -451,7 +451,7 @@ struct DiscordSettingsView: View {
 
 
     private var stepVerifySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Verify an incoming message"))
 
             Text(
@@ -505,7 +505,7 @@ struct DiscordSettingsView: View {
 
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 AgentChannelMultilineSettingsField(
                     title: L("Server IDs"),
                     text: $guildIdsText,
@@ -556,7 +556,7 @@ struct DiscordSettingsView: View {
             },
             isSelected: { $0.isSelected }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Channels", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -593,10 +593,10 @@ struct DiscordSettingsView: View {
         _ channel: DiscordChannel,
         access: AgentChannelReadWriteSelection
     ) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "number")
                 .foregroundColor(theme.text.secondary)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(channel.displayName)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.primary)
@@ -628,7 +628,7 @@ struct DiscordSettingsView: View {
             state: { allowedIds.contains($0.id) },
             isSelected: { $0 }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Authorized Senders", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -656,7 +656,7 @@ struct DiscordSettingsView: View {
 
     private func discordMemberRow(_ member: DiscordGuildMember, allowed: Bool) -> some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(member.displayName)
                     .font(SettingsFont.smallLabel)
                     .lineLimit(1)

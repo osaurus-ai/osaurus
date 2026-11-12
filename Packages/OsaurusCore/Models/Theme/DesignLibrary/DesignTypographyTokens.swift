@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import Foundation
 
 enum DesignTypographyTokens {
@@ -31,4 +30,3 @@ enum DesignTypographyTokens {
         return doc
     }
 }
-#endif

@@ -141,11 +141,11 @@ struct ChatHistoryPaneView: View {
 
     var body: some View {
         let runs = agentRuns
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             // Header: the scope on the left (whose history this is — the
             // agent of the tab on screen), the Chats tab's actions on the
             // right. Same row the File Changes pane puts its summary in.
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 scopeLabel
                 Spacer(minLength: 8)
                 if windowState.historyTab == .chats {
@@ -158,9 +158,9 @@ struct ChatHistoryPaneView: View {
                     .accessibilityLabel(Text("Import Conversations", bundle: .module))
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 2)
-            .padding(.bottom, 4)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.top, theme.space.s2)
+            .padding(.bottom, theme.space.s4)
             .frame(minHeight: 32)
 
             InspectorSubTabBar(
@@ -171,7 +171,7 @@ struct ChatHistoryPaneView: View {
                 ],
                 horizontalPadding: 16
             )
-            .padding(.bottom, 10)
+            .padding(.bottom, theme.space.s10)
 
             switch windowState.historyTab {
             case .chats: chatsList
@@ -182,7 +182,7 @@ struct ChatHistoryPaneView: View {
                     isLoaded: runStore.recentPersisted != nil,
                     onSelectSession: onSelect
                 )
-                .padding(.horizontal, 12)
+                .padding(.horizontal, theme.space.s12)
                 .frame(maxHeight: .infinity, alignment: .top)
             }
         }
@@ -235,7 +235,7 @@ struct ChatHistoryPaneView: View {
             listMaxHeight: nil,
             searchAccessory: AnyView(filterButton)
         )
-        .padding(.horizontal, 12)
+        .padding(.horizontal, theme.space.s12)
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
@@ -245,11 +245,11 @@ struct ChatHistoryPaneView: View {
     /// scoped to, not a control (pick agents in the sidebar). The counts
     /// sit on the Chats and Runs tabs.
     private var scopeLabel: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             AgentAvatarView(
                 mascotId: agent?.avatar,
                 name: agent?.displayName ?? "",
-                tint: agentColorFor(agent?.name ?? ""),
+                tint: theme.dataInk(seed: agent?.name ?? ""),
                 diameter: 16,
                 customImageURL: agent?.customAvatarURL,
                 monogramFontSize: 7,
@@ -261,7 +261,7 @@ struct ChatHistoryPaneView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .padding(.leading, 4)
+        .padding(.leading, theme.space.s4)
         .accessibilityElement(children: .combine)
     }
 
@@ -294,7 +294,7 @@ struct ChatHistoryPaneView: View {
         return Button {
             showSourcePicker.toggle()
         } label: {
-            HStack(alignment: .center, spacing: 4) {
+            HStack(alignment: .center, spacing: theme.space.s4) {
                 Image(
                     systemName: isActive
                         ? "line.3.horizontal.decrease.circle.fill"
@@ -308,7 +308,7 @@ struct ChatHistoryPaneView: View {
                 }
             }
             .foregroundColor(isActive || isRaised ? theme.text.primary : theme.text.secondary)
-            .padding(.horizontal, 7)
+            .padding(.horizontal, theme.space.s6)
             // Matches the search field's height so the row reads as one.
             .frame(minHeight: 28)
             .background(
@@ -578,12 +578,12 @@ private struct ChatHistoryFilterPicker: View {
         // Estimate used only until the first measurement lands.
         let estimatedHeight = CGFloat(rowCount) * Self.rowHeight + Self.chromeHeight + 28
         let measuredHeight = headerHeight + 1 + min(listHeight, Self.maxListHeight)
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
                 .measureHeight($headerHeight)
             Divider().background(theme.border.subtle)
             ScrollView {
-                VStack(spacing: 2) {
+                VStack(spacing: theme.space.s2) {
                     ForEach(sources, id: \.self) { source in
                         FilterPickerRow(
                             icon: source.iconName,
@@ -659,8 +659,8 @@ private struct ChatHistoryFilterPicker: View {
 
                     Divider()
                         .background(theme.border.subtle)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, theme.space.s12)
+                        .padding(.vertical, theme.space.s4)
                     FilterPickerRow(
                         icon: showArchived ? "archivebox.fill" : "archivebox",
                         title: Text("Archived", bundle: .module),
@@ -671,7 +671,7 @@ private struct ChatHistoryFilterPicker: View {
                         }
                     )
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, theme.space.s6)
                 .measureHeight($listHeight)
             }
             .scrollIndicators(.automatic)
@@ -791,7 +791,7 @@ private struct ChatHistoryFilterPicker: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Text("Filters", bundle: .module)
                 .textStyle(.label, weight: 600)
                 .foregroundColor(theme.text.primary)
@@ -799,8 +799,8 @@ private struct ChatHistoryFilterPicker: View {
             Text("\(activeCount)")
                 .textStyle(.footnote, weight: 500)
                 .foregroundColor(activeCount > 0 ? theme.status.info.foreground : theme.text.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s2)
                 .background(
                     Capsule().fill(activeCount > 0 ? theme.status.info.background : theme.surface.raised)
                 )
@@ -819,8 +819,8 @@ private struct ChatHistoryFilterPicker: View {
                 .pointingHandCursor()
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, theme.space.s14)
+        .padding(.vertical, theme.space.s12)
     }
 }
 
@@ -855,11 +855,11 @@ private struct FilterPickerRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 ZStack {
                     Circle().fill(isSelected ? theme.surface.pressed : theme.surface.raised)
                     Image(systemName: icon)
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
                 }
                 .frame(width: 22, height: 22)
@@ -871,8 +871,8 @@ private struct FilterPickerRow: View {
                 Text("\(count)")
                     .textStyle(.micro, weight: 500)
                     .foregroundColor(isSelected ? theme.text.secondary : theme.text.tertiary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1.5)
+                    .padding(.horizontal, theme.space.s6)
+                    .padding(.vertical, theme.space.s2)
                     .background(
                         Capsule().fill(isSelected ? theme.surface.pressed : theme.surface.raised)
                     )
@@ -880,12 +880,12 @@ private struct FilterPickerRow: View {
                     trailing
                 } else if isSelected {
                     Image(systemName: "checkmark")
-                        .glyphSize(10, weight: .bold)
+                        .glyphSize(.micro, weight: .bold)
                         .foregroundColor(theme.text.primary)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s6)
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.small)
                     .fill(
@@ -894,7 +894,11 @@ private struct FilterPickerRow: View {
                             : ((isHovering || isHighlighted) ? theme.surface.hover : Color.clear)
                     )
             )
-            .padding(.horizontal, 6)
+            .overlay(
+                RoundedRectangle(cornerRadius: theme.radius.small)
+                    .strokeBorder(isSelected ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
+            )
+            .padding(.horizontal, theme.space.s6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -974,7 +978,7 @@ private struct FilterSubmenuRow: View {
             isSelected: !selectedIds.isEmpty,
             trailing: AnyView(
                 Image(systemName: "chevron.right")
-                    .glyphSize(9, weight: .bold)
+                    .glyphSize(.tiny, weight: .bold)
                     .foregroundColor(!selectedIds.isEmpty ? theme.text.primary : theme.text.tertiary)
             ),
             isHighlighted: isOpen,
@@ -989,13 +993,13 @@ private struct FilterSubmenuRow: View {
 
     private var submenu: some View {
         ScrollView {
-            LazyVStack(spacing: 2) {
+            LazyVStack(spacing: theme.space.s2) {
                 if choices.isEmpty {
                     emptyText
                         .textStyle(.caption)
                         .foregroundColor(theme.text.secondary)
                         .frame(maxWidth: .infinity, minHeight: Self.rowHeight)
-                        .padding(.horizontal, 12)
+                        .padding(.horizontal, theme.space.s12)
                 }
                 ForEach(choices) { choice in
                     FilterPickerRow(
@@ -1010,7 +1014,7 @@ private struct FilterSubmenuRow: View {
                     )
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, theme.space.s6)
         }
         // Automatic, not hidden: the bar appears only when the list is
         // taller than the cap. The frame matches the content exactly (rows

@@ -1039,19 +1039,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         ]
 
         var body: some View {
-            VStack(spacing: 20) {
+            VStack(spacing: theme.space.s20) {
                 // Leading-aligned + fixed-width icons so the symbols form a
                 // tidy column; `fixedSize` shrinks the block to its widest row
                 // so the outer frame can center it as a unit.
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: theme.space.s14) {
                     ForEach(points) { point in
-                        HStack(spacing: 12) {
+                        HStack(spacing: theme.space.s12) {
                             Image(systemName: point.icon)
-                                .font(.system(size: 14, weight: .medium))
+                                .glyphSize(.body, weight: .medium)
                                 .foregroundColor(theme.text.link)
                                 .frame(width: 22)
                             Text(point.text, bundle: .module)
-                                .font(.system(size: 12.5))
+                                .font(SettingsFont.caption)
                                 .foregroundColor(theme.text.secondary)
                         }
                     }
@@ -1059,12 +1059,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 .fixedSize(horizontal: true, vertical: false)
 
                 Text("You can change this anytime in Settings → Privacy.", bundle: .module)
-                    .font(.system(size: 11))
+                    .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.tertiary)
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
-            .padding(.top, 6)
+            .padding(.top, theme.space.s6)
         }
     }
 
@@ -1957,13 +1957,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             button.action = #selector(togglePopover(_:))
 
             // Green blinking dot — server is generating.
-            activityDot = makeStatusDot(in: button, color: .systemGreen, corner: .bottomTrailing)
+            activityDot = makeStatusDot(in: button, status: .success, corner: .bottomTrailing)
 
             // Blue/red pulse — VAD listening / error.
-            vadDot = makeStatusDot(in: button, color: .systemBlue, corner: .topTrailing)
+            vadDot = makeStatusDot(in: button, status: .info, corner: .topTrailing)
         }
         statusItem = item
         updateStatusItemAndMenu()
+    }
+
+    /// Status ink for the menu-bar dots. The menu bar follows the system
+    /// appearance, not the app theme, so the built-in library seed for the
+    /// view's effective appearance supplies the color.
+    private static func menuBarInk(_ kind: ThemeStatusKind, for view: NSView) -> CGColor {
+        let dark = view.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let set = (dark ? ThemeSemanticColors.darkDefaults : ThemeSemanticColors.lightDefaults).status[kind]
+        return NSColor(Color(themeHex: set.ink ?? set.foreground)).cgColor
     }
 
     /// Creates a 7x7 circular overlay view anchored to one corner of `button`.
@@ -1971,7 +1980,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// `updateStatusItemAndMenu`.
     private func makeStatusDot(
         in button: NSStatusBarButton,
-        color: NSColor,
+        status: ThemeStatusKind,
         corner: StatusDotCorner
     ) -> NSView {
         let dot = NSView()
@@ -1999,10 +2008,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         NSLayoutConstraint.activate(constraints)
 
         if let layer = dot.layer {
-            layer.backgroundColor = color.cgColor
+            layer.backgroundColor = Self.menuBarInk(status, for: button)
             layer.cornerRadius = side / 2
             layer.borderWidth = 1
-            layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
+            layer.borderColor = FixedPalette.onMediaNS.withAlphaComponent(0.9).cgColor
         }
         return dot
     }
@@ -2164,7 +2173,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 case .listening:
                     vDot.isHidden = false
                     if let layer = vDot.layer {
-                        layer.backgroundColor = NSColor.systemBlue.cgColor
+                        layer.backgroundColor = Self.menuBarInk(.info, for: vDot)
                         // Add pulse animation for listening state
                         if layer.animation(forKey: "vadPulse") == nil {
                             let anim = CABasicAnimation(keyPath: "opacity")
@@ -2181,7 +2190,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 case .error:
                     vDot.isHidden = false
                     if let layer = vDot.layer {
-                        layer.backgroundColor = NSColor.systemRed.cgColor
+                        layer.backgroundColor = Self.menuBarInk(.error, for: vDot)
                         layer.removeAnimation(forKey: "vadPulse")
                     }
                     tooltip += " — Voice: Error"

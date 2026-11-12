@@ -14,13 +14,9 @@ import SwiftUI
 struct DatabaseHistoryView: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-#if OSAURUS_DESIGN_SYSTEM
     var inspectionTheme: (any ThemeProtocol)?
-#endif
     private var theme: any ThemeProtocol {
-#if OSAURUS_DESIGN_SYSTEM
         if let value = inspectionTheme { return value }
-#endif
         return inheritedTheme
     }
 
@@ -58,7 +54,7 @@ struct DatabaseHistoryView: View {
 
     @ViewBuilder
     private var runsList: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             HStack {
                 Text("Runs", bundle: .module)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
@@ -68,7 +64,7 @@ struct DatabaseHistoryView: View {
                     Task { await loadRuns() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                 }
                 .buttonStyle(.borderless)
             }
@@ -76,7 +72,7 @@ struct DatabaseHistoryView: View {
             .padding(.vertical, theme.space.s8)
             Divider().foregroundColor(theme.border.subtle)
             if isLoadingRuns {
-                ProgressView().padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
+                SettingsSpinner(size: .large).padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
             } else if runs.isEmpty {
                 Text(
                     "No runs yet. When the agent works on a schedule or automation, each run shows up here.",
@@ -162,12 +158,12 @@ struct DatabaseHistoryView: View {
 
     @ViewBuilder
     private var tracePane: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if let runId = selectedRunId, let run = runs.first(where: { $0.id == runId }) {
                 traceHeader(for: run)
                 Divider().foregroundColor(theme.border.subtle)
                 if isLoadingTrace {
-                    ProgressView().padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
+                    SettingsSpinner(size: .large).padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
                 } else if changelogRows.isEmpty {
                     Text("No database changes were recorded for this run.", bundle: .module)
                         .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
@@ -175,7 +171,7 @@ struct DatabaseHistoryView: View {
                         .padding(.horizontal, theme.space.s24).padding(.vertical, theme.space.s24)
                 } else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                             ForEach(changelogRows) { row in
                                 changelogRowView(row)
                             }
@@ -195,7 +191,7 @@ struct DatabaseHistoryView: View {
 
     @ViewBuilder
     private func traceHeader(for run: OsaurusTask) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s6) {
+        SettingsRowText(compact: true) {
             HStack(spacing: theme.space.s6) {
                 statusIcon(for: run.state)
                 Text(run.state.displayName)
@@ -212,28 +208,30 @@ struct DatabaseHistoryView: View {
                         .foregroundColor(theme.text.tertiary)
                 }
             }
-            if let error = run.lastError, !error.isEmpty {
-                Text(error)
-                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
-                    .foregroundColor(theme.status.error.foreground)
+        } description: {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                if let error = run.lastError, !error.isEmpty {
+                    Text(error)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.status.error.foreground)
+                        .lineLimit(3)
+                }
+                HStack(spacing: theme.space.s12) {
+                    if let tin = run.result?.tokensIn {
+                        statBadge(label: "in", value: "\(tin)")
+                    }
+                    if let tout = run.result?.tokensOut {
+                        statBadge(label: "out", value: "\(tout)")
+                    }
+                    if let cost = run.result?.costUSD {
+                        statBadge(label: "$", value: String(format: "%.4f", cost))
+                    }
+                    Spacer()
+                }
+                Text(run.title)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                     .lineLimit(3)
             }
-            HStack(spacing: theme.space.s12) {
-                if let tin = run.result?.tokensIn {
-                    statBadge(label: "in", value: "\(tin)")
-                }
-                if let tout = run.result?.tokensOut {
-                    statBadge(label: "out", value: "\(tout)")
-                }
-                if let cost = run.result?.costUSD {
-                    statBadge(label: "$", value: String(format: "%.4f", cost))
-                }
-                Spacer()
-            }
-            Text(run.title)
-                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-                .foregroundColor(theme.text.tertiary)
-                .lineLimit(3)
         }
         .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)

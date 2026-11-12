@@ -18,26 +18,24 @@ import SwiftUI
 /// card icon and the primary Install action — those use the app accent.
 enum ClaudeMarketplacePalette {
     /// Calm, desaturated category tint for the badge.
-    static func color(for categoryKey: String) -> Color {
-        let hue: Double
+    static func color(for categoryKey: String, theme: any ThemeProtocol) -> Color {
+        let ink: DataInk
         switch categoryKey {
-        case "development": hue = 0.58
-        case "productivity": hue = 0.09
-        case "database": hue = 0.48
-        case "security": hue = 0.99
-        case "monitoring": hue = 0.78
-        case "design": hue = 0.92
-        case "deployment": hue = 0.38
-        case "testing": hue = 0.68
-        case "learning": hue = 0.52
-        case "location": hue = 0.44
-        case "math": hue = 0.13
-        case ClaudeMarketplaceCategory.otherKey:
-            return Color(hue: 0, saturation: 0, brightness: 0.6)
-        default:
-            hue = Double(abs(categoryKey.hashValue % 360)) / 360.0
+        case "development": ink = .blue
+        case "productivity": ink = .orange
+        case "database": ink = .teal
+        case "security": ink = .red
+        case "monitoring": ink = .purple
+        case "design": ink = .pink
+        case "deployment": ink = .green
+        case "testing": ink = .indigo
+        case "learning": ink = .cyan
+        case "location": ink = .teal
+        case "math": ink = .orange
+        case ClaudeMarketplaceCategory.otherKey: ink = .gray
+        default: return theme.dataInk(seed: categoryKey)
         }
-        return Color(hue: hue, saturation: 0.32, brightness: 0.72)
+        return theme.dataInk(ink)
     }
 }
 
@@ -62,7 +60,7 @@ struct ClaudeMarketplaceCard: View {
     /// Calm app accent drives the icon + primary action on every card.
     private var accent: Color { theme.action.primary.default.background }
     /// Muted per-category tint, used only for the small category badge.
-    private var categoryColor: Color { ClaudeMarketplacePalette.color(for: categoryKey) }
+    private var categoryColor: Color { ClaudeMarketplacePalette.color(for: categoryKey, theme: theme) }
 
     /// Precomputed importable component summary (skills / agents / commands /
     /// MCP) for this plugin, from the bundled catalog. Drives the at-a-glance

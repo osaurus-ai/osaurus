@@ -41,7 +41,7 @@ struct AuthenticationSection: View {
             }
 
             SettingsFieldRow(label: "Planned Controls") {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     ServerSettingsPlannedBanner(
                         blurb:
                             "Saved today; the request pipeline will start enforcing these in a follow-up."
@@ -81,9 +81,9 @@ struct AuthenticationSection: View {
     }
 
     private var noAccessKeysWarning: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.status.warning.foreground)
             Text(
                 "No access keys exist yet, so local tools calling these routes will get 401. Create a key in the Server → Overview tab.",
@@ -96,22 +96,19 @@ struct AuthenticationSection: View {
     }
 
     private var accessKeyCallout: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: "key.horizontal")
-                .glyphSize(16, weight: .semibold)
+                .glyphSize(.medium, weight: .semibold)
                 .foregroundColor(theme.text.link)
                 .padding(.top, theme.space.s2)
-            VStack(alignment: .leading, spacing: 4) {
+            SettingsRowText(compact: true) {
                 Text("API access keys", bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 Text(
                     "Manage keys in the Server → Overview tab. They are stored in the macOS Keychain and never leave this device.",
                     bundle: .module
                 )
-                .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             ServerSettingsStatusBadge(status: .hostOwned)

@@ -237,15 +237,13 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
 
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 sectionRail
 
-                Rectangle()
-                    .fill(theme.border.subtle)
-                    .frame(width: 1)
+                ThemeHairlineDivider(axis: .vertical)
 
                 ScrollView {
                     contentBuilder(selection)
@@ -268,17 +266,9 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             if let onBack {
-                Button(action: onBack) {
-                    Image(systemName: "chevron.left")
-                        .glyphSize(12, weight: .semibold)
-                        .foregroundColor(theme.text.secondary)
-                        .frame(width: 28, height: 28)
-                        .background(Circle().fill(theme.surface.hover))
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help(Text("Back to channel choices", bundle: .module))
+                SettingsIconButton("chevron.left", help: "Back to channel choices", size: .compact, action: onBack)
             }
 
             ZStack {
@@ -291,12 +281,12 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
                         )
                     )
                 Image(systemName: icon)
-                    .glyphSize(17, weight: .semibold)
+                    .glyphSize(.large, weight: .semibold)
                     .foregroundColor(FixedPalette.onMedia)
             }
             .frame(width: 40, height: 40)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(title)
                     .font(SettingsFont.detailTitle)
                     .foregroundColor(theme.text.primary)
@@ -317,7 +307,7 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
     }
 
     private var sectionRail: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             ForEach(Array(displayedSections.enumerated()), id: \.element.id) { index, section in
                 railRow(section, number: index + 1)
             }
@@ -337,7 +327,7 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
                 selection = section.id
             }
         } label: {
-            HStack(spacing: 9) {
+            HStack(spacing: theme.space.s8) {
                 Group {
                     if isEditing {
                         tabIndicator(section, status: status, isSelected: isSelected)
@@ -347,7 +337,7 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
                 }
                 .frame(width: 20, height: 20)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(section.title)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
@@ -379,7 +369,7 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
         _ section: AgentChannelSetupSection, status: AgentChannelSetupSectionStatus, isSelected: Bool
     ) -> some View {
         Image(systemName: status == .attention ? "exclamationmark.triangle.fill" : section.icon)
-            .glyphSize(11, weight: .semibold)
+            .glyphSize(.footnote, weight: .semibold)
             .foregroundColor(
                 status == .attention
                     ? theme.status.warning.foreground : isSelected ? theme.text.primary : theme.text.tertiary
@@ -394,11 +384,11 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
             switch status {
             case .complete:
                 Image(systemName: "checkmark")
-                    .glyphSize(9, weight: .bold)
+                    .glyphSize(.tiny, weight: .bold)
                     .foregroundColor(theme.status.success.foreground)
             case .attention:
                 Image(systemName: "exclamationmark")
-                    .glyphSize(9, weight: .bold)
+                    .glyphSize(.tiny, weight: .bold)
                     .foregroundColor(theme.status.warning.foreground)
             case .pending:
                 Text("\(number)")
@@ -417,11 +407,11 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
     }
 
     private var footerBar: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             statusBar
 
             if let pendingAccount {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Spacer()
                     Button {
                         dismiss()
@@ -448,16 +438,14 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
         .background(
             theme.surface.subtle
                 .overlay(
-                    Rectangle()
-                        .fill(theme.border.subtle)
-                        .frame(height: 1),
+                    ThemeHairlineDivider(),
                     alignment: .top
                 )
         )
     }
 
     private var navigationFooter: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             footerLeading
 
             Spacer()
@@ -480,10 +468,10 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
                             selection = next
                         }
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: theme.space.s4) {
                             Text("Continue", bundle: .module)
                             Image(systemName: "chevron.right")
-                                .glyphSize(10, weight: .semibold)
+                                .glyphSize(.micro, weight: .semibold)
                         }
                     }
                     .assignedSettingsButtonStyle()
@@ -500,6 +488,7 @@ struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: 
 /// Footer button with a built-in busy spinner, used for Save / Test actions
 /// in channel sheets.
 struct AgentChannelSheetActionButton: View {
+    @Environment(\.theme) private var theme
     let title: String
     let busyTitle: String
     let isBusy: Bool
@@ -509,12 +498,9 @@ struct AgentChannelSheetActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 if isBusy {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.6)
-                        .frame(width: 12, height: 12)
+                    SettingsSpinner(size: .mini)
                 }
                 Text(LocalizedStringKey(isBusy ? busyTitle : title), bundle: .module)
             }
@@ -554,8 +540,8 @@ struct AgentChannelSecretField: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s6) {
                 Text(LocalizedStringKey(label), bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.tertiary)
@@ -572,9 +558,9 @@ struct AgentChannelSecretField: View {
                 Spacer()
 
                 if saved {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "lock.fill")
-                            .glyphSize(9)
+                            .glyphSize(.tiny)
                         Text("Stored in Keychain", bundle: .module)
                             .font(SettingsFont.footnote)
                     }
@@ -656,7 +642,7 @@ struct AgentChannelPluginPreloadOverflowNotice: View {
                 .fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .glyphSize(10)
+                    .glyphSize(.micro)
             }
             .foregroundColor(themeManager.currentTheme.status.warning.foreground)
         }
@@ -682,13 +668,13 @@ struct AgentChannelCopyableCommand: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             if let caption, lineLimit > 1 {
                 Text(LocalizedStringKey(caption), bundle: .module)
                     .font(SettingsFont.footnote)
                     .foregroundColor(theme.text.tertiary)
             }
-            HStack(alignment: lineLimit > 1 ? .top : .center, spacing: 8) {
+            HStack(alignment: lineLimit > 1 ? .top : .center, spacing: theme.space.s8) {
                 Text(command)
                     .font(SettingsFont.monoSmall)
                     .foregroundColor(theme.text.primary)
@@ -707,7 +693,7 @@ struct AgentChannelCopyableCommand: View {
                     onCopied?()
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .glyphSize(10, weight: .medium)
+                        .glyphSize(.micro, weight: .medium)
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(theme.text.link)
@@ -732,6 +718,7 @@ struct AgentChannelCopyableCommand: View {
 /// Accent-colored external link for "where do I create this bot" guidance,
 /// mirroring the provider setup links on the Providers tab.
 struct AgentChannelSetupLink: View {
+    @Environment(\.theme) private var theme
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let title: String
@@ -743,9 +730,9 @@ struct AgentChannelSetupLink: View {
                 NSWorkspace.shared.open(url)
             #endif
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "link.circle.fill")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                 Text(LocalizedStringKey(title), bundle: .module)
                     .font(SettingsFont.smallLabel)
             }
@@ -769,7 +756,7 @@ struct AgentChannelMultilineSettingsField: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text(LocalizedStringKey(title), bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.primary)
@@ -814,10 +801,10 @@ struct AgentChannelInlineStatusMessage: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(tint)
                 Text(message)
                     .font(SettingsFont.caption)
@@ -827,9 +814,9 @@ struct AgentChannelInlineStatusMessage: View {
             }
 
             ForEach(details, id: \.self) { detail in
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "arrow.turn.down.right")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .padding(.top, theme.space.s2)
                     Text(detail)

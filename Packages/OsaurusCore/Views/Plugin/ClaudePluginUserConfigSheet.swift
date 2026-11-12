@@ -30,10 +30,10 @@ struct ClaudePluginUserConfigSheet: View {
     @State private var hasAppeared: Bool = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     infoCard
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 10)
@@ -65,9 +65,9 @@ struct ClaudePluginUserConfigSheet: View {
     }
 
     private var infoCard: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Image(systemName: "info.circle.fill")
-                .glyphSize(16)
+                .glyphSize(.medium)
                 .foregroundColor(theme.status.info.foreground)
             Text(
                 "This plugin declared configuration options. Non-sensitive values are stored locally; sensitive ones are kept in the system Keychain.",
@@ -83,12 +83,10 @@ struct ClaudePluginUserConfigSheet: View {
     }
 
     private var fieldsForm: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             ForEach(Array(fields.enumerated()), id: \.element.key) { index, field in
                 if index > 0 {
-                    Rectangle()
-                        .fill(theme.border.default)
-                        .frame(height: 1)
+                    ThemeHairlineDivider()
                         .padding(.horizontal, theme.space.s16)
                 }
                 UserConfigFieldRow(
@@ -190,8 +188,8 @@ private struct UserConfigFieldRow: View {
     @State private var isFocused = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(spacing: theme.space.s6) {
                 Text(field.title)
                     .font(SettingsFont.sectionTitle)
                     .foregroundColor(theme.text.primary)
@@ -249,7 +247,7 @@ private struct UserConfigFieldRow: View {
                 Spacer()
             }
         case .directory, .file:
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 placeholderTextField
                 Button(action: pickPath) {
                     Label(L("Choose…"), systemImage: "folder")

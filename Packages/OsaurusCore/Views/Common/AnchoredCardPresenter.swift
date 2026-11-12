@@ -201,11 +201,9 @@ private struct AnchoredCardAnchor<Card: View>: NSViewRepresentable {
     func updateNSView(_ view: AnchoredCardMarkerView, context: Context) {
         let coordinator = context.coordinator
         coordinator.isPresented = $isPresented
-        #if OSAURUS_DESIGN_SYSTEM
         // Read the binding during the view update so content actions such as
         // Done invalidate this bridge, even when the trigger has no active fill.
         coordinator.requestedVisibility = isPresented
-        #endif
         coordinator.requestedSize = size
         coordinator.accessibilityLabel = accessibilityLabel
         coordinator.rightToLeft = layoutDirection == .rightToLeft

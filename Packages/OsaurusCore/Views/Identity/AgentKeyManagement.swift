@@ -33,7 +33,7 @@ struct AgentKeyManagementRow: View {
     let accessKeys: [AccessKeyInfo]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             headerRow
             if isExpanded {
                 Divider()
@@ -50,14 +50,14 @@ struct AgentKeyManagementRow: View {
     // MARK: - Header (always visible)
 
     private var headerRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: "person.fill")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundColor(theme.text.link)
                 .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(agent.name)
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(theme.text.secondary)
@@ -106,7 +106,7 @@ struct AgentKeyManagementRow: View {
     // MARK: - Expansion (rotate / revoke + access keys)
 
     private var expansionBody: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if agent.agentAddress != nil {
                 rotateRevokeRow
                 accessKeysBlock
@@ -117,7 +117,7 @@ struct AgentKeyManagementRow: View {
     }
 
     private var rotateRevokeRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             SettingsButton(
                 .secondary,
                 "Rotate key",
@@ -141,9 +141,9 @@ struct AgentKeyManagementRow: View {
     }
 
     private var noAddressRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "info.circle")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.tertiary)
             Text("Generate an address for this agent first.", bundle: .module)
                 .font(SettingsFont.rowDescription)
@@ -153,14 +153,14 @@ struct AgentKeyManagementRow: View {
     }
 
     private var accessKeysBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Text("Access keys", bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.tertiary)
                 Spacer(minLength: 0)
                 Button(action: onGenerateAccessKey) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "plus")
                         Text("Generate", bundle: .module)
                     }
@@ -169,9 +169,9 @@ struct AgentKeyManagementRow: View {
             }
 
             if accessKeys.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "key.slash")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                         .foregroundColor(theme.text.tertiary)
                     Text("No access keys for this agent yet.", bundle: .module)
                         .font(SettingsFont.rowDescription)
@@ -189,14 +189,14 @@ struct AgentKeyManagementRow: View {
     }
 
     private func accessKeyRow(_ key: AccessKeyInfo) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "key.fill")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundColor(key.isActive ? theme.text.link : theme.text.tertiary)
                 .frame(width: 14)
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(key.label)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(key.isActive ? theme.text.primary : theme.text.tertiary)
@@ -208,7 +208,7 @@ struct AgentKeyManagementRow: View {
                         statusBadge("Active", color: theme.status.success.foreground)
                     }
                 }
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Text(key.prefix + "…")
                         .font(SettingsFont.monoSmall)
                         .foregroundColor(theme.text.tertiary)

@@ -10,6 +10,7 @@
 import SwiftUI
 
 struct AgentCreatorPage: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var chat: ChatWindowState
     let onBack: () -> Void
     let onDiscard: () -> Void
@@ -24,7 +25,7 @@ struct AgentCreatorPage: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsPageHeader(
                 title: draftName.isEmpty ? L("New Agent") : draftName,
                 verbatimTitle: true,

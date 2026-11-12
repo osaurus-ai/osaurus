@@ -90,7 +90,7 @@ struct ImportGuideSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             Text(
                 "Bring conversations from other AI apps into Osaurus and continue them with any model. Export your chats first:",
                 bundle: .module
@@ -99,9 +99,9 @@ struct ImportGuideSheet: View {
             .foregroundColor(theme.text.secondary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
-            .padding(.bottom, 12)
+            .padding(.bottom, theme.space.s12)
 
-            VStack(spacing: 6) {
+            VStack(spacing: theme.space.s6) {
                 ForEach(providers) { provider in
                     providerRow(provider)
                 }
@@ -115,12 +115,10 @@ struct ImportGuideSheet: View {
             .foregroundColor(theme.text.tertiary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
-            .padding(.top, 12)
+            .padding(.top, theme.space.s12)
 
-            Rectangle()
-                .fill(theme.border.subtle)
-                .frame(height: 1)
-                .padding(.top, 14)
+            ThemeHairlineDivider()
+                .padding(.top, theme.space.s14)
 
             HStack {
                 if showsSkipToggle {
@@ -134,34 +132,23 @@ struct ImportGuideSheet: View {
 
                 Spacer()
 
-                Button(action: onChooseFile) {
-                    Text("Choose File…", bundle: .module)
-                        .textStyle(.label, weight: 600)
-                        .foregroundColor(theme.action.primary.default.foreground)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                                .fill(theme.action.primary.default.background)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsButton(.primary, "Choose File…", action: onChooseFile)
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(.top, 12)
+            .padding(.top, theme.space.s12)
         }
         .frame(width: contentWidth)
     }
 
     private func providerRow(_ provider: Provider) -> some View {
         let isExpanded = expandedProviderId == provider.id
-        return VStack(alignment: .leading, spacing: 0) {
+        return VStack(alignment: .leading, spacing: theme.space.s0) {
             Button {
                 withAnimation(theme.motion.springAnimation) {
                     expandedProviderId = isExpanded ? nil : provider.id
                 }
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Text(provider.name)
                         .textStyle(.label, weight: 600)
                         .foregroundColor(theme.text.primary)
@@ -169,18 +156,18 @@ struct ImportGuideSheet: View {
                     Spacer()
 
                     Image(systemName: "chevron.right")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
                 .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
 
             if isExpanded {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
                     Text(provider.recipe, bundle: .module)
                         .textStyle(.caption)
                         .foregroundColor(theme.text.secondary)
@@ -192,15 +179,15 @@ struct ImportGuideSheet: View {
                             NSWorkspace.shared.open(url)
                         } label: {
                             Image(systemName: "arrow.up.right.square")
-                                .glyphSize(13, weight: .medium)
+                                .glyphSize(.label, weight: .medium)
                                 .foregroundColor(theme.text.link)
                         }
                         .buttonStyle(PlainButtonStyle())
                         .localizedHelp("Open export page")
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.bottom, theme.space.s10)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }

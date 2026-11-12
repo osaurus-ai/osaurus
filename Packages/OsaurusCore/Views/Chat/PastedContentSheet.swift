@@ -16,7 +16,7 @@ struct PastedContentSheet: View {
     var onSave: ((String) -> Void)? = nil
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(24, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(24) }
     @State private var draft: String = ""
     @State private var didInit: Bool = false
     /// Cached extracted text for spillover (`documentRef`) attachments, whose
@@ -47,7 +47,7 @@ struct PastedContentSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             Divider()
             contentBody
@@ -83,7 +83,7 @@ struct PastedContentSheet: View {
     }
 
     private var footer: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.footer.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(24, "gap", 8, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.footer.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(24, "gap", theme.space.s8, theme))) {
             Spacer()
             Button(localized: "Cancel", action: onDismiss)
                 .keyboardShortcut(.cancelAction)
@@ -94,8 +94,8 @@ struct PastedContentSheet: View {
             .keyboardShortcut(.defaultAction)
             .assignedSettingsButtonStyle(.primary)
         }.catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.footer.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.footer.paddingX", inheriting: NativeComponentInspectionStyle.metric(24, "padding", 16, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.footer.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.footer.paddingY", inheriting: NativeComponentInspectionStyle.metric(24, "padding", 12, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.footer.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.footer.paddingX", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.footer.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.footer.paddingY", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.footer.paddingY")
     }
 
     /// Body style, the same one the chat composer uses, so pasted text reads
@@ -108,7 +108,7 @@ struct PastedContentSheet: View {
                 .textStyle(.body)
                 .foregroundColor(theme.text.primary)
                 .scrollContentBackground(.hidden)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(24, "padding", 12, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(24, "padding", 12, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.horizontal").catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.vertical")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s12, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.horizontal").catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding.vertical")
         } else {
             ScrollView {
                 Text(originalContent)
@@ -116,7 +116,7 @@ struct PastedContentSheet: View {
                     .foregroundColor(theme.text.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.horizontal", inheriting: NativeComponentInspectionStyle.metric(24, "padding", 16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.vertical", inheriting: NativeComponentInspectionStyle.metric(24, "padding", 16, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.horizontal").catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.vertical")
+                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.horizontal", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.vertical", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.horizontal").catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.contentBody.padding2.vertical")
             }
         }
     }
@@ -134,8 +134,8 @@ struct PastedContentSheet: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(24, "gap", 12, theme))) {
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.verticalGap", inheriting: NativeComponentInspectionStyle.metric(24, "gap", 4, theme))) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(24, "gap", theme.space.s12, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.verticalGap", inheriting: NativeComponentInspectionStyle.metric(24, "gap", theme.space.s4, theme))) {
                 titleText
                     .componentInspectionText(24, role: .heading, fallback: .body, weight: 600, theme: theme)
                     .foregroundColor(theme.text.primary)
@@ -151,31 +151,13 @@ struct PastedContentSheet: View {
             }.catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.verticalGap")
             Spacer(minLength: 8)
             if !isEditable {
-                Button(action: copyContent) {
-                    Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
-                        .glyphSize(11, weight: .bold)
-                        .foregroundColor(didCopy ? theme.status.success.foreground : theme.text.secondary)
-                        .padding(6)
-                        .background(
-                            Circle().fill(theme.surface.subtle)
-                        )
-                }
-                .buttonStyle(.plain)
+                SettingsIconButton(didCopy ? "checkmark" : "doc.on.doc", help: "Copy", size: .compact, action: copyContent)
                 .localizedHelp("Copy")
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .glyphSize(11, weight: .bold)
-                        .foregroundColor(theme.text.secondary)
-                        .padding(6)
-                        .background(
-                            Circle().fill(theme.surface.subtle)
-                        )
-                }
-                .buttonStyle(.plain)
+                SettingsIconButton("xmark", help: "Close", size: .compact, action: onDismiss)
                 .keyboardShortcut(.cancelAction)
             }
         }.catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.paddingX", inheriting: NativeComponentInspectionStyle.metric(24, "padding", 16, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.paddingY", inheriting: NativeComponentInspectionStyle.metric(24, "padding", 12, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.paddingX", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.pastedContentSheet.header.paddingY", inheriting: NativeComponentInspectionStyle.metric(24, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.24.elements.layout.pastedContentSheet.header.paddingY")
     }
 }

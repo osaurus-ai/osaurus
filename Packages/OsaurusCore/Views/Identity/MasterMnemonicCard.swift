@@ -48,8 +48,8 @@ struct MasterMnemonicCard: View {
         // 6x4 (wide container). Words use `.fixedSize(horizontal: true)`
         // and no `lineLimit` — silently truncating a recovery phrase
         // would be data loss.
-        let columns = [GridItem(.adaptive(minimum: 110), spacing: 10)]
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+        let columns = [GridItem(.adaptive(minimum: 110), spacing: theme.space.s10)]
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: theme.space.s8) {
             ForEach(Array(words.enumerated()), id: \.offset) { index, word in
                 wordCell(index: index + 1, word: word)
             }
@@ -57,7 +57,7 @@ struct MasterMnemonicCard: View {
     }
 
     private func wordCell(index: Int, word: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Text("\(index).")
                 .font(SettingsFont.monoSmall)
                 .foregroundColor(theme.text.tertiary)
