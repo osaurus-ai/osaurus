@@ -3,29 +3,36 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>1.0.1</title>
-            <pubDate>Wed, 11 Nov 2026 05:56:50 +0000</pubDate>
-            <sparkle:version>1.0.1</sparkle:version>
-            <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+            <title>1.0.2</title>
+            <pubDate>Thu, 12 Nov 2026 11:41:16 +0000</pubDate>
+            <sparkle:version>1.0.2</sparkle:version>
+            <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.1/Osaurus-1.0.1.dmg" length="121418335" type="application/octet-stream" sparkle:edSignature="cEvFJdCOGkcY8vBQEYGzyQ/m+aQGD1DF2YILd2viTpX/z4eKmCdYDgblhBElkJ1bjaZfkZtvS25gCoPP+mRNBQ=="/>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.2/Osaurus-1.0.2.dmg" length="121329160" type="application/octet-stream" sparkle:edSignature="YlcF+BCXfNLfWtLk1pKK6ydiERVneZiWZSzKj6sK/VDEunCH66u+XPgZEWdWOcmRovcvw1wgBCiJH2U+wD4NDw=="/>
             <description sparkle:format="markdown"><![CDATA[
 ## What's Changed
-* Document the two release lanes and refuse tags on the other product's code by @tpae in https://github.com/osaurus-ai/osaurus/pull/3371
-* Delegated agents inherit the Orchestrator's working folder by @tpae in https://github.com/osaurus-ai/osaurus/pull/3375
-* fix: queued imports wait for the local model scan before resolving agent models by @tpae in https://github.com/osaurus-ai/osaurus/pull/3376
-* Fix workflows stuck on "Changed outside Osaurus" by @tpae in https://github.com/osaurus-ai/osaurus/pull/3377
-* CI: lint on Linux and skip untouched optional macOS lanes on PRs by @tpae in https://github.com/osaurus-ai/osaurus/pull/3379
-* Rewrite the README for 1.0 and drop custom-theme leftovers from the docs by @tpae in https://github.com/osaurus-ai/osaurus/pull/3380
-* Fix subagent tool-call crash in Release builds (APPLE-MACOS-3R9) by @tpae in https://github.com/osaurus-ai/osaurus/pull/3381
-* Keep chat times stable on selection; one blank New Chat per window by @tpae in https://github.com/osaurus-ai/osaurus/pull/3382
-* Center control labels, fix onboarding contrast, and use stock teammate avatars by @tpae in https://github.com/osaurus-ai/osaurus/pull/3383
-* Analytics coverage for Osaurus 1.0 by @tpae in https://github.com/osaurus-ai/osaurus/pull/3378
-* Fix light-mode contrast on onboarding setup and the selected rail tab by @tpae in https://github.com/osaurus-ai/osaurus/pull/3384
+* Eagerly prime telemetry consent cache at launch and guard undecided reads by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3354
+* Compile simpleName regexes once and memoize familyDisplayName by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3344
+* Accelerate Markdown line splitting with UTF-8 newline scanning by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3337
+* Memoize connected spawn target index in RemoteProviderManager by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3321
+* Consume bounded screen-context status-bar coordinate checks by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3335
+* Move keychain wipe off the main actor during factory reset by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3361
+* Coalesce download progress publishes and throttle ModelManager objectWillChange by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3338
+* Cache resolved home directory in ExecutableLocator to stop main thread hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3320
+* Debounce network path monitor updates to avoid main thread hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3295
+* Refresh model lists for Grok 4.7, GPT-6.1, Gemini 4, and Nano Banana 2.1 by @tpae in https://github.com/osaurus-ai/osaurus/pull/3388
+* Report read-only folders and empty share_artifact content accurately by @tpae in https://github.com/osaurus-ai/osaurus/pull/3389
+* Fix config apply turning on Remote Access for every agent by @tpae in https://github.com/osaurus-ai/osaurus/pull/3392
+* Report attached folders accurately when loading a workspace tool by @tpae in https://github.com/osaurus-ai/osaurus/pull/3397
+* Show the Working Folder picker and Knowledge grants in agent settings by @tpae in https://github.com/osaurus-ai/osaurus/pull/3398
+* Offer only Raptor 0.7 in onboarding and refresh Models tab Top Picks by @tpae in https://github.com/osaurus-ai/osaurus/pull/3400
+* Harden device Sync: owner checks, safer removal, clearer pairing and status, Osaurus servers by @tpae in https://github.com/osaurus-ai/osaurus/pull/3399
+* Make the design library the single source for spacing, color and dividers by @tpae in https://github.com/osaurus-ai/osaurus/pull/3401
+* Don't time workflow steps while a person is answering by @tpae in https://github.com/osaurus-ai/osaurus/pull/3402
 
 
-**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.0...1.0.1
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.1...1.0.2
 ]]></description>
             <sparkle:channel>beta</sparkle:channel>
             <sparkle:minimumAutoupdateVersion>1.0.0</sparkle:minimumAutoupdateVersion>
