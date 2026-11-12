@@ -211027,6 +211027,62 @@
         }
       }
     },
+    "Nobody answered the form in time. Run again and fill it in, or remove the form's `expires_after` so it waits for an answer." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Niemand hat das Formular rechtzeitig ausgefüllt. Starte den Lauf erneut und fülle es aus, oder entferne `expires_after` aus dem Formular, damit es auf eine Antwort wartet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제시간에 양식에 응답한 사람이 없습니다. 다시 실행해 양식을 작성하거나, 응답을 기다리도록 양식에서 `expires_after`를 제거하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никто не заполнил форму вовремя. Запустите снова и заполните её или удалите у формы `expires_after`, чтобы она ждала ответа."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有人及时填写表单。请重新运行并填写，或移除表单的 `expires_after`，让它一直等待回答。"
+          }
+        }
+      }
+    },
+    "Nobody answered the form within %llds." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Niemand hat das Formular innerhalb von %llds ausgefüllt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld초 안에 양식에 응답한 사람이 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никто не заполнил форму в течение %lld с."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有人在 %lld 秒内填写表单。"
+          }
+        }
+      }
+    },
     "Nobody answers here yet — messages stay in the inbox" : {
       "localizations" : {
         "de" : {
