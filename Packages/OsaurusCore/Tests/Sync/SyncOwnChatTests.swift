@@ -27,7 +27,11 @@ struct SyncOwnChatTests {
         role: SyncMessageRole = .user, author: String = "iphone-key", isAgent: Bool = false, turn: String?
     ) -> SyncMessage {
         let appData = turn.map {
-            [AppData(namespace: SyncConversationMapper.turnNamespace, bytes: Data($0.utf8), blobs: [])]
+            [
+                AppData(
+                    namespace: SyncConversationMapper.turnNamespace, bytes: Data($0.utf8), blobs: [],
+                    authorDevice: author, hlc: 0)
+            ]
         }
         return SyncMessage(
             id: "m", scope: "scope", hlc: 0, timestampMs: 0, authorDevice: author, author: "u:me",
