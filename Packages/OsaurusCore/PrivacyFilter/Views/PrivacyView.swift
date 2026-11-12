@@ -650,7 +650,7 @@ private struct PrivacyOverviewTab: View {
     private var noDetectorNote: some View {
         HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(theme.status.warning.foreground)
             Text(
                 "Privacy Filter is on, but no detector is active. Turn on AI detection above, or enable a pattern in Detection Rules — otherwise messages send unredacted.",
@@ -996,7 +996,7 @@ private struct PrivacyDryRunTester: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Image(systemName: "arrow.right")
-                        .glyphSize(9)
+                        .glyphSize(.tiny)
                         .foregroundColor(theme.text.tertiary)
                     Text(verbatim: item.placeholder.token)
                         .catalogTypography(.code, theme: theme, fallback: SettingsFont.monoSmall)

@@ -64,12 +64,12 @@ struct MemorySafetySection: View {
             .settingsLandingAnchor("server.memorySafety.keepModelInMemory")
 
             SettingsFieldRow(label: "Resolved Plan") {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text(resolvedPlan.displaySummary)
                         .font(SettingsFont.monoSmall)
                         .textSelection(.enabled)
 
-                    HStack(spacing: 12) {
+                    HStack(spacing: theme.space.s12) {
                         summaryPill(L("Load"), value: loadCapSummary)
                         summaryPill(L("Load Allocator Cap"), value: allocatorCapSummary)
                             .settingsLandingAnchor("server.memorySafety.loadAllocatorCap")
@@ -83,19 +83,19 @@ struct MemorySafetySection: View {
                         )
                     )
                         .font(SettingsFont.rowDescription)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.text.secondary)
 
                     ForEach(resolvedPlan.warnings, id: \.self) { warning in
                         Text(warning)
                             .font(SettingsFont.rowDescription)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.text.secondary)
                     }
                 }
             }
 
 
             SettingsFieldRow(label: "Advanced Overrides") {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     SettingsToggle(
                         title: "Fail Closed When Estimate Is Unknown",
                         description:
@@ -207,10 +207,10 @@ struct MemorySafetySection: View {
     }
 
     private func summaryPill(_ label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(label)
                 .font(SettingsFont.chip)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.text.secondary)
             Text(value)
                 .font(SettingsFont.monoSmall)
                 .lineLimit(1)

@@ -46,7 +46,7 @@ struct SavedAnswersSection: View {
     private var section: some View {
         let _ = store.revision
         let saved = Dictionary(uniqueKeysWithValues: store.all(workflowID: workflowID).map { ($0.id, $0) })
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: theme.space.s10) {
             HStack {
                 Text("Saved Answers", bundle: .module)
                     .textStyle(.body, weight: 600)
@@ -94,9 +94,9 @@ struct SavedAnswersSection: View {
     @ViewBuilder
     private func row(_ nodeID: String, _ field: DialogField, saved: SavedAnswer?) -> some View {
         let entryID = SavedAnswersStore.key(nodeID: nodeID, fieldKey: field.key)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s10) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(field.label)
                         .textStyle(.body, weight: 500)
                         .foregroundColor(theme.text.primary)

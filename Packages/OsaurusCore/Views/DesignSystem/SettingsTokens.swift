@@ -222,10 +222,12 @@ enum SettingsChrome: Equatable {
     /// A callout in a status tone: `status.<kind>.background` + `status.<kind>.border`.
     case status(ThemeStatusKind)
     /// A callout tinted by a data-driven colour (tool categories, agent
-    /// colours). Theme-driven tones must use `.status(_)` or `.selected`.
+    /// colours): `wash(behind:)` + `rule(around:)`. Theme-driven tones must
+    /// use `.status(_)` or `.selected`.
     case tinted(Color)
     /// The chosen option in a set of option tiles or a selected list row:
-    /// `surface.selected` + `border.default`, `radius.medium`.
+    /// `surface.selected` + `selectionBorder` (`border.default` in dark
+    /// themes), `radius.medium`.
     case selected
 }
 
@@ -271,7 +273,7 @@ private struct SettingsChromeModifier: ViewModifier {
         case .code: return theme.surface.code
         case .hover: return theme.surface.hover
         case .status(let kind): return theme.status[kind].background
-        case .tinted(let color): return color.opacity(0.12)
+        case .tinted(let color): return theme.wash(behind: color)
         case .selected: return theme.surface.selected
         }
     }
@@ -286,12 +288,12 @@ private struct SettingsChromeModifier: ViewModifier {
         case .subtle: return theme.border.default
         case .hover, .inset, .code: return .clear
         case .status(let kind): return theme.status[kind].border
-        case .tinted(let color): return color
-        case .selected: return theme.border.default
+        case .tinted(let color): return theme.rule(around: color)
+        case .selected: return theme.isDark ? theme.border.default : theme.selectionBorder
         }
     }
 
-    private var lineWidth: CGFloat { theme.stroke.default }
+    private var lineWidth: CGFloat { chrome == .selected ? theme.selectionStroke : theme.stroke.default }
 
     private var elevation: ThemeElevationRecipe {
         switch chrome {

@@ -24,18 +24,16 @@ extension CredentialOrigin {
 
     /// Category hue (like tool categories), so keys from the same kind of
     /// owner read as a family.
-    var tint: Color {
-        let hue: Double
+    var ink: DataInk {
         switch self {
-        case .user: hue = 0.58
-        case .mcp: hue = 0.74
-        case .plugin: hue = 0.36
-        case .channel: hue = 0.07
-        case .workflow: hue = 0.48
-        case .sandboxPrompt: hue = 0.90
-        case .config: hue = 0.13
+        case .user: .blue
+        case .mcp: .purple
+        case .plugin: .green
+        case .channel: .orange
+        case .workflow: .teal
+        case .sandboxPrompt: .pink
+        case .config: .indigo
         }
-        return Color(hue: hue, saturation: 0.55, brightness: 0.85)
     }
 }
 
@@ -49,15 +47,13 @@ extension AppKeyRow.Group {
         }
     }
 
-    var tint: Color {
-        let hue: Double
+    var ink: DataInk {
         switch self {
-        case .models: hue = 0.62
-        case .webSearch: hue = 0.52
-        case .voice: hue = 0.84
-        case .downloads: hue = 0.36
+        case .models: .blue
+        case .webSearch: .cyan
+        case .voice: .pink
+        case .downloads: .green
         }
-        return Color(hue: hue, saturation: 0.55, brightness: 0.85)
     }
 }
 
@@ -72,7 +68,7 @@ struct KeyValuePill: View {
     var body: some View {
         HStack(spacing: theme.space.s6) {
             Image(systemName: isHidden ? (value == nil ? "lock.fill" : "lock.open.fill") : "textformat")
-                .glyphSize(9, weight: .semibold)
+                .glyphSize(.tiny, weight: .semibold)
                 .foregroundColor(theme.text.tertiary)
                 .accessibilityHidden(true)
             Text(verbatim: value ?? "••••••••")

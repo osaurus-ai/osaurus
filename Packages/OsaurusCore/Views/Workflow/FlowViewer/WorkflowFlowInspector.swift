@@ -32,7 +32,7 @@ struct WorkflowFlowInspector: View {
     private var record: NodeRun? { snapshot.record(node.id) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
                 .padding(theme.space.s16)
             ThemeHairlineDivider()
@@ -60,9 +60,9 @@ struct WorkflowFlowInspector: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: theme.space.s8) {
-            let tint = WorkflowFlowStepCard.accent(node)
+            let tint = WorkflowFlowStepCard.accent(node, theme: theme)
             Image(systemName: WorkflowFlowStyle.icon(node))
-                .glyphSize(14, weight: .semibold)
+                .glyphSize(.body, weight: .semibold)
                 .foregroundColor(tint)
                 .frame(width: theme.space.s32, height: theme.space.s32)
                 .settingsChrome(.tinted(tint), radius: theme.radius.medium)
@@ -73,7 +73,7 @@ struct WorkflowFlowInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: theme.space.s4) {
                     if let status = record?.status {
-                        WorkflowStepStatusIcon(status: status).glyphSize(10)
+                        WorkflowStepStatusIcon(status: status).glyphSize(.micro)
                     }
                     Text(verbatim: statusLine)
                         .textStyle(.footnote)
@@ -124,7 +124,7 @@ struct WorkflowFlowInspector: View {
             section(L("What went wrong")) {
                 Text(verbatim: error)
                     .textStyle(.caption)
-                    .foregroundColor(theme.statusInk.error)
+                    .foregroundColor(theme.statusInk(.error))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(theme.space.s8)
@@ -173,7 +173,7 @@ struct WorkflowFlowInspector: View {
             + badges.filter { WorkflowFlowStory.privacyKinds.contains($0.kind) }
         return section(L("Where your data goes")) {
             if marks.isEmpty {
-                mark("lock", theme.statusInk.success, L("Stays on this Mac"), detail: nil)
+                mark("lock", theme.statusInk(.success), L("Stays on this Mac"), detail: nil)
             } else {
                 ForEach(marks) { badge in
                     mark(badge.systemImage, color(badge.tone), badge.label, detail: badge.detail)
@@ -184,8 +184,8 @@ struct WorkflowFlowInspector: View {
 
     private func color(_ tone: WorkflowStepBadge.Tone) -> Color {
         switch tone {
-        case .risky: return theme.statusInk.error
-        case .caution: return theme.statusInk.warning
+        case .risky: return theme.statusInk(.error)
+        case .caution: return theme.statusInk(.warning)
         case .neutral: return theme.text.secondary
         }
     }
@@ -193,7 +193,7 @@ struct WorkflowFlowInspector: View {
     private func mark(_ icon: String, _ color: Color, _ title: String, detail: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(color)
                 .frame(width: theme.space.s16)
                 .accessibilityHidden(true)
@@ -224,7 +224,7 @@ struct WorkflowFlowInspector: View {
                     } label: {
                         HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                             Image(systemName: "arrow.turn.down.right")
-                                .glyphSize(10)
+                                .glyphSize(.micro)
                                 .foregroundColor(theme.text.tertiary)
                             Text(verbatim: Self.branch(edge, in: snapshot.definition))
                                 .textStyle(.caption)
@@ -285,7 +285,7 @@ struct WorkflowFlowInspector: View {
             } label: {
                 HStack(spacing: theme.space.s4) {
                     Image(systemName: showsMore ? "chevron.down" : "chevron.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                     Text(verbatim: L("More Details"))
                         .textStyle(.footnote, weight: 500)
                 }
@@ -302,8 +302,8 @@ struct WorkflowFlowInspector: View {
                     ForEach(Array(calls.enumerated()), id: \.offset) { _, call in
                         HStack(spacing: theme.space.s6) {
                             Image(systemName: call.isError ? "xmark.circle" : "wrench.and.screwdriver")
-                                .glyphSize(10)
-                                .foregroundColor(call.isError ? theme.statusInk.error : theme.text.tertiary)
+                                .glyphSize(.micro)
+                                .foregroundColor(call.isError ? theme.statusInk(.error) : theme.text.tertiary)
                             Text(verbatim: call.name)
                                 .textStyle(.code)
                                 .foregroundColor(theme.text.primary)

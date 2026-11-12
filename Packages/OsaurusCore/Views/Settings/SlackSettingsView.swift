@@ -125,7 +125,7 @@ struct SlackSettingsView: View {
                     connect: connectNewAccount)
                 : nil
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch AgentChannelProviderSetupSection(rawValue: sectionId) {
                 case .connect:
                     connectSectionContent
@@ -260,7 +260,7 @@ struct SlackSettingsView: View {
     // MARK: - Section content
 
     private var connectSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             if !isPendingAccount {
                 ChannelAccountNameField(connectionId: connectionId, kind: .slack)
             }
@@ -308,7 +308,7 @@ struct SlackSettingsView: View {
     }
 
     private var accessSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             accessSection
             appPostsSection
             advancedSection
@@ -320,7 +320,7 @@ struct SlackSettingsView: View {
     }
 
     private var sendingSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             sendingSection
             ChannelPostingSection(kind: .slack, connectionId: connectionId)
         }
@@ -338,7 +338,7 @@ struct SlackSettingsView: View {
     }
 
     private var stepCreateAppSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Create the Slack app"))
 
             AgentChannelSetupLink(
@@ -372,7 +372,7 @@ struct SlackSettingsView: View {
     }
 
     private var stepBotTokenSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Install the app and paste the Bot Token"))
 
             Text(
@@ -402,7 +402,7 @@ struct SlackSettingsView: View {
     }
 
     private var stepAppTokenSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Generate the App-Level Token (receiving)"))
 
             Text(
@@ -430,11 +430,11 @@ struct SlackSettingsView: View {
     }
 
     private var accessSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Choose conversations and people"))
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                HStack(spacing: theme.space.s10) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(
                             discovery == nil ? L("Connect to load workspace choices") : L("Slack workspace loaded")
                         )
@@ -485,7 +485,7 @@ struct SlackSettingsView: View {
 
     private var sendingSection: some View {
         SettingsFieldRow(label: "Sending") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 SettingsToggle(
                     title: "Allow Sending on Slack",
                     description: "Let agents post to write-allowlisted Slack channels. The global Sending switch in Channels must also be on.",
@@ -529,7 +529,7 @@ struct SlackSettingsView: View {
     }
 
     private var stepVerifySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Verify an incoming message"))
 
             Text(
@@ -575,7 +575,7 @@ struct SlackSettingsView: View {
     private var testPromptRow: some View {
         let botName = discovery?.identity.user
         let prompt = "@\(botName ?? "your-slack-bot") hello"
-        return HStack(spacing: 8) {
+        return HStack(spacing: theme.space.s8) {
             Text(prompt)
                 .font(SettingsFont.monoSmall)
                 .foregroundColor(theme.text.primary)
@@ -590,7 +590,7 @@ struct SlackSettingsView: View {
                 showStatus(L("Test message copied"), isError: false)
             } label: {
                 Image(systemName: "doc.on.doc")
-                    .glyphSize(10, weight: .medium)
+                    .glyphSize(.micro, weight: .medium)
             }
             .buttonStyle(.plain)
             .foregroundColor(theme.text.link)
@@ -610,7 +610,7 @@ struct SlackSettingsView: View {
 
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 AgentChannelSecretField(
                     label: L("Signing Secret"),
                     requirementHint: L("Not used by Socket Mode receive"),
@@ -671,14 +671,14 @@ struct SlackSettingsView: View {
 
     private func workspaceSummary(_ discovery: SlackConnectionDiscovery) -> some View {
         let selected = parseIds(configuredTeamIdsText).contains(discovery.identity.teamId)
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             Image(systemName: "building.2.fill")
-                .glyphSize(13, weight: .semibold)
+                .glyphSize(.label, weight: .semibold)
                 .foregroundColor(theme.text.link)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(theme.status.info.background))
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(discovery.identity.team ?? discovery.identity.teamId)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -726,7 +726,7 @@ struct SlackSettingsView: View {
             },
             isSelected: { $0.isSelected }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Conversations", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -778,14 +778,14 @@ struct SlackSettingsView: View {
         let kind = AgentChannelRoomKind.from(providerKind: channel.kind)
         let name = channel.resolvedDisplayName(userNames: userNames)
         let nameIsResolved = name != channel.id
-        return HStack(spacing: 9) {
+        return HStack(spacing: theme.space.s8) {
             Image(systemName: kind.icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(canUse ? theme.text.secondary : theme.text.tertiary)
                 .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s4) {
                     Text(nameIsResolved && kind.usesHashPrefix ? "#\(name)" : name)
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(canUse ? theme.text.primary : theme.text.tertiary)
@@ -836,7 +836,7 @@ struct SlackSettingsView: View {
             state: { allowedIds.contains($0.id) },
             isSelected: { $0 }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Authorized Senders", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -871,13 +871,13 @@ struct SlackSettingsView: View {
     }
 
     private func userSelectionRow(_ user: SlackUser, selected: Bool) -> some View {
-        HStack(spacing: 9) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "person.crop.circle.fill")
-                .glyphSize(15)
+                .glyphSize(.medium)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(user.displayName)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.primary)

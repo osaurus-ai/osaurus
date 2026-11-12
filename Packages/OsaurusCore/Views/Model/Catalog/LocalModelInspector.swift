@@ -36,7 +36,7 @@ private struct LocalModelFactsInspector: View {
     let perform: (LocalModelCatalogItem.Action) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             ThemeHairlineDivider(color: theme.border.default)
             ScrollView {
@@ -110,7 +110,7 @@ private struct LocalModelFactsInspector: View {
     }
 
     private var facts: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             ForEach(Array(item.facts.enumerated()), id: \.element.id) { index, fact in
                 if index > 0 { SettingsGroupDivider() }
                 HStack(alignment: .firstTextBaseline, spacing: theme.settingsInlineGap) {
@@ -139,7 +139,7 @@ private struct LocalModelFactsInspector: View {
                 if let progress {
                     SettingsProgressBar(value: progress, tint: isPaused ? theme.text.tertiary : nil, height: 6)
                 } else {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 }
                 HStack(spacing: theme.settingsControlGap) {
                     Text(verbatim: progressLine(progress: progress, detail: detail, isPaused: isPaused))

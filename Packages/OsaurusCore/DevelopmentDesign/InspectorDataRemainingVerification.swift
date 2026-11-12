@@ -24,7 +24,7 @@ struct InspectorDataRemainingVerification: View {
             case "Database history": DatabaseHistoryView.inspectionPopulatedHistory()
             default: EmptyView()
             }
-        }.environment(\.theme, theme.catalogFamily(53, authoritative: true))
+        }.environment(\.theme, theme.catalogFamily(53))
     }
 }
 #endif

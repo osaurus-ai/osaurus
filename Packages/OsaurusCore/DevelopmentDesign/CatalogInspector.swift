@@ -118,9 +118,7 @@ import AppKit
     }
     func usesAppDefault(_ key: String) -> Bool {
         guard offersAppDefault(key) else { return false }
-        if CatalogLayoutAssignments.byKey[key] != nil {
-            return !(document["explicitAssignments"] as? [String] ?? []).contains(key)
-        }
+        if CatalogLayoutAssignments.byKey[key] != nil { return mappings[key] == nil }
         if key.hasSuffix(".borderWidth"), let family = Int(key.split(separator: ".")[2]), [28,29].contains(family) {
             return !MessageBubbleInspectionStyle.hasBorderOverride(family, snapshot: DesignThemeOverlay.shared.current())
         }

@@ -98,7 +98,7 @@ final class NativeArtifactCardView: NSView {
     // MARK: - Configure
 
     func configure(artifact: SharedArtifact, theme: any ThemeProtocol) {
-        let theme = theme.catalogFamily(37, authoritative: true)
+        let theme = theme.catalogFamily(37)
         let themeFP = theme.renderFingerprint
         // must not skip when hostPath or other fields update for the same id (tool result arrives after first paint)
         if artifact.id == currentArtifactId, themeFP == currentThemeFingerprint, boundArtifact == artifact {
@@ -161,7 +161,6 @@ final class NativeArtifactCardView: NSView {
     }
 
     private func applyInspectionStyle(_ theme: any ThemeProtocol) {
-        #if OSAURUS_DESIGN_SYSTEM
         catalogAssignmentTarget(
             ["background", "hover", "border", "borderWidth", "radius", "height"].map { "component.library.37." + $0 }
                 + ["paddingX", "paddingTop", "paddingBottom", "headerGap", "descriptionGap", "previewGap", "footerGap", "actionGap"]
@@ -177,10 +176,9 @@ final class NativeArtifactCardView: NSView {
             NativeComponentInspectionStyle.label(label, family: 37, property: "label", theme: theme)
         }
         NativeComponentInspectionStyle.label(textPreviewField, family: 37, property: "code", theme: theme)
-        #endif
 
         let padding = NativeComponentInspectionStyle.metric(37, "padding", Self.innerPadding, theme)
-        let gap = NativeComponentInspectionStyle.metric(37, "gap", 12, theme)
+        let gap = NativeComponentInspectionStyle.metric(37, "gap", theme.space.s12, theme)
         for constraint in constraints where constraint.firstItem as? NSView === inner {
             switch constraint.firstAttribute {
             case .leading: constraint.constant = layoutMetric("paddingX", padding, theme)
@@ -461,11 +459,7 @@ final class NativeArtifactCardView: NSView {
         iv.addGestureRecognizer(pdfClick)
 
         pdfBadgeBackdrop.wantsLayer = true
-        #if OSAURUS_DESIGN_SYSTEM
         pdfBadgeBackdrop.layer?.backgroundColor = NSColor(theme.surface.raised).cgColor
-        #else
-        pdfBadgeBackdrop.layer?.backgroundColor = FixedPalette.mediaScrimNS(0.6).cgColor
-        #endif
         pdfBadgeBackdrop.layer?.cornerRadius = theme.radius.medium
         pdfBadgeBackdrop.translatesAutoresizingMaskIntoConstraints = false
         pdfBadgeBackdrop.isHidden = true
@@ -476,11 +470,7 @@ final class NativeArtifactCardView: NSView {
         pdfPageBadge.isBordered = false
         pdfPageBadge.drawsBackground = false
         pdfPageBadge.font = theme.nsFont(.micro, weight: .semibold)
-        #if OSAURUS_DESIGN_SYSTEM
         pdfPageBadge.textColor = NSColor(theme.text.secondary)
-        #else
-        pdfPageBadge.textColor = FixedPalette.onMediaNS
-        #endif
         pdfPageBadge.stringValue = ""
         container.addSubview(pdfPageBadge)
 

@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import AppKit
 import SwiftUI
 
@@ -160,4 +159,3 @@ final class InspectorNativeTextField: NSTextField {
         return accepted
     }
 }
-#endif

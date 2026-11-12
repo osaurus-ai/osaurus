@@ -137,7 +137,7 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
 
     var body: some View {
         let visible = visibleColumns
-        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+        LazyVStack(alignment: .leading, spacing: theme.space.s0, pinnedViews: [.sectionHeaders]) {
             Section {
                 if isLoading && rows.isEmpty {
                     ForEach(0 ..< 5, id: \.self) { index in
@@ -177,7 +177,7 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
     // MARK: Header
 
     private func header(_ visible: [SettingsDataTableColumn<SortKey>]) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             HStack(spacing: theme.settingsInlineGap) {
                 ForEach(visible) { column in
                     headerCell(column)
@@ -186,7 +186,7 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
             }
             .padding(.horizontal, theme.space.s12)
             .padding(.vertical, theme.space.s8)
-            ThemeHairlineDivider(color: theme.border.subtle)
+            ThemeHairlineDivider(color: theme.rowRule)
         }
         .background(theme.surface.raised)
     }
@@ -208,7 +208,7 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
                         .lineLimit(1)
                     if let active {
                         Image(systemName: active.ascending ? "chevron.up" : "chevron.down")
-                            .glyphSize(8, weight: .bold)
+                            .glyphSize(.tiny, weight: .bold)
                             .foregroundColor(theme.text.primary)
                     }
                 }
@@ -276,6 +276,7 @@ private struct SettingsDataTableRow<Content: View>: View {
             .padding(.vertical, theme.space.s8)
             .frame(maxWidth: .infinity, minHeight: theme.space.s32 + theme.space.s16, alignment: .leading)
             .background(isSelected ? theme.surface.selected : isHovered ? theme.surface.hover : .clear)
+            .overlay(Rectangle().strokeBorder(isSelected ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke))
             .contentShape(Rectangle())
             .onTapGesture { if isEnabled { action() } }
             .onHover { hovering in

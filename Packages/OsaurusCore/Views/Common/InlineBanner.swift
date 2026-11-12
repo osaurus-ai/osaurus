@@ -67,20 +67,16 @@ struct InlineBanner: View {
         HStack(alignment: caption == nil ? .center : .top, spacing: theme.space.s8) {
             iconView
 
-            VStack(alignment: .leading, spacing: theme.space.s2) {
+            SettingsRowText {
                 Text(title)
-                    #if OSAURUS_DESIGN_SYSTEM
                     .assignedTypography(caption == nil ? "component.library.18.text" : "component.library.18.label", fallback: SettingsFont.rowTitle)
-                    #else
-                    .textStyle(caption == nil ? .caption : .label)
-                    #endif
                     .foregroundColor(caption == nil ? tint : theme.text.primary)
                     .fixedSize(horizontal: false, vertical: true)
+            } description: {
                 if let caption {
                     Text(caption)
                         .assignedTypography("component.library.18.caption", fallback: SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -95,10 +91,10 @@ struct InlineBanner: View {
 
             if let action {
                 Button(action: action.handler) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: theme.space.s4) {
                         if let icon = action.icon {
                             Image(systemName: icon)
-                                .glyphSize(10.5, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                         }
                         Text(action.title)
                     }
@@ -111,13 +107,9 @@ struct InlineBanner: View {
             }
         }
         .padding(.horizontal, theme.space.s12)
-        .padding(.vertical, kind == .action ? 12 : 10)
+        .padding(.vertical, kind == .action ? theme.space.s12 : theme.space.s10)
         .frame(maxWidth: .infinity, minHeight: theme.catalogMetric("height", fallback: 0), alignment: .leading)
-        #if OSAURUS_DESIGN_SYSTEM
         .assignedBaseChrome(18)
-        #else
-        .background(background)
-        #endif
     }
 
     @ViewBuilder
@@ -126,19 +118,15 @@ struct InlineBanner: View {
             ZStack {
                 Circle().fill(theme.status.info.background)
                 Image(systemName: icon ?? defaultIcon)
-                    .glyphSize(13, weight: .semibold)
-                    #if OSAURUS_DESIGN_SYSTEM
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(baseComponentEnabled ? theme.border.focus : theme.text.disabled)
-                    #else
-                    .foregroundColor(theme.text.link)
-                    #endif
             }
             .frame(width: 30, height: 30)
         } else {
             Image(systemName: icon ?? defaultIcon)
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(tint)
-                .padding(.top, caption == nil ? 0 : 1)
+                .padding(.top, caption == nil ? theme.space.s0 : theme.space.s2)
         }
     }
 

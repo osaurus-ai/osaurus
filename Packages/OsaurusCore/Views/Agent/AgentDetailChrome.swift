@@ -35,7 +35,7 @@ struct AgentHeaderAvatar: View {
                 HStack(spacing: theme.space.s4) {
                     avatar
                     Image(systemName: "chevron.down")
-                        .glyphSize(8, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                 }
                 .contentShape(Rectangle())
@@ -85,7 +85,7 @@ struct RemoteAvatarBadge: View {
 
     var body: some View {
         Image(systemName: "antenna.radiowaves.left.and.right")
-            .glyphSize(glyphSize, weight: .bold)
+            .glyphSize(points: glyphSize, weight: .bold)
             .foregroundColor(theme.action.primary.default.foreground)
             .padding(padding)
             .background(Circle().fill(theme.action.primary.default.background))
@@ -116,7 +116,7 @@ struct AgentDetailIdentityLabel: View {
     var glyphRingColor: Color? = nil
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             AgentAvatarView(
                 mascotId: mascotId,
                 name: name,
@@ -139,8 +139,8 @@ struct AgentDetailIdentityLabel: View {
             .animation(theme.motion.springAnimation, value: name)
             .animation(theme.motion.springAnimation, value: mascotId)
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(name.isEmpty ? L("Untitled Agent") : name)
                         .font(SettingsFont.sectionTitle)
                         .foregroundColor(theme.text.primary)
@@ -148,7 +148,7 @@ struct AgentDetailIdentityLabel: View {
                         .truncationMode(.tail)
                     if showsChevron {
                         Image(systemName: "chevron.down")
-                            .glyphSize(8, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                             .foregroundColor(theme.text.tertiary)
                     }
                 }
@@ -190,13 +190,13 @@ struct AgentSwitcherPopover: View {
     private var totalCount: Int { localAgents.count + remoteAgents.count }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             ScrollView {
-                VStack(spacing: 2) {
+                VStack(spacing: theme.space.s2) {
                     ForEach(localAgents, id: \.id) { agent in
                         row(
                             mascotId: agent.avatar,
@@ -239,9 +239,9 @@ struct AgentSwitcherPopover: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: "person.2.fill")
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(theme.text.tertiary)
             Text("Switch Agent", bundle: .module)
                 .font(SettingsFont.compactLabel)
@@ -255,9 +255,9 @@ struct AgentSwitcherPopover: View {
     }
 
     private func sectionLabel(_ key: LocalizedStringKey) -> some View {
-        HStack(spacing: 5) {
+        HStack(spacing: theme.space.s4) {
             Image(systemName: "antenna.radiowaves.left.and.right")
-                .glyphSize(8, weight: .bold)
+                .glyphSize(.tiny, weight: .bold)
             Text(key, bundle: .module)
                 .font(SettingsFont.compactLabel)
         }
@@ -284,11 +284,11 @@ struct AgentSwitcherPopover: View {
         Button {
             if isCurrent { onDismiss() } else { select() }
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 AgentAvatarView(
                     mascotId: mascotId,
                     name: name,
-                    tint: agentColorFor(name),
+                    tint: theme.dataInk(seed: name),
                     diameter: 26,
                     customImageURL: customImageURL,
                     monogramFontSize: 11,
@@ -301,7 +301,7 @@ struct AgentSwitcherPopover: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(name.isEmpty ? L("Untitled Agent") : name)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -318,7 +318,7 @@ struct AgentSwitcherPopover: View {
 
                 if isCurrent {
                     Image(systemName: "checkmark")
-                        .glyphSize(10, weight: .bold)
+                        .glyphSize(.micro, weight: .bold)
                         .foregroundColor(theme.text.link)
                 }
             }

@@ -36,7 +36,7 @@ struct RedactionReviewSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
             listToolbar
             // Master/detail split: the row list on the left stays
@@ -51,7 +51,7 @@ struct RedactionReviewSheet: View {
                 ContextPreview(state: state)
                     .frame(minWidth: 360, idealWidth: 440)
             }
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
             footer
         }
         .frame(minWidth: 820, idealWidth: 880,
@@ -112,7 +112,7 @@ struct RedactionReviewSheet: View {
         let isSelected = state.selectedEntityID == entity.id
         return HStack(alignment: .center, spacing: theme.space.s12) {
             Image(systemName: entity.category.reviewIcon)
-                .glyphSize(14, weight: .medium)
+                .glyphSize(.body, weight: .medium)
                 .foregroundColor(theme.text.link)
                 .frame(width: 22, height: 22)
                 .settingsChrome(.selected)
@@ -302,7 +302,7 @@ private struct ContextPreview: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if let entity = state.selectedEntity {
                 header(for: entity)
                 bodyView(for: entity)
@@ -317,7 +317,7 @@ private struct ContextPreview: View {
     private func header(for entity: DetectedEntity) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: entity.category.reviewIcon)
-                .glyphSize(14, weight: .medium)
+                .glyphSize(.body, weight: .medium)
                 .foregroundColor(theme.text.link)
                 .frame(width: 26, height: 26)
                 .settingsChrome(.selected)
@@ -333,7 +333,7 @@ private struct ContextPreview: View {
                         .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)
                     Image(systemName: "arrow.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                     StatusChip(entity.placeholder.token, tone: .accent)
                 }
@@ -356,7 +356,7 @@ private struct ContextPreview: View {
                 if !activePairs.isEmpty {
                     HStack(spacing: theme.space.s4) {
                         Image(systemName: "shield.lefthalf.filled")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                         Text("privacy.review.context.hoverHint", bundle: .module)
                             .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
                     }
@@ -389,7 +389,7 @@ private struct ContextPreview: View {
     private var emptyContextCard: some View {
         HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "text.viewfinder")
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(theme.text.tertiary)
                 .padding(.top, theme.space.s2)
             Text("privacy.review.context.empty", bundle: .module)
@@ -407,7 +407,7 @@ private struct ContextPreview: View {
             Spacer()
             VStack(spacing: theme.space.s8) {
                 Image(systemName: "shield.lefthalf.filled")
-                    .glyphSize(24)
+                    .glyphSize(.xxlarge)
                     .foregroundColor(theme.text.disabled)
                 Text("privacy.review.context.empty", bundle: .module)
                     .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)

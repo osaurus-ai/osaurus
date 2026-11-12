@@ -10,6 +10,7 @@ import AppKit
 import SwiftUI
 
 struct AgentRuntimesView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var store = HarnessRuntimeStore.shared
     @ObservedObject private var agentManager = AgentManager.shared
@@ -98,7 +99,7 @@ struct AgentRuntimesView: View {
     // MARK: - Rows
 
     private func runtimeRow(_ runtime: HarnessRuntime) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             LibraryRow(
                 title: runtime.displayName,
                 subtitle: commandLine(runtime),
@@ -228,6 +229,7 @@ struct AgentRuntimesView: View {
 // MARK: - Editor
 
 struct HarnessRuntimeEditorSheet: View {
+    @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
 
     let runtime: HarnessRuntime?
@@ -274,7 +276,7 @@ struct HarnessRuntimeEditorSheet: View {
             }
 
             SettingsFieldRow(label: "Executable", hint: "A command on your PATH, or a full path. ~ is allowed.") {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     SettingsTextField(placeholder: kind.defaultExecutable, text: $executable, monospaced: true)
                     SettingsButton(.secondary, "Choose…") { chooseExecutable() }
                 }
@@ -306,7 +308,7 @@ struct HarnessRuntimeEditorSheet: View {
             }
 
             if !errors.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     ForEach(errors, id: \.self) { error in
                         SettingsFindingRow(severity: .blocked, title: error)
                     }

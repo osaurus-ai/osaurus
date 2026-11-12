@@ -504,13 +504,11 @@ struct AgentCapabilityManagerView: View {
     @State private var plugins: [PluginManager.LoadedPlugin] = []
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             stickyHeader
                 .background(theme.surface.canvas)
                 .overlay(
-                    Rectangle()
-                        .fill(theme.border.subtle)
-                        .frame(height: 1)
+                    ThemeHairlineDivider()
                         .opacity(compact ? 0 : 1),
                     alignment: .bottom
                 )
@@ -569,7 +567,7 @@ struct AgentCapabilityManagerView: View {
                     if onDismiss != nil { doneButton }
 
                     Image(systemName: "info.circle")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                         .foregroundColor(theme.text.tertiary)
                     Text(
                         "Pick which tools this agent can use. Skills come from the shared library; limit them below.",
@@ -599,7 +597,7 @@ struct AgentCapabilityManagerView: View {
                 AgentSkillAllowListCard(agentId: agentId)
             }
         }
-        .padding(.horizontal, compact ? 20 : 24)
+        .padding(.horizontal, compact ? theme.space.s20 : theme.space.s24)
         .padding(.vertical, theme.space.s12)
     }
 
@@ -609,7 +607,7 @@ struct AgentCapabilityManagerView: View {
             Button(action: onDismiss) {
                 HStack(spacing: theme.space.s4) {
                     Image(systemName: "chevron.left")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                     Text("Done", bundle: .module)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
@@ -658,7 +656,7 @@ struct AgentCapabilityManagerView: View {
     private var autoDiscoverCard: some View {
         HStack(spacing: theme.space.s12) {
             Image(systemName: toolMode == .auto ? "sparkles" : "list.bullet.rectangle")
-                .glyphSize(13, weight: .semibold)
+                .glyphSize(.label, weight: .semibold)
                 .foregroundColor(toolMode == .auto ? theme.text.link : theme.text.secondary)
                 .frame(width: 26, height: 26)
                 .settingsChrome(toolMode == .auto ? .selected : .inset)

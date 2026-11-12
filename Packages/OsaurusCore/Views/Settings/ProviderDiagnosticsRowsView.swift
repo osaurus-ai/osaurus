@@ -30,7 +30,7 @@ struct ProviderDiagnosticsRowsView: View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: "stethoscope")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.text.tertiary)
                 Text("Diagnostics", bundle: .module)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
@@ -38,7 +38,7 @@ struct ProviderDiagnosticsRowsView: View {
                 Spacer()
                 Button(action: copyReport) {
                     Image(systemName: "doc.on.doc")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .frame(width: 24, height: 24)
                 }
@@ -89,7 +89,7 @@ struct ProviderDiagnosticsRowsView: View {
     private func diagnosticRow(_ row: ProviderDiagnosticRow) -> some View {
         HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon(for: row.severity))
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(color(for: row.severity))
                 .frame(width: 14, height: 14)
 

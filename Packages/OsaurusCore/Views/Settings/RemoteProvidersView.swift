@@ -38,7 +38,7 @@ struct RemoteProvidersView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Header
             headerView
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
@@ -727,7 +727,7 @@ private struct ConnectivityFilterButton: View {
                     CountBadge(badge)
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .glyphSize(10, weight: .bold)
+                            .glyphSize(.micro, weight: .bold)
                             .foregroundColor(theme.text.link)
                     }
                 }
@@ -758,6 +758,7 @@ private struct ConnectivityFilterButton: View {
 /// Original provider cards driven by local report/state values. Callbacks only
 /// update local text; no provider manager, keychain or network operation is used.
 struct InspectorProviderStatesVerification: View {
+    @Environment(\.theme) private var theme
     @State private var mode = "Connected"
     @State private var callbacks = 0
     private let modes = ["Connected", "Connecting", "Error", "Disabled"]
@@ -781,7 +782,7 @@ struct InspectorProviderStatesVerification: View {
             modelCount: s.modelCount, manualModelCount: 0, issueKinds: [], primaryIssueKind: nil)
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Text(verbatim: "Original provider cards · local status data only")
             SettingsMenuPicker(selection: $mode) { ForEach(modes, id: \.self) { Text(verbatim: $0).tag($0) } }
                 .accessibilityLabel(Text(verbatim: "Local provider status"))

@@ -90,7 +90,7 @@ private struct SecretPromptCard: View {
     @State private var secretValue: String = ""
     @FocusState private var isInputFocused: Bool
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var canSubmit: Bool {
@@ -133,22 +133,22 @@ private struct SecretPromptCard: View {
     // MARK: - Input
 
     private var inputAndActions: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 10, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s10, theme))) {
             SecureField("", text: $secretValue)
                 .promptText(.body, fallback: .bodySmall, theme: theme)
                 .foregroundColor(theme.text.primary)
                 .textFieldStyle(.plain)
                 .focused($isInputFocused)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX", inheriting: PromptInspectionStyle.metric("padding", 12, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY", inheriting: PromptInspectionStyle.metric("padding", 9, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX", inheriting: PromptInspectionStyle.metric("padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY")
                 .frame(minHeight: PromptInspectionStyle.metric("height", 0, theme))
                 .overlay(alignment: .topLeading) {
                     if secretValue.isEmpty {
                         Text("Paste your \(state.key) here...", bundle: .module)
                             .promptText(.body, fallback: .bodySmall, theme: theme)
                             .foregroundColor(theme.text.placeholder)
-                            .padding(.leading, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX2", inheriting: PromptInspectionStyle.metric("padding", 12, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX2")
-                            .padding(.top, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY2", inheriting: PromptInspectionStyle.metric("padding", 9, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY2")
+                            .padding(.leading, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX2", inheriting: PromptInspectionStyle.metric("padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingX2")
+                            .padding(.top, theme.catalogLayoutMetric("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY2", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.36.elements.layout.secretPromptCard.inputAndActions.paddingY2")
                             .allowsHitTesting(false)
                     }
                 }
@@ -164,7 +164,7 @@ private struct SecretPromptCard: View {
 
             Button(action: submitSecret) {
                 Image(systemName: "arrow.up")
-                    .glyphSize(12, weight: .bold)
+                    .glyphSize(.caption, weight: .bold)
                     .foregroundColor(canSubmit ? theme.action.primary.default.foreground : theme.assignedColor(PromptInspectionStyle.key + "disabledForeground", fallback: theme.action.primary.disabled.foreground))
                     .frame(width: PromptInspectionStyle.metric("height", 32, theme), height: PromptInspectionStyle.metric("height", 32, theme))
                     .background(
@@ -182,7 +182,6 @@ private struct SecretPromptCard: View {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension SecretPromptOverlay {
     @MainActor static func inspectionCard() -> some View {
         SecretPromptCard(
@@ -193,4 +192,3 @@ extension SecretPromptOverlay {
         ).allowsHitTesting(false)
     }
 }
-#endif

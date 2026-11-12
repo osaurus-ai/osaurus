@@ -35,7 +35,7 @@ struct WorkflowStoredDataSection: View {
     }
 
     private func section(_ tables: [WorkflowStateTable]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             HStack {
                 Text("Stored Data", bundle: .module)
                     .textStyle(.body, weight: 600)
@@ -77,14 +77,14 @@ struct WorkflowStoredDataSection: View {
     @ViewBuilder
     private func tableRow(_ table: WorkflowStateTable) -> some View {
         let isOpen = expanded.contains(table.name)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s10) {
                 Button {
                     if isOpen { expanded.remove(table.name) } else { expanded.insert(table.name) }
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                            .glyphSize(9, weight: .bold)
+                            .glyphSize(.tiny, weight: .bold)
                             .foregroundColor(theme.text.tertiary)
                         Text(verbatim: table.name)
                             .textStyle(.code)
@@ -113,7 +113,7 @@ struct WorkflowStoredDataSection: View {
             if isOpen {
                 let loaded = Result { try store.list(workflow: workflowID, table: table.name, limit: 50) }
                 let rows = (try? loaded.get()) ?? []
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     if case .failure(let error) = loaded {
                         Text(verbatim: L("Couldn’t read \(table.name): \(WorkflowErrorText.text(error))"))
                             .textStyle(.caption)
@@ -121,7 +121,7 @@ struct WorkflowStoredDataSection: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     ForEach(rows) { row in
-                        HStack(alignment: .top, spacing: 8) {
+                        HStack(alignment: .top, spacing: theme.space.s8) {
                             Text(verbatim: row.key)
                                 .font(SettingsFont.monoSmall)
                                 .foregroundColor(theme.text.primary)

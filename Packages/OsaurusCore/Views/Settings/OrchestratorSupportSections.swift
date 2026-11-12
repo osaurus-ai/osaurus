@@ -81,8 +81,8 @@ struct OrchestratorModelReadinessRow: View {
             title: "Model Readiness",
             anchorId: "settings.orchestrator.modelReadiness"
         ) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(verdict.modelName ?? L("No model selected"))
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -279,7 +279,7 @@ struct OrchestratorDelegationsSection: View {
                         title: direction == .sent ? "No delegations yet" : "No received runs yet"
                     )
                 } else {
-                    VStack(spacing: 6) {
+                    VStack(spacing: theme.space.s6) {
                         ForEach(rows) { row in
                             delegationRow(row)
                         }
@@ -308,14 +308,14 @@ struct OrchestratorDelegationsSection: View {
     }
 
     private func delegationRow(_ row: DelegationRecord) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: statusIcon(row.status))
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(statusColor(row.status))
                 .frame(width: 14)
                 .padding(.top, theme.space.s2)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(verbatim: row.agentName)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)

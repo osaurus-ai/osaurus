@@ -46,9 +46,9 @@ struct AgentAbilityContextPreviewBar: View {
         Button {
             showsDetails.toggle()
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "brain.head.profile")
-                    .glyphSize(10.5, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(statusColor)
                 Text("Context", bundle: .module)
                     .font(SettingsFont.chip)
@@ -67,7 +67,7 @@ struct AgentAbilityContextPreviewBar: View {
                 StatusChip(compactImpactLabel, tint: statusColor)
 
                 Image(systemName: "chevron.down")
-                    .glyphSize(7.5, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
                     .foregroundColor(theme.text.tertiary)
             }
         }
@@ -82,19 +82,16 @@ struct AgentAbilityContextPreviewBar: View {
     }
 
     private var contextPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 Image(systemName: "brain.head.profile")
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(statusColor)
                     .frame(width: 30, height: 30)
-                    .background(
-                        RoundedRectangle(cornerRadius: theme.radius.medium)
-                            .fill(statusColor.opacity(0.12))
-                    )
+                    .settingsChrome(.tinted(statusColor))
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    HStack(spacing: theme.space.s6) {
                         Text("Context impact", bundle: .module)
                             .font(SettingsFont.compactLabel)
                             .foregroundColor(theme.text.primary)
@@ -109,7 +106,7 @@ struct AgentAbilityContextPreviewBar: View {
 
                 Spacer(minLength: 8)
 
-                VStack(alignment: .trailing, spacing: 3) {
+                VStack(alignment: .trailing, spacing: theme.space.s2) {
                     Text(fullEstimateText)
                         .font(SettingsFont.monoSmall)
                         .foregroundColor(theme.text.primary)
@@ -234,7 +231,7 @@ private struct AgentAbilityContextDetailsView: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             Divider().foregroundColor(theme.border.default)
 
             Text(
@@ -245,9 +242,9 @@ private struct AgentAbilityContextDetailsView: View {
             .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(displayRows) { row in
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Text(row.label, bundle: .module)
                             .font(SettingsFont.footnote)
                             .foregroundColor(theme.text.secondary)
@@ -265,9 +262,9 @@ private struct AgentAbilityContextDetailsView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if let notice = autoDisableNotice {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: theme.space.s6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(9)
+                        .glyphSize(.tiny)
                         .foregroundColor(theme.status.warning.foreground)
                     Text(notice)
                         .font(SettingsFont.footnote)

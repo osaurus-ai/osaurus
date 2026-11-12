@@ -67,7 +67,7 @@ struct DatabaseWorkspaceView: View {
     var body: some View {
         Group {
             if isEnabled {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     sectionBar
                     Divider().foregroundColor(theme.border.subtle)
                     sectionContent
@@ -199,7 +199,7 @@ struct DatabaseWorkspaceView: View {
 
     @ViewBuilder
     private var disabledState: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsEmptyState(
                 inline: "cylinder.split.1x2",
                 title: "Give this agent its own database",

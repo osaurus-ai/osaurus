@@ -22,10 +22,8 @@ import SwiftUI
 
 struct SettingsRow<Leading: View, Trailing: View, Description: View>: View {
     @Environment(\.theme) private var theme
-    @Environment(\.isEnabled) private var isEnabled
     @Environment(\.baseAssignmentFamily) private var inheritedFamily
     private var family: Int { 14 }
-    @Environment(\.baseDescriptionAssignment) private var descriptionAssignment
     private var assignment: String { "component.library.\(family)." }
 
     let title: String
@@ -60,19 +58,15 @@ struct SettingsRow<Leading: View, Trailing: View, Description: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.14.elements.layout.row.leadingGap", inheriting: theme.assignedMetric(assignment + "gap", fallback: theme.space.s12))) {
             leading
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.14.elements.layout.row.titleDescriptionGap", inheriting: theme.settingsTitleToDescription)) {
+            SettingsRowText {
                 HStack(spacing: theme.catalogLayoutMetric("component.library.14.elements.layout.row.titleBadgeGap", inheriting: theme.space.s6)) {
                     titleText
-                        .assignedTypography(assignment + "label", fallback: SettingsFont.rowTitle)
-                        .foregroundStyle(theme.assignedColor(assignment + (isEnabled ? "foreground" : "disabledForeground"), fallback: theme.text.primary))
                     if let badge, !badge.isEmpty {
                         StatusChip(badge, tone: .accent, typographyKey: assignment + "caption")
                     }
                 }
+            } description: {
                 description
-                    .assignedTypography(descriptionAssignment ?? assignment + "text", fallback: SettingsFont.rowDescription)
-                    .foregroundStyle(theme.assignedColor(assignment + (isEnabled ? "secondary" : "disabledForeground"), fallback: theme.text.tertiary))
-                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
@@ -83,7 +77,6 @@ struct SettingsRow<Leading: View, Trailing: View, Description: View>: View {
                 .fixedSize(horizontal: true, vertical: false)
         }
         .catalogLayoutTarget("component.library.14.elements.layout.row.leadingGap")
-        .catalogLayoutTarget("component.library.14.elements.layout.row.titleDescriptionGap")
         .catalogLayoutTarget("component.library.14.elements.layout.row.titleBadgeGap")
         .settingsRowChrome()
         .settingsLandingAnchor(anchorId)
@@ -167,6 +160,54 @@ extension SettingsRow where Leading == EmptyView, Description == SettingsRowDesc
     }
 }
 
+// MARK: - Row Text
+
+/// The title-over-description column of every row. Rows that draw their own
+/// chrome (list items, banners, selectable cards) use it directly, so they
+/// keep the row's type roles, colors and gap. A `Text` inside either slot
+/// may still set its own color or line limit.
+struct SettingsRowText<Title: View, Description: View>: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.baseDescriptionAssignment) private var descriptionAssignment
+    private let assignment = "component.library.14."
+
+    /// The denser title for rows inside cards and lists.
+    var compact: Bool
+    @ViewBuilder let title: Title
+    @ViewBuilder let description: Description
+
+    init(compact: Bool = false, @ViewBuilder title: () -> Title, @ViewBuilder description: () -> Description) {
+        self.compact = compact
+        self.title = title()
+        self.description = description()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.14.elements.layout.row.titleDescriptionGap", inheriting: theme.settingsTitleToDescription)) {
+            title
+                .assignedTypography(assignment + "label", fallback: compact ? SettingsFont.compactLabel : SettingsFont.rowTitle)
+                .foregroundStyle(theme.assignedColor(assignment + (isEnabled ? "foreground" : "disabledForeground"), fallback: theme.text.primary))
+            description
+                .assignedTypography(descriptionAssignment ?? assignment + "text", fallback: SettingsFont.rowDescription)
+                .foregroundStyle(theme.assignedColor(assignment + (isEnabled ? "secondary" : "disabledForeground"), fallback: theme.text.tertiary))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .catalogLayoutTarget("component.library.14.elements.layout.row.titleDescriptionGap")
+    }
+}
+
+extension SettingsRowText where Title == Text, Description == SettingsRowDescription {
+    /// Catalog-key strings; `verbatim` for user data such as a name.
+    init(_ title: String, description: String, verbatim: Bool = false, compact: Bool = false) {
+        self.init(compact: compact) {
+            verbatim ? Text(verbatim: title) : Text(LocalizedStringKey(title), bundle: .module)
+        } description: {
+            SettingsRowDescription(text: description, verbatim: verbatim)
+        }
+    }
+}
+
 /// String description slot of `SettingsRow`; renders nothing when empty.
 struct SettingsRowDescription: View {
     let text: String
@@ -203,12 +244,7 @@ private struct SettingsRowChrome: ViewModifier {
     private var assignment: String { "component.library.\(family).elements.row." }
 
     private func groupedMetric(_ property: String, fallback: CGFloat) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
-        if DesignThemeOverlay.shared.current()?.reassignedProperties.contains(assignment + property) == true {
-            return theme.assignedMetric(assignment + property, fallback: fallback)
-        }
-        #endif
-        return fallback
+        theme.assignedMetric(assignment + property, fallback: fallback)
     }
     func body(content: Content) -> some View {
         if inGroup {
@@ -348,24 +384,7 @@ private struct SettingsSwitchModifier: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         content.toggleStyle(AssignedBaseToggleStyle(checkbox: style == .checkbox, showsLabel: showsLabel, mini: mini))
-        #else
-        let styled = Group {
-            switch style {
-            case .switch:
-                content.toggleStyle(.switch).controlSize(mini ? .mini : .small)
-            case .checkbox:
-                content.toggleStyle(.checkbox)
-            }
-        }
-        .tint(theme.action.primary.default.background)
-        if showsLabel {
-            styled
-        } else {
-            styled.labelsHidden()
-        }
-        #endif
     }
 }
 
@@ -419,20 +438,8 @@ struct SettingsPickerRow<Value: Hashable>: View {
         SettingsRow(title: title, description: description, anchorId: anchorId) {
             switch style {
             case .segmented:
-                #if OSAURUS_DESIGN_SYSTEM
                 AssignedBaseSegmentedPicker(selection: $selection, options: options)
                     .accessibilityLabel(Text(LocalizedStringKey(title), bundle: .module))
-                #else
-                Picker("", selection: $selection) {
-                    ForEach(options) { option in
-                        SettingsOptionLabel(option.label, verbatim: option.verbatim).tag(option.value)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .accessibilityLabel(Text(LocalizedStringKey(title), bundle: .module))
-                #endif
             case .menu:
                 SettingsMenuPicker(selection: $selection, options: options)
                     .accessibilityLabel(Text(LocalizedStringKey(title), bundle: .module))
@@ -506,7 +513,6 @@ struct SettingsMenuPicker<Value: Hashable, Content: View>: View {
 
     var body: some View {
         Group {
-            #if OSAURUS_DESIGN_SYSTEM
             Group(subviews: content) { subviews in
                 let indices = Set(subviews.enumerated().compactMap { index, subview in
                     disabledValues.contains(where: { subview.containerValues.hasTag($0) }) ? index : nil
@@ -515,15 +521,12 @@ struct SettingsMenuPicker<Value: Hashable, Content: View>: View {
                     disabledMenuIndices: indices, onFocusChange: { assignedFocus = $0 },
                     inlineMenu: AnyView(picker.pickerStyle(.inline)))
             }
-            #else
-            nativePicker
-            #endif
         }
         .assignedTypography("component.library.5.text", fallback: SettingsFont.compactLabel)
         .foregroundStyle(theme.text.primary)
         .tint(theme.border.focus)
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsMenuPicker.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: 0))).catalogLayoutTarget("component.library.5.elements.layout.settingsMenuPicker.body.paddingX")
-        .padding(.vertical, theme.catalogMetric("paddingY", fallback: 0))
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsMenuPicker.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: theme.space.s0))).catalogLayoutTarget("component.library.5.elements.layout.settingsMenuPicker.body.paddingX")
+        .padding(.vertical, theme.catalogMetric("paddingY", fallback: theme.space.s0))
         .nativeCatalogTarget(["padding", "paddingY", "height", "gap"].map { "component.library.5.elements.container." + $0 }, "Select / picker")
         .frame(minHeight: theme.catalogMetric("height", fallback: 0))
         .assignedBaseChrome(5)
@@ -588,16 +591,15 @@ struct SettingsPopUpButton<Label: View>: View {
     var body: some View {
         switch style {
         case .compact:
-            #if OSAURUS_DESIGN_SYSTEM
             Button(action: action) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: 6))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s6))) {
                     label.assignedTypography("component.library.5.label", fallback: SettingsFont.rowTitle)
                         .foregroundColor(theme.text.primary).lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
                 }.catalogLayoutTarget("component.library.5.elements.layout.settingsPopUpButton.body.horizontalGap")
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: 6))).padding(.vertical, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: 6))).catalogLayoutTarget("component.library.5.elements.layout.settingsPopUpButton.body.padding.horizontal").catalogLayoutTarget("component.library.5.elements.layout.settingsPopUpButton.body.padding.vertical")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: theme.space.s6))).padding(.vertical, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: theme.space.s6))).catalogLayoutTarget("component.library.5.elements.layout.settingsPopUpButton.body.padding.horizontal").catalogLayoutTarget("component.library.5.elements.layout.settingsPopUpButton.body.padding.vertical")
                 .frame(minHeight: theme.catalogMetric("height", fallback: 0))
                 .assignedBaseChrome(5, selected: isActive)
                 .contentShape(Rectangle())
@@ -605,17 +607,6 @@ struct SettingsPopUpButton<Label: View>: View {
             .assignedBasePlainButtonStyle()
             .assignedBaseKeyboardButton(5, action: action)
             .fixedSize()
-            #else
-            Button(action: action) {
-                HStack(spacing: theme.space.s6) {
-                    label.lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .glyphSize(9, weight: .semibold)
-                }
-            }
-            .buttonStyle(.bordered)
-            .fixedSize()
-            #endif
         case .field:
             Button(action: action) {
                 HStack(spacing: theme.space.s6) {
@@ -625,11 +616,11 @@ struct SettingsPopUpButton<Label: View>: View {
                         .lineLimit(1)
                     if fillsWidth { Spacer(minLength: theme.space.s6) }
                     Image(systemName: "chevron.up.chevron.down")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                 }
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: 12))).catalogLayoutTarget("component.library.5.elements.layout.settingsPopUpButton.body.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.paddingY", inheriting: theme.catalogMetric("gap", fallback: 6))).catalogLayoutTarget("component.library.5.elements.layout.settingsPopUpButton.body.paddingY")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: theme.space.s12))).catalogLayoutTarget("component.library.5.elements.layout.settingsPopUpButton.body.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.5.elements.layout.settingsPopUpButton.body.paddingY", inheriting: theme.catalogMetric("gap", fallback: theme.space.s6))).catalogLayoutTarget("component.library.5.elements.layout.settingsPopUpButton.body.paddingY")
                 .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: theme.catalogMetric("height", fallback: 36), alignment: .leading)
                 .assignedBaseChrome(5, selected: isActive)
                 .contentShape(Rectangle())
@@ -656,6 +647,33 @@ private struct SettingsOptionLabel: View {
         } else {
             Text(LocalizedStringKey(text), bundle: .module)
         }
+    }
+}
+
+// MARK: - Fact
+
+/// Caption-over-value tile for detail grids. Both strings render verbatim;
+/// `compact` sets the value in the compact label size.
+struct SettingsFactText: View {
+    @Environment(\.theme) private var theme
+
+    let label: String
+    let value: String
+    var compact = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            Text(verbatim: label)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
+                .lineLimit(1)
+            Text(verbatim: value)
+                .font(compact ? SettingsFont.compactLabel : SettingsFont.rowTitle)
+                .foregroundColor(theme.text.primary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -888,7 +906,7 @@ struct SettingsIconTile: View {
 
     var body: some View {
         Image(systemName: icon)
-            .glyphSize(size * 0.5, weight: .semibold)
+            .glyphSize(points: size * 0.5, weight: .semibold)
             .foregroundColor(glyph)
             .frame(width: size, height: size)
             .background(fill)
@@ -899,10 +917,9 @@ struct SettingsIconTile: View {
     /// tint can be light (a pale status shade, the primary fill itself), so
     /// the glyph takes whichever of white and black contrasts more with it.
     private var glyph: Color {
-        if gradient != nil { return .white }
+        if gradient != nil { return FixedPalette.onMedia }
         guard let tint else { return theme.action.primary.default.foreground }
-        let fill = WorkflowStatusInk.luminance(tint)
-        return WorkflowStatusInk.contrast(fill, 1) >= WorkflowStatusInk.contrast(fill, 0) ? .white : .black
+        return FixedPalette.glyph(on: tint)
     }
 
     @ViewBuilder

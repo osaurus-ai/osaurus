@@ -134,7 +134,7 @@ struct SettingsAbilityRow<Accessory: View>: View {
     private var configureLink: some View {
         if showsConfigure, let configureLabel, let onConfigure {
             Button(action: onConfigure) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Text(LocalizedStringKey(configureLabel), bundle: .module)
                     Image(systemName: "chevron.right")
                         .font(SettingsFont.glyphSmall)

@@ -33,7 +33,7 @@ struct ExternalModelsSettingsView: View {
     @State private var showHFCachePicker: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             SettingsToggle(
                 title: "Hugging Face cache and model folder",
                 description:
@@ -55,12 +55,9 @@ struct ExternalModelsSettingsView: View {
                 isOn: $importLMStudio
             )
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 if isScanning {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle())
-                        .scaleEffect(0.5)
-                        .frame(width: 12, height: 12)
+                    SettingsSpinner(size: .mini)
                     Text("Scanning…", bundle: .module)
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.tertiary)
@@ -82,10 +79,10 @@ struct ExternalModelsSettingsView: View {
             }
 
             if let scanReport, !scanReport.skipped.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .glyphSize(10, weight: .semibold)
+                            .glyphSize(.micro, weight: .semibold)
                             .foregroundColor(theme.status.warning.foreground)
                         let count = scanReport.skipped.count
                         Text(
@@ -127,7 +124,7 @@ struct ExternalModelsSettingsView: View {
     }
 
     private var hfCachePathControl: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text("Cache or model folder path", bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)

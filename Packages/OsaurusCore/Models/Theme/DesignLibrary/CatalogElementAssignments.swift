@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import Foundation
 
 /// Independent element assignments, initialized from the user's existing choices.
@@ -132,7 +131,7 @@ enum CatalogElementAssignments {
         }
         let quoteFill = key("component.library.18", "quote", "background")
         if result[quoteFill] == nil { result[quoteFill] = "color.surface.subtle" }
-        return AgentContentSurfaceAssignments.extend(CatalogLayoutAssignments.extend(result))
+        return AgentContentSurfaceAssignments.extend(result)
     }
     static func migrate(_ document: DesignWorkingDocument) -> DesignWorkingDocument {
         var result = document
@@ -157,4 +156,3 @@ enum CatalogElementAssignments {
 
     private static let regularChipHeight = "component.library.56.elements.regular.height"
 }
-#endif

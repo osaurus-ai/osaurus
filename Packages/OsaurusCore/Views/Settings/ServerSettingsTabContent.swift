@@ -290,8 +290,8 @@ struct ServerSettingsTabContent: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
+                HStack(spacing: theme.space.s0) {
                     ServerSettingsSidebarNav(selection: $activeSection)
                         .frame(width: 220)
 
@@ -361,7 +361,7 @@ struct ServerSettingsTabContent: View {
     // MARK: - Content pane
 
     private var contentPane: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             validationBanner
             sectionScroll
         }

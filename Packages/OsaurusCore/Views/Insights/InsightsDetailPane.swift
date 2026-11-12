@@ -35,7 +35,7 @@ struct InsightsDetailPane: View {
     private var hInset: CGFloat { presentation == .inspector ? 20 : 24 }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             Divider()
                 .background(theme.border.subtle)
@@ -57,8 +57,8 @@ struct InsightsDetailPane: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 if presentation == .page {
                     SettingsBackButton(title: "Insights", action: onBack)
                         .padding(.leading, -theme.space.s8)
@@ -74,19 +74,18 @@ struct InsightsDetailPane: View {
                 }
             }
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 ZStack {
-                    Circle().fill(log.category.tint.opacity(0.14))
+                    Circle().fill(theme.dataWash(log.category.ink))
                     Image(systemName: log.category.icon)
-                        .glyphSize(13, weight: .semibold)
-                        .foregroundColor(log.category.tint.opacity(0.9))
+                        .glyphSize(.label, weight: .semibold)
+                        .foregroundColor(theme.dataInk(log.category.ink))
                 }
                 .frame(width: 32, height: 32)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     Text(log.title)
-                        .textStyle(usesMonospacedTitle ? .code : .heading)
-                        .fontWeight(.semibold)
+                        .textStyle(usesMonospacedTitle ? .code : .heading, weight: 600)
                         .foregroundColor(theme.text.primary)
                         .lineLimit(2)
                         .truncationMode(.middle)
@@ -246,12 +245,12 @@ struct InsightsDetailPane: View {
     }
 
     private var tabPicker: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             ForEach(availableTabs, id: \.self) { tab in
                 Button(action: { selectedTab = tab }) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: tab.icon)
-                            .glyphSize(11, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                         tab.label
                             .textStyle(.caption, weight: selectedTab == tab ? 600 : 500)
                     }
@@ -261,6 +260,10 @@ struct InsightsDetailPane: View {
                     .background(
                         RoundedRectangle(cornerRadius: theme.radius.medium)
                             .fill(selectedTab == tab ? theme.surface.selected : Color.clear)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: theme.radius.medium)
+                            .strokeBorder(selectedTab == tab ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
                     )
                     .contentShape(Rectangle())
                 }
@@ -291,10 +294,10 @@ struct InsightsDetailPane: View {
         let level = PluginLogLevel(statusCode: log.statusCode)
         let levelColor = level.color(theme: theme)
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: level.icon)
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(levelColor)
                     Text(level.label, bundle: .module)
                         .font(SettingsFont.smallLabel)
@@ -312,10 +315,10 @@ struct InsightsDetailPane: View {
             .padding(theme.space.s12)
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.medium)
-                    .fill(levelColor.opacity(0.06))
+                    .fill(level.wash(theme: theme))
                     .overlay(
                         RoundedRectangle(cornerRadius: theme.radius.medium)
-                            .stroke(levelColor.opacity(0.2), lineWidth: theme.stroke.default)
+                            .stroke(level.edge(theme: theme), lineWidth: theme.stroke.default)
                     )
             )
             .padding(.horizontal, hInset)
@@ -377,8 +380,8 @@ private struct RawTab: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 2) {
+        VStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s2) {
                 pill(.request, label: Text("Request", bundle: .module), icon: "arrow.up.circle")
                 pill(.response, label: Text("Response", bundle: .module), icon: "arrow.down.circle")
                 Spacer()
@@ -411,8 +414,8 @@ private struct RawTab: View {
     private func pill(_ value: BodyTab.Kind, label: Text, icon: String) -> some View {
         let isSelected = kind == value
         return Button(action: { kind = value }) {
-            HStack(spacing: 5) {
-                Image(systemName: icon).glyphSize(10, weight: .semibold)
+            HStack(spacing: theme.space.s4) {
+                Image(systemName: icon).glyphSize(.micro, weight: .semibold)
                 label.textStyle(.footnote, weight: isSelected ? 600 : 500)
             }
             .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
@@ -463,8 +466,24 @@ private enum PluginLogLevel {
     func color(theme: ThemeProtocol) -> Color {
         switch self {
         case .info: return theme.text.primary
-        case .warning: return .orange
-        case .error: return .red
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
+        }
+    }
+
+    func wash(theme: ThemeProtocol) -> Color {
+        switch self {
+        case .info: return theme.surface.subtle
+        case .warning: return theme.status.warning.background
+        case .error: return theme.status.error.background
+        }
+    }
+
+    func edge(theme: ThemeProtocol) -> Color {
+        switch self {
+        case .info: return theme.border.subtle
+        case .warning: return theme.status.warning.border
+        case .error: return theme.status.error.border
         }
     }
 }
@@ -482,7 +501,7 @@ private struct PromptTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 if let parsed = parsedRequest {
                     if parsed.messages.isEmpty {
                         emptyState(text: Text("No messages in request", bundle: .module))
@@ -518,10 +537,10 @@ private struct PromptTab: View {
     private func emptyState(text: Text) -> some View {
         HStack {
             Spacer()
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Image(systemName: "text.bubble")
-                    .glyphSize(28)
-                    .foregroundColor(theme.text.disabled)
+                    .glyphSize(.display)
+                    .foregroundColor(theme.text.tertiary)
                 text
                     .textStyle(.caption)
                     .foregroundColor(theme.text.tertiary)
@@ -534,17 +553,17 @@ private struct PromptTab: View {
     }
 
     private func toolsSection(_ tools: [ParsedTool]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "wrench.and.screwdriver.fill")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.status.info.foreground)
                 Text("Tools (\(tools.count))", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
                 Spacer()
             }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(Array(tools.enumerated()), id: \.offset) { _, tool in
                     ToolCard(tool: tool)
                 }
@@ -575,7 +594,7 @@ private enum MessageRoleStyle {
         }
     }
 
-    var color: Color {
+    var ink: DataInk {
         switch self {
         case .system: return .purple
         case .user: return .blue
@@ -619,9 +638,10 @@ private struct MessageCard: View {
     @State private var isExpanded: Bool = true
 
     private var role: MessageRoleStyle { MessageRoleStyle(rawRole: message.role) }
+    private var roleColor: Color { theme.dataInk(role.ink) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             cardHeader
             if isExpanded {
                 cardContent
@@ -632,18 +652,15 @@ private struct MessageCard: View {
         }
         .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
+        .settingsChrome(.card, radius: theme.radius.medium)
+        .overlay(
             RoundedRectangle(cornerRadius: theme.radius.medium)
-                .fill(role.color.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: theme.radius.medium)
-                        .stroke(role.color.opacity(0.2), lineWidth: theme.stroke.default)
-                )
+                .stroke(theme.dataWash(role.ink), lineWidth: theme.stroke.default)
         )
     }
 
     private var cardHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             roleBadge
             Spacer()
             if let toolCallId = message.toolCallId {
@@ -653,7 +670,7 @@ private struct MessageCard: View {
             }
             Button(action: copyContent) {
                 Image(systemName: "doc.on.doc")
-                    .glyphSize(10)
+                    .glyphSize(.micro)
                     .foregroundColor(theme.text.tertiary)
             }
             .buttonStyle(PlainButtonStyle())
@@ -661,7 +678,7 @@ private struct MessageCard: View {
 
             Button(action: { withAnimation(theme.motion.quick) { isExpanded.toggle() } }) {
                 Image(systemName: "chevron.right")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(theme.text.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
@@ -686,13 +703,13 @@ private struct MessageCard: View {
     }
 
     private var toolCallsList: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             ForEach(Array(message.toolCalls.enumerated()), id: \.offset) { _, call in
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "wrench.and.screwdriver")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                         .foregroundColor(theme.status.info.foreground)
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(call.name)
                             .font(SettingsFont.monoSmall)
                             .foregroundColor(theme.text.primary)
@@ -710,7 +727,7 @@ private struct MessageCard: View {
     }
 
     private var roleBadge: some View {
-        StatusChip(role.displayName, tint: role.color, icon: role.icon)
+        StatusChip(role.displayName, tint: roleColor, icon: role.icon)
     }
 
     private func copyContent() {
@@ -739,11 +756,11 @@ private struct ToolCard: View {
     @State private var isExpanded: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Button(action: { withAnimation(theme.motion.quick) { isExpanded.toggle() } }) {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "chevron.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     Text(tool.name)
@@ -859,7 +876,7 @@ private struct BodyTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 if hasBothSources {
                     sourcePicker
                     captionRow
@@ -886,7 +903,7 @@ private struct BodyTab: View {
     /// exist; the visual is intentionally similar to the parent
     /// tab strip so the relationship reads as "tab > sub-tab".
     private var sourcePicker: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             sourcePill(.server, label: Text("insights.body.source.server", bundle: .module))
             sourcePill(.local, label: Text("insights.body.source.local", bundle: .module))
             Spacer()
@@ -899,9 +916,9 @@ private struct BodyTab: View {
         let isSelected = source == value
         let isServer = value == .server
         return Button(action: { source = value }) {
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: isServer ? "shield.lefthalf.filled" : "laptopcomputer")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                 label
                     .textStyle(.footnote, weight: isSelected ? 600 : 500)
             }
@@ -912,6 +929,10 @@ private struct BodyTab: View {
                 RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(isSelected ? theme.surface.selected : Color.clear)
             )
+            .overlay(
+                RoundedRectangle(cornerRadius: theme.radius.medium)
+                    .strokeBorder(isSelected ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -919,12 +940,12 @@ private struct BodyTab: View {
 
     @ViewBuilder
     private var captionRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: source == .server ? "shield.lefthalf.filled" : "laptopcomputer")
-                .glyphSize(9, weight: .semibold)
+                .glyphSize(.tiny, weight: .semibold)
                 .foregroundColor(source == .server ? theme.text.link : theme.text.tertiary)
             captionText
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -949,10 +970,10 @@ private struct BodyTab: View {
     private var emptyState: some View {
         HStack {
             Spacer()
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Image(systemName: kind.emptyIcon)
-                    .glyphSize(28)
-                    .foregroundColor(theme.text.disabled)
+                    .glyphSize(.display)
+                    .foregroundColor(theme.text.tertiary)
                 kind.emptyMessage(source: source)
                     .textStyle(.caption)
                     .foregroundColor(theme.text.tertiary)
@@ -1003,7 +1024,7 @@ private struct OverviewTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 if let error = log.errorMessage {
                     errorSection(error)
                 }
@@ -1749,21 +1770,21 @@ private struct OverviewTab: View {
             }
         }
         if let toolCalls = log.toolCalls, !toolCalls.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Tool calls", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.tertiary)
                     .padding(.top, theme.space.s6)
                 ForEach(toolCalls) { tool in
-                    HStack(alignment: .top, spacing: 8) {
+                    HStack(alignment: .top, spacing: theme.space.s8) {
                         Image(systemName: tool.isError ? "xmark.circle.fill" : "checkmark.circle.fill")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                             .foregroundColor(
                                 tool.isError
                                     ? theme.status.error.foreground
                                     : theme.status.success.foreground
                             )
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
                             Text(tool.name)
                                 .font(SettingsFont.monoSmall)
                                 .foregroundColor(theme.text.primary)
@@ -1822,11 +1843,11 @@ private struct OverviewTab: View {
     // MARK: Error
 
     private func errorSection(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.status.error.foreground)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text("Error", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.status.error.foreground)
@@ -1872,9 +1893,9 @@ private struct FactsGrid: View {
     private let columns = [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)]
 
     var body: some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: theme.space.s12) {
             ForEach(facts) { fact in
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(fact.label)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.tertiary)
@@ -1905,17 +1926,17 @@ private struct FlatGroup<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: icon)
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(theme.text.tertiary)
                 title
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
                 Spacer()
             }
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 content()
             }
             .padding(.leading, theme.space.s16)
@@ -1948,19 +1969,19 @@ private struct CollapsibleGroup<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Button(action: { withAnimation(theme.motion.quick) { isExpanded.toggle() } }) {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "chevron.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .frame(width: 10)
                     Image(systemName: icon)
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                     title
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
                     if !isExpanded, !summary.isEmpty {
                         Text(summary)
@@ -1977,7 +1998,7 @@ private struct CollapsibleGroup<Content: View>: View {
             .buttonStyle(PlainButtonStyle())
 
             if isExpanded {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     content()
                 }
                 .padding(.leading, theme.space.s16)
@@ -1998,7 +2019,7 @@ private struct WorkflowRunLinks: View {
     let runID: UUID
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             if WorkflowRunStore.shared.run(id: runID) != nil {
                 InsightsLink(title: "Open Run", icon: "arrow.up.forward.square") {
                     WorkflowRunLauncher.open(runID: runID)
@@ -2014,10 +2035,11 @@ private struct WorkflowRunLinks: View {
 }
 
 private struct TaskLinks: View {
+    @Environment(\.theme) private var theme
     let taskID: UUID
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             InsightsLink(title: "Open Task", icon: "arrow.up.forward.square") {
                 TaskControl.showDetail(taskID)
             }
@@ -2030,10 +2052,11 @@ private struct TaskLinks: View {
 }
 
 private struct AgentAddressLinks: View {
+    @Environment(\.theme) private var theme
     let address: String
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             InsightsLink(title: "All Events for This Agent", icon: "line.3.horizontal.decrease.circle") {
                 InsightsService.shared.showAgent(address: address)
             }
@@ -2091,10 +2114,11 @@ enum InteractionTimeline {
 }
 
 private struct ParticipantLinks: View {
+    @Environment(\.theme) private var theme
     let key: String
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             InsightsLink(title: "All Events for This Person", icon: "line.3.horizontal.decrease.circle") {
                 InsightsService.shared.showParticipant(key)
             }
@@ -2111,8 +2135,8 @@ private struct InsightsLink: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon).glyphSize(10, weight: .semibold)
+            HStack(spacing: theme.space.s4) {
+                Image(systemName: icon).glyphSize(.micro, weight: .semibold)
                 Text(title, bundle: .module).font(SettingsFont.smallLabel)
             }
             .foregroundColor(theme.text.link)
@@ -2133,7 +2157,7 @@ private struct DetailRow: View {
     var valueColor: Color?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
             label
                 .textStyle(.footnote, weight: 500)
                 .foregroundColor(theme.text.tertiary)
@@ -2165,18 +2189,18 @@ private struct IdentifierRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
             label
                 .textStyle(.footnote, weight: 500)
                 .foregroundColor(theme.text.tertiary)
                 .frame(width: 104, alignment: .leading)
             Button(action: copy) {
-                HStack(spacing: 5) {
+                HStack(spacing: theme.space.s4) {
                     Text(Self.shortened(value))
                         .font(SettingsFont.monoSmall)
                         .foregroundColor(theme.text.primary)
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(copied ? theme.status.success.foreground : theme.text.tertiary)
                 }
                 .contentShape(Rectangle())

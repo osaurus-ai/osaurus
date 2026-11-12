@@ -37,7 +37,7 @@ struct DatabaseOverviewView: View {
                 summaryStrip
                 if isLoading {
                     HStack {
-                        ProgressView()
+                        SettingsSpinner(size: .large)
                         Text("Loading…", bundle: .module).catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                             .foregroundColor(theme.text.tertiary)
                     }
@@ -103,11 +103,11 @@ struct DatabaseOverviewView: View {
     private func summaryTile(icon: String, value: String, label: String) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(13, weight: .medium)
+                .glyphSize(.label, weight: .medium)
                 .foregroundColor(theme.text.link)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(theme.status.info.background))
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 Text(verbatim: value)
                     .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle)
                     .foregroundColor(theme.text.primary)
@@ -157,7 +157,7 @@ struct DatabaseOverviewView: View {
                 sectionLabel("Dashboard")
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 280, maximum: 600), spacing: theme.space.s16)],
-                    spacing: 16
+                    spacing: theme.space.s16
                 ) {
                     ForEach(pinned) { card in
                         cardView(card)
@@ -224,8 +224,8 @@ struct DatabaseOverviewView: View {
 
     @ViewBuilder
     private func miniTableBody(_ result: AgentQueryResult) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s0) {
                 ForEach(result.columns, id: \.self) { col in
                     Text(col)
                         .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
@@ -235,7 +235,7 @@ struct DatabaseOverviewView: View {
             }
             .padding(.bottom, theme.space.s2)
             ForEach(Array(result.rows.prefix(8).enumerated()), id: \.offset) { (_, row) in
-                HStack(spacing: 0) {
+                HStack(spacing: theme.space.s0) {
                     ForEach(Array(row.enumerated()), id: \.offset) { (_, value) in
                         Text(agentSQLDisplayString(value))
                             .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
@@ -295,7 +295,7 @@ struct DatabaseOverviewView: View {
                     .disabled(isBundleBusy)
                     .localizedHelp("Restore an agent bundle exported from this or another Mac.")
                     if isBundleBusy {
-                        ProgressView().controlSize(.small)
+                        SettingsSpinner()
                     }
                     Spacer()
                     Button(role: .destructive, action: onDeleteData) {

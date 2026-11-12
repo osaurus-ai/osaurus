@@ -92,7 +92,7 @@ public final class ToastManager {
         ToastWindowController.shared.showOverlayIfNeeded()
 
         // Add toast to the list
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+        withAnimation(ThemeManager.shared.currentTheme.motion.springAnimation) {
             toasts.append(toast)
         }
 
@@ -115,7 +115,7 @@ public final class ToastManager {
         dismissTasks.removeValue(forKey: id)
 
         // Remove from list with animation
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        withAnimation(ThemeManager.shared.currentTheme.motion.springAnimation) {
             toasts.removeAll { $0.id == id }
         }
 
@@ -132,7 +132,7 @@ public final class ToastManager {
         dismissTasks.removeAll()
 
         // Remove all toasts with animation
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        withAnimation(ThemeManager.shared.currentTheme.motion.springAnimation) {
             toasts.removeAll()
         }
         let observers = dismissObservers
@@ -177,7 +177,7 @@ public final class ToastManager {
             toast.progress = progress
         }
 
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        withAnimation(ThemeManager.shared.currentTheme.motion.springAnimation) {
             toasts[index] = toast
         }
 

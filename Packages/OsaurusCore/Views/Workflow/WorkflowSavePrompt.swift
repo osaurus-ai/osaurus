@@ -378,7 +378,7 @@ struct WorkflowTestEvidenceView: View {
         .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .settingsChrome(.tinted(tint))
-        .overlay(RoundedRectangle(cornerRadius: theme.radius.medium).strokeBorder(tint.opacity(0.25)))
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.medium).strokeBorder(theme.rule(around: tint)))
         .settingsLandingAnchor("workflows.saveEvidence")
     }
 
@@ -407,7 +407,7 @@ struct WorkflowTestEvidenceView: View {
         VStack(alignment: .leading, spacing: theme.space.s4) {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: row.status == .completed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .glyphSize(10)
+                    .glyphSize(.micro)
                     .foregroundColor(
                         row.status == .completed ? theme.status.success.foreground : theme.status.error.foreground
                     )

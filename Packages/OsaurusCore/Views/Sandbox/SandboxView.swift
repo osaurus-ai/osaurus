@@ -74,7 +74,7 @@ struct SandboxView: View {
     private var isSeatbelt: Bool { SandboxBackend.current == .seatbelt }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerBar
             containerTabContent
         }
@@ -314,9 +314,9 @@ private extension SandboxView {
 private extension SandboxView {
 
     var preflightBlock: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             troubleshootingHeading("Provisioning Preflight")
-            HStack(alignment: .center, spacing: 10) {
+            HStack(alignment: .center, spacing: theme.space.s10) {
                 if let report = provisioningReport {
                     readinessPill(report.overallReadiness)
                     Text(preflightSummary(report))
@@ -384,11 +384,11 @@ private extension SandboxView {
         ]
         let rows = ids.compactMap { id in report.locations.first { $0.id == id } }
 
-        return VStack(spacing: 0) {
+        return VStack(spacing: theme.space.s0) {
             ForEach(rows) { location in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                     Image(systemName: preflightLocationIcon(location.status))
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(preflightLocationColor(location.status))
                         .frame(width: 14)
                     Text(location.title)
@@ -419,11 +419,11 @@ private extension SandboxView {
         let visible = Array(actionable.prefix(4))
         let hiddenCount = max(0, actionable.count - visible.count)
 
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             if visible.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "checkmark.circle.fill")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.status.success.foreground)
                     Text("No blocking host storage issues found.", bundle: .module)
                         .font(SettingsFont.rowDescription)
@@ -517,7 +517,7 @@ private extension SandboxView {
 
     var overviewSection: some View {
         SettingsSection(title: "Overview", anchorId: "sandbox.status") {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 SettingsStatusHero(
                     valueLabel: "Runs on",
                     value: backendSummary,
@@ -527,11 +527,8 @@ private extension SandboxView {
                 )
 
                 if isStarting {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                            .scaleEffect(0.7)
-                            .frame(width: 12, height: 12)
+                    HStack(spacing: theme.space.s8) {
+                        SettingsSpinner(size: .mini)
                         Text(verbatim: startingDetail)
                             .font(SettingsFont.rowDescription)
                             .foregroundColor(theme.text.secondary)
@@ -715,13 +712,13 @@ private struct SandboxLogConsoleCard: View {
     private static let refreshThrottle: Duration = .milliseconds(200)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Text("Logs", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s8) {
                     FilterChip(L("All"), isSelected: logLevelFilter == nil) { logLevelFilter = nil }
 
                     ForEach(SandboxLogBuffer.Entry.Level.allCases, id: \.self) { level in
@@ -747,7 +744,7 @@ private struct SandboxLogConsoleCard: View {
 
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                             if visibleEntries.isEmpty {
                                 Text(
                                     "No log entries yet. Command output and sandbox activity will stream here in real time.",
@@ -820,7 +817,7 @@ private struct SandboxLogConsoleCard: View {
     }
 
     private func logEntryRow(_ entry: SandboxLogBuffer.Entry) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s6) {
             Text(Self.logTimestampFormatter.string(from: entry.timestamp))
                 .font(SettingsFont.monoSmall)
                 .foregroundColor(theme.text.tertiary)
@@ -875,7 +872,7 @@ private extension SandboxView {
             title: "Troubleshooting",
             anchorIds: [Self.troubleshootingAnchor, "sandbox.preflight", "sandbox.diagnostics", "sandbox.logs"]
         ) {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 lastFailureBlock
                 preflightBlock
                 if sandboxState.status == .running {
@@ -902,7 +899,7 @@ private extension SandboxView {
     @ViewBuilder
     var lastFailureBlock: some View {
         if let failure = SandboxStartupMetricsStore.loadFailures().last {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 troubleshootingHeading("Last Failure")
                 Text(SandboxStartupMetricsStore.failureSummary(failure))
                     .font(SettingsFont.monoSmall)
@@ -916,9 +913,9 @@ private extension SandboxView {
     }
 
     var diagnosticsBlock: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             troubleshootingHeading("Diagnostics")
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 SettingsButton(
                     .primary,
                     isRunningDiag ? "Running…" : "Run Diagnostics",
@@ -941,7 +938,7 @@ private extension SandboxView {
             }
 
             if let results = diagResults {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     ForEach(Array(results.enumerated()), id: \.offset) { _, result in
                         SettingsFindingRow(
                             severity: result.passed ? .ok : .warning,
@@ -973,7 +970,7 @@ private extension SandboxView {
 
     var settingsSection: some View {
         SettingsSection(title: "Settings") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 // CPU/memory budgets and per-agent CoW rootfs clones are
                 // VM constructs — the Seatbelt backend runs host processes
                 // with no resource caps to configure.
@@ -1077,7 +1074,7 @@ private extension SandboxView {
 
     /// Read-only: network is each agent's own setting (Agent → Sandbox).
     var networkRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             SettingsValueRow(title: "Network", value: networkValue, anchorId: "sandbox.network")
             Text(networkCaption)
                 .font(SettingsFont.rowDescription)

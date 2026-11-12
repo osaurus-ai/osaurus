@@ -31,7 +31,7 @@ struct ConfigHistorySection: View {
 
     var body: some View {
         SettingsSection(title: "Configuration History") {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 Text(
                     "Every change to agents, models, tools, automations, and the other settings the Configurator manages. Select a version to see what it changed, or two to compare them.",
                     bundle: .module
@@ -41,14 +41,14 @@ struct ConfigHistorySection: View {
                 .fixedSize(horizontal: false, vertical: true)
 
                 if !loaded {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 } else if rows.isEmpty {
                     Text("No configuration changes recorded yet.", bundle: .module)
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)
                 } else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
+                        LazyVStack(alignment: .leading, spacing: theme.space.s2) {
                             ForEach(rows) { row in historyRow(row) }
                         }
                     }
@@ -88,12 +88,12 @@ struct ConfigHistorySection: View {
 
     private func historyRow(_ row: ConfigSnapshot) -> some View {
         let isSelected = selected.contains(row.sequence)
-        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+        return HStack(alignment: .firstTextBaseline, spacing: theme.space.s10) {
             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(isSelected ? theme.action.primary.default.background : theme.text.tertiary)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(L("Version \(row.sequence)"))
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -151,15 +151,16 @@ struct ConfigHistorySection: View {
     }
 
     private func namePopover(_ snapshot: ConfigSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(L("Name version \(snapshot.sequence)"))
-                .font(SettingsFont.compactLabel)
-            SettingsTextField(placeholder: L("For example: Before the trip"), text: $nameDraft)
-                .frame(minWidth: 240)
-                .onSubmit { saveName(snapshot) }
-            Text("Named versions are always kept.", bundle: .module)
-                .font(SettingsFont.rowDescription)
-                .foregroundColor(theme.text.tertiary)
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            SettingsFieldRow(
+                label: L("Name version \(snapshot.sequence)"),
+                hint: "Named versions are always kept.",
+                verbatimLabel: true
+            ) {
+                SettingsTextField(placeholder: L("For example: Before the trip"), text: $nameDraft)
+                    .frame(minWidth: 240)
+                    .onSubmit { saveName(snapshot) }
+            }
             HStack {
                 Spacer()
                 Button(L("Cancel")) { naming = nil }

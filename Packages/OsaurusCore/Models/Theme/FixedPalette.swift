@@ -27,4 +27,11 @@ enum FixedPalette {
     /// QR codes need a white quiet zone and black modules to scan.
     static let qrPaper = Color.white
     static let qrInk = Color.black
+
+    /// A glyph on a caller-chosen fill (a pale status shade, a saturated
+    /// tint): white or black, whichever contrasts more with the fill.
+    static func glyph(on fill: Color) -> Color {
+        let lum = ThemeContrast.luminance(fill)
+        return ThemeContrast.ratio(lum, 1) >= ThemeContrast.ratio(lum, 0) ? .white : .black
+    }
 }

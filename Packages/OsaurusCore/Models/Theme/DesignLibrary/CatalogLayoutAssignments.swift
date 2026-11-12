@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import Foundation
 
 /// Independent layout assignments. Existing rendered recipes stay in effect
@@ -366,12 +365,8 @@ enum CatalogLayoutAssignments {
         .init(key: "component.library.36.elements.layout.computerUseConfirmOverlay.cardChrome.padding.vertical", legacy: "component.library.36.padding", label: "Computer Use Confirm Overlay · card Chrome — Vertical padding", group: "Computer Use Confirm Overlay · card Chrome", source: "Views/Chat/ComputerUseConfirmOverlay.swift"),
         .init(key: "component.library.36.elements.layout.computerUseConfirmOverlay.effectBadge.paddingX", legacy: "component.library.36.padding", label: "Computer Use Confirm Overlay · effect Badge — Horizontal padding", group: "Computer Use Confirm Overlay · effect Badge", source: "Views/Chat/ComputerUseConfirmOverlay.swift"),
         .init(key: "component.library.36.elements.layout.computerUseConfirmOverlay.effectBadge.paddingY", legacy: "component.library.36.padding", label: "Computer Use Confirm Overlay · effect Badge — Vertical padding", group: "Computer Use Confirm Overlay · effect Badge", source: "Views/Chat/ComputerUseConfirmOverlay.swift"),
-        .init(key: "component.library.36.elements.layout.optionChip.body.horizontalGap", legacy: "component.library.36.gap", label: "Option Chip — Gap between items", group: "Option Chip", source: "Views/Chat/ClarifyPromptOverlay.swift"),
-        .init(key: "component.library.36.elements.layout.optionChip.body.paddingX", legacy: "component.library.36.padding", label: "Option Chip — Horizontal padding", group: "Option Chip", source: "Views/Chat/ClarifyPromptOverlay.swift"),
-        .init(key: "component.library.36.elements.layout.optionChip.body.paddingY", legacy: "component.library.36.padding", label: "Option Chip — Vertical padding", group: "Option Chip", source: "Views/Chat/ClarifyPromptOverlay.swift"),
         .init(key: "component.library.36.elements.layout.configApprovalModal.planContent.verticalGap", legacy: "component.library.36.gap", label: "Config Approval Modal · plan Content — Gap between stacked elements", group: "Config Approval Modal · plan Content", source: "Views/Chat/ConfigApprovalModal.swift"),
         .init(key: "component.library.36.elements.layout.configApprovalModal.planContent.verticalGap2", legacy: "component.library.36.gap", label: "Config Approval Modal · plan Content — Gap between stacked elements (2)", group: "Config Approval Modal · plan Content", source: "Views/Chat/ConfigApprovalModal.swift"),
-        .init(key: "component.library.36.elements.layout.configApprovalModal.planContent.horizontalGap", legacy: "component.library.36.gap", label: "Config Approval Modal · plan Content — Gap between items", group: "Config Approval Modal · plan Content", source: "Views/Chat/ConfigApprovalModal.swift"),
         .init(key: "component.library.36.elements.layout.configApprovalModal.pruneBanner.horizontalGap", legacy: "component.library.36.gap", label: "Config Approval Modal · prune Banner · Prune is on: entries not listed in the document will be deleted. — Gap between items", group: "Config Approval Modal · prune Banner · Prune is on: entries not listed in the document will be deleted.", source: "Views/Chat/ConfigApprovalModal.swift"),
         .init(key: "component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.horizontal", legacy: "component.library.36.padding", label: "Config Approval Modal · prune Banner — Horizontal padding", group: "Config Approval Modal · prune Banner", source: "Views/Chat/ConfigApprovalModal.swift"),
         .init(key: "component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.vertical", legacy: "component.library.36.padding", label: "Config Approval Modal · prune Banner — Vertical padding", group: "Config Approval Modal · prune Banner", source: "Views/Chat/ConfigApprovalModal.swift"),
@@ -466,9 +461,6 @@ enum CatalogLayoutAssignments {
         .init(key: "component.library.38.elements.layout.diffLinesView.body.padding.horizontal", legacy: "component.library.38.padding", label: "Diff Lines — Horizontal padding", group: "Diff Lines", source: "Views/Chat/FileChangesPanel.swift"),
         .init(key: "component.library.38.elements.layout.diffLinesView.body.padding.vertical", legacy: "component.library.38.padding", label: "Diff Lines — Vertical padding", group: "Diff Lines", source: "Views/Chat/FileChangesPanel.swift"),
         .init(key: "component.library.38.elements.layout.diffLinesView.row.paddingX", legacy: "component.library.38.padding", label: "Diff Lines · row — Horizontal padding", group: "Diff Lines · row", source: "Views/Chat/FileChangesPanel.swift"),
-        .init(key: "component.library.38.elements.layout.panelStatusPill.body.paddingX", legacy: "component.library.38.padding", label: "Panel Status Pill — Horizontal padding", group: "Panel Status Pill", source: "Views/Chat/FileChangesPanel.swift"),
-        .init(key: "component.library.38.elements.layout.panelPillButtonStyle.makeBody.paddingX", legacy: "component.library.38.padding", label: "Panel Pill Button Style · make Body — Horizontal padding", group: "Panel Pill Button Style · make Body", source: "Views/Chat/FileChangesPanel.swift"),
-        .init(key: "component.library.38.elements.layout.panelPillButtonStyle.makeBody.paddingY", legacy: "component.library.38.padding", label: "Panel Pill Button Style · make Body — Vertical padding", group: "Panel Pill Button Style · make Body", source: "Views/Chat/FileChangesPanel.swift"),
     ]
     private static let family40: [Entry] = [
         .init(key: "component.library.40.elements.layout.remoteAgentNoticeRow.body.horizontalGap", legacy: "component.library.40.gap", label: "Remote Agent Notice Row — Gap between items", group: "Remote Agent Notice Row", source: "Views/Chat/RemoteAgentConnectionNotice.swift"),
@@ -609,8 +601,6 @@ enum CatalogLayoutAssignments {
         .init(key: "component.library.45.elements.layout.transcriptionPreviewView.body.paddingY", legacy: "component.library.45.padding", label: "Transcription Preview — Vertical padding", group: "Transcription Preview", source: "Views/Voice/VoiceComponents.swift"),
         .init(key: "component.library.45.elements.layout.countdownRingButton.body.horizontalGap", legacy: "component.library.45.gap", label: "Countdown Ring Button — Gap between items", group: "Countdown Ring Button", source: "Views/Voice/VoiceComponents.swift"),
         .init(key: "component.library.45.elements.layout.countdownRingButton.body.verticalGap", legacy: "component.library.45.gap", label: "Countdown Ring Button · Sending... / Tap to cancel — Gap between stacked elements", group: "Countdown Ring Button · Sending... / Tap to cancel", source: "Views/Voice/VoiceComponents.swift"),
-        .init(key: "component.library.45.elements.layout.countdownRingButton.body.padding.horizontal", legacy: "component.library.45.padding", label: "Countdown Ring Button — Horizontal padding", group: "Countdown Ring Button", source: "Views/Voice/VoiceComponents.swift"),
-        .init(key: "component.library.45.elements.layout.countdownRingButton.body.padding.vertical", legacy: "component.library.45.padding", label: "Countdown Ring Button — Vertical padding", group: "Countdown Ring Button", source: "Views/Voice/VoiceComponents.swift"),
         .init(key: "component.library.45.elements.layout.countdownRingButton.body.padding2.horizontal", legacy: "component.library.45.padding", label: "Countdown Ring Button — Horizontal padding", group: "Countdown Ring Button", source: "Views/Voice/VoiceComponents.swift"),
         .init(key: "component.library.45.elements.layout.countdownRingButton.body.padding2.vertical", legacy: "component.library.45.padding", label: "Countdown Ring Button — Vertical padding", group: "Countdown Ring Button", source: "Views/Voice/VoiceComponents.swift"),
         .init(key: "component.library.45.elements.layout.pauseDetectionRing.body.horizontalGap", legacy: "component.library.45.gap", label: "Pause Detection Ring — Gap between items", group: "Pause Detection Ring", source: "Views/Voice/VoiceComponents.swift"),
@@ -752,19 +742,10 @@ enum CatalogLayoutAssignments {
         .init(key: "component.library.57.elements.layout.settingsSection.body.verticalGap2", legacy: "component.library.57.gap", label: "Section — Gap between stacked elements (2)", group: "Section", source: "Views/DesignSystem/SettingsSection.swift"),
     ]
     static let byKey = Dictionary(uniqueKeysWithValues: entries.map { ($0.key, $0) })
+    /// A mapped slot paints its token; an unmapped slot keeps the surrounding value.
     static func resolve(_ key: String, snapshot: DesignThemeSnapshot?, mode: String, inheriting value: Double) -> Double {
-        guard let snapshot, snapshot.document.explicitAssignments?.contains(key) == true,
-              let role = snapshot.document.mappings[key],
-              let metric = snapshot.document.tokens[role]?[mode].designNumber else { return value }
+        guard let role = snapshot?.document.mappings[key],
+              let metric = snapshot?.document.tokens[role]?[mode].designNumber else { return value }
         return max(0, metric)
     }
-    static func extend(_ mappings: [String: String]) -> [String: String] {
-        var result = mappings
-        for entry in entries where result[entry.key] == nil {
-            result[entry.key] = mappings[CatalogElementAssignments.routed(entry.legacy, mappings: mappings)]
-                ?? mappings[entry.legacy] ?? "space.8"
-        }
-        return result
-    }
 }
-#endif

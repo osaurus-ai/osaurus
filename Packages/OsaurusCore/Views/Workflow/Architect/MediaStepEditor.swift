@@ -24,7 +24,7 @@ struct MediaStepEditor: View {
             spec.model, action: spec.action, candidates: candidates,
             preferred: MediaModelResolver.configuredDefault(for: spec.action))
         let model = try? resolved.get()
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             field("Makes") {
                 AssignedBaseSegmentedPicker(
                     selection: $spec.action,
@@ -83,9 +83,9 @@ struct MediaStepEditor: View {
         candidates: [MediaModelCandidate], resolved: Result<MediaModelCandidate, MediaModelResolver.Failure>
     ) -> some View {
         let usable = candidates.filter { $0.supports(spec.action) }
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             field("Model") {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     SettingsMenuPicker(selection: modelChoice) {
                         Text("Default", bundle: .module).tag("")
                         if let family = spec.model.family {
@@ -116,7 +116,7 @@ struct MediaStepEditor: View {
             switch resolved {
             case _ where !pickerCache.isLoaded:
                 HStack(spacing: theme.space.s6) {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                     note(L("Looking for image and video models…"))
                 }
             case .success(let model):
@@ -217,7 +217,7 @@ struct MediaStepEditor: View {
         let q21 = ImageModelRequestPolicy.isQwen21Family(model?.family)
         let formats = Self.formats(model)
         field("Size") {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 MediaParameterField(inputKeys: inputKeys, key: "width", placeholder: L("Width"), value: $spec.width)
                 Text(verbatim: "×").foregroundColor(theme.text.tertiary)
                 MediaParameterField(inputKeys: inputKeys, key: "height", placeholder: L("Height"), value: $spec.height)
@@ -240,7 +240,7 @@ struct MediaStepEditor: View {
                 .foregroundColor(theme.status.warning.foreground)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             field("Steps") {
                 MediaParameterField(
                     inputKeys: inputKeys, key: "steps", placeholder: model?.defaultSteps.map(String.init) ?? L("Model default"),
@@ -273,7 +273,7 @@ struct MediaStepEditor: View {
             note(L("0 keeps the source, 1 ignores it."))
         }
         seedFields
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             if spec.action == .generate {
                 field("Images") {
                     MediaParameterField(inputKeys: inputKeys, key: "count", placeholder: "1", value: $spec.count)
@@ -333,7 +333,7 @@ struct MediaStepEditor: View {
         let showsScheduler = schedulers.count > 1 || spec.scheduler != nil
         let showsShift = limits.supportsShift || spec.shift != nil
         if showsSampler || showsScheduler || showsShift {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 if showsSampler {
                     field("Sampler") {
                         namedChoice(
@@ -402,7 +402,7 @@ struct MediaStepEditor: View {
 
     @ViewBuilder
     private var seedFields: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             field("Seed") {
                 SettingsMenuPicker(selection: seedMode) {
                     Text("Random", bundle: .module).tag(MediaSeedMode.random)
@@ -438,7 +438,7 @@ struct MediaStepEditor: View {
     @ViewBuilder
     private func videoParameters(_ model: MediaModelCandidate?) -> some View {
         let constraints = model?.media?.constraints
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             field("Duration") {
                 choiceField(
                     text: optionalText($spec.duration), options: constraints?.durations ?? [], placeholder: "5")
@@ -458,7 +458,7 @@ struct MediaStepEditor: View {
             SettingsToggle(title: "With Audio", isOn: audio)
         }
         if model?.isLocal == true {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 field("Frames") {
                     MediaParameterField(inputKeys: inputKeys, key: "frame_count", placeholder: "49", value: $spec.frameCount)
                 }
@@ -477,7 +477,7 @@ struct MediaStepEditor: View {
                 }
             }
             field("Size") {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     MediaParameterField(inputKeys: inputKeys, key: "width", placeholder: L("Width"), value: $spec.width)
                     Text(verbatim: "×").foregroundColor(theme.text.tertiary)
                     MediaParameterField(inputKeys: inputKeys, key: "height", placeholder: L("Height"), value: $spec.height)
@@ -538,7 +538,7 @@ struct MediaStepEditor: View {
     }
 
     private func field<Content: View>(_ label: LocalizedStringKey, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text(label, bundle: .module)
                 .textStyle(.caption, weight: 500)
                 .foregroundColor(theme.text.secondary)
@@ -570,7 +570,7 @@ struct MediaParameterField<T: MediaScalar & LosslessStringConvertible>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: theme.settingsTitleToDescription) {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 SettingsTextField(
                     placeholder: bound ? "{{input.\(key)}}" : placeholder, text: $text, monospaced: bound,
                     isInvalid: !isValid)

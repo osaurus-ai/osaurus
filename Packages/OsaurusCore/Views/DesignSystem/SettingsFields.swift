@@ -97,22 +97,12 @@ struct SettingsTextField: View {
     var onEditingChanged: ((Bool) -> Void)?
     var onSubmit: (() -> Void)?
 
-    #if OSAURUS_DESIGN_SYSTEM
     @Environment(\.inspectorInputPreviewState) private var previewState
-    #endif
     private var displaysFocus: Bool {
-        #if OSAURUS_DESIGN_SYSTEM
         return isFocused || previewState == "focus"
-        #else
-        return isFocused
-        #endif
     }
     private var displaysHover: Bool {
-        #if OSAURUS_DESIGN_SYSTEM
         return isHovering || previewState == "hover"
-        #else
-        return isHovering
-        #endif
     }
     @State private var isFocused = false
     @State private var reveals = false
@@ -167,7 +157,7 @@ struct SettingsTextField: View {
                     .font(SettingsFont.glyph)
                     .foregroundColor(iconColor)
                     .frame(width: 16)
-                    .padding(.top, axis == .vertical ? 1 : 0)
+                    .padding(.top, axis == .vertical ? theme.space.s2 : theme.space.s0)
             }
 
             field
@@ -203,12 +193,8 @@ struct SettingsTextField: View {
             RoundedRectangle(cornerRadius: theme.assignedMetric("component.input.radius", fallback: theme.radius.medium), style: .continuous)
                 .strokeBorder(borderColor, lineWidth: theme.assignedMetric("component.input.borderWidth", fallback: theme.stroke.default))
         )
-        #if OSAURUS_DESIGN_SYSTEM
         .assignedDesignEffect("component.input.effect", theme: theme, radius: theme.assignedMetric("component.input.radius", fallback: theme.radius.medium))
-        #endif
-        #if OSAURUS_DESIGN_SYSTEM
         .nativeCatalogTarget(["component.input.background", "component.input.border", "component.input.borderHover", "component.input.borderError", "component.input.radius", "component.input.paddingX", "component.input.paddingY", "component.input.borderWidth", "component.input.effect", "component.control.heightDefault"], "Input field container")
-        #endif
         .preference(key: SettingsInputInvalidPreference.self, value: isInvalid)
         .assignedFocusRing(displaysFocus && isEnabled, radius: theme.assignedMetric("component.input.radius", fallback: theme.radius.medium))
         .onHover { isHovering = $0 }
@@ -220,13 +206,11 @@ struct SettingsTextField: View {
         .onAppear {
             guard autofocus, axis == .horizontal else { return }
             DispatchQueue.main.async {
-                #if OSAURUS_DESIGN_SYSTEM
                 if !isSecure {
                     isFocused = true
                     if let focus { focus.wrappedValue = true }
                     return
                 }
-                #endif
                 if let focus { focus.wrappedValue = true } else { ownFocus = true }
             }
         }
@@ -274,7 +258,6 @@ struct SettingsTextField: View {
                     .onSubmit { onSubmit?() }
             }
         } else {
-            #if OSAURUS_DESIGN_SYSTEM
             InspectorAssignedTextField(
                 text: $text, isComposing: $isComposing,
                 font: theme.assignedNativeFont(monospaced ? "type.code" : "component.input.text", fallback: theme.nsFont(.bodySmall)),
@@ -293,13 +276,6 @@ struct SettingsTextField: View {
                 placeholder: placeholder, placeholderColor: NSColor(placeholderColor)
             )
             .frame(height: theme.assignedLineHeight(monospaced ? "type.code" : "component.input.text", fallback: theme.lineHeight(.bodySmall)))
-            #else
-            TextField("", text: $text, prompt: prompt)
-                .accessibilityLabel(Text(verbatim: fieldName))
-                .accessibilityHint(Text(verbatim: fieldAccessibility?.help ?? ""))
-                .focused(focus ?? $ownFocus)
-                .onSubmit { onSubmit?() }
-            #endif
         }
     }
 
@@ -401,9 +377,8 @@ struct SettingsTextEditor: View {
         fieldAccessibility.flatMap { $0.name.isEmpty ? nil : $0.name } ?? placeholder ?? L("Multiline editor")
     }
     var body: some View {
-        #if OSAURUS_DESIGN_SYSTEM
-        let paddingX = theme.catalogLayoutMetric(prefix + "elements.layout.editorPaddingX", inheriting: theme.assignedMetric(prefix + "padding", fallback: 5))
-        let paddingY = theme.catalogLayoutMetric(prefix + "elements.layout.editorPaddingY", inheriting: theme.assignedMetric(prefix + "padding", fallback: 5))
+        let paddingX = theme.catalogLayoutMetric(prefix + "elements.layout.editorPaddingX", inheriting: theme.assignedMetric(prefix + "padding", fallback: theme.space.s4))
+        let paddingY = theme.catalogLayoutMetric(prefix + "elements.layout.editorPaddingY", inheriting: theme.assignedMetric(prefix + "padding", fallback: theme.space.s4))
         let radius = theme.assignedMetric(prefix + "radius", fallback: theme.radius.medium)
         let ink = theme.assignedColor(prefix + (isEnabled ? "foreground" : "disabledForeground"), fallback: theme.text.primary)
         ZStack(alignment: .topLeading) {
@@ -418,7 +393,7 @@ struct SettingsTextEditor: View {
                 font: theme.assignedNativeFont(textKey, fallback: theme.nsFont(.bodySmall)),
                 lineHeight: theme.assignedLineHeight(textKey, fallback: theme.lineHeight(.bodySmall)),
                 tracking: theme.assignedTracking(textKey) ?? 0,
-                paragraphSpacing: theme.catalogLayoutMetric(prefix + "elements.layout.paragraphGap", inheriting: theme.assignedMetric(prefix + "gap", fallback: 0)),
+                paragraphSpacing: theme.catalogLayoutMetric(prefix + "elements.layout.paragraphGap", inheriting: theme.assignedMetric(prefix + "gap", fallback: theme.space.s0)),
                 textColor: NSColor(ink), selectionColor: NSColor(theme.assignedColor(prefix + "selected", fallback: theme.surface.selected)),
                 editable: isEnabled, onFocusChange: { nativeFocused = $0 },
                 accessibleName: fieldName, accessibleHelp: fieldAccessibility?.help)
@@ -441,24 +416,19 @@ struct SettingsTextEditor: View {
             }
         }
         .onHover { isHovering = $0 }
-        #if OSAURUS_DESIGN_SYSTEM
         .assignedDesignEffect("component.input.effect", theme: theme, radius: theme.assignedMetric("component.input.radius", fallback: theme.radius.medium))
-        #endif
         .preference(key: SettingsInputInvalidPreference.self, value: isInvalid)
         .preference(key: SettingsEditorPreference.self, value: true)
         .nativeCatalogTarget(["background", "foreground", "disabledForeground", "padding", "radius", "border", "borderWidth", "error", "text", "gap", "height", "selected", "hover", "disabledBackground", "secondary", "accent"].map {
             CatalogElementAssignments.routed(prefix + $0, mappings: DesignThemeOverlay.shared.current()?.document.mappings ?? [:])
         }, "Multiline editor")
-        #else
-        legacyBody
-        #endif
     }
     private var legacyBody: some View {
         ZStack(alignment: .topLeading) {
             if text.isEmpty, let placeholder {
                 Text(verbatim: placeholder)
                     .foregroundColor(isEnabled ? theme.assignedColor("component.input.placeholder", fallback: theme.text.placeholder) : theme.assignedColor("component.input.disabled.foreground", fallback: theme.text.disabled))
-                    .padding(.horizontal, 5)
+                    .padding(.horizontal, theme.space.s4)
                     .padding(.vertical, theme.space.s8)
                     .allowsHitTesting(false)
             }
@@ -471,7 +441,7 @@ struct SettingsTextEditor: View {
         }
         .assignedTypography(monospaced ? "type.code" : "component.input.text", fallback: monospaced ? SettingsFont.mono : SettingsFont.body)
         .frame(minHeight: minHeight, maxHeight: maxHeight)
-        .padding(.horizontal, 5)
+        .padding(.horizontal, theme.space.s4)
         .padding(.vertical, theme.space.s4)
         .background(
             RoundedRectangle(cornerRadius: theme.assignedMetric("component.input.radius", fallback: theme.radius.medium), style: .continuous)
@@ -481,9 +451,7 @@ struct SettingsTextEditor: View {
             RoundedRectangle(cornerRadius: theme.assignedMetric("component.input.radius", fallback: theme.radius.medium), style: .continuous)
                 .strokeBorder(isInvalid ? theme.assignedColor("component.input.borderError", fallback: theme.border.error) : theme.assignedColor("component.input.border", fallback: theme.border.strong), lineWidth: theme.assignedMetric("component.input.borderWidth", fallback: theme.stroke.default))
         )
-        #if OSAURUS_DESIGN_SYSTEM
         .assignedDesignEffect("component.input.effect", theme: theme, radius: theme.assignedMetric("component.input.radius", fallback: theme.radius.medium))
-        #endif
         .preference(key: SettingsInputInvalidPreference.self, value: isInvalid)
         .assignedFocusRing(isFocused && isEnabled, radius: theme.assignedMetric("component.input.radius", fallback: theme.radius.medium))
         .animation(theme.motion.quick, value: isFocused)
@@ -534,7 +502,7 @@ struct SettingsFieldRow<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if !label.isEmpty {
                 Group {
                     if verbatimLabel {
@@ -714,14 +682,8 @@ struct SettingsSliderRow: View {
                         .foregroundColor(theme.text.tertiary)
                         .fixedSize(horizontal: true, vertical: false)
                         .frame(minWidth: 28, alignment: .trailing)
-                    #if OSAURUS_DESIGN_SYSTEM
                     AssignedBaseSlider(value: Binding(get: { Double(effectiveValue) }, set: { text = String(format: formatString, Float($0)) }),
                         range: Double(range.lowerBound)...Double(range.upperBound), step: Double(step), label: L(String.LocalizationValue(label)))
-                    #else
-                    Slider(value: sliderValue, in: range, step: step)
-                        .tint(theme.action.primary.default.background)
-                        .controlSize(.small)
-                    #endif
                     Text(verbatim: String(format: formatString, range.upperBound))
                         .assignedTypography("component.library.7.caption", fallback: SettingsFont.monoSmall)
                         .foregroundColor(theme.text.tertiary)
@@ -732,12 +694,12 @@ struct SettingsSliderRow: View {
                         .foregroundColor(theme.text.primary)
                         .fixedSize(horizontal: true, vertical: false)
                         .frame(minWidth: 44)
-                        .padding(.vertical, 3)
+                        .padding(.vertical, theme.space.s2)
                         .settingsChrome(.control, radius: theme.radius.small)
                 }.catalogLayoutTarget("component.library.7.elements.layout.settingsSliderRow.body.horizontalGap")
             }
         }.catalogLayoutTarget("component.library.7.elements.layout.settingsSliderRow.body.verticalGap")
-        .padding(.horizontal, inGroup ? 0 : theme.catalogLayoutMetric("component.library.7.elements.layout.settingsSliderRow.body.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: 0))).padding(.vertical, inGroup ? 0 : theme.catalogLayoutMetric("component.library.7.elements.layout.settingsSliderRow.body.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: 0))).catalogLayoutTarget("component.library.7.elements.layout.settingsSliderRow.body.padding.horizontal").catalogLayoutTarget("component.library.7.elements.layout.settingsSliderRow.body.padding.vertical")
+        .padding(.horizontal, inGroup ? 0 : theme.catalogLayoutMetric("component.library.7.elements.layout.settingsSliderRow.body.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: theme.space.s0))).padding(.vertical, inGroup ? 0 : theme.catalogLayoutMetric("component.library.7.elements.layout.settingsSliderRow.body.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: theme.space.s0))).catalogLayoutTarget("component.library.7.elements.layout.settingsSliderRow.body.padding.horizontal").catalogLayoutTarget("component.library.7.elements.layout.settingsSliderRow.body.padding.vertical")
         .assignedBaseChrome(7, fallback: nil)
         .environment(\.baseAssignmentFamily, 7)
         .environment(\.baseDescriptionAssignment, "component.library.7.caption")
@@ -793,7 +755,7 @@ struct SettingsSlider<Value: BinaryFloatingPoint>: View where Value.Stride: Bina
                     .fixedSize(horizontal: false, vertical: true)
             }
         }.catalogLayoutTarget("component.library.7.elements.layout.settingsSlider.body.verticalGap")
-        .padding(.horizontal, inGroup ? 0 : theme.catalogLayoutMetric("component.library.7.elements.layout.settingsSlider.body.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: 0))).padding(.vertical, inGroup ? 0 : theme.catalogLayoutMetric("component.library.7.elements.layout.settingsSlider.body.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: 0))).catalogLayoutTarget("component.library.7.elements.layout.settingsSlider.body.padding.horizontal").catalogLayoutTarget("component.library.7.elements.layout.settingsSlider.body.padding.vertical")
+        .padding(.horizontal, inGroup ? 0 : theme.catalogLayoutMetric("component.library.7.elements.layout.settingsSlider.body.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: theme.space.s0))).padding(.vertical, inGroup ? 0 : theme.catalogLayoutMetric("component.library.7.elements.layout.settingsSlider.body.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: theme.space.s0))).catalogLayoutTarget("component.library.7.elements.layout.settingsSlider.body.padding.horizontal").catalogLayoutTarget("component.library.7.elements.layout.settingsSlider.body.padding.vertical")
         .assignedBaseChrome(7, fallback: nil)
         .environment(\.baseAssignmentFamily, 7)
         .settingsLandingAnchor(anchorId)
@@ -801,17 +763,9 @@ struct SettingsSlider<Value: BinaryFloatingPoint>: View where Value.Stride: Bina
 
     @ViewBuilder
     private var slider: some View {
-        #if OSAURUS_DESIGN_SYSTEM
         AssignedBaseSlider(value: Binding(get: { Double(value) }, set: { value = Value($0) }),
             range: Double(range.lowerBound)...Double(range.upperBound), step: step.map { Double($0) },
             label: L("Slider"), onEditingChanged: onEditingChanged)
-        #else
-        if let step {
-            Slider(value: $value, in: range, step: step, onEditingChanged: onEditingChanged)
-        } else {
-            Slider(value: $value, in: range, onEditingChanged: onEditingChanged)
-        }
-        #endif
     }
 }
 
@@ -847,21 +801,15 @@ struct SettingsDatePicker: View {
     }
     var body: some View {
         Group {
-            #if OSAURUS_DESIGN_SYSTEM
             AssignedNativePicker(content: nativePicker, theme: theme, enabled: baseComponentEnabled, family: 8, onFocusChange: { assignedFocus = $0 })
-            #else
-            nativePicker
-            #endif
         }
         .tint(theme.border.focus)
         .assignedTypography("component.library.8.text", fallback: SettingsFont.body)
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.8.elements.layout.settingsDatePicker.body.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: 0))).padding(.vertical, theme.catalogLayoutMetric("component.library.8.elements.layout.settingsDatePicker.body.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: 0))).catalogLayoutTarget("component.library.8.elements.layout.settingsDatePicker.body.padding.horizontal").catalogLayoutTarget("component.library.8.elements.layout.settingsDatePicker.body.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.8.elements.layout.settingsDatePicker.body.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: theme.space.s0))).padding(.vertical, theme.catalogLayoutMetric("component.library.8.elements.layout.settingsDatePicker.body.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: theme.space.s0))).catalogLayoutTarget("component.library.8.elements.layout.settingsDatePicker.body.padding.horizontal").catalogLayoutTarget("component.library.8.elements.layout.settingsDatePicker.body.padding.vertical")
         .frame(minHeight: theme.catalogMetric("height", fallback: 0))
         .assignedBaseChrome(8)
         .nativeCatalogTarget(["padding", "height", "hover", "disabledBackground"].map { "component.library.8.elements.container." + $0 } + ["component.library.8.accent"], "Date/time field")
-        #if OSAURUS_DESIGN_SYSTEM
         .assignedBaseFocusRing(8, visible: assignedFocus && baseComponentEnabled, radius: theme.catalogMetric("radius", fallback: 8), keyboardOnly: false)
-        #endif
         .fixedSize()
     }
 }
@@ -933,13 +881,9 @@ struct SettingsStepper: View {
     private let unit: String?
 
     @State private var draft = ""
-    #if OSAURUS_DESIGN_SYSTEM
     @State private var isFocused = false
     @State private var composing = false
     @FocusState private var focusedStepButton: String?
-    #else
-    @FocusState private var isFocused: Bool
-    #endif
 
     /// Override form: empty `text` inherits `defaultValue` (the placeholder).
     init(text: Binding<String>, range: ClosedRange<Int>, step: Int = 1, defaultValue: Int) {
@@ -1003,7 +947,7 @@ struct SettingsStepper: View {
         return max(theme.space.s24, ceil(number + theme.space.s8))
     }
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: theme.space.s0) {
             HStack(spacing: theme.catalogLayoutMetric("component.library.7.elements.layout.settingsStepper.body.horizontalGap", inheriting: theme.space.s4)) {
                 ZStack(alignment: .trailing) {
                     if draft.isEmpty, let placeholder {
@@ -1012,7 +956,6 @@ struct SettingsStepper: View {
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
                     }
-                    #if OSAURUS_DESIGN_SYSTEM
                     InspectorAssignedTextField(text: $draft, isComposing: $composing,
                         font: theme.assignedNativeFont("component.library.7.text", fallback: theme.nsFont(.code)),
                         textColor: NSColor(isEnabled ? theme.text.primary : theme.text.disabled),
@@ -1021,18 +964,6 @@ struct SettingsStepper: View {
                         requestedFocus: isFocused, alignment: .right,
                         onCommand: handleNumericCommand, accessibleName: fieldName, accessibleHelp: fieldHelp)
                         .frame(height: theme.assignedLineHeight("component.library.7.text", fallback: theme.lineHeight(.code)))
-                    #else
-                    TextField("", text: $draft)
-                        .accessibilityLabel(Text(verbatim: fieldName))
-                        .textFieldStyle(.plain)
-                        .multilineTextAlignment(.trailing)
-                        .foregroundColor(isEnabled ? theme.text.primary : theme.text.disabled)
-                        .focused($isFocused)
-                        .onSubmit(commit)
-                        .onKeyPress(.upArrow) { adjust(increasing: true); return .handled }
-                        .onKeyPress(.downArrow) { adjust(increasing: false); return .handled }
-                        .accessibilityHint(Text(verbatim: fieldHelp ?? ""))
-                    #endif
                 }
                 .frame(width: contentWidth)
                 if let unit {
@@ -1053,18 +984,7 @@ struct SettingsStepper: View {
         .padding(.vertical, verticalPadding)
         .catalogLayoutTarget("component.library.7.elements.layout.settingsStepper.body.paddingY")
         .frame(minHeight: minimumHeight)
-        #if OSAURUS_DESIGN_SYSTEM
         .assignedBaseChrome(7, fallback: .control)
-        #else
-        .background(
-            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .fill(isEnabled ? theme.surface.raised : theme.surface.disabled)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .strokeBorder(theme.border.strong, lineWidth: theme.stroke.default)
-        )
-        #endif
         .assignedBaseFocusRing(7, visible: isFocused && isEnabled, radius: theme.radius.medium, keyboardOnly: false)
         .fixedSize()
         .onAppear { draft = value.map(String.init) ?? "" }
@@ -1134,7 +1054,6 @@ struct SettingsStepper: View {
         }
         .accessibilityLabel(Text(verbatim: title))
         .assignedBasePlainButtonStyle()
-        #if OSAURUS_DESIGN_SYSTEM
         .focusable(enabled && isEnabled).focused($focusedStepButton, equals: icon).focusEffectDisabled()
         .assignedBaseFocusRing(7, visible: focusedStepButton == icon && enabled && isEnabled, radius: theme.radius.small)
         .onKeyPress(.space) {
@@ -1142,7 +1061,6 @@ struct SettingsStepper: View {
             adjust(increasing: increasing)
             return .handled
         }
-        #endif
         .disabled(!enabled)
     }
 }

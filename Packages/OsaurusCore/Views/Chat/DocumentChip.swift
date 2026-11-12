@@ -29,16 +29,12 @@ struct DocumentChip: View {
     var body: some View {
         let border = AttachmentInspectionStyle.color("border", theme.border.subtle, theme)
         let borderWidth = AttachmentInspectionStyle.metric("borderWidth", theme.hairline, theme)
-        #if OSAURUS_DESIGN_SYSTEM
         let needsComposerBoundary = isOnComposerInputSurface && !theme.isDark && isEnabled
-        #else
-        let needsComposerBoundary = false
-        #endif
-        HStack(spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.body.horizontalGap", inheriting: AttachmentInspectionStyle.metric("gap", 6, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.body.horizontalGap", inheriting: AttachmentInspectionStyle.metric("gap", theme.space.s6, theme))) {
             chipContent
         }.catalogLayoutTarget("component.library.24.elements.layout.documentChip.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.body.paddingX", inheriting: AttachmentInspectionStyle.metric("padding", 8, theme))).catalogLayoutTarget("component.library.24.elements.layout.documentChip.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.body.paddingY", inheriting: AttachmentInspectionStyle.metric("padding", 5, theme))).catalogLayoutTarget("component.library.24.elements.layout.documentChip.body.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.body.paddingX", inheriting: AttachmentInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.24.elements.layout.documentChip.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.body.paddingY", inheriting: AttachmentInspectionStyle.metric("padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.24.elements.layout.documentChip.body.paddingY")
         .modifier(AttachmentMinimumHeight())
         .background(
             RoundedRectangle(cornerRadius: AttachmentInspectionStyle.metric("radius", theme.radius.medium, theme), style: .continuous)
@@ -63,11 +59,7 @@ struct DocumentChip: View {
     }
 
     private var chipBackground: Color {
-        #if OSAURUS_DESIGN_SYSTEM
         AttachmentInspectionStyle.color(!isEnabled ? "disabledBackground" : isHovered ? "hover" : "background", theme.surface.subtle, theme)
-        #else
-        (onRemove != nil ? theme.surface.hover : theme.surface.subtle).opacity(isHovered ? 0.9 : 0.7)
-        #endif
     }
 
     @ViewBuilder
@@ -95,15 +87,15 @@ struct DocumentChip: View {
                 // Same fill, stroke, height and ink as the circular edit /
                 // remove buttons beside it, and the chip's own corner radius,
                 // so the row reads as one set.
-                HStack(spacing: 3) {
+                HStack(spacing: theme.space.s2) {
                     Image(systemName: "text.insert")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                     Text("Insert as Text", bundle: .module)
                         .attachmentTextStyle(.micro, property: "caption", weight: 600)
                         .lineLimit(1)
                 }
                 .attachmentInk("accent", fallback: theme.text.secondary)
-                .padding(.horizontal, 7)
+                .padding(.horizontal, theme.space.s6)
                 .frame(height: 20)
                 .background(
                     shape.fill(AttachmentInspectionStyle.color(isEnabled ? "background" : "disabledBackground", theme.surface.canvas, theme))
@@ -127,9 +119,9 @@ struct DocumentChip: View {
     }
 
     private var labelStack: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.labelStack.horizontalGap", inheriting: AttachmentInspectionStyle.metric("gap", 5, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.24.elements.layout.documentChip.labelStack.horizontalGap", inheriting: AttachmentInspectionStyle.metric("gap", theme.space.s4, theme))) {
             Image(systemName: isPasted ? "doc.on.clipboard" : businessSummary?.systemImageName ?? attachment.fileIcon)
-                .glyphSize(11, weight: .medium)
+                .glyphSize(.footnote, weight: .medium)
                 .attachmentInk("accent", fallback: theme.text.secondary)
 
             if let name = attachment.filename {
@@ -159,7 +151,7 @@ struct DocumentChip: View {
     private func circularButton(systemName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .attachmentInk("accent", fallback: theme.text.secondary)
                 .frame(width: 20, height: 20)
                 .background(
@@ -180,10 +172,6 @@ struct DocumentChip: View {
 private struct AttachmentMinimumHeight: ViewModifier {
     @Environment(\.theme) private var theme
     @ViewBuilder func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         content.frame(minHeight: AttachmentInspectionStyle.documentHeight(theme))
-        #else
-        content
-        #endif
     }
 }

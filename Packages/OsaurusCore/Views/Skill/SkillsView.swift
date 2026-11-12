@@ -68,16 +68,14 @@ struct SkillsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Header
             headerView
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
             // Progress bar
             if showProgress {
-                ProgressView()
-                    .progressViewStyle(LinearProgressViewStyle())
-                    .frame(height: 2)
+                SettingsProgressBar(value: nil, height: 2)
                     .transition(.opacity)
             } else {
                 Spacer().frame(height: 2)
@@ -403,7 +401,7 @@ struct SkillsView: View {
     private var availabilityHint: some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: "info.circle")
-                .glyphSize(11, weight: .medium)
+                .glyphSize(.footnote, weight: .medium)
                 .foregroundColor(theme.text.link)
             Text(
                 "A skill loads only when it is relevant. Type /skill-name in chat to use one explicitly.",
@@ -507,10 +505,7 @@ private struct SkillRow: View {
         return L("Plugin")
     }
 
-    private var skillColor: Color {
-        let hue = Double(abs(skill.name.hashValue % 360)) / 360.0
-        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
-    }
+    private var skillColor: Color { theme.dataInk(seed: skill.name) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: theme.space.s12) {

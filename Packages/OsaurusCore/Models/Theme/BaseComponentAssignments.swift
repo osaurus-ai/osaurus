@@ -1,8 +1,6 @@
 import SwiftUI
-#if OSAURUS_DESIGN_SYSTEM
 import AppKit
 import Carbon.HIToolbox
-#endif
 
 /// Assignment chrome shared by the existing native app components. Its fallback
 /// keeps ordinary app builds unchanged; no inspector specimen is embedded here.
@@ -15,10 +13,14 @@ private struct AssignedBaseChrome: ViewModifier {
     let selected: Bool
     let invalid: Bool
     let element: String
-    var key: String { "component.library.\(family).elements.\(element)." }
+    /// Chrome overrides live apart from the element's role mappings, which the
+    /// scoped family theme reads; with none, the kit chrome paints.
+    var key: String { "component.library.\(family).elements.chrome.\(element)." }
     @ViewBuilder func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
-        let hasOverride = DesignThemeOverlay.shared.current()?.reassignedProperties.contains(where: { $0.hasPrefix(key) }) == true
+        let prefix = key
+        let hasOverride = DesignThemeOverlay.shared.memoized(.init(property: prefix, family: family, flags: 0, kind: 9)) { snapshot in
+            snapshot?.document.mappings.keys.contains { $0.hasPrefix(prefix) } == true
+        }
         if !hasOverride {
             content.settingsChrome(fallback).nativeCatalogTarget(["background", "border", "borderWidth", "radius"].map { key + $0 }, NativeCatalogAssignment.name(key))
         } else {
@@ -30,9 +32,6 @@ private struct AssignedBaseChrome: ViewModifier {
         }.onHover { hovered = $0 }
         .nativeCatalogTarget(["background", "disabledBackground", "selected", "hover", "error", "border", "borderWidth", "radius"].map { key + $0 }, NativeCatalogAssignment.name(key))
         }
-        #else
-        content.settingsChrome(fallback)
-        #endif
     }
 }
 extension View {
@@ -46,17 +45,12 @@ private struct AssignedBadgeSurface: ViewModifier {
     let fill: Color
     let stroke: Color
     @ViewBuilder func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         let pinned = DesignButtonBindings.value("component.library.10.elements.badge.radius", theme: theme)?.designNumber
         let shape = ThemePillShape(theme.radius.pill, pinned: pinned.map { CGFloat($0) })
         content.background(shape.fill(fill))
             .overlay(shape
                 .strokeBorder(theme.assignedColor("component.library.10.elements.badge.border", fallback: stroke), lineWidth: theme.assignedMetric("component.library.10.elements.badge.borderWidth", fallback: theme.stroke.default)))
             .nativeCatalogTarget(["radius", "border", "borderWidth"].map { "component.library.10.elements.badge." + $0 }, "Badge shape")
-        #else
-        let shape = ThemePillShape(theme.radius.pill)
-        content.background(shape.fill(fill)).overlay(shape.strokeBorder(stroke, lineWidth: theme.stroke.default))
-        #endif
     }
 }
 extension View {
@@ -80,7 +74,6 @@ extension EnvironmentValues {
         set { self[BaseAssignmentFamilyKey.self] = newValue }
     }
 }
-#if OSAURUS_DESIGN_SYSTEM
 /// Tracks input for custom focus rings without changing the first responder.
 /// AppKit retains the local monitor for the lifetime of the app.
 @MainActor @Observable
@@ -173,7 +166,6 @@ struct AssignedBaseToggleStyle: ToggleStyle {
 struct AssignedBasePlainButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { configuration.label }
 }
-#endif
 
 private struct AssignedBaseFocusRing: ViewModifier {
     @Environment(\.theme) private var theme
@@ -183,7 +175,6 @@ private struct AssignedBaseFocusRing: ViewModifier {
     let radius: CGFloat
     let keyboardOnly: Bool
     @ViewBuilder func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         let key = "component.library.\(family).accent"
         let role = DesignButtonBindings.role(key)
         let keyboardFocus = DesignKeyboardFocus.shared
@@ -194,18 +185,11 @@ private struct AssignedBaseFocusRing: ViewModifier {
             width: theme.assignedMetric("component.focus.width", fallback: theme.stroke.focus),
             offset: theme.assignedMetric("component.focus.offset", fallback: theme.focusOffset)
         )
-        #else
-        content.settingsFocusRing(visible, radius: radius)
-        #endif
     }
 }
 extension View {
     @ViewBuilder func assignedBasePlainButtonStyle() -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         buttonStyle(AssignedBasePlainButtonStyle())
-        #else
-        buttonStyle(.plain)
-        #endif
     }
     func assignedBaseFocusRing(_ family: Int, visible: Bool, radius: CGFloat, keyboardOnly: Bool = true) -> some View {
         modifier(AssignedBaseFocusRing(family: family, visible: visible, radius: radius, keyboardOnly: keyboardOnly))
@@ -227,7 +211,6 @@ private struct AssignedBaseKeyboardButton: ViewModifier {
     var onFocusRequestHandled: () -> Void = {}
     @State private var descendantFocused = false
     @ViewBuilder func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         content.onPreferenceChange(AssignedDescendantFocusKey.self) { descendantFocused = $0 }
             .focusable(enabled).focused($focused).focusEffectDisabled()
             .assignedBaseFocusRing(family, visible: focused && enabled && !descendantFocused,
@@ -241,9 +224,6 @@ private struct AssignedBaseKeyboardButton: ViewModifier {
             .onChange(of: focusRequest) { _, _ in restoreRequestedFocus() }
             .preference(key: AssignedDescendantFocusKey.self, value: focused || descendantFocused)
             .onChange(of: enabled) { _, enabled in if !enabled { focused = false } }
-        #else
-        content
-        #endif
     }
     private func restoreRequestedFocus() {
         guard enabled, focusRequest > 0 else { return }

@@ -1046,7 +1046,7 @@ final class ConfigureAIState: ObservableObject {
 struct ConfigureAIStepView: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
 
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
@@ -1159,12 +1159,12 @@ private struct ConfigureAILeftColumn: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
 
     var body: some View {
         Group {
 
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             Text(title, bundle: .module)
                 .catalogTypography(.heading, theme: theme, fallback: OnboardingTypography.heroTitle)
                 .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
@@ -1177,9 +1177,6 @@ private struct ConfigureAILeftColumn: View {
             Text(subtitle)
             .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.subtitle)
             .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
-            #if !OSAURUS_DESIGN_SYSTEM
-            .lineSpacing(1.5)
-            #endif
             .fixedSize(horizontal: false, vertical: true)
             .id(state.screen)
             .transition(.opacity)
@@ -1359,7 +1356,7 @@ private struct OnboardingPathCard: View {
                 ZStack {
                     Circle().fill(iconFill)
                     Image(systemName: symbol)
-                        .glyphSize(17, weight: .semibold)
+                        .glyphSize(.large, weight: .semibold)
                         .foregroundColor(
                             isHovered || isRecommended ? OnboardingPalette.dinoGreenText : OnboardingPalette.labelPrimary)
                 }
@@ -1394,7 +1391,7 @@ private struct OnboardingPathCard: View {
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(OnboardingPalette.labelSecondary)
                     .offset(x: isHovered ? theme.space.s2 : 0)
             }
@@ -1419,7 +1416,7 @@ private struct OnboardingPathCard: View {
                         shape.strokeBorder(OnboardingPalette.dinoGreen, lineWidth: theme.stroke.focus)
                             .blur(radius: theme.space.s8)
                             .opacity(isHovered ? 0.9 : 0.6)
-                        shape.strokeBorder(OnboardingPalette.dinoGreen, lineWidth: theme.stroke.focus)
+                        shape.strokeBorder(OnboardingPalette.dinoGreenText, lineWidth: theme.stroke.focus)
                     }
                 } else {
                     shape.strokeBorder(
@@ -1450,7 +1447,7 @@ private struct ConfigureAIBackRow: View {
         Button(action: action) {
             HStack(spacing: theme.space.s4) {
                 Image(systemName: "arrow.left")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                 Text("Back", bundle: .module)
                     .font(OnboardingTypography.cardCaption)
             }
@@ -1472,7 +1469,7 @@ private struct ConfigureAILocalPanel: View {
     let onComplete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             ConfigureAIBackRow { state.popToHome() }
 
             Spacer().frame(height: theme.space.s16)
@@ -1500,14 +1497,14 @@ private struct ConfigureAILocalPanel: View {
 private struct ConfigureAIKeysPanel: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
 
     @ObservedObject var state: ConfigureAIState
 
     var body: some View {
         Group {
 
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             ConfigureAIBackRow { state.popToHome() }
 
             Spacer().frame(height: theme.space.s16)
@@ -1551,7 +1548,7 @@ private struct ConfigureAIKeysPanel: View {
     /// Featured chips cascade in; the chips revealed by "+ More" instead
     /// pop in with the expansion animation itself.
     private var providerChips: some View {
-        ChipFlowLayout(spacing: 8, lineSpacing: 8) {
+        ChipFlowLayout(spacing: theme.space.s8, lineSpacing: theme.space.s8) {
             ForEach(Array(visiblePresets.enumerated()), id: \.element.id) { index, preset in
                 let chip = OnboardingProviderChip(
                     logo: { OnboardingProviderLogo(preset: preset, size: 16) },
@@ -1569,7 +1566,7 @@ private struct ConfigureAIKeysPanel: View {
             OnboardingProviderChip(
                 logo: {
                     Image(systemName: "terminal.fill")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                 },
                 label: "Claude Code"
@@ -1590,7 +1587,7 @@ private struct ConfigureAIKeysPanel: View {
                 OnboardingProviderChip(
                     logo: {
                         Image(systemName: "plus")
-                            .glyphSize(11, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                             .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
                     },
                     label: L("More")
@@ -1618,7 +1615,7 @@ private struct ConfigureAIKeysPanel: View {
 private struct RecommendedModelCard: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
 
@@ -1628,7 +1625,7 @@ private struct RecommendedModelCard: View {
         Group {
 
         if let model = state.selectedModel {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 OnboardingPickedBadge(text: "Picked for your Mac")
 
                 Spacer().frame(height: 12)
@@ -1657,7 +1654,7 @@ private struct RecommendedModelCard: View {
                 statusBlock(model)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 20, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 20, theme))).catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.body.padding.vertical")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s20, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s20, theme))).catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.body.padding.vertical")
             .background(
                 RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
                     .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
@@ -1679,7 +1676,7 @@ private struct RecommendedModelCard: View {
     }
 
     private func titleRow(_ model: MLXModel) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.titleRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.titleRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s10, theme))) {
             Text(model.simplifiedName)
                 .catalogTypography(.heading, theme: theme, fallback: OnboardingTypography.modelTitle)
                 .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelWhite))
@@ -1708,9 +1705,9 @@ private struct RecommendedModelCard: View {
     private func statusBlock(_ model: MLXModel) -> some View {
         switch downloadState(for: model) {
         case .notStarted:
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 16, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s16, theme))) {
                 metaChips(model)
-                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s12, theme))) {
                     OnboardingPillButton(
                         title: "Download",
                         style: .primary,
@@ -1728,13 +1725,13 @@ private struct RecommendedModelCard: View {
             }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap")
 
         case .downloading(let progress):
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap2", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap2", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s8, theme))) {
                 Text("Downloading. You can continue while it finishes in the background.", bundle: .module)
                     .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
                     .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                     .fixedSize(horizontal: false, vertical: true)
                 OnboardingProgressBar(progress: progress)
-                HStack(spacing: 0) {
+                HStack(spacing: theme.space.s0) {
                     let metrics = metricsText(for: model) ?? L("Starting download…")
                     Text(metrics)
                         .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
@@ -1753,9 +1750,9 @@ private struct RecommendedModelCard: View {
             }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap2")
 
         case .paused(let progress):
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap3", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap3", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s10, theme))) {
                 OnboardingProgressBar(progress: progress)
-                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s12, theme))) {
                     Text("Download paused", bundle: .module)
                         .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
                         .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
@@ -1769,12 +1766,12 @@ private struct RecommendedModelCard: View {
             }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap3")
 
         case .failed(let error):
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap4", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap4", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s10, theme))) {
                 Text(L("Download hit a snag — \(error)"))
                     .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
                     .foregroundColor(theme.assignedColor("component.library.55.error", fallback: OnboardingPalette.warningLabel))
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap3", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap3", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s12, theme))) {
                     OnboardingPillButton(
                         title: "Try again",
                         style: .primary,
@@ -1791,16 +1788,16 @@ private struct RecommendedModelCard: View {
             }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap4")
 
         case .completed:
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap5", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 16, theme))) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap4", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 6, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.verticalGap5", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s16, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap4", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s6, theme))) {
                     Image(systemName: "checkmark.circle")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.dinoGreen))
                     Text("Already on your Mac — ready to go", bundle: .module)
                         .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
                         .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                 }.catalogLayoutTarget("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap4")
-                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap5", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.statusBlock.horizontalGap5", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s12, theme))) {
                     OnboardingPillButton(
                         title: "Use this model",
                         style: .primary,
@@ -1821,7 +1818,7 @@ private struct RecommendedModelCard: View {
     }
 
     private func metaChips(_ model: MLXModel) -> some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.metaChips.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.recommendedModelCard.metaChips.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s8, theme))) {
             if let size = model.formattedDownloadSize {
                 OnboardingMetaChip(text: L("One-time \(size) download"))
             }
@@ -1888,7 +1885,7 @@ private struct RecommendedModelCard: View {
 private struct ConfigureAIProviderPanel: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
 
     @ObservedObject var state: ConfigureAIState
 
@@ -1902,7 +1899,7 @@ private struct ConfigureAIProviderPanel: View {
     var body: some View {
         Group {
 
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             backRow
 
             if let preset {
@@ -1924,7 +1921,7 @@ private struct ConfigureAIProviderPanel: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 24, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.body.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s24, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s24, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.body.padding.horizontal").catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.body.padding.vertical")
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     
         }.environment(\.theme, theme)
@@ -1934,14 +1931,14 @@ private struct ConfigureAIProviderPanel: View {
         Button {
             state.popBYOKToProviders()
         } label: {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.backRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 5, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.backRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s4, theme))) {
                 Image(systemName: "arrow.left")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                 Text("Back", bundle: .module)
                     .catalogTypography(.caption, theme: theme, fallback: OnboardingTypography.cardCaption)
             }.catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.backRow.horizontalGap")
             .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.backRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 4, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.backRow.paddingY")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.backRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureAIProviderPanel.backRow.paddingY")
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1954,7 +1951,7 @@ private struct ConfigureAIProviderPanel: View {
 
     @ViewBuilder
     private func optionRows(_ preset: ProviderPreset) -> some View {
-        VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.optionRows.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureAIProviderPanel.optionRows.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s12, theme))) {
             if oauthKind != nil {
                 OnboardingOptionRow(
                     title: oauthRowTitle(preset),
@@ -2026,7 +2023,7 @@ private struct ConfigureAIProviderPanel: View {
 struct ProviderConnectDialog: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
     @ObservedObject var state: ConfigureAIState
 
     private var preset: ProviderPreset? { state.currentAPIProvider }
@@ -2039,7 +2036,7 @@ struct ProviderConnectDialog: View {
             isDismissable: !state.isTesting,
             onClose: { state.closeConnectDialog() }
         ) {
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 if let preset {
                     OnboardingLogoCard(
                         logo: { OnboardingProviderLogo(preset: preset, size: 24) },
@@ -2087,8 +2084,8 @@ struct ProviderConnectDialog: View {
                     actionButton(preset)
                 }
             }
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 40, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.body.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 36, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.body.paddingY")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s40, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.body.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s32, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.body.paddingY")
         }
         .onChange(of: state.isAPISuccess) { _, success in
             // A verified connection closes the dialog after a beat so the
@@ -2150,29 +2147,8 @@ struct ProviderConnectDialog: View {
     }
 
     private func keyField(_ preset: ProviderPreset) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         SettingsTextField(placeholder: L("sk-..."), text: $state.apiKey, monospaced: true, isSecure: true)
             .frame(maxWidth: 300).onChange(of: state.apiKey) { _, _ in state.testResult = nil }
-        #else
-
-        SecureField(L("sk-..."), text: $state.apiKey)
-            .textFieldStyle(.plain)
-            .componentInspectionText(55, role: .body, fallback: .code, theme: theme)
-            .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.keyField.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.keyField.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.keyField.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 9, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.keyField.paddingY")
-            .background(
-                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill10), lineWidth: theme.stroke.default)
-            )
-            .frame(maxWidth: 300)
-            .onChange(of: state.apiKey) { _, _ in state.testResult = nil }
-    
-        #endif
 }
 
     /// Single paste-the-URL form for the custom OpenAI-compatible endpoint.
@@ -2180,30 +2156,11 @@ struct ProviderConnectDialog: View {
     /// (`CustomProviderForm.parse`); a resolved preview confirms how the
     /// paste was understood. Optional key below for authenticated servers.
     private var customEndpointForm: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s10, theme))) {
             formField("http://localhost:11434/v1", text: $state.customEndpointURL)
 
             Group {
-                #if OSAURUS_DESIGN_SYSTEM
                 SettingsTextField(placeholder: L("API key (optional for local servers)"), text: $state.apiKey, monospaced: true, isSecure: true)
-                #else
-            SecureField(L("API key (optional for local servers)"), text: $state.apiKey)
-                .textFieldStyle(.plain)
-                .componentInspectionText(55, role: .body, fallback: .code, theme: theme)
-                .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 9, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.customEndpointForm.paddingY")
-                .background(
-                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                        .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                        .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill10), lineWidth: theme.stroke.default)
-                )
-
-
-                #endif
             }
 
             // Confirm how the paste was understood, but only when parsing
@@ -2226,35 +2183,14 @@ struct ProviderConnectDialog: View {
     }
 
     private func formField(_ placeholder: String, text: Binding<String>) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         SettingsTextField(placeholder: placeholder, text: text, monospaced: true)
-        #else
-
-        TextField(placeholder, text: text)
-            .textFieldStyle(.plain)
-            .componentInspectionText(55, role: .body, fallback: .code, theme: theme)
-            .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
-            .autocorrectionDisabled()
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.formField.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 12, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.formField.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.formField.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 9, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.formField.paddingY")
-            .background(
-                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill5))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .strokeBorder(theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill10), lineWidth: theme.stroke.default)
-            )
-    
-        #endif
 }
 
     @ViewBuilder
     private func actionButton(_ preset: ProviderPreset) -> some View {
         if state.isTesting {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
-                ProgressView()
-                    .controlSize(.small)
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s8, theme))) {
+                SettingsSpinner()
                 Text(
                     isOAuth
                         ? LocalizedStringKey("Authenticating...")
@@ -2264,18 +2200,18 @@ struct ProviderConnectDialog: View {
                 .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.chip)
                 .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
             }.catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 16, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 8, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY")
             .background(Capsule().fill(theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill8)))
         } else if state.isAPISuccess {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 6, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s6, theme))) {
                 Image(systemName: "checkmark.circle")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                 Text("Connected", bundle: .module)
                     .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.chip)
             }.catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.horizontalGap2")
             .foregroundColor(theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.dinoGreen))
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY2", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 8, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY2")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY2", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.55.elements.layout.providerConnectDialog.actionButton.paddingY2")
         } else {
             OnboardingPillButton(
                 title: idleButtonTitle,
@@ -2309,7 +2245,7 @@ struct ProviderConnectDialog: View {
 struct ConfigureModelChooserModal: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
     @ObservedObject var state: ConfigureAIState
 
     @ObservedObject private var modelManager = ModelManager.shared
@@ -2323,7 +2259,7 @@ struct ConfigureModelChooserModal: View {
         Group {
 
         OnboardingDialog(width: 520, closeInsets: closeInsets, onClose: { state.cancelModelChooser() }) {
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 header
                 modelList
                 footer
@@ -2357,7 +2293,7 @@ struct ConfigureModelChooserModal: View {
     // MARK: Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.header.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 6, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.header.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s6, theme))) {
             Text("Choose your model", bundle: .module)
                 .catalogTypography(.heading, theme: theme, fallback: OnboardingTypography.cardTitle)
                 .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelWhite))
@@ -2373,20 +2309,20 @@ struct ConfigureModelChooserModal: View {
         .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.header.paddingX", inheriting: inset)).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.header.paddingX")
         .padding(.top, titleTop)
         .padding(.trailing, OnboardingLayout.glassButtonDiameter + theme.space.s12)
-        .padding(.bottom, 16)
+        .padding(.bottom, theme.space.s16)
     }
 
     // MARK: List
 
     private var modelList: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
+            VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s8, theme))) {
                 ForEach(pickerModels, id: \.model.id) { pair in
                     modelRow(pair.model, compatibility: pair.compatibility)
                 }
             }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.verticalGap")
             .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX", inheriting: inset)).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 4, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelList.paddingY")
         }
         .sidebarScrollEdgeFade(length: theme.space.s24)
         .frame(maxHeight: 360)
@@ -2401,8 +2337,8 @@ struct ConfigureModelChooserModal: View {
         return Button {
             state.selectDraftModel(model)
         } label: {
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 4, theme))) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 8, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s4, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s8, theme))) {
                     Text(model.simplifiedName)
                         .catalogTypography(.body, theme: theme, fallback: OnboardingTypography.optionTitle)
                         .foregroundColor(theme.assignedColor("component.library.55.foreground", fallback: OnboardingPalette.labelPrimary))
@@ -2419,7 +2355,7 @@ struct ConfigureModelChooserModal: View {
                     Spacer(minLength: 0)
                     if isSelected {
                         Image(systemName: "checkmark.circle")
-                            .glyphSize(13, weight: .semibold)
+                            .glyphSize(.label, weight: .semibold)
                             .foregroundColor(theme.assignedColor("component.library.55.accent", fallback: OnboardingPalette.dinoGreen))
                     }
                 }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.horizontalGap")
@@ -2439,8 +2375,8 @@ struct ConfigureModelChooserModal: View {
                 }
             }.catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.verticalGap")
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 14, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", 10, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingY")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingX", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(55, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.55.elements.layout.configureModelChooserModal.modelRow.paddingY")
             .background(
                 RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
                     .fill(isSelected ? theme.assignedColor("component.library.55.selected", fallback: OnboardingPalette.fill5) : theme.assignedColor("component.library.55.background", fallback: OnboardingPalette.fill2))
@@ -2448,8 +2384,10 @@ struct ConfigureModelChooserModal: View {
             .overlay(
                 RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(55, "radius", OnboardingLayout.cardRadius, theme), style: .continuous)
                     .strokeBorder(
-                        isSelected ? theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.dinoGreen) : theme.assignedColor("component.library.55.border", fallback: OnboardingPalette.fill8),
-                        lineWidth: theme.stroke.default
+                        isSelected && !theme.isDark
+                            ? theme.selectionBorder
+                            : theme.assignedColor("component.library.55.border", fallback: isSelected ? OnboardingPalette.dinoGreen : OnboardingPalette.fill8),
+                        lineWidth: isSelected ? theme.selectionStroke : theme.stroke.default
                     )
             )
             .contentShape(
@@ -2503,14 +2441,14 @@ struct ConfigureModelChooserModal: View {
     // MARK: Footer
 
     private var footer: some View {
-        VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 12, theme))) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s12, theme))) {
             Text(footerHint)
                 .componentInspectionText(55, role: .caption, fallback: .footnote, theme: theme)
                 .foregroundColor(theme.assignedColor("component.library.55.secondary", fallback: OnboardingPalette.labelSecondary))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 10, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.configureModelChooserModal.footer.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s10, theme))) {
                 Spacer(minLength: 0)
                 OnboardingPillButton(
                     title: "Cancel",

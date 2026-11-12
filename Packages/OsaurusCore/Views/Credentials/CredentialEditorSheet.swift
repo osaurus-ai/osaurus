@@ -61,6 +61,7 @@ struct CredentialEditorSheet: View {
     let usedBy: [CredentialSlot]
     let onClose: () -> Void
 
+    @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
     @State private var key: String
     @State private var scope: CredentialScope
@@ -219,7 +220,7 @@ struct CredentialEditorSheet: View {
                             subtitle: "\(slot.category.label) · \(slot.field)",
                             leading: {
                                 LibraryIcon(
-                                    symbol: slot.category.origin.symbol, tint: slot.category.origin.tint, size: 28)
+                                    symbol: slot.category.origin.symbol, tint: theme.dataInk(slot.category.origin.ink), size: 28)
                             }
                         )
                     }

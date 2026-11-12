@@ -111,7 +111,7 @@ struct ChannelsOverviewTable: View {
     }
 
     private var channelTable: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header([L("Channel"), L("Receives from"), L("Routes to"), L("Sends")])
             ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
                 if index > 0 { SettingsGroupDivider() }
@@ -155,7 +155,7 @@ struct ChannelsOverviewTable: View {
     }
 
     private func header(_ titles: [String]) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             ForEach(Array(titles.enumerated()), id: \.offset) { index, title in
                 Text(title.uppercased())
                     .font(SettingsFont.chip)
@@ -179,7 +179,7 @@ struct ChannelsOverviewTable: View {
     private var agentTable: some View {
         let rows = ChannelAgentRoster.agentOverview(
             entries.compactMap { entry in facts[entry.connectionId].map { (entry.connectionId, $0.roster) } })
-        return VStack(spacing: 0) {
+        return VStack(spacing: theme.space.s0) {
             header([L("Agent"), L("Answers on"), L("Posts on its own")])
             if rows.isEmpty {
                 Text(
@@ -199,10 +199,10 @@ struct ChannelsOverviewTable: View {
     }
 
     private func agentRow(_ row: ChannelAgentRoster.AgentOverviewRow) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: row.target.isAgent ? "person.crop.circle" : "point.3.connected.trianglepath.dotted")
-                    .glyphSize(12)
+                    .glyphSize(.caption)
                     .foregroundColor(theme.text.secondary)
                 Text(ChannelRoutingNames.target(row.target))
                     .font(SettingsFont.compactLabel)
@@ -212,7 +212,7 @@ struct ChannelsOverviewTable: View {
             .frame(minWidth: 150, maxWidth: 190, alignment: .leading)
             .layoutPriority(1)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 if row.answers.isEmpty {
                     muted(L("—"))
                 }
@@ -222,7 +222,7 @@ struct ChannelsOverviewTable: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 if row.posts.isEmpty {
                     muted(L("—"))
                 }
@@ -316,10 +316,10 @@ private struct ChannelOverviewRow: View {
 
     var body: some View {
         Button(action: entry.open) {
-            HStack(alignment: .top, spacing: 12) {
-                HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
                     SettingsIconTile(icon: entry.kind.icon, size: 30, gradient: entry.kind.brandGradient)
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(verbatim: entry.name)
                             .font(SettingsFont.compactLabel)
                             .foregroundColor(theme.text.primary)
@@ -382,12 +382,12 @@ private struct ChannelOverviewRow: View {
     }
 
     private func column(_ lines: [Line]) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s4) {
                     if line.warning {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .glyphSize(9)
+                            .glyphSize(.tiny)
                             .foregroundColor(theme.status.warning.foreground)
                     }
                     Text(verbatim: line.text)

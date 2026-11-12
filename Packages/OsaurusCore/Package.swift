@@ -568,7 +568,6 @@ let package = Package(
             swiftSettings: (designInspectorBuild ? [
                 .define("OSAURUS_DESIGN_INSPECTOR"), .unsafeFlags(["-Onone"])
             ] : []) + [
-                .define("OSAURUS_DESIGN_SYSTEM"),
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
                 // SDK. Enable this flag when building against that SDK (or newer) to
                 // read the real on-device context window; leave it off on older SDKs
@@ -610,7 +609,7 @@ let package = Package(
             path: "Tests",
             resources: [
                 .process("ComputerUse/Fixtures"), .copy("Identity/Fixtures"), .copy("Workflow/RegistryFixtures"),
-                .copy("Theme/ThemeFixtures"), .copy("Sync/SyncFixtures"),
+                .copy("Sync/SyncFixtures"),
             ]
         ),
     ]

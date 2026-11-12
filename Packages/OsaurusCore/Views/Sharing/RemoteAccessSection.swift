@@ -80,7 +80,7 @@ struct RemoteAccessRow: View {
                     AgentAvatarView(
                         mascotId: agent.avatar,
                         name: agent.name,
-                        tint: agentColorFor(agent.name),
+                        tint: theme.dataInk(seed: agent.name),
                         diameter: 26,
                         customImageURL: agent.customAvatarURL,
                         monogramFontSize: 11,

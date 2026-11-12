@@ -98,7 +98,7 @@ struct AgentChannelCustomConnectionSheet: View {
             sectionStatus: sectionStatus(for:),
             onBack: onBack
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch AgentChannelCustomSetupSection(rawValue: sectionId) {
                 case .basics:
                     basicsSectionContent
@@ -218,13 +218,13 @@ struct AgentChannelCustomConnectionSheet: View {
     // MARK: - Basics
 
     private var basicsSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             AgentChannelSectionHeading(
                 L("Name this channel"),
                 detail: L("The connection id is how agent_channel tools refer to this channel.")
             )
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 SettingsTextFieldRow(
                     label: "Connection ID (required)",
                     text: $draft.id,
@@ -267,7 +267,7 @@ struct AgentChannelCustomConnectionSheet: View {
     // MARK: - Capabilities & Access
 
     private var capabilitiesSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             actionsSection
 
             if draft.kind == .customHTTP {
@@ -279,7 +279,7 @@ struct AgentChannelCustomConnectionSheet: View {
     }
 
     private var actionsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(
                 L("Choose what agents may do"),
                 detail: L("Only checked standard actions are offered to agents on this channel.")
@@ -287,10 +287,10 @@ struct AgentChannelCustomConnectionSheet: View {
 
             LazyVGrid(
                 columns: [
-                    GridItem(.adaptive(minimum: 150), spacing: 8)
+                    GridItem(.adaptive(minimum: 150), spacing: theme.space.s8)
                 ],
                 alignment: .leading,
-                spacing: 8
+                spacing: theme.space.s8
             ) {
                 ForEach(AgentChannelAction.allCases, id: \.self) { action in
                     Toggle(
@@ -317,7 +317,7 @@ struct AgentChannelCustomConnectionSheet: View {
     }
 
     private var httpActionsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Define the HTTP requests"),
                 detail: L(
@@ -340,13 +340,13 @@ struct AgentChannelCustomConnectionSheet: View {
     }
 
     private var accessSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(
                 L("Where agents may look"),
                 detail: L("Allowlists limit which spaces and rooms this connection can inspect.")
             )
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 AgentChannelMultilineSettingsField(
                     title: L("Space Allowlist"),
                     text: $draft.spaceAllowlistText,
@@ -366,14 +366,14 @@ struct AgentChannelCustomConnectionSheet: View {
     // MARK: - Send & Receive
 
     private var sendReceiveSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             sendingSection
             inboundAuthorizationSection
         }
     }
 
     private var sendingSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Allow sending (optional)"))
 
             SettingsToggle(
@@ -397,7 +397,7 @@ struct AgentChannelCustomConnectionSheet: View {
     }
 
     private var inboundAuthorizationSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Authorize incoming messages (optional)"),
                 detail: L(
@@ -405,7 +405,7 @@ struct AgentChannelCustomConnectionSheet: View {
                 )
             )
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 AgentChannelMultilineSettingsField(
                     title: L("Allowed Senders"),
                     text: $draft.inboundSenderAllowlistText,
@@ -436,11 +436,11 @@ struct AgentChannelCustomConnectionSheet: View {
     // MARK: - Review & Test
 
     private var reviewSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             validationSummary
 
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 AgentChannelSectionHeading(
                     L("Diagnostics"),
                     detail: canRunLiveDiagnostics
@@ -468,20 +468,20 @@ struct AgentChannelCustomConnectionSheet: View {
 
     private var validationSummary: some View {
         let findings = draft.validationFindings()
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Configuration check"))
 
             if findings.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "checkmark.circle.fill")
-                        .glyphSize(13, weight: .semibold)
+                        .glyphSize(.label, weight: .semibold)
                         .foregroundColor(theme.status.success.foreground)
                     Text("This configuration looks structurally valid.", bundle: .module)
                         .font(SettingsFont.caption)
                         .foregroundColor(theme.text.secondary)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     ForEach(Array(findings.enumerated()), id: \.offset) { _, finding in
                         findingRow(finding)
                     }
@@ -491,9 +491,9 @@ struct AgentChannelCustomConnectionSheet: View {
     }
 
     private func findingRow(_ finding: AgentChannelDraftValidationFinding) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(theme.status.warning.foreground)
                 .padding(.top, theme.space.s2)
 
@@ -524,8 +524,8 @@ struct AgentChannelCustomConnectionSheet: View {
 
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                HStack(alignment: .top, spacing: theme.space.s12) {
                     SettingsTextFieldRow(
                         label: "Default Read Limit",
                         text: $draft.defaultReadLimit,
@@ -545,9 +545,9 @@ struct AgentChannelCustomConnectionSheet: View {
                 }
 
                 Button(action: revealConfigurationFile) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "folder")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                         Text("Open configuration file", bundle: .module)
                             .font(SettingsFont.smallLabel)
                     }
@@ -707,7 +707,7 @@ private struct AgentChannelStructuredActionsEditor: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if let actions = AgentChannelConnectionDraft.decodedActionsForEditing(jsonText) {
                 let names = actions.keys.sorted()
 
@@ -728,9 +728,9 @@ private struct AgentChannelStructuredActionsEditor: View {
 
                 addActionMenu(existing: Set(names))
             } else {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.status.warning.foreground)
                     Text(
                         "The action map JSON does not parse, so it can't be edited as fields. Fix it in the Advanced JSON editor below.",
@@ -802,8 +802,8 @@ private struct AgentChannelActionEditorRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(spacing: theme.space.s8) {
                 Text(displayName)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -824,15 +824,15 @@ private struct AgentChannelActionEditorRow: View {
                     }
                 } label: {
                     Image(systemName: "trash")
-                        .glyphSize(10, weight: .medium)
+                        .glyphSize(.micro, weight: .medium)
                         .foregroundColor(theme.status.error.foreground)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(Text("Remove this action", bundle: .module))
             }
 
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     fieldLabel(L("Method"))
                     SettingsMenuPicker(selection: methodBinding) {
                         ForEach(methodChoices, id: \.self) { method in
@@ -842,14 +842,14 @@ private struct AgentChannelActionEditorRow: View {
                     .frame(width: 92, alignment: .leading)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     fieldLabel(L("Path"))
                     SettingsTextField(placeholder: L("/rooms/{room_id}/messages"), text: pathBinding, monospaced: true)
                 }
                 .frame(maxWidth: .infinity)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 fieldLabel(L("Headers"))
                 headersEditor
                 Text("One per line: Header-Name: value. Use ${secret:name} for tokens.", bundle: .module)
@@ -857,7 +857,7 @@ private struct AgentChannelActionEditorRow: View {
                     .foregroundColor(theme.text.tertiary)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 fieldLabel(L("Body Template (optional)"))
                 bodyEditor
                 Text(

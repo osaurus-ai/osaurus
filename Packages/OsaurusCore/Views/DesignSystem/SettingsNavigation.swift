@@ -25,29 +25,15 @@ struct SettingsBackButton: View {
     var verbatim: Bool = false
     let action: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "chevron.left")
                     .font(SettingsFont.glyph)
                 titleText
-                    .font(SettingsFont.rowTitle)
-                    .lineLimit(1)
             }
-            .foregroundColor(isHovering ? theme.action.tertiary.hover.foreground : theme.action.tertiary.default.foreground)
-            .padding(.horizontal, theme.space.s8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
-                    .fill(isHovering ? theme.action.tertiary.hover.background : theme.action.tertiary.default.background)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .onHover { isHovering = $0 }
+        .assignedSettingsButtonStyle(.tertiary, size: .small)
         .keyboardShortcut("[", modifiers: .command)
         .accessibilityLabel(Text("Back to \(title)", bundle: .module))
     }
@@ -118,7 +104,7 @@ struct SettingsDetailHeader<Leading: View, Chips: View, Actions: View>: View {
     /// Only the title shares a line with the actions; the subtitle and chips
     /// run the full width below them.
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             HStack(alignment: .top, spacing: theme.space.s16) {
                 Text(verbatim: title)
                     .font(SettingsFont.detailTitle)
@@ -137,7 +123,7 @@ struct SettingsDetailHeader<Leading: View, Chips: View, Actions: View>: View {
             }
             if hasChips {
                 HStack(spacing: theme.space.s6) { chips }
-                    .padding(.top, 2)
+                    .padding(.top, theme.space.s2)
             }
         }
         .layoutPriority(1)
@@ -274,7 +260,7 @@ struct SettingsAdvancedDisclosure<Content: View>: View {
                     isExpanded.toggle()
                 }
             } label: {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.15.elements.layout.settingsAdvancedDisclosure.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: 10))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.15.elements.layout.settingsAdvancedDisclosure.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s10))) {
                     Text(LocalizedStringKey(title), bundle: .module)
                         .assignedTypography("component.library.15.label", fallback: SettingsFont.rowTitle)
                         .foregroundColor(theme.text.primary)

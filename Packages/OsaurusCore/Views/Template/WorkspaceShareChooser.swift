@@ -26,7 +26,7 @@ struct WorkspaceShareChooser: View {
     private var choices: [OsaurusRouterWorkspaceSummary] { Self.eligible(workspaces.workspaces) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             if choices.isEmpty {
                 Text(
                     "You're not in a workspace you can share with. Create or join one in Settings, Workspaces. Viewers can install a workspace's workflows but not share.",

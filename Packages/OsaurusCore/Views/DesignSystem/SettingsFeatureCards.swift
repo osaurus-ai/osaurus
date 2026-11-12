@@ -50,7 +50,7 @@ struct SettingsFeatureCards: View {
         VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.13.elements.layout.settingsFeatureCards.leadingCard.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s8))) {
             HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.13.elements.layout.settingsFeatureCards.leadingCard.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s8))) {
                 Image(systemName: feature.icon)
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(theme.text.primary)
                     .frame(width: 22, height: 22)
                     .background(Circle().fill(theme.surface.selected))
@@ -110,10 +110,10 @@ private struct CenteredFeatureCard: View {
     }
 
     private var content: some View {
-        VStack(spacing: theme.catalogLayoutMetric("component.library.13.elements.layout.settingsFeatureCards.centeredCard.verticalGap", inheriting: theme.catalogMetric("gap", fallback: 10))) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.13.elements.layout.settingsFeatureCards.centeredCard.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s10))) {
             SettingsIconTile(icon: feature.icon, size: 32)
                 .accessibilityHidden(true)
-            VStack(spacing: theme.catalogLayoutMetric("component.library.13.elements.layout.settingsFeatureCards.centeredCard.verticalGap2", inheriting: theme.catalogMetric("gap", fallback: 4))) {
+            VStack(spacing: theme.catalogLayoutMetric("component.library.13.elements.layout.settingsFeatureCards.centeredCard.verticalGap2", inheriting: theme.catalogMetric("gap", fallback: theme.space.s4))) {
                 title(feature)
                     .assignedTypography("component.library.13.heading", fallback: SettingsFont.rowTitle)
                     .multilineTextAlignment(.center)

@@ -66,6 +66,24 @@ struct DesignLibraryTokenCoverageTests {
         }
     }
 
+    @Test("every spacing step, type role and status ink the code names is a library token")
+    func codeScaleIsInLibrary() throws {
+        let tokens = Self.snapshot.document.tokens
+        guard case .object(let steps)? = try resolvedJSON(.light).walk(["space"]) else {
+            Issue.record("theme has no spacing scale")
+            return
+        }
+        for step in steps.keys.sorted() {
+            #expect(tokens["space." + step.dropFirst()] != nil, "space.\(step.dropFirst()) is defined only in code")
+        }
+        for role in ThemeTextStyleRole.allCases {
+            #expect(tokens["type." + role.rawValue] != nil, "type.\(role.rawValue) is defined only in code")
+        }
+        for kind in ThemeStatusKind.allCases {
+            #expect(tokens["color.status.\(kind.rawValue).ink"] != nil, "color.status.\(kind.rawValue).ink is missing")
+        }
+    }
+
     @Test("library extensions surface on the resolved runtime roles", arguments: Mode.allCases)
     func extensionsSurface(mode: Mode) throws {
         let theme = mode == .light ? Self.snapshot.light : Self.snapshot.dark
@@ -104,7 +122,7 @@ struct DesignLibraryTokenCoverageTests {
     }
 }
 
-private extension JSONValue {
+extension JSONValue {
     func walk(_ path: [String]) -> JSONValue? {
         guard let head = path.first else { return self }
         guard case .object(let object) = self, let child = object[head] else { return nil }

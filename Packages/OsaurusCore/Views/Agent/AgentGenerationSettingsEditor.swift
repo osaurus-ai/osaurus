@@ -58,7 +58,7 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: theme.space.s24) {
             header
             if currentApplicability == .nativeBlockDiffusion {
                 Text(
@@ -238,7 +238,7 @@ struct AgentGenerationSettingsEditor: View {
                 .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
         } else if let choices, choices.modelID == modelID {
             if let capabilities = choices.efforts, !capabilities.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text("Reasoning effort", bundle: .module)
                         .font(SettingsFont.rowTitle).foregroundColor(theme.text.primary)
                     AssignedBaseSegmentedPicker(
@@ -282,8 +282,8 @@ struct AgentGenerationSettingsEditor: View {
                 }
             }
         } else {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
                 Text("Detecting model reasoning controls…", bundle: .module)
                     .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
             }
@@ -302,7 +302,7 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             Text(
                 "Available settings inherit the model and server defaults. Switch a setting to Custom to override it for this agent only.",
                 bundle: .module
@@ -331,7 +331,7 @@ struct AgentGenerationSettingsEditor: View {
         subtitle: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             HStack(alignment: .firstTextBaseline) {
                 Text(LocalizedStringKey(title), bundle: .module)
                     .font(SettingsFont.sectionTitle).foregroundColor(theme.text.primary)
@@ -347,15 +347,8 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     private func rowLabel(_ title: String, _ description: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(LocalizedStringKey(title), bundle: .module)
-                .font(SettingsFont.rowTitle).foregroundColor(theme.text.primary)
-            if !description.isEmpty {
-                Text(LocalizedStringKey(description), bundle: .module)
-                    .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }.frame(maxWidth: .infinity, alignment: .leading)
+        SettingsRowText(title, description: description)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func modePicker(_ title: String, field: AgentGenerationField) -> some View {
@@ -373,7 +366,7 @@ struct AgentGenerationSettingsEditor: View {
 
     private func inheritedValue(_ field: AgentGenerationField) -> some View {
         let value = inherited[field]
-        return HStack(spacing: 6) {
+        return HStack(spacing: theme.space.s6) {
             Text(value.text).font(SettingsFont.mono)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -393,19 +386,19 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     private func parameter(_ title: String, description: String, field: AgentGenerationField) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             // Use the editor width for every row. Ideal text widths made ViewThatFits
             // mix horizontal and stacked rows on the same editing screen.
             if editorWidth >= 600 {
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .top, spacing: theme.space.s14) {
                     rowLabel(title, description).frame(minWidth: 190)
                     modePicker(title, field: field)
                     parameterValue(title, field: field).frame(maxWidth: 160)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
                     rowLabel(title, description)
-                    HStack(alignment: .top, spacing: 12) {
+                    HStack(alignment: .top, spacing: theme.space.s12) {
                         modePicker(title, field: field)
                         parameterValue(title, field: field)
                     }
@@ -456,8 +449,8 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     private var stopSequences: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 rowLabel(
                     "Stop sequences",
                     "Generation ends when any additional stop string is produced. Model end-of-turn tokens still apply."
@@ -465,16 +458,16 @@ struct AgentGenerationSettingsEditor: View {
                 modePicker("Stop sequences", field: .stop)
             }
             if draft.stop.isCustom {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     let values = (try? JSONDecoder().decode([String].self, from: Data(draft.stop.text.utf8))) ?? []
                     // Adaptive columns keep long exact strings reachable at narrow creation widths.
                     LazyVGrid(
                         columns: [GridItem(.adaptive(minimum: 120), alignment: .leading)],
                         alignment: .leading,
-                        spacing: 6
+                        spacing: theme.space.s6
                     ) {
                         ForEach(Array(values.enumerated()), id: \.offset) { index, value in
-                            HStack(spacing: 8) {
+                            HStack(spacing: theme.space.s8) {
                                 Text(String(reflecting: value)).font(SettingsFont.monoSmall)
                                     .foregroundColor(theme.text.primary)
                                     .lineLimit(2).help(value)
@@ -525,16 +518,15 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     private var templateParameters: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Button {
                 withAnimation(theme.motion.quick) { showTemplateParameters.toggle() }
             } label: {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
+                    SettingsRowText {
                         Text("Advanced: chat template parameters", bundle: .module)
-                            .font(SettingsFont.rowTitle).foregroundColor(theme.text.primary)
+                    } description: {
                         Text(draft.templateKwargs.isCustom ? L("Custom parameters") : L("Inherited from the model"))
-                            .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
                     }
                     Spacer()
                     Text(showTemplateParameters ? L("Hide") : L("Show"))

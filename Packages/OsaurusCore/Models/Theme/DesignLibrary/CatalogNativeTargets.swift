@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 import AppKit
 import ObjectiveC
@@ -97,4 +96,3 @@ private final class NativeAssignmentOverlay: NSView {
         }
     }
 }
-#endif

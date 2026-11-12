@@ -151,7 +151,7 @@ final class TerminalDisplayView: NSView {
     /// the same live entry id (cheap re-bind during cell layout
     /// passes); always fully re-renders for a completed snapshot.
     func bind(_ mode: Mode, theme: any ThemeProtocol) {
-        let theme = theme.catalogFamily(39, authoritative: true)
+        let theme = theme.catalogFamily(39)
         switch mode {
         case .live(let entry):
             bindLive(entry, theme: theme)
@@ -260,13 +260,9 @@ final class TerminalDisplayView: NSView {
         inspectionHeaderHeight(theme ?? ThemeManager.shared.chatTheme) + maxBodyHeight
     }
     static func inspectionHeaderHeight(_ theme: any ThemeProtocol) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         let font = theme.assignedNativeFont(NativeComponentInspectionStyle.key(39, "caption"), fallback: theme.nsFont(.caption))
         let line = max(ceil(font.ascender - font.descender + font.leading), theme.assignedLineHeight(NativeComponentInspectionStyle.key(39, "caption"), fallback: 16))
-        return max(NativeComponentInspectionStyle.metric(39, "height", headerHeight, theme), line + 2 * NativeComponentInspectionStyle.metric(39, "padding", 0, theme))
-        #else
-        return headerHeight
-        #endif
+        return max(NativeComponentInspectionStyle.metric(39, "height", headerHeight, theme), line + 2 * NativeComponentInspectionStyle.metric(39, "padding", theme.space.s0, theme))
     }
     private var assignedHeaderHeight: CGFloat { Self.inspectionHeaderHeight(statusTheme) }
     private func refreshInspectionLabels() {
@@ -399,7 +395,7 @@ final class TerminalDisplayView: NSView {
 
         headerDivider.wantsLayer = true
         headerDivider.layer?.backgroundColor =
-            NSColor(theme.border.default).withAlphaComponent(0.5).cgColor
+            NSColor(theme.border.subtle).cgColor
 
         bodyAttrs = [
             .font: Self.bodyFont,
@@ -420,10 +416,9 @@ final class TerminalDisplayView: NSView {
 
         copyButton.contentTintColor = NSColor(theme.text.tertiary)
         terminateButton.contentTintColor = .systemRed
-        #if OSAURUS_DESIGN_SYSTEM
         layer?.borderWidth = theme.stroke.default
-        let pad = NativeComponentInspectionStyle.metric(39, "padding", 8, theme)
-        let gap = NativeComponentInspectionStyle.metric(39, "gap", 8, theme)
+        let pad = NativeComponentInspectionStyle.metric(39, "padding", theme.space.s8, theme)
+        let gap = NativeComponentInspectionStyle.metric(39, "gap", theme.space.s8, theme)
         textView.textContainerInset = NSSize(width: pad, height: pad)
         textView.selectedTextAttributes = [.backgroundColor: NSColor(theme.selection.background)]
         headerStrip.constraints.first { $0.firstAttribute == .height }?.constant = assignedHeaderHeight
@@ -459,7 +454,6 @@ final class TerminalDisplayView: NSView {
         terminateButton.contentTintColor = NSColor(theme.status.error.foreground)
         refreshInspectionLabels()
         if let entry = liveEntry { applyLiveStatus(entry.currentStatus()); currentMeasuredHeight = assignedHeaderHeight + Self.maxBodyHeight }
-        #endif
     }
 
     // MARK: Layout
@@ -646,10 +640,11 @@ private final class InspectorTerminalDisplayState: ObservableObject, @unchecked 
 }
 
 struct InspectorTerminalLiveVerification: View {
+    @Environment(\.theme) private var theme
     @StateObject private var state = InspectorTerminalDisplayState()
     @State private var phase = "Running"
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Text(verbatim: "Chat · command output returned by an agent tool")
             Picker("Command state", selection: $phase) {
                 ForEach(["Running", "Completed", "Failed", "Stopped"], id: \.self) { Text($0).tag($0) }

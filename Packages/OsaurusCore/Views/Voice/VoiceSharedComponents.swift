@@ -26,21 +26,17 @@ struct VoiceRequirementRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
-                .glyphSize(16)
+                .glyphSize(.medium)
                 .foregroundColor(isComplete ? theme.status.success.foreground : theme.text.tertiary)
                 .animation(theme.motion.quick, value: isComplete)
 
-            VStack(alignment: .leading, spacing: 2) {
+            SettingsRowText {
                 Text(title)
-                    .font(SettingsFont.rowTitle)
-                    .foregroundColor(theme.text.primary)
-
+            } description: {
                 if let description {
                     Text(description)
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
                 }
             }
 
@@ -78,9 +74,9 @@ struct VoiceInfoBox: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "info.circle")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.tertiary)
 
             Text(LocalizedStringKey(text), bundle: .module)

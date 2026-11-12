@@ -53,10 +53,10 @@ struct FilterChip: View {
         // (agent colour) only recolours the glyph/text when selected.
         let selectedForeground = baseComponentEnabled ? (tint ?? theme.text.primary) : theme.text.disabled
         Button(action: action) {
-            SharedChipContent(spacing: theme.catalogMetric("gap", fallback: 4)) {
+            SharedChipContent(spacing: theme.catalogMetric("gap", fallback: theme.space.s4)) {
                 if let icon {
                     Image(systemName: icon)
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                 }
                 Text(verbatim: title)
                     .lineLimit(1)
@@ -67,31 +67,11 @@ struct FilterChip: View {
                 }
             }
             .composerChipTextStyle(.label)
-            #if !OSAURUS_DESIGN_SYSTEM
-            .fontWeight(isSelected ? .semibold : .medium)
-            #endif
             .composerChipInk("foreground", fallback: isSelected ? selectedForeground : theme.text.secondary)
             .fixedSize()
-            #if OSAURUS_DESIGN_SYSTEM
             .composerChipInk("foreground", fallback: theme.text.primary)
             .composerChipSurface(selected: isSelected)
             .environment(\.sharedChipVariant, .filter)
-            #else
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.10.elements.layout.filterChip.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: 10))).catalogLayoutTarget("component.library.10.elements.layout.filterChip.body.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.10.elements.layout.filterChip.body.paddingY", inheriting: theme.catalogMetric("gap", fallback: 4))).catalogLayoutTarget("component.library.10.elements.layout.filterChip.body.paddingY")
-            .frame(minHeight: theme.catalogMetric("height", fallback: 0))
-            .background(
-                Capsule().fill(
-                    isSelected
-                        ? theme.surface.selected
-                        : (isHovered ? theme.surface.hover : theme.surface.raised)
-                )
-            )
-            .overlay(
-                Capsule().strokeBorder(
-                    isSelected ? theme.border.strong : theme.border.default, lineWidth: theme.stroke.default)
-            )
-            #endif
             .contentShape(Capsule())
         }
         .assignedBasePlainButtonStyle()
@@ -169,7 +149,7 @@ struct FilterChipRow<Item: Hashable>: View {
                         .id(item)
                     }
                 }
-                .padding(.vertical, 1)
+                .padding(.vertical, theme.space.s2)
             }
             // Fades a cut-off edge so the hidden chips read as scrollable.
             .onScrollGeometryChange(for: ChipRowOverflow.self) { geo in
@@ -181,7 +161,7 @@ struct FilterChipRow<Item: Hashable>: View {
                 withAnimation(theme.motion.quick) { overflow = new }
             }
             .mask {
-                HStack(spacing: 0) {
+                HStack(spacing: theme.space.s0) {
                     edgeFade(fading: overflow.leading, toward: .leading)
                     Rectangle()
                     edgeFade(fading: overflow.trailing, toward: .trailing)
@@ -241,7 +221,7 @@ struct FilterTokenChip: View {
     }
 
     var body: some View {
-        SharedChipContent(spacing: theme.catalogMetric("gap", fallback: 5)) {
+        SharedChipContent(spacing: theme.catalogMetric("gap", fallback: theme.space.s4)) {
             if let prefix {
                 Text(verbatim: prefix)
                     .composerChipTextStyle(.caption)
@@ -257,7 +237,7 @@ struct FilterTokenChip: View {
             }
             Button(action: onRemove) {
                 Image(systemName: "xmark")
-                    .glyphSize(8, weight: .bold)
+                    .glyphSize(.tiny, weight: .bold)
                     .composerChipInk("secondary", fallback: theme.text.tertiary)
                     .frame(width: 14, height: 14)
                     .contentShape(Rectangle())
@@ -267,16 +247,8 @@ struct FilterTokenChip: View {
             .accessibilityLabel(Text("Remove \(label)", bundle: .module))
             .settingsHelp("Remove this filter")
         }
-        #if OSAURUS_DESIGN_SYSTEM
         .composerChipInk("foreground", fallback: theme.text.primary)
         .composerChipSurface(selected: true)
         .environment(\.sharedChipVariant, .removable)
-        #else
-        .padding(.leading, theme.catalogLayoutMetric("component.library.10.elements.layout.filterTokenChip.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: 9))).catalogLayoutTarget("component.library.10.elements.layout.filterTokenChip.body.paddingX")
-        .padding(.trailing, theme.catalogLayoutMetric("component.library.10.elements.layout.filterTokenChip.body.paddingX2", inheriting: theme.catalogMetric("padding", fallback: 5))).catalogLayoutTarget("component.library.10.elements.layout.filterTokenChip.body.paddingX2")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.10.elements.layout.filterTokenChip.body.paddingY", inheriting: theme.catalogMetric("gap", fallback: 4))).catalogLayoutTarget("component.library.10.elements.layout.filterTokenChip.body.paddingY")
-        .frame(minHeight: theme.catalogMetric("height", fallback: 0))
-        .assignedBadgeSurface(fill: theme.surface.selected, stroke: theme.border.default)
-        #endif
     }
 }

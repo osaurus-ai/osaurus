@@ -238,7 +238,7 @@ struct WorkspacesView: View {
     // MARK: - List pane
 
     private var listPane: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerView
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
                 .settingsLandingAnchor("workspaces.overview")
@@ -730,16 +730,15 @@ private struct WorkspaceCard: View {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension WorkspacesView {
     @MainActor static func inspectionCards(action: @escaping () -> Void) -> some View {
-        VStack(spacing: 12) {
+        let theme = ThemeManager.shared.currentTheme
+        return VStack(spacing: theme.space.s12) {
             WorkspaceCard(workspace: .init(id: "local-workspace-owner", name: "Local workspace", role: "owner", source: "subscription", active: true, membersActive: 3, agentsShared: 2), ownerIsTrialing: true, animationDelay: 0, hasAppeared: true, onSelect: action, onInvite: action, onShareAgent: action, onLeaveOrDelete: action)
             WorkspaceCard(workspace: .init(id: "local-workspace-viewer", name: "Shared display sample", role: "viewer", source: "suspended", active: false, membersActive: 2, agentsShared: 1), ownerIsTrialing: false, animationDelay: 0, hasAppeared: true, onSelect: action, onInvite: action, onShareAgent: action, onLeaveOrDelete: action)
         }
     }
 }
-#endif
 
 // MARK: - Shared Workspaces components
 
@@ -757,7 +756,7 @@ struct WorkspaceAvatar: View {
         AgentAvatarView(
             mascotId: nil,
             name: name,
-            tint: agentColorFor(name),
+            tint: theme.dataInk(seed: name),
             diameter: size,
             monogramFontSize: size * 0.42,
             borderWidth: size >= 32 ? 2 : 1.5

@@ -161,18 +161,8 @@ public enum ClaudeCodeConfiguration {
     /// runtime. Only read to migrate agents and to refuse those ids.
     public static let modelPrefix = "claude-code/"
 
-    /// Claude's brand gradient, from Anthropic's published accent orange
-    /// (#D97757) to a darker shade of the same hue.
-    ///
-    /// Deliberately not the accent color: the picker's generic `.symbol` rows
-    /// all hover to the accent, so an accent-tinted Claude Code row was
-    /// indistinguishable from "Use an API key". Measured against every existing
-    /// row gradient, the nearest in the same list is OpenRouter at ΔE 22.7
-    /// (CIELAB) — comfortably distinguishable.
-    public static let brandGradient: [Color] = [
-        Color(red: 0.851, green: 0.467, blue: 0.341),
-        Color(red: 0.749, green: 0.373, blue: 0.259),
-    ]
+    /// Claude's brand gradient (`BrandPalette.claudeCode`).
+    public static var brandGradient: [Color] { BrandPalette.claudeCode }
 
     /// The command we look for on PATH.
     public static let executableName = "claude"

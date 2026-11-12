@@ -67,61 +67,57 @@ enum OnboardingPalette {
     // Brand constants
 
     /// Selection green `#68d735` (specialty card border, verified check).
-    static let dinoGreen = Color(red: 0x68 / 255, green: 0xD7 / 255, blue: 0x35 / 255)
+    static let dinoGreen = BrandPalette.dinoGreen
     /// Dino green for text. `#68d735` is 1.2–1.7:1 on light glass, so light
     /// mode sets copy in a deep green `#24650f` (4.5:1 or better on the
     /// green washes and the dialog surface).
     static var dinoGreenText: Color {
-        theme.isDark ? dinoGreen : Color(red: 0x24 / 255, green: 0x65 / 255, blue: 0x0F / 255)
+        theme.isDark ? dinoGreen : BrandPalette.dinoGreenDeep
     }
     /// The local-model card's gradient tint, fading to clear.
-    static let createGradientGreen = Color(red: 133 / 255, green: 212 / 255, blue: 82 / 255)
-        .opacity(0.26)
+    static let createGradientGreen = BrandPalette.dinoGreenGlow
     /// Glyphs on the link-colored checkbox.
-    static let onAccent = Color.white
-    /// The dino's comic speech bubble: white paper, black ink and outline.
-    static let bubbleFill = Color.white
-    static let bubbleInk = Color.black
-    /// The specular rim on glass.
-    static func glassRim(_ strength: Double) -> Color { Color.white.opacity(strength) }
-    /// The soft light that follows the pointer across the landscape.
-    static let pointerLight = Color.white
+    static let onAccent = FixedPalette.onMedia
+    static let bubbleFill = BrandPalette.bubblePaper
+    static let bubbleInk = BrandPalette.bubbleInk
+    static func glassRim(_ strength: Double) -> Color { BrandPalette.glassLight.opacity(strength) }
+    static let pointerLight = BrandPalette.glassLight
 }
 
 // MARK: - Typography
 
-/// Type ramp from the Figma kit. The Figma "Helper" name chip uses Inter
-/// Bold; we substitute the system SF Pro Bold — an intentional deviation so
-/// the app never bundles a webfont.
+/// The onboarding type ramp, set on the shared text roles. The Figma
+/// "Helper" name chip uses Inter Bold; SF Pro Bold stands in so the app
+/// never bundles a webfont.
 enum OnboardingTypography {
-    /// 46pt bold greeting on the Hello chapter.
-    static let greeting = Font.system(size: 46, weight: .bold)
-    /// 11pt semibold chapter indicator label.
-    static let chapter = Font.system(size: 11, weight: .semibold)
-    /// 40pt bold hero title, tight leading.
-    static let heroTitle = Font.system(size: 40, weight: .bold)
-    /// 14pt regular subtitle under the hero title.
-    static let subtitle = Font.system(size: 14)
-    /// 15pt semibold CTA label (large pills).
-    static let cta = Font.system(size: 15, weight: .semibold)
-    /// 13pt label (compact pills, provider chips).
-    static let chip = Font.system(size: 13)
-    /// 10pt footnote (legal line, checkbox label).
-    static let footnote = Font.system(size: 10)
-    /// 17pt semibold card / dialog title.
-    static let cardTitle = Font.system(size: 17, weight: .semibold)
-    /// 17pt regular row title (specialty cards use Title 2/Regular).
-    static let cardTitleRegular = Font.system(size: 17)
-    /// 12pt card caption.
-    static let cardCaption = Font.system(size: 12)
-    /// 22pt bold model name.
-    static let modelTitle = Font.system(size: 22, weight: .bold)
-    /// 11pt semibold badge label.
-    static let badge = Font.system(size: 11, weight: .semibold)
-    /// 13pt semibold option-row title.
-    static let optionTitle = Font.system(size: 13, weight: .semibold)
-    /// 17pt bold name chip (SF Pro Bold standing in for Figma's Inter Bold).
-    static let nameChip = Font.system(size: 17, weight: .bold)
+    /// `type.hero`. The greeting on the Hello chapter.
+    static let greeting = SettingsFont(role: .hero)
+    /// `type.footnote`, semibold. The chapter indicator label.
+    static let chapter = SettingsFont(role: .footnote, weightOverride: 600)
+    /// `type.display`. The chapter title.
+    static let heroTitle = SettingsFont(role: .display)
+    /// `type.bodySmall`. The line under the chapter title.
+    static let subtitle = SettingsFont(role: .bodySmall)
+    /// `type.bodyEmphasis`. Large pill labels.
+    static let cta = SettingsFont(role: .bodyEmphasis)
+    /// `type.label`. Compact pills and provider chips.
+    static let chip = SettingsFont(role: .label)
+    /// `type.micro`. The legal line and checkbox labels.
+    static let footnote = SettingsFont(role: .micro)
+    /// `type.lead`. Card and dialog titles.
+    static let cardTitle = SettingsFont(role: .lead)
+    /// `type.lead`, regular. Specialty card row titles.
+    static let cardTitleRegular = SettingsFont(role: .lead, weightOverride: 400)
+    /// `type.caption`. Card captions.
+    static let cardCaption = SettingsFont(role: .caption)
+    /// `type.title`, bold. The model name.
+    static let modelTitle = SettingsFont(role: .title, weightOverride: 700)
+    /// `type.footnote`, semibold. Badge labels.
+    static let badge = SettingsFont(role: .footnote, weightOverride: 600)
+    /// `type.label`, semibold. Option row titles.
+    static let optionTitle = SettingsFont(role: .label, weightOverride: 600)
+    /// `type.lead`, bold. The helper name chip.
+    static let nameChip = SettingsFont(role: .lead, weightOverride: 700)
 }
 
 // MARK: - Layout

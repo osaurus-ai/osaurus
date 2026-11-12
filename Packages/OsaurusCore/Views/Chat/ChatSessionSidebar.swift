@@ -141,7 +141,7 @@ struct ChatSessionSidebar: View {
         SidebarContainer(attachedEdge: .leading, topPadding: 16, width: width, roundBottomCorners: false, showsBorder: false) {
             navigatorSearchRow
             ScrollView {
-                VStack(spacing: 2) {
+                VStack(spacing: theme.space.s2) {
                     if let orchestrator = agentManager.agent(for: Agent.defaultId),
                         navigatorShows(orchestrator)
                     {
@@ -152,17 +152,17 @@ struct ChatSessionSidebar: View {
                         SidebarEmptyState(icon: "magnifyingglass", title: "No agents or chats match")
                     }
                     if !isFilteringNavigator || !filteredLocalAgents.isEmpty {
-                        sidebarHeader.padding(.top, 14)
+                        sidebarHeader.padding(.top, theme.space.s14)
                     }
                     if !agentsCollapsed || isFilteringNavigator {
-                        VStack(spacing: 8) {
+                        VStack(spacing: theme.space.s8) {
                             ForEach(filteredLocalAgents) { agent in
-                                VStack(spacing: 2) { localAgentSection(agent) }
+                                VStack(spacing: theme.space.s2) { localAgentSection(agent) }
                             }
                         }
                     }
                     ForEach(filteredProjects) { project in
-                        VStack(spacing: 2) { projectSection(project) }
+                        VStack(spacing: theme.space.s2) { projectSection(project) }
                     }
                     ForEach(visibleHostedAgents) { host in
                         hostedAgentsSection(host)
@@ -597,7 +597,7 @@ struct ChatSessionSidebar: View {
                     : nil,
                 onToggle: { withAnimation(theme.motion.quick) { pinnedCollapsed.toggle() } }
             )
-            .padding(.top, 14)
+            .padding(.top, theme.space.s14)
             if !collapsed {
                 ForEach(pinned, id: \.item.id) { entry in
                     navigatorConversationRow(
@@ -658,7 +658,7 @@ struct ChatSessionSidebar: View {
                 Label(LCached("Open Settings"), systemImage: "gearshape")
             }
         }
-        .padding(.top, 14)
+        .padding(.top, theme.space.s14)
         if !collapsed {
             let recent = navigatorProjectChats(for: project)
             let count = visibleChatCounts[project.id] ?? 5
@@ -718,13 +718,13 @@ struct ChatSessionSidebar: View {
     /// in the 26pt avatar column so the label lines up with the row titles
     /// above, and a hairline separates it from the list.
     private var sidebarFooter: some View {
-        VStack(spacing: 0) {
-            Divider().opacity(0.4).padding(.horizontal, 12)
+        VStack(spacing: theme.space.s0) {
+            ThemeHairlineDivider().padding(.horizontal, theme.space.s12)
             SidebarFooterRow(icon: "gearshape", title: "Settings") {
                 AppDelegate.shared?.showManagementWindow(initialTab: nil)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
         }
     }
 
@@ -758,7 +758,6 @@ struct ChatSessionSidebar: View {
     @ViewBuilder
     private var agentsHeaderMenu: some View {
         let size = theme.assignedMetric(SettingsButtonSize.extraSmall.assignment("height"), fallback: theme.space.s24)
-        #if OSAURUS_DESIGN_SYSTEM
         AssignedActionMenu(accessibilityLabel: L("More actions"), appearance: .chatContext) {
             agentsHeaderMenuItems
         } label: {
@@ -767,12 +766,6 @@ struct ChatSessionSidebar: View {
         .buttonStyle(ConversationEllipsisStyle())
         .frame(width: size, height: size)
         .help(Text("More actions", bundle: .module))
-        #else
-        Menu { agentsHeaderMenuItems } label: { Image(systemName: "ellipsis") }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden)
-            .frame(width: size)
-            .help(Text("More actions", bundle: .module))
-        #endif
     }
 
     @ViewBuilder
@@ -867,7 +860,7 @@ struct ChatSessionSidebar: View {
         ScrollView {
             // Plain VStack: every row needs a live frame for drag-to-reorder
             // hit testing, and the agent list is small.
-            VStack(spacing: 2) {
+            VStack(spacing: theme.space.s2) {
                 // Background runs (scheduled / API / channel / delegated)
                 // are tabs of their agent, not rows here; each agent row
                 // rolls its live work up into a ring + status line.
@@ -943,8 +936,8 @@ struct ChatSessionSidebar: View {
                     sharedAgentsSection(directlySharedAgents)
                 }
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 8)
+            .padding(.vertical, theme.space.s8)
+            .padding(.horizontal, theme.space.s8)
             .coordinateSpace(name: "agentList")
             .onPreferenceChange(AgentRowFramesKey.self) { agentRowFrames = $0 }
             .animation(theme.motion.quick, value: displayedAgents.map(\.id))
@@ -971,7 +964,7 @@ struct ChatSessionSidebar: View {
     private func hostedAgentsSection(_ host: SyncAgentDirectory.Host) -> some View {
         let key = "host:\(host.device)"
         let collapsed = isSharedGroupCollapsed(key)
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             NavigatorGroupHeader(
                 title: String(format: L("On %@"), host.name),
                 isCollapsed: collapsed,
@@ -979,7 +972,7 @@ struct ChatSessionSidebar: View {
                 help: String(format: L("Your agents on %@. They run there, with its tools and files."), host.name),
                 onToggle: { withAnimation(theme.motion.quick) { toggleSharedGroupCollapsed(key) } }
             )
-            .padding(.top, 14)
+            .padding(.top, theme.space.s14)
 
             if !collapsed { ForEach(host.agents, id: \.id) { entry in
                 let agentId = UUID(uuidString: entry.id)
@@ -1029,7 +1022,7 @@ struct ChatSessionSidebar: View {
     @ViewBuilder
     private func sharedAgentsSection(_ agents: [RemoteAgent]) -> some View {
         let collapsed = isSharedGroupCollapsed("shared")
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             NavigatorGroupHeader(
                 title: L("Shared with you"),
                 isCollapsed: collapsed,
@@ -1042,7 +1035,7 @@ struct ChatSessionSidebar: View {
                     : nil,
                 onToggle: { withAnimation(theme.motion.quick) { toggleSharedGroupCollapsed("shared") } }
             )
-            .padding(.top, 14)
+            .padding(.top, theme.space.s14)
 
             if !collapsed { ForEach(agents) { remote in
                 let address = remote.agentAddress.lowercased()
@@ -1140,7 +1133,7 @@ struct ChatSessionSidebar: View {
             let pairings = orphaned[workspaceId] ?? []
             let name = workspaceNames[workspaceId]
             let collapsed = isWorkspaceCollapsed(workspaceId)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 workspaceGroupHeader(
                     workspaceId: workspaceId,
                     name: name ?? L("Workspace"),
@@ -1185,8 +1178,8 @@ struct ChatSessionSidebar: View {
                 // Router off but Settings knows workspaces: explain once
                 // (orphan sections above already carry the row).
                 if orphaned.isEmpty {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Self.workspacesStateHeader
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
+                        Self.workspacesStateHeader(theme: theme)
                         workspaceStateRow(
                             icon: "bolt.slash.fill",
                             text: L("Osaurus Router is off — shared agents can't be reached."),
@@ -1196,21 +1189,21 @@ struct ChatSessionSidebar: View {
                     }
                 }
             } else if routerOn, rosterStore.isLoading {
-                VStack(alignment: .leading, spacing: 2) {
-                    Self.workspacesStateHeader
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.mini)
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    Self.workspacesStateHeader(theme: theme)
+                    HStack(spacing: theme.space.s8) {
+                        SettingsSpinner(size: .mini)
                         Text("Loading workspaces…", bundle: .module)
                             .textStyle(.footnote)
                             .foregroundColor(theme.text.tertiary)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, theme.space.s10)
+                    .padding(.vertical, theme.space.s8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else if routerOn, let error = rosterStore.lastError {
-                VStack(alignment: .leading, spacing: 2) {
-                    Self.workspacesStateHeader
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    Self.workspacesStateHeader(theme: theme)
                     workspaceStateRow(
                         icon: "exclamationmark.triangle.fill",
                         text: error,
@@ -1229,14 +1222,14 @@ struct ChatSessionSidebar: View {
                 actionTitle: L("Retry"),
                 action: { Task { await rosterStore.refresh(reason: .manual) } }
             )
-            .padding(.top, 6)
+            .padding(.top, theme.space.s6)
         }
     }
 
     /// "Workspaces", over the loading / error / Router-off explainers that
     /// stand in for the groups. It keeps the group anatomy but has nothing
     /// to fold.
-    private static var workspacesStateHeader: some View {
+    private static func workspacesStateHeader(theme: any ThemeProtocol) -> some View {
         NavigatorGroupHeader(
             title: L("Workspaces"),
             isCollapsed: false,
@@ -1244,7 +1237,7 @@ struct ChatSessionSidebar: View {
             help: L("Workspaces"),
             onToggle: {}
         )
-        .padding(.top, 14)
+        .padding(.top, theme.space.s14)
     }
 
     /// Compact explanatory row inside a workspace section (loading / error /
@@ -1257,18 +1250,18 @@ struct ChatSessionSidebar: View {
         action: (() -> Void)? = nil
     ) -> some View {
         Self.renderWorkspaceState(icon: icon, text: text, tint: tint, actionTitle: actionTitle, action: action,
-            theme: theme.catalogFamily(42, authoritative: true))
+            theme: theme.catalogFamily(42))
     }
 
     private static func renderWorkspaceState(icon: String, text: String, tint: Color? = nil,
         actionTitle: String? = nil, action: (() -> Void)? = nil, theme: any ThemeProtocol) -> some View {
-        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.chatSessionSidebar.content.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 8, theme))) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.chatSessionSidebar.content.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s8, theme))) {
             Image(systemName: icon)
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(tint ?? theme.text.tertiary)
                 .frame(width: 14)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.chatSessionSidebar.content.verticalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 3, theme))) {
+                .padding(.top, theme.space.s2)
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.chatSessionSidebar.content.verticalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s2, theme))) {
                 Text(text)
                     .componentInspectionText(42, role: .bodySmall, fallback: .footnote, theme: theme)
                     .foregroundColor(tint == nil ? theme.text.tertiary : theme.text.secondary)
@@ -1286,8 +1279,8 @@ struct ChatSessionSidebar: View {
             }.catalogLayoutTarget("component.library.42.elements.layout.chatSessionSidebar.content.verticalGap")
             .frame(maxWidth: .infinity, alignment: .leading)
         }.catalogLayoutTarget("component.library.42.elements.layout.chatSessionSidebar.content.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.chatSessionSidebar.content.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 10, theme))).catalogLayoutTarget("component.library.42.elements.layout.chatSessionSidebar.content.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.chatSessionSidebar.content.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 8, theme))).catalogLayoutTarget("component.library.42.elements.layout.chatSessionSidebar.content.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.chatSessionSidebar.content.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.42.elements.layout.chatSessionSidebar.content.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.chatSessionSidebar.content.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.42.elements.layout.chatSessionSidebar.content.paddingY")
     }
 
     @ViewBuilder
@@ -1461,7 +1454,7 @@ struct ChatSessionSidebar: View {
                 Label(L("Workflows"), systemImage: "point.3.connected.trianglepath.dotted")
             }
         }
-        .padding(.top, 14)
+        .padding(.top, theme.space.s14)
     }
 
     /// The header's +: the same hover-free trigger and plain-text menu as
@@ -1471,7 +1464,6 @@ struct ChatSessionSidebar: View {
         workspaceId: String, teammates: [SharedAgentIdentity], canShare: Bool
     ) -> some View {
         let size = theme.assignedMetric(SettingsButtonSize.extraSmall.assignment("height"), fallback: theme.space.s24)
-        #if OSAURUS_DESIGN_SYSTEM
         AssignedActionMenu(accessibilityLabel: L("New Chat"), appearance: .chatContext) {
             workspaceNewChatItems(workspaceId: workspaceId, teammates: teammates, canShare: canShare)
         } label: {
@@ -1480,16 +1472,6 @@ struct ChatSessionSidebar: View {
         .buttonStyle(ConversationEllipsisStyle())
         .frame(width: size, height: size)
         .help(Text("New Chat", bundle: .module))
-        #else
-        Menu {
-            workspaceNewChatItems(workspaceId: workspaceId, teammates: teammates, canShare: canShare)
-        } label: {
-            Image(systemName: "plus")
-        }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden)
-        .frame(width: size)
-        .help(Text("New Chat", bundle: .module))
-        #endif
     }
 
     @ViewBuilder
@@ -2004,7 +1986,7 @@ private struct NavigatorGroupHeader<Trailing: View>: View {
                         .textStyle(.caption)
                         .lineLimit(1)
                     Image(systemName: "chevron.right")
-                        .glyphSize(8, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                     if let activityStatus {
                         NavigatorActivityIndicator(status: activityStatus)
@@ -2074,7 +2056,7 @@ private struct AgentSidebarRow: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @State private var isHovered = false
     @State private var hoverControlsWidth: CGFloat = 0
 
@@ -2106,7 +2088,7 @@ private struct AgentSidebarRow: View {
             AgentAvatarView(
                 mascotId: agent.avatar,
                 name: agent.displayName,
-                tint: agentColorFor(agent.name),
+                tint: theme.dataInk(seed: agent.name),
                 diameter: 24,
                 customImageURL: agent.customAvatarURL,
                 monogramFontSize: 12,
@@ -2122,10 +2104,10 @@ private struct AgentSidebarRow: View {
             )
             .animation(theme.motion.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.agentSidebarRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 2, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.agentSidebarRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
                 // Baseline-aligned so the Orchestrator star sits on the
                 // name's line like an inline glyph, not on the row's center.
-                HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.agentSidebarRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 4, theme))) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.agentSidebarRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s4, theme))) {
                     Text(agent.displayName)
                         .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
                         .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
@@ -2138,7 +2120,7 @@ private struct AgentSidebarRow: View {
                     }
                     if !sharedWorkspaceNames.isEmpty {
                         Image(systemName: "person.2.fill")
-                            .glyphSize(8, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                             .foregroundColor(theme.text.secondary)
                             .help(
                                 String(
@@ -2158,7 +2140,7 @@ private struct AgentSidebarRow: View {
             // The name runs under the hover controls and fades out there
             // instead of re-truncating, so hovering never shifts the row.
             .mask(alignment: .leading) {
-                HStack(spacing: 0) {
+                HStack(spacing: theme.space.s0) {
                     Rectangle()
                     LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
                         .frame(width: isHovered ? theme.space.s12 : 0)
@@ -2282,7 +2264,7 @@ private struct NewAgentRowHighlight: ViewModifier {
     let isNew: Bool
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
 
     func body(content: Content) -> some View {
         content
@@ -2306,15 +2288,15 @@ extension View {
 private struct NewAgentPill: View {
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
 
     var body: some View {
         Text("New", bundle: .module)
             .componentInspectionText(41, role: .caption, fallback: .micro, weight: 700, theme: theme)
             .textCase(.uppercase)
             .foregroundColor(theme.status.info.foreground)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.newAgentPill.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 5, theme))).catalogLayoutTarget("component.library.41.elements.layout.newAgentPill.body.paddingX")
-            .padding(.vertical, 1.5)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.newAgentPill.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.41.elements.layout.newAgentPill.body.paddingX")
+            .padding(.vertical, theme.space.s2)
             .background(Capsule().fill(theme.status.info.background))
             .accessibilityLabel(Text("New Agent", bundle: .module))
     }
@@ -2356,7 +2338,7 @@ private struct WorkspaceAgentSidebarRow: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @State private var isHovered = false
 
     /// Hosted on this Mac — the row reads relay reachability and opens the
@@ -2373,7 +2355,7 @@ private struct WorkspaceAgentSidebarRow: View {
             AgentAvatarView(
                 mascotId: identity.avatar,
                 name: identity.name,
-                tint: agentColorFor(identity.localAgent?.name ?? identity.name),
+                tint: theme.dataInk(seed: identity.localAgent?.name ?? identity.name),
                 diameter: NavigatorRowMetrics.iconColumn,
                 customImageURL: identity.customAvatarURL,
                 monogramFontSize: 12,
@@ -2392,7 +2374,7 @@ private struct WorkspaceAgentSidebarRow: View {
             // so the section scans as one list instead of two glyph systems.
             .overlay(alignment: .bottomTrailing) {
                 SharedAgentStatusDot(status: status)
-                    .padding(1.5)
+                    .padding(theme.space.s2)
                     .background(Circle().fill(theme.surface.sidebar))
                     .offset(x: 2, y: 2)
                     .help(isMine ? ownPresenceHelp : status.shortLabel)
@@ -2400,8 +2382,8 @@ private struct WorkspaceAgentSidebarRow: View {
             .opacity(isOffline ? 0.7 : 1)
             .animation(theme.motion.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.workspaceAgentSidebarRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 2, theme))) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.workspaceAgentSidebarRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 4, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.workspaceAgentSidebarRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.workspaceAgentSidebarRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s4, theme))) {
                     Text(identity.name)
                         .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
                         .foregroundColor(theme.text.primary)
@@ -2623,7 +2605,7 @@ private struct WorkspaceAgentSidebarRow: View {
 private struct SharedAgentStatusDot: View {
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     let status: SharedAgentStatus
 
     var body: some View {
@@ -2642,7 +2624,7 @@ private struct SharedAgentStatusDot: View {
             case .accessRevoked:
                 Circle().fill(theme.status.error.foreground)
             case .offline, .unavailable, .readOnlyTeammate:
-                Circle().fill(theme.text.disabled)
+                Circle().fill(theme.text.tertiary)
             }
         }
         .frame(width: 8, height: 8)
@@ -2672,15 +2654,15 @@ private struct RemoteAgentSidebarRow: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 10, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s10, theme))) {
             AgentAvatarView(
                 mascotId: agent.avatar,
                 name: agent.name,
-                tint: agentColorFor(agent.name),
+                tint: theme.dataInk(seed: agent.name),
                 diameter: 26,
                 customImageURL: nil,
                 monogramFontSize: 12,
@@ -2697,15 +2679,15 @@ private struct RemoteAgentSidebarRow: View {
             .overlay(alignment: .bottomTrailing) {
                 if let status {
                     SharedAgentStatusDot(status: status)
-                        .padding(1.5)
+                        .padding(theme.space.s2)
                         .background(Circle().fill(theme.surface.sidebar))
                         .offset(x: 2, y: 2)
                 }
             }
             .animation(theme.motion.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 2, theme))) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 4, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s4, theme))) {
                     Text(agent.name)
                         .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
                         .foregroundColor(theme.text.primary)
@@ -2734,7 +2716,7 @@ private struct RemoteAgentSidebarRow: View {
             if isHovered {
                 Button(action: openSettings) {
                     Image(systemName: "gearshape")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: NativeComponentInspectionStyle.metric(41, "height", SidebarStyle.actionButtonSize, theme), height: NativeComponentInspectionStyle.metric(41, "height", SidebarStyle.actionButtonSize, theme))
                         .contentShape(Rectangle())
@@ -2745,8 +2727,8 @@ private struct RemoteAgentSidebarRow: View {
                 .transition(.opacity)
             }
         }.catalogLayoutTarget("component.library.41.elements.layout.remoteAgentSidebarRow.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 10, theme))).catalogLayoutTarget("component.library.41.elements.layout.remoteAgentSidebarRow.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 8, theme))).catalogLayoutTarget("component.library.41.elements.layout.remoteAgentSidebarRow.body.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.41.elements.layout.remoteAgentSidebarRow.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.remoteAgentSidebarRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.41.elements.layout.remoteAgentSidebarRow.body.paddingY")
         .frame(minHeight: NativeComponentInspectionStyle.metric(41, "height", 0, theme))
             .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered)
         .newAgentHighlight(isNew)
@@ -2824,15 +2806,15 @@ private struct HostedAgentSidebarRow: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.discoveredAgentSidebarRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 10, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.discoveredAgentSidebarRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s10, theme))) {
             AgentAvatarView(
                 mascotId: entry.avatar,
                 name: entry.name,
-                tint: agentColorFor(entry.name),
+                tint: theme.dataInk(seed: entry.name),
                 diameter: 26,
                 customImageURL: nil,
                 monogramFontSize: 12,
@@ -2840,7 +2822,7 @@ private struct HostedAgentSidebarRow: View {
             )
             .opacity(isOnline ? 1 : 0.6)
 
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.discoveredAgentSidebarRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 2, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.discoveredAgentSidebarRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
                 Text(entry.name)
                     .componentInspectionText(41, role: .label, fallback: .caption, weight: 500, theme: theme)
                     .foregroundColor(theme.text.primary)
@@ -2855,8 +2837,8 @@ private struct HostedAgentSidebarRow: View {
             }.catalogLayoutTarget("component.library.41.elements.layout.discoveredAgentSidebarRow.body.verticalGap")
             .frame(maxWidth: .infinity, alignment: .leading)
         }.catalogLayoutTarget("component.library.41.elements.layout.discoveredAgentSidebarRow.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.discoveredAgentSidebarRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 10, theme))).catalogLayoutTarget("component.library.41.elements.layout.discoveredAgentSidebarRow.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.discoveredAgentSidebarRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 8, theme))).catalogLayoutTarget("component.library.41.elements.layout.discoveredAgentSidebarRow.body.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.discoveredAgentSidebarRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.41.elements.layout.discoveredAgentSidebarRow.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.discoveredAgentSidebarRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.41.elements.layout.discoveredAgentSidebarRow.body.paddingY")
         .frame(minHeight: NativeComponentInspectionStyle.metric(41, "height", 0, theme))
             .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered)
         .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
@@ -2895,15 +2877,15 @@ private struct SidebarFooterRow: View {
     let action: () -> Void
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42) }
     @Environment(\.controlActiveState) private var controlActiveState
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarFooterRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 10, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarFooterRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s10, theme))) {
                 Image(systemName: icon)
-                    .glyphSize(13, weight: .medium)
+                    .glyphSize(.label, weight: .medium)
                     .foregroundColor(theme.text.secondary)
                     .frame(width: 26, height: 26)
                 Text(title, bundle: .module)
@@ -2911,8 +2893,8 @@ private struct SidebarFooterRow: View {
                     .foregroundColor(theme.text.primary)
                 Spacer(minLength: 0)
             }.catalogLayoutTarget("component.library.42.elements.layout.sidebarFooterRow.body.horizontalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarFooterRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 10, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarFooterRow.body.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarFooterRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 6, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarFooterRow.body.paddingY")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarFooterRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarFooterRow.body.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarFooterRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarFooterRow.body.paddingY")
             .sidebarRowChrome(isSelected: false, isHovered: isHovered, family: 42)
             .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
         }
@@ -2978,7 +2960,7 @@ private struct SessionRow: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @Environment(\.themedAlertScope) private var alertScope
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var fileChanges = FileChangeSummaryStore.shared
@@ -3003,28 +2985,25 @@ private struct SessionRow: View {
     /// Get a consistent color for the agent based on its ID
     private var agentColor: Color {
         guard let agent = agent, !agent.isBuiltIn else { return theme.text.secondary }
-        // Generate a consistent hue from the agent ID
-        let hash = agent.id.hashValue
-        let hue = Double(abs(hash) % 360) / 360.0
-        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
+        return theme.dataInk(seed: agent.id.uuidString)
     }
 
     var body: some View {
         if isEditing {
             editingView
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 10, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 8, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingY")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingY")
                 .frame(minHeight: NativeComponentInspectionStyle.metric(41, "height", 0, theme))
             .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered)
         } else if navigatorStyle {
             navigatorRow
         } else {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 10, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s10, theme))) {
                 // Multi-select check, shown in place of leading padding so the
                 // row doesn't shift when selection toggles.
                 if isMultiSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .glyphSize(13, weight: .semibold)
+                        .glyphSize(.label, weight: .semibold)
                         .foregroundColor(theme.text.primary)
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
@@ -3047,11 +3026,11 @@ private struct SessionRow: View {
                 )
                 .animation(theme.motion.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
-                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 2, theme))) {
-                    HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 5, theme))) {
+                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
+                    HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s4, theme))) {
                         if session.pinned {
                             Image(systemName: "pin.fill")
-                                .glyphSize(9, weight: .semibold)
+                                .glyphSize(.tiny, weight: .semibold)
                                 .foregroundColor(theme.text.secondary)
                                 .rotationEffect(.degrees(45))
                         }
@@ -3126,8 +3105,8 @@ private struct SessionRow: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.horizontalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingX2", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 10, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingX2")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingY2", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 8, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingY2")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingX2", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingX2")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.body.paddingY2", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.body.paddingY2")
             .frame(minHeight: NativeComponentInspectionStyle.metric(41, "height", 0, theme))
             .sidebarRowChrome(isSelected: isSelected || isMultiSelected, isHovered: isHovered)
             .overlay(
@@ -3154,10 +3133,11 @@ private struct SessionRow: View {
         }
     }
 
-    /// Archived chats read as set aside: the disabled ink at rest, lifted
-    /// to tertiary on hover so the title stays legible when pointed at.
+    /// Archived chats read as set aside: tertiary ink at rest (below the
+    /// secondary titles around them, still legible), lifted to secondary on
+    /// hover. Disabled ink is for unavailable controls, not readable titles.
     private var archivedInk: Color {
-        isHovered ? environmentTheme.text.tertiary : environmentTheme.text.disabled
+        isHovered ? environmentTheme.text.secondary : environmentTheme.text.tertiary
     }
 
     private var navigatorActivityLine: String? {
@@ -3191,16 +3171,16 @@ private struct SessionRow: View {
     private var navigatorRow: some View {
         let trailingControl = environmentTheme.assignedMetric(
             SettingsButtonSize.extraSmall.assignment("height"), fallback: environmentTheme.space.s24)
-        return HStack(spacing: 0) {
+        return HStack(spacing: theme.space.s0) {
             Button(action: onSelect) {
-                HStack(spacing: 0) {
+                HStack(spacing: theme.space.s0) {
                     // A real view, so the column keeps its width when empty.
                     ZStack {
                         if showsAgentAvatar, let sharedAvatar {
                             AgentAvatarView(
                                 mascotId: sharedAvatar.avatar,
                                 name: sharedAvatar.name,
-                                tint: agentColorFor(sharedAvatar.localAgent?.name ?? sharedAvatar.name),
+                                tint: theme.dataInk(seed: sharedAvatar.localAgent?.name ?? sharedAvatar.name),
                                 diameter: 18,
                                 customImageURL: sharedAvatar.customAvatarURL,
                                 monogramFontSize: 9,
@@ -3217,7 +3197,7 @@ private struct SessionRow: View {
                             AgentAvatarView(
                                 mascotId: agent.avatar,
                                 name: agent.displayName,
-                                tint: agentColorFor(agent.name),
+                                tint: theme.dataInk(seed: agent.name),
                                 diameter: 18,
                                 customImageURL: agent.customAvatarURL,
                                 monogramFontSize: 9,
@@ -3235,7 +3215,7 @@ private struct SessionRow: View {
                                 .transition(navigatorActivityTransition)
                         } else if session.archived {
                             Image(systemName: "archivebox")
-                                .glyphSize(11)
+                                .glyphSize(.footnote)
                                 .foregroundStyle(archivedInk)
                                 .help(Text("Archived", bundle: .module))
                                 .transition(.opacity)
@@ -3258,7 +3238,7 @@ private struct SessionRow: View {
                         // there instead of re-truncating, so hovering never
                         // shifts the row.
                         .mask(alignment: .leading) {
-                            HStack(spacing: 0) {
+                            HStack(spacing: theme.space.s0) {
                                 Rectangle()
                                 LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
                                     .frame(width: isHovered ? environmentTheme.space.s12 : 0)
@@ -3299,7 +3279,6 @@ private struct SessionRow: View {
             ZStack(alignment: .trailing) {
                 navigatorAgeLabel
                     .opacity(isHovered ? 0 : 1)
-                #if OSAURUS_DESIGN_SYSTEM
                 AssignedActionMenu(accessibilityLabel: "Conversation actions for \(session.title)", appearance: .chatContext) {
                     conversationContextMenu
                 } label: {
@@ -3309,11 +3288,6 @@ private struct SessionRow: View {
                 .frame(width: trailingControl, height: trailingControl)
                 .opacity(isHovered ? 1 : 0)
                 .allowsHitTesting(isHovered)
-                #else
-                Menu { conversationContextMenu } label: { Image(systemName: "ellipsis") }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden)
-                    .frame(width: trailingControl).opacity(isHovered ? 1 : 0)
-                #endif
             }
             .padding(.leading, environmentTheme.space.s4)
             .padding(.trailing, NavigatorRowMetrics.trailingInset)
@@ -3323,9 +3297,7 @@ private struct SessionRow: View {
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .assignedContextMenu(chatMenu: true) { conversationContextMenu }
-        #if OSAURUS_DESIGN_SYSTEM
         .environment(\.assignedMenuAppearance, .chatContext)
-        #endif
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
@@ -3426,11 +3398,11 @@ private struct SessionRow: View {
     /// "Remove from Project" and a back row. Same `ActionsPopoverButton`
     /// styling as the main page.
     private var projectPickerPopoverPage: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 2, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
             ActionsPopoverButton(icon: "chevron.left", label: "Back", isDestructive: false) {
                 showProjectPicker = false
             }
-            Divider().padding(.vertical, 2)
+            Divider().padding(.vertical, theme.space.s2)
             ForEach(projects) { project in
                 ActionsPopoverButton(
                     icon: project.id == session.projectId ? "checkmark" : "folder",
@@ -3443,7 +3415,7 @@ private struct SessionRow: View {
                 }
             }
             if session.projectId != nil {
-                Divider().padding(.vertical, 2)
+                Divider().padding(.vertical, theme.space.s2)
                 ActionsPopoverButton(
                     icon: "folder.badge.minus", label: "Remove from Project", isDestructive: true
                 ) {
@@ -3452,7 +3424,7 @@ private struct SessionRow: View {
                 }
             }
         }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.verticalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 6, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 6, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.horizontal").catalogLayoutTarget("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.horizontal").catalogLayoutTarget("component.library.41.elements.layout.sessionRow.projectPickerPopoverPage.padding.vertical")
         .frame(minWidth: 180)
     }
 
@@ -3462,7 +3434,7 @@ private struct SessionRow: View {
     }
 
     private var mainActionsPopoverPage: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 2, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
             ActionsPopoverButton(icon: "pencil", label: "Rename", isDestructive: false) {
                 showActionsPopover = false
                 onStartRename()
@@ -3484,12 +3456,12 @@ private struct SessionRow: View {
                     showProjectPicker = true
                 }
             }
-            Divider().padding(.vertical, 2)
+            Divider().padding(.vertical, theme.space.s2)
             ActionsPopoverButton(icon: "square.and.arrow.up", label: "Export…", isDestructive: false) {
                 showActionsPopover = false
                 requestExport()
             }
-            Divider().padding(.vertical, 2)
+            Divider().padding(.vertical, theme.space.s2)
             ActionsPopoverButton(
                 icon: session.archived ? "tray.and.arrow.up" : "archivebox",
                 label: session.archived ? "Unarchive" : "Archive",
@@ -3503,7 +3475,7 @@ private struct SessionRow: View {
                 requestDelete()
             }
         }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.verticalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 6, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 6, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.horizontal").catalogLayoutTarget("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.horizontal").catalogLayoutTarget("component.library.41.elements.layout.sessionRow.mainActionsPopoverPage.padding.vertical")
         .frame(minWidth: 180)
     }
 
@@ -3582,7 +3554,7 @@ private struct SessionRow: View {
         let ordered = orderedCapabilities
         let visible = Array(ordered.prefix(visibleLimit))
         let overflow = ordered.count - visible.count
-        return HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.capabilityBadges.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 3, theme))) {
+        return HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.capabilityBadges.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
             ForEach(visible, id: \.self) { cap in
                 capabilityIcon(cap)
             }
@@ -3590,8 +3562,8 @@ private struct SessionRow: View {
                 Text(verbatim: "+\(overflow)")
                     .componentInspectionText(41, role: .caption, fallback: .micro, weight: 600, theme: theme)
                     .foregroundColor(theme.text.secondary)
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.capabilityBadges.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 4, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.capabilityBadges.paddingX")
-                    .padding(.vertical, 1)
+                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.capabilityBadges.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.capabilityBadges.paddingX")
+                    .padding(.vertical, theme.space.s2)
                     .background(
                         Capsule(style: .continuous)
                             .fill(theme.surface.pressed)
@@ -3609,20 +3581,20 @@ private struct SessionRow: View {
         return Button {
             onShowFileChanges?()
         } label: {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.fileChangesBadge.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 2, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.fileChangesBadge.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
                 Image(systemName: "plus.forwardslash.minus")
-                    .glyphSize(7.5, weight: .bold)
+                    .glyphSize(.tiny, weight: .bold)
                 if active {
                     Text(verbatim: "\(summary.outstandingFiles)")
                         .componentInspectionText(41, role: .caption, fallback: .micro, monospacedDigit: true, weight: 600, theme: theme)
                 }
             }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.fileChangesBadge.horizontalGap")
             .foregroundColor(color)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.fileChangesBadge.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 4, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.fileChangesBadge.paddingX")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.fileChangesBadge.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.fileChangesBadge.paddingX")
             .frame(height: 14)
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
-                    .fill(color.opacity(theme.isDark ? 0.16 : 0.12))
+                    .fill(theme.wash(behind: color))
             )
         }
         .buttonStyle(.plain)
@@ -3638,7 +3610,7 @@ private struct SessionRow: View {
 
     private func capabilityIcon(_ cap: SessionCapability) -> some View {
         Image(systemName: cap.iconName)
-            .glyphSize(8.5, weight: .semibold)
+            .glyphSize(.tiny, weight: .semibold)
             .foregroundColor(theme.text.secondary)
             .frame(width: 14, height: 14)
             .background(
@@ -3661,7 +3633,7 @@ private struct SessionRow: View {
 
     private var sourceBadge: some View {
         Image(systemName: isFromPairedPhone ? "iphone" : session.runtimeSource.iconName)
-            .glyphSize(8.5, weight: .semibold)
+            .glyphSize(.tiny, weight: .semibold)
             .foregroundColor(sourceBadgeColor)
             .frame(width: 14, height: 14)
             .background(
@@ -3766,7 +3738,7 @@ private struct SessionRow: View {
                 .frame(width: 24, height: 24)
 
             Image(systemName: "person.fill")
-                .glyphSize(10, weight: .medium)
+                .glyphSize(.micro, weight: .medium)
                 .foregroundColor(theme.text.secondary)
         }
         .localizedHelp("Default")
@@ -3787,8 +3759,8 @@ private struct SessionRow: View {
     }
 
     private var editingView: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.editingView.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 4, theme))) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.editingView.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 6, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.editingView.verticalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s4, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.editingView.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s6, theme))) {
                 TextField(text: $editBuffer, prompt: Text("Title", bundle: .module)) {
                     Text("Title", bundle: .module)
                 }
@@ -3799,8 +3771,8 @@ private struct SessionRow: View {
                 .onSubmit { onConfirmRename(editBuffer) }
                 .focused($isTextFieldFocused)
                 .onExitCommand(perform: onCancelRename)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.editingView.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 6, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.editingView.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.editingView.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 4, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.editingView.paddingY")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.editingView.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.editingView.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.editingView.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.41.elements.layout.sessionRow.editingView.paddingY")
                 .background(
                     RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
                         .fill(theme.surface.canvas)
@@ -3838,20 +3810,20 @@ private struct SessionRow: View {
 
     /// Low-contrast hint showing the Return and Esc shortcuts.
     private var renameKeyboardHint: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.renameKeyboardHint.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 6, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.renameKeyboardHint.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s6, theme))) {
             keyHintChip(symbol: "return", label: "Save")
             Text("·")
                 .componentInspectionText(41, role: .caption, fallback: .micro, theme: theme)
             keyHintChip(symbol: "escape", label: "Cancel")
         }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.renameKeyboardHint.horizontalGap")
         .foregroundColor(theme.text.secondary)
-        .padding(.leading, 6)
+        .padding(.leading, theme.space.s6)
     }
 
     private func keyHintChip(symbol: String, label: String) -> some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.keyHintChip.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 3, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.sessionRow.keyHintChip.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s2, theme))) {
             Image(systemName: symbol)
-                .glyphSize(9, weight: .semibold)
+                .glyphSize(.tiny, weight: .semibold)
             Text(LocalizedStringKey(label), bundle: .module)
                 .componentInspectionText(41, role: .caption, fallback: .micro, weight: 500, theme: theme)
         }.catalogLayoutTarget("component.library.41.elements.layout.sessionRow.keyHintChip.horizontalGap")
@@ -3873,14 +3845,14 @@ private struct ActionsPopoverButton: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.actionsPopoverButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", 8, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.41.elements.layout.actionsPopoverButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(41, "gap", theme.space.s8, theme))) {
                 Image(systemName: icon)
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                     .frame(width: 14)
                 Group {
                     if labelIsVerbatim {
@@ -3894,8 +3866,8 @@ private struct ActionsPopoverButton: View {
                 Spacer(minLength: 0)
             }.catalogLayoutTarget("component.library.41.elements.layout.actionsPopoverButton.body.horizontalGap")
             .foregroundColor(foreground)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.actionsPopoverButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 8, theme))).catalogLayoutTarget("component.library.41.elements.layout.actionsPopoverButton.body.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.actionsPopoverButton.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", 6, theme))).catalogLayoutTarget("component.library.41.elements.layout.actionsPopoverButton.body.paddingY")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.41.elements.layout.actionsPopoverButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.41.elements.layout.actionsPopoverButton.body.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.41.elements.layout.actionsPopoverButton.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(41, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.41.elements.layout.actionsPopoverButton.body.paddingY")
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
@@ -3930,7 +3902,7 @@ struct SessionActivityRing: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSpinning = false
 
@@ -3973,7 +3945,7 @@ struct SessionActivityRing: View {
                             .fill(theme.surface.canvas)
                             .frame(width: 11, height: 11)
                         Image(systemName: "questionmark.circle.fill")
-                            .glyphSize(10, weight: .semibold)
+                            .glyphSize(.micro, weight: .semibold)
                             .foregroundColor(theme.status.warning.foreground)
                     }
                     .offset(x: 2, y: 2)
@@ -4000,7 +3972,7 @@ struct NavigatorActivityIndicator: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var diameter: CGFloat { ringsAvatar ? 22 : 11 }
@@ -4046,6 +4018,8 @@ private struct NavigatorActivityComet: View {
     let lineWidth: CGFloat
     let isStill: Bool
 
+    @Environment(\.theme) private var theme
+
     private static let period: TimeInterval = 1.2
     private static let arcFraction: CGFloat = 0.25
 
@@ -4083,7 +4057,7 @@ private struct NavigatorActivityComet: View {
     }
 
     private var track: some View {
-        Circle().stroke(color.opacity(0.15), lineWidth: lineWidth)
+        Circle().stroke(theme.rule(around: color), lineWidth: lineWidth)
     }
 }
 
@@ -4129,13 +4103,13 @@ struct SessionStopButton: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "stop.circle.fill")
-                .glyphSize(13, weight: .semibold)
+                .glyphSize(.label, weight: .semibold)
                 .foregroundColor(isHovered ? theme.status.error.foreground : theme.text.secondary)
                 .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
                 .background(
@@ -4298,8 +4272,8 @@ struct ChatHistoryList: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 SidebarSearchField(
                     text: $searchQuery,
                     placeholder: "Search chats...",
@@ -4329,7 +4303,7 @@ struct ChatHistoryList: View {
             {
                 // Lens (not search) produced the empty list: offer a way
                 // back instead of the search-flavored no-results view.
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     placeholder(
                         icon: showArchived ? "archivebox" : "line.3.horizontal.decrease.circle",
                         text: showArchived ? "No archived chats" : "No chats match this filter"
@@ -4344,7 +4318,7 @@ struct ChatHistoryList: View {
                         }
                         .buttonStyle(.plain)
                         .pointingHandCursor()
-                        .padding(.bottom, 16)
+                        .padding(.bottom, theme.space.s16)
                     }
                 }
             } else if filteredSessions.isEmpty {
@@ -4354,7 +4328,7 @@ struct ChatHistoryList: View {
                 .frame(maxHeight: listMaxHeight ?? .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 2) {
+                    LazyVStack(spacing: theme.space.s2) {
                         ForEach(filteredSessions) { session in
                             SessionRow(
                                 session: session,
@@ -4392,7 +4366,7 @@ struct ChatHistoryList: View {
                             .id(session.id)
                         }
                     }
-                    .padding(.bottom, 4)
+                    .padding(.bottom, theme.space.s4)
                     .animation(
                         theme.motion.springAnimation(responseMultiplier: 0.9),
                         value: filteredSessions.map(\.id)
@@ -4460,7 +4434,7 @@ struct ChatHistoryList: View {
 
     /// Batch bar for the selection: move to project, archive, delete, clear.
     private var selectionActionBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Text("\(selectedIds.count) selected", bundle: .module)
                 .textStyle(.caption, weight: 600)
                 .foregroundColor(theme.text.primary)
@@ -4469,7 +4443,7 @@ struct ChatHistoryList: View {
             Spacer(minLength: 4)
 
             if !projectManager.projects.isEmpty {
-                SettingsActionMenu(accessibilityLabel: L("Move to Project")) {
+                SettingsOverflowMenu(icon: "folder.badge.plus", help: "Move to Project", size: .extraSmall) {
                     ForEach(projectManager.projects) { project in
                         Button { moveSelected(to: project.id) } label: { Text(verbatim: project.name) }
                     }
@@ -4477,56 +4451,25 @@ struct ChatHistoryList: View {
                     Button { moveSelected(to: nil) } label: {
                         Text("Remove from Project", bundle: .module)
                     }
-                } label: {
-                    Image(systemName: "folder.badge.plus")
-                        .glyphSize(12, weight: .semibold)
-                        .foregroundColor(theme.text.secondary)
-                        .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
-                        .background(
-                            RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
-                                .fill(theme.surface.subtle)
-                        )
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .tint(theme.text.secondary)
-                .fixedSize()
-                .localizedHelp("Move to Project")
             }
-            selectionBarButton(icon: "archivebox", help: "Archive", tint: theme.text.secondary) {
+            SettingsIconButton("archivebox", help: "Archive", size: .extraSmall) {
                 for id in selectedIds { onSetArchived(id, true) }
                 clearSelection()
             }
-            selectionBarButton(icon: "trash", help: "Delete", tint: .red) {
+            SettingsIconButton("trash", help: "Delete", size: .extraSmall, isDestructive: true) {
                 requestDeleteSelected()
             }
-            selectionBarButton(icon: "xmark", help: "Clear Selection", tint: theme.text.secondary) {
+            SettingsIconButton("xmark", help: "Clear Selection", size: .extraSmall) {
                 clearSelection()
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, theme.space.s10)
+        .padding(.vertical, theme.space.s6)
         .background(
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .fill(theme.surface.selected)
         )
-    }
-
-    private func selectionBarButton(
-        icon: String, help: LocalizedStringKey, tint: Color, action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .glyphSize(12, weight: .semibold)
-                .foregroundColor(tint)
-                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
-                .background(
-                    RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
-                        .fill(theme.surface.subtle)
-                )
-        }
-        .buttonStyle(.plain)
-        .localizedHelp(help)
     }
 
     private func moveSelected(to projectId: UUID?) {
@@ -4571,20 +4514,20 @@ struct ChatHistoryList: View {
     }
 
     private func placeholder(icon: String?, text: LocalizedStringKey) -> some View {
-        VStack(spacing: 6) {
+        VStack(spacing: theme.space.s6) {
             if let icon {
                 Image(systemName: icon)
-                    .glyphSize(20)
+                    .glyphSize(.xlarge)
                     .foregroundColor(theme.text.tertiary)
             } else {
-                ProgressView().controlSize(.small)
+                SettingsSpinner()
             }
             Text(text, bundle: .module)
                 .textStyle(.caption)
                 .foregroundColor(theme.text.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.vertical, theme.space.s24)
     }
 
     /// Debounced full-text lookup, mirroring the sidebar's implementation.
@@ -4627,12 +4570,13 @@ private struct AgentRowFramesKey: PreferenceKey {
         onUnshareFromWorkspace: { action("Unshare local callback: \($0.name)") }, onSelect: { action("Local agent selected") })
 }
 struct InspectorSidebarRemainingVerification: View {
+    @Environment(\.theme) private var theme
     @State private var state = "Working"
     @State private var callbacks = 0
     @Environment(\.inspectorVerificationWidth) private var width
     private var status: SessionActivityMonitor.Status? { state == "Working" ? .working : state == "Waiting" ? .waitingForInput : nil }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Picker("Sidebar sample state", selection: $state) { ForEach(["Working", "Waiting", "Pinned", "Archived", "Multi-selected"], id: \.self) { Text($0) } }
             AgentSidebarRow(agent: Agent(name: "Local agent with a deliberately long descriptive name"), isSelected: state == "Multi-selected",
                 activityStatus: status, activityStep: "Reading a local display sample", sharedWorkspaceNames: ["Local sample workspace"], isNew: true,
@@ -4666,9 +4610,9 @@ struct InspectorSidebarRemainingVerification: View {
 #if OSAURUS_DESIGN_INSPECTOR
 extension ChatSessionSidebar {
     static func inspectionWorkspaceChrome(theme: any ThemeProtocol, action: @escaping () -> Void) -> some View {
-        let theme = theme.catalogFamily(42, authoritative: true)
-        return VStack(alignment: .leading, spacing: 8) {
-            workspacesStateHeader
+        let theme = theme.catalogFamily(42)
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            workspacesStateHeader(theme: theme)
             renderWorkspaceState(icon: "person.2.fill", text: "No shared agents yet", actionTitle: "Local action", action: action, theme: theme)
             renderWorkspaceState(icon: "exclamationmark.triangle.fill", text: "Local connection error display", tint: theme.status.error.foreground, theme: theme)
         }.environment(\.theme, theme)
@@ -4678,7 +4622,7 @@ struct InspectorSidebarChromeVerification: View {
     @Environment(\.theme) private var theme
     @State private var count = 0
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Text("Chat sidebar · workspace section with sample data")
             ChatSessionSidebar.inspectionWorkspaceChrome(theme: theme) { count += 1 }
         }
@@ -4686,7 +4630,6 @@ struct InspectorSidebarChromeVerification: View {
 }
 #endif
 
-#if OSAURUS_DESIGN_SYSTEM
 /// The sidebar's ⋯ triggers: the same extra-small tertiary icon button as
 /// the + and gear beside them, so every hover action shares one hover
 /// treatment.
@@ -4696,4 +4639,3 @@ private struct ConversationEllipsisStyle: ButtonStyle {
             .makeBody(configuration: configuration)
     }
 }
-#endif

@@ -49,9 +49,7 @@ final class NativeActivityGroupView: NSView {
 
     private var isExpanded = false
     private var inspectionTheme: (any ThemeProtocol)?
-    #if OSAURUS_DESIGN_SYSTEM
     private let inspectionHeader = InspectorActivityHeaderSurface()
-    #endif
     private var currentWidth: CGFloat = 0
     /// Same-block guard so the chevron only animates on a real expand-state
     /// change, never on cell recycling (mirrors NativeThinkingView).
@@ -103,7 +101,7 @@ final class NativeActivityGroupView: NSView {
         onToggle: @escaping () -> Void,
         onHeightChanged: @escaping () -> Void
     ) {
-        let theme = theme.catalogFamily(34, authoritative: true)
+        let theme = theme.catalogFamily(34)
         inspectionTheme = theme
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
@@ -117,8 +115,8 @@ final class NativeActivityGroupView: NSView {
         titleLabel.font = titleFont
         titleLabel.textColor = tint
         iconView.contentTintColor = tint
-        iconNode.layer?.backgroundColor = tint.withAlphaComponent(0.15).cgColor
-        iconNode.layer?.borderColor = tint.withAlphaComponent(0.55).cgColor
+        iconNode.layer?.backgroundColor = NSColor(theme.surface.hover).cgColor
+        iconNode.layer?.borderColor = NSColor(theme.border.default).cgColor
         iconNode.layer?.borderWidth = theme.stroke.default
         expandAllButton.font = theme.nsFont(.footnote, weight: .medium)
         chevronView.contentTintColor = NSColor(theme.text.tertiary)
@@ -137,17 +135,12 @@ final class NativeActivityGroupView: NSView {
         }
 
         if live {
-            #if OSAURUS_DESIGN_SYSTEM
             let titleTracking = theme.assignedTracking(ActivityInspectionStyle.key + "heading")
             let titleLineHeight: CGFloat? = theme.assignedLineHeight(ActivityInspectionStyle.key + "heading", fallback: titleFont.pointSize)
-            #else
-            let titleTracking: CGFloat? = nil
-            let titleLineHeight: CGFloat? = nil
-            #endif
             shimmerLabel.configure(
                 text: L("Working"),
                 font: titleFont,
-                baseColor: tint.withAlphaComponent(0.45),
+                baseColor: NSColor(theme.text.tertiary),
                 highlightColor: tint,
                 tracking: titleTracking,
                 lineHeight: titleLineHeight
@@ -186,12 +179,10 @@ final class NativeActivityGroupView: NSView {
             animated: isSameBlock && expanded != self.isExpanded
         )
         self.isExpanded = expanded
-        #if OSAURUS_DESIGN_SYSTEM
         ActivityInspectionStyle.label(titleLabel, property: "heading", theme: theme)
         ActivityInspectionStyle.label(stepCountLabel, property: "caption", theme: theme)
         inspectionHeader.configure(theme: theme, selected: expanded, element: "activityHeader")
         applyAssignedLayout(theme)
-        #endif
         configuredBlockId = blockId
 
         contentContainer.isHidden = !expanded
@@ -213,13 +204,11 @@ final class NativeActivityGroupView: NSView {
             allStepsExpanded ? L("Collapse all steps") : L("Expand all steps")
         expandAllButton.setAccessibilityLabel(expandAllButton.toolTip ?? "")
         expandAllButton.contentTintColor = NSColor(theme.text.tertiary)
-        #if OSAURUS_DESIGN_SYSTEM
         let expandTitle = NSTextField(labelWithString: expandAllButton.title)
         expandTitle.textColor = NSColor(theme.text.tertiary)
         ActivityInspectionStyle.label(expandTitle, property: "caption", theme: theme)
         expandAllButton.attributedTitle = expandTitle.attributedStringValue
         expandAllButton.constraints.first { $0.firstAttribute == .height }?.constant = max(20, ActivityInspectionStyle.fieldHeight("caption", theme))
-        #endif
 
         if expanded {
             configureChildren(
@@ -245,15 +234,14 @@ final class NativeActivityGroupView: NSView {
         applyHeight()
     }
 
-    #if OSAURUS_DESIGN_SYSTEM
     private func applyAssignedLayout(_ theme: any ThemeProtocol) {
-        let pad = ActivityInspectionStyle.layout("headerPaddingX", "padding", 14, theme)
-        let contentPad = ActivityInspectionStyle.layout("contentPaddingX", "padding", 14, theme)
-        let gap = ActivityInspectionStyle.layout("headerIconGap", "gap", 8, theme)
+        let pad = ActivityInspectionStyle.layout("headerPaddingX", "padding", theme.space.s14, theme)
+        let contentPad = ActivityInspectionStyle.layout("contentPaddingX", "padding", theme.space.s14, theme)
+        let gap = ActivityInspectionStyle.layout("headerIconGap", "gap", theme.space.s8, theme)
         let height = ActivityInspectionStyle.headerHeight(theme, fallback: 44, property: "heading")
         headerButton.constraints.first { $0.firstAttribute == .height }?.constant = height
         separatorView.constraints.first { $0.firstAttribute == .height }?.constant = ActivityInspectionStyle.metric("borderWidth", 1, theme)
-        childStack.spacing = ActivityInspectionStyle.layout("childGap", "gap", 8, theme)
+        childStack.spacing = ActivityInspectionStyle.layout("childGap", "gap", theme.space.s8, theme)
         headerButton.catalogAssignmentTarget(["headerPaddingX", "headerPaddingY", "headerIconGap"].map { ActivityInspectionStyle.key + "elements.layout." + $0 }, name: "Grouped activity header", theme: theme)
         contentContainer.catalogAssignmentTarget(["contentPaddingX", "contentTopGap", "contentBottomPadding", "childGap"].map { ActivityInspectionStyle.key + "elements.layout." + $0 } + [AgentContentSurfaceAssignments.key(34, "activityContent")], name: "Grouped activity content", theme: theme)
         layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "activityCard", theme)).cgColor
@@ -275,10 +263,9 @@ final class NativeActivityGroupView: NSView {
             if view === separatorView, c.firstAttribute == .top { c.constant = height }
             if (view === separatorView || view === contentContainer), c.firstAttribute == .leading { c.constant = contentPad }
             if (view === separatorView || view === contentContainer), c.firstAttribute == .trailing { c.constant = -contentPad }
-            if view === contentContainer, c.firstAttribute == .top { c.constant = ActivityInspectionStyle.layout("contentTopGap", "gap", 8, theme) }
+            if view === contentContainer, c.firstAttribute == .top { c.constant = ActivityInspectionStyle.layout("contentTopGap", "gap", theme.space.s8, theme) }
         }
     }
-    #endif
 
     // MARK: Measured height (used by cell coordinator)
 
@@ -298,7 +285,7 @@ final class NativeActivityGroupView: NSView {
             }
         }
         contentH += childStack.spacing * CGFloat(max(0, childOrder.count - 1))
-        return headerH + ActivityInspectionStyle.metric("borderWidth", 1, theme) + ActivityInspectionStyle.layout("contentTopGap", "gap", 8, theme) + contentH + ActivityInspectionStyle.layout("contentBottomPadding", "padding", 10, theme)
+        return headerH + ActivityInspectionStyle.metric("borderWidth", 1, theme) + ActivityInspectionStyle.layout("contentTopGap", "gap", theme.space.s8, theme) + contentH + ActivityInspectionStyle.layout("contentBottomPadding", "padding", theme.space.s10, theme)
     }
 
     // MARK: - Children
@@ -311,7 +298,7 @@ final class NativeActivityGroupView: NSView {
         sessionRedactions: [String: String],
         onToggleChild: @escaping (String) -> Void
     ) {
-        let childWidth = max(currentWidth - 2 * ActivityInspectionStyle.layout("contentPaddingX", "padding", 14, theme), 100)
+        let childWidth = max(currentWidth - 2 * ActivityInspectionStyle.layout("contentPaddingX", "padding", theme.space.s14, theme), 100)
         let newOrder = children.map(\.id)
 
         // Rebuild the stack arrangement only when membership/order changed;
@@ -469,11 +456,7 @@ final class NativeActivityGroupView: NSView {
             v.removeFromSuperview()
         }
         // Opaque backing so overlapped circles don't show through each other.
-        #if OSAURUS_DESIGN_SYSTEM
         let backing = NSColor(theme.surface.raised)
-        #else
-        let backing = NSColor(theme.surface.canvas)
-        #endif
         for chip in chips {
             let color = chipColor(chip.colorKey, theme: theme)
             stepChipsStack.addArrangedSubview(makeChipView(chip, color: color, backing: backing, theme: theme))
@@ -483,7 +466,7 @@ final class NativeActivityGroupView: NSView {
         // negatively-spaced circles.
         stepChipsStack.addArrangedSubview(stepCountLabel)
         if let lastChip = stepChipsStack.arrangedSubviews.dropLast().last {
-            stepChipsStack.setCustomSpacing(ActivityInspectionStyle.metric("gap", 6, theme), after: lastChip)
+            stepChipsStack.setCustomSpacing(ActivityInspectionStyle.metric("gap", theme.space.s6, theme), after: lastChip)
         }
     }
 
@@ -498,7 +481,7 @@ final class NativeActivityGroupView: NSView {
         circle.wantsLayer = true
         circle.layer?.cornerRadius = Self.chipSize / 2
         circle.layer?.borderWidth = theme.stroke.default
-        circle.layer?.borderColor = color.withAlphaComponent(0.55).cgColor
+        circle.layer?.borderColor = NSColor(theme.border.default).cgColor
         circle.layer?.backgroundColor =
             (backing.blended(withFraction: 0.14, of: color) ?? backing).cgColor
         let chipHeight = max(Self.chipSize, ActivityInspectionStyle.fieldHeight("caption", theme, fallback: Self.chipSize))
@@ -698,11 +681,9 @@ final class NativeActivityGroupView: NSView {
             childStack.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
 
-        #if OSAURUS_DESIGN_SYSTEM
         inspectionHeader.translatesAutoresizingMaskIntoConstraints = false
         addSubview(inspectionHeader, positioned: .below, relativeTo: iconNode)
         NSLayoutConstraint.activate([inspectionHeader.leadingAnchor.constraint(equalTo: leadingAnchor), inspectionHeader.trailingAnchor.constraint(equalTo: trailingAnchor), inspectionHeader.topAnchor.constraint(equalTo: topAnchor), inspectionHeader.heightAnchor.constraint(equalTo: headerButton.heightAnchor)])
-        #endif
         // Front of Z-order like the tool rows' header overlay, so clicks on
         // the title / step-count text toggle the same as the empty header
         // area. Transparent, and only 44pt tall, so it never paints over or

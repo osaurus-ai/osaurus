@@ -367,17 +367,22 @@ public struct ThemeStatusSet<Value: Sendable>: Sendable {
     public var foreground: Value
     public var background: Value
     public var border: Value
+    /// The tone drawn straight on the canvas or a card (glyphs, text,
+    /// progress). `foreground` is for text on the status fill, which can be a
+    /// pale tint that vanishes on a plain surface.
+    public var ink: Value?
 
-    public init(foreground: Value, background: Value, border: Value) {
+    public init(foreground: Value, background: Value, border: Value, ink: Value? = nil) {
         self.foreground = foreground
         self.background = background
         self.border = border
+        self.ink = ink
     }
 
     public func map<T: Sendable>(_ transform: (Value) throws -> T) rethrows -> ThemeStatusSet<T> {
         ThemeStatusSet<T>(
             foreground: try transform(foreground), background: try transform(background),
-            border: try transform(border)
+            border: try transform(border), ink: try ink.map(transform)
         )
     }
 }
@@ -447,6 +452,31 @@ extension ThemeStatusRoles: Equatable where Value: Equatable {}
 extension ThemeStatusRoles: Hashable where Value: Hashable {}
 extension ThemeStatusRoles: Codable where Value: Codable {}
 
+// MARK: - Categorical data series
+
+/// One slot of the categorical series: `ink` for glyphs, text, dots and chart
+/// strokes, `wash` for the tinted tile or chip behind that ink.
+public struct ThemeDataSwatch<Value: Sendable>: Sendable {
+    public var ink: Value
+    public var wash: Value
+
+    public init(ink: Value, wash: Value) {
+        self.ink = ink
+        self.wash = wash
+    }
+
+    public func map<T: Sendable>(_ transform: (Value) throws -> T) rethrows -> ThemeDataSwatch<T> {
+        ThemeDataSwatch<T>(ink: try transform(ink), wash: try transform(wash))
+    }
+}
+
+extension ThemeDataSwatch: Equatable where Value: Equatable {}
+extension ThemeDataSwatch: Hashable where Value: Hashable {}
+extension ThemeDataSwatch: Codable where Value: Codable {}
+
+/// Slot number (`"1"` … `"8"`, matching `color.data.N`) to swatch.
+public typealias ThemeDataSeries<Value: Sendable> = [String: ThemeDataSwatch<Value>]
+
 // MARK: - Danger compatibility roles
 
 public struct ThemeDangerRoles<Value: Sendable>: Sendable {
@@ -484,11 +514,15 @@ public struct ThemeColorRoles<Value: Sendable>: Sendable {
     public var danger: ThemeDangerRoles<Value>
     public var scrim: Value
     public var shadow: Value
+    /// Categorical series for things identified by kind rather than role
+    /// (chart series, event categories, name-hashed avatars).
+    public var data: ThemeDataSeries<Value>?
 
     public init(
         surface: ThemeSurfaceRoles<Value>, text: ThemeTextRoles<Value>, chat: ThemeChatRoles<Value>,
         action: ThemeActionRoles<Value>, border: ThemeBorderRoles<Value>, selection: ThemeSelectionRoles<Value>,
-        cursor: Value, status: ThemeStatusRoles<Value>, danger: ThemeDangerRoles<Value>, scrim: Value, shadow: Value
+        cursor: Value, status: ThemeStatusRoles<Value>, danger: ThemeDangerRoles<Value>, scrim: Value, shadow: Value,
+        data: ThemeDataSeries<Value>? = nil
     ) {
         self.surface = surface
         self.text = text
@@ -501,6 +535,7 @@ public struct ThemeColorRoles<Value: Sendable>: Sendable {
         self.danger = danger
         self.scrim = scrim
         self.shadow = shadow
+        self.data = data
     }
 
     public func map<T: Sendable>(_ transform: (Value) throws -> T) rethrows -> ThemeColorRoles<T> {
@@ -509,7 +544,8 @@ public struct ThemeColorRoles<Value: Sendable>: Sendable {
             action: try action.map(transform), border: try border.map(transform),
             selection: try selection.map(transform), cursor: try transform(cursor),
             status: try status.map(transform), danger: try danger.map(transform),
-            scrim: try transform(scrim), shadow: try transform(shadow)
+            scrim: try transform(scrim), shadow: try transform(shadow),
+            data: try data?.mapValues { try $0.map(transform) }
         )
     }
 }
@@ -585,12 +621,17 @@ extension ThemeColorRoles {
             out.append(("color.status.\(kind.rawValue).foreground", set.foreground))
             out.append(("color.status.\(kind.rawValue).background", set.background))
             out.append(("color.status.\(kind.rawValue).border", set.border))
+            appendIfSet("color.status.\(kind.rawValue).ink", set.ink)
         }
         out += [
             ("color.danger.default", danger.default), ("color.danger.hover", danger.hover),
             ("color.danger.pressed", danger.pressed),
             ("color.scrim", scrim), ("color.shadow", shadow),
         ]
+        for slot in (data ?? [:]).keys.sorted(by: { Int($0) ?? 0 < Int($1) ?? 0 }) {
+            out.append(("color.data.\(slot).ink", data![slot]!.ink))
+            out.append(("color.data.\(slot).wash", data![slot]!.wash))
+        }
         return out
     }
 }

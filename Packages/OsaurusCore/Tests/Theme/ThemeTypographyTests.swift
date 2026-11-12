@@ -76,7 +76,7 @@ struct ThemeTypographyTests {
         #expect(styles.heading.size == 18 && styles.heading.weight == 600 && styles.heading.lineHeight == 24)
         #expect(styles.body.size == 15 && styles.body.weight == 400 && styles.body.lineHeight == 22)
         #expect(styles.bodySmall.size == 14 && styles.bodySmall.lineHeight == 20)
-        #expect(styles.label.size == 13 && styles.label.weight == 500 && styles.label.lineHeight == 18)
+        #expect(styles.label.size == 13 && styles.label.weight == 400 && styles.label.lineHeight == 13)
         #expect(styles.caption.size == 12 && styles.caption.lineHeight == 16)
         #expect(styles.footnote.size == 11 && styles.footnote.weight == 400 && styles.footnote.lineHeight == 14)
         #expect(styles.micro.size == 10 && styles.micro.weight == 400 && styles.micro.lineHeight == 13)

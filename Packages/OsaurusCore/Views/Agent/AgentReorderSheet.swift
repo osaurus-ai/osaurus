@@ -16,7 +16,7 @@ struct AgentReorderSheet: View {
     @State private var hasPendingReorder = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "arrow.up.arrow.down",
                 title: "Reorder Agents",
@@ -53,7 +53,7 @@ struct AgentReorderSheet: View {
     // MARK: - Row
 
     private func row(for agent: Agent) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             AgentAvatarView(
                 mascotId: agent.avatar,
                 name: agent.name,
@@ -64,15 +64,12 @@ struct AgentReorderSheet: View {
                 borderWidth: 1
             )
 
-            VStack(alignment: .leading, spacing: 1) {
+            SettingsRowText {
                 Text(agent.name)
-                    .font(SettingsFont.rowTitle)
-                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
-
+            } description: {
                 if !agent.displayDescription.isEmpty {
                     Text(agent.displayDescription)
-                        .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)
                         .lineLimit(1)
                 }
@@ -81,7 +78,7 @@ struct AgentReorderSheet: View {
             Spacer(minLength: 0)
 
             Image(systemName: "line.3.horizontal")
-                .glyphSize(13, weight: .medium)
+                .glyphSize(.label, weight: .medium)
                 .foregroundColor(theme.text.tertiary)
         }
         .padding(.vertical, theme.space.s6)

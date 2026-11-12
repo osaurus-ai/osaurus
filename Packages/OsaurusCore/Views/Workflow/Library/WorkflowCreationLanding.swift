@@ -185,7 +185,7 @@ struct WorkflowStarterCard: View {
             VStack(alignment: .leading, spacing: theme.space.s8) {
                 HStack(spacing: theme.space.s6) {
                     Image(systemName: icon)
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                         .foregroundStyle(theme.text.inverse)
                         .frame(width: theme.space.s16 + theme.space.s4, height: theme.space.s16 + theme.space.s4)
                         .background(WorkflowCanvasGrid.primitive("sky/300", theme: theme, fallback: theme.status.info.foreground), in: Circle())
@@ -215,7 +215,7 @@ private struct WorkflowStarterCardStyle: ButtonStyle {
                 shape.fill(theme.surface.canvas)
                 shape.fill(selected ? theme.surface.selected : (isHovered ? theme.surface.hover : .clear))
             }
-            .overlay { shape.strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default) }
+            .overlay { shape.strokeBorder(isSelected && !theme.isDark ? theme.selectionBorder : theme.border.subtle, lineWidth: theme.selectionStroke) }
             .contentShape(shape)
             .onHover { isHovered = $0 }
             .animation(theme.motion.quick, value: isHovered)
@@ -278,11 +278,9 @@ struct WorkflowCreationComposerFrame: ViewModifier {
 struct WorkflowCanvasGrid: View {
     @Environment(\.theme) private var theme
     static func primitive(_ name: String, theme: any ThemeProtocol, fallback: Color) -> Color {
-        #if OSAURUS_DESIGN_SYSTEM
         if let color = DesignThemeOverlay.shared.current()?.document.primitives?[name] {
             return Color(themeHex: theme.isDark ? color.dark : color.light)
         }
-        #endif
         return fallback
     }
     var body: some View {

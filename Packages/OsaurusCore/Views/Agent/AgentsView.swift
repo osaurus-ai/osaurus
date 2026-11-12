@@ -5,10 +5,6 @@ import UniformTypeIdentifiers
 
 // MARK: - Shared Helpers
 
-/// Stable per name across launches (`String.hashValue` is reseeded each run).
-func agentColorFor(_ name: String) -> Color {
-    Color(hue: ParticipantAvatar.hue(for: name), saturation: 0.6, brightness: 0.8)
-}
 
 private func formatModelName(_ model: String) -> String {
     if let last = model.split(separator: "/").last {
@@ -457,7 +453,7 @@ struct AgentsView: View {
     // MARK: - Grid Content
 
     private var gridContent: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerView
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
                 .settingsLandingAnchor("agents.overview")
@@ -575,14 +571,11 @@ struct AgentsView: View {
             HStack(spacing: theme.space.s12) {
                 AgentAvatarView(
                     mascotId: draft.agent.avatar, name: name.isEmpty ? "?" : name,
-                    tint: agentColorFor(name), diameter: 32)
-                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    tint: theme.dataInk(seed: name), diameter: 32)
+                SettingsRowText {
                     Text(name.isEmpty ? L("Untitled agent") : name)
-                        .font(SettingsFont.rowTitle)
-                        .foregroundColor(theme.text.primary)
+                } description: {
                     Text("A new agent in progress. Nothing is created until you click Create Agent.", bundle: .module)
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer(minLength: theme.space.s8)
                 SettingsButton(.tertiary, L("Discard"), verbatim: true) {
@@ -617,7 +610,7 @@ struct AgentsView: View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.text.tertiary)
                 SettingsFieldLabel("Paired Remote Agents")
                 Spacer()
@@ -996,7 +989,7 @@ private struct AgentCard: View {
     @State private var showDeleteConfirm = false
     @State private var showDeleteBlockedByShare = false
 
-    private var agentColor: Color { agentColorFor(agent.name) }
+    private var agentColor: Color { theme.dataInk(seed: agent.name) }
 
     private var automationCount: Int { eventManager.eventCount(forAgentId: agent.id) }
 
@@ -1618,9 +1611,7 @@ struct AgentDetailView: View {
 
     /// Drives the share-agent sheet (cross-device deeplink invite flow).
     @State private var showingShareSheet: Bool = false
-    #if OSAURUS_DESIGN_SYSTEM
     @State private var shareMenuPresenter = AssignedMenuPanelPresenter()
-    #endif
     /// Drives the Save as Template sheet from the share menu.
     @State private var showingSaveTemplateSheet: Bool = false
 
@@ -1696,7 +1687,7 @@ struct AgentDetailView: View {
         agentManager.agent(for: agent.id) ?? agent
     }
 
-    private var agentColor: Color { agentColorFor(name) }
+    private var agentColor: Color { theme.dataInk(seed: name) }
 
     /// Recompute the per-agent caches consumed by the tab strip and
     /// sub-sections. Called from `.onAppear`, `.onChange(of: agent.id)`,
@@ -1846,7 +1837,7 @@ struct AgentDetailView: View {
     }
 
     private var bodyCore: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             detailHeaderBar
 
             if isNewlyCreated {
@@ -1869,7 +1860,7 @@ struct AgentDetailView: View {
                     .environment(\.theme, theme)
             }
 
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 // Capabilities + the Database workspace host their own
                 // scrolling (NSTableView / NSOutlineView). Rendering them
                 // directly — without the outer ScrollView the other tabs
@@ -2175,15 +2166,12 @@ struct AgentDetailView: View {
     private var newlyCreatedBanner: some View {
         HStack(spacing: theme.space.s12) {
             Image(systemName: "checkmark.circle.fill")
-                .glyphSize(16, weight: .semibold)
+                .glyphSize(.medium, weight: .semibold)
                 .foregroundColor(theme.status.success.foreground)
-            VStack(alignment: .leading, spacing: theme.space.s2) {
+            SettingsRowText {
                 Text("\(currentAgent.name) is ready", bundle: .module)
-                    .font(SettingsFont.rowTitle)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 Text("Everything below can be changed any time.", bundle: .module)
-                    .font(SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
             }
             Spacer(minLength: theme.space.s8)
             SettingsButton(.primary, L("Start Chatting"), icon: "bubble.left", verbatim: true) {
@@ -2382,7 +2370,7 @@ struct AgentDetailView: View {
 
     /// The rows that close the agent's main page: one per sub-page.
     private var mainPageNavigationRows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsSectionHeader(title: "More Settings")
             SettingsGroup {
                 navigationRow(
@@ -2401,7 +2389,7 @@ struct AgentDetailView: View {
 
     /// Tools, Subagents, Sandbox and this agent's plugins, under Abilities.
     private var abilitiesSubpageRows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsSectionHeader(title: "Configure")
             SettingsGroup {
                 navigationRow(.builtIn(.capabilities))
@@ -2418,9 +2406,9 @@ struct AgentDetailView: View {
     }
 
     private func tabHelperText(_ text: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: "info.circle")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundColor(theme.text.tertiary)
             Text(text)
                 .font(SettingsFont.caption)
@@ -2532,7 +2520,7 @@ struct AgentDetailView: View {
     /// dedicated to switching between agents.
     private var identitySection: some View {
         SettingsSection(title: "editor.section.identity") {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 SettingsTextField(
                     placeholder: L("e.g., Code Assistant"),
                     text: $name,
@@ -2552,9 +2540,9 @@ struct AgentDetailView: View {
                         .foregroundColor(theme.text.tertiary)
                 }
 
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "calendar")
-                        .glyphSize(9, weight: .medium)
+                        .glyphSize(.tiny, weight: .medium)
                         .foregroundColor(theme.text.tertiary)
                     Text(
                         "Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))",
@@ -2571,20 +2559,20 @@ struct AgentDetailView: View {
     }
 
     private var advancedSettingsDisclosure: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Button {
                 withAnimation(theme.motion.quick) {
                     showAdvancedSettings.toggle()
                 }
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Image(systemName: "chevron.right")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(showAdvancedSettings ? 90 : 0))
 
                     Image(systemName: "wrench.adjustable")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
 
                     Text("Advanced Settings", bundle: .module)
@@ -2605,7 +2593,7 @@ struct AgentDetailView: View {
             .buttonStyle(.plain)
 
             if showAdvancedSettings {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     generationOverridesSection
                     if agent.id != Agent.defaultId {
                         AgentResponseMetricsToggle(isOn: $showResponseMetrics)
@@ -2653,8 +2641,8 @@ struct AgentDetailView: View {
     /// — we no longer wrap it in an outer "Action Bar" Text since
     /// there's just one quick-actions block now that work mode is gone.
     private var manualEmptyStateBody: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Greeting", bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -2665,7 +2653,7 @@ struct AgentDetailView: View {
                 )
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Message", bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -2682,8 +2670,8 @@ struct AgentDetailView: View {
 
     private var avatarSection: some View {
         SettingsSection(title: "Avatar") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                HStack(spacing: theme.space.s10) {
                     if currentAgent.customAvatarURL != nil {
                         customAvatarPreview
                     }
@@ -2726,7 +2714,7 @@ struct AgentDetailView: View {
             )
             .overlay(alignment: .topTrailing) {
                 Image(systemName: "xmark.circle.fill")
-                    .glyphSize(14, weight: .semibold)
+                    .glyphSize(.body, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
                     .background(Circle().fill(theme.surface.canvas))
                     .offset(x: 4, y: -4)
@@ -2746,7 +2734,7 @@ struct AgentDetailView: View {
                 Circle()
                     .strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [3, 3]))
                 Image(systemName: "photo.badge.plus")
-                    .glyphSize(14, weight: .semibold)
+                    .glyphSize(.body, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
             }
             .frame(width: 40, height: 40)
@@ -2840,14 +2828,10 @@ struct AgentDetailView: View {
         menu.addItem(templateItem)
 
         let origin = NSEvent.mouseLocation
-        #if OSAURUS_DESIGN_SYSTEM
         if let window = NSApp.keyWindow, let anchor = window.contentView {
             let point = anchor.convert(window.convertPoint(fromScreen: origin), from: nil)
             shareMenuPresenter.showContextMenu(menu, from: anchor, theme: theme, at: point)
         }
-        #else
-        menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
-        #endif
     }
 
     private var deleteAgentMessage: String {
@@ -2898,7 +2882,7 @@ struct AgentDetailView: View {
                 title: "Execution",
                 subtitle: "What the agent may do inside the sandbox."
             ) {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     sandboxExecSubsection
                 }
             }
@@ -2958,7 +2942,7 @@ struct AgentDetailView: View {
 
     private var systemPromptSection: some View {
         SettingsSection(title: "System Prompt") {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 SettingsTextEditor(text: $systemPrompt, placeholder: L("Enter instructions for this agent..."), minHeight: 160, maxHeight: 300, monospaced: true)
 
                 Text(
@@ -2995,7 +2979,7 @@ struct AgentDetailView: View {
 
     private var claudeCodeSection: some View {
         SettingsSection(title: "Claude Code Options") {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 labeledSegmented(L("Claude model")) {
                     AssignedBaseSegmentedPicker(
                         selection: Binding(
@@ -3175,7 +3159,7 @@ struct AgentDetailView: View {
                 isWarning: true
             )
         case .resolved(let runtime):
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 runtimeNote(
                     String(
                         format: L(
@@ -3204,7 +3188,7 @@ struct AgentDetailView: View {
         title: LocalizedStringKey,
         detail: LocalizedStringKey
     ) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(title, bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.primary)
@@ -3255,7 +3239,7 @@ struct AgentDetailView: View {
             .onChange(of: followUpEnabled) { debouncedSave() }
 
             if followUpEnabled {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
                     ModelSearchablePicker(
                         items: pickerItems,
                         selection: Binding(
@@ -3319,7 +3303,7 @@ struct AgentDetailView: View {
             action: { selectScheduleMode(mode) }
         ) {
             Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                .glyphSize(16)
+                .glyphSize(.medium)
                 .foregroundColor(isSelected ? theme.text.link : theme.text.tertiary)
         }
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -3591,18 +3575,15 @@ struct AgentDetailView: View {
             }
             debouncedSave()
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: granted ? "checkmark.circle.fill" : "circle")
-                    .glyphSize(14)
+                    .glyphSize(.body)
                     .foregroundColor(granted ? theme.text.link : theme.text.tertiary)
-                VStack(alignment: .leading, spacing: 1) {
+                SettingsRowText(compact: true) {
                     Text(collection.name)
-                        .font(SettingsFont.compactLabel)
-                        .foregroundColor(theme.text.primary)
+                } description: {
                     if !collection.summary.isEmpty {
                         Text(collection.summary)
-                            .font(SettingsFont.rowDescription)
-                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(2)
                     }
                 }
@@ -3846,7 +3827,7 @@ struct AgentDetailView: View {
                             .font(SettingsFont.rowDescription)
                             .foregroundColor(theme.text.tertiary)
                         } else {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: theme.space.s2) {
                                 ForEach(knowledgeManager.collections) { collection in
                                     knowledgeGrantRow(collection)
                                 }
@@ -4015,7 +3996,7 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private var bundleExportPassphraseSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             Text("Seal Bundle", bundle: .module)
                 .font(SettingsFont.cardTitle)
                 .foregroundColor(theme.text.primary)
@@ -4057,7 +4038,7 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private var bundleImportPassphraseSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             Text("Open Bundle", bundle: .module)
                 .font(SettingsFont.cardTitle)
                 .foregroundColor(theme.text.primary)
@@ -4092,7 +4073,7 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private var bundleImportReviewSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             Text("Review Bundle", bundle: .module)
                 .font(SettingsFont.cardTitle)
                 .foregroundColor(theme.text.primary)
@@ -4128,8 +4109,8 @@ struct AgentDetailView: View {
 
     @ViewBuilder
     private func bundleManifestSummary(_ manifest: AgentBundleManifest) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            HStack(spacing: theme.space.s6) {
                 Text(localized: "Agent:").font(SettingsFont.smallLabel)
                 Text(manifest.agentName).font(SettingsFont.rowDescription)
             }
@@ -4139,7 +4120,7 @@ struct AgentDetailView: View {
                     .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Text(localized: "Tables: \(manifest.schemaTables)").font(SettingsFont.rowDescription)
                 Text(localized: "Views: \(manifest.savedViews)").font(SettingsFont.rowDescription)
                 Spacer()
@@ -4181,9 +4162,9 @@ struct AgentDetailView: View {
                 )
             }
         }()
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s6) {
             Image(systemName: symbol)
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.status.warning.foreground)
             Text(text)
                 .font(SettingsFont.rowDescription)
@@ -4505,11 +4486,11 @@ struct AgentDetailView: View {
                 "\(callableSubagentCount) \(L("callable")) · "
                 + "\(configuredSubagentCount) \(L("configured"))"
         ) {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 ForEach(perAgentFeatures, id: \.flag) { feature in
                     let isOn = subagentToggleBinding(feature.flag)
                     let readiness = subagentReadiness(for: feature.flag)
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
                         subagentCapabilityCard(
                             title: feature.title,
                             subtitle: feature.subtitle,
@@ -4548,19 +4529,15 @@ struct AgentDetailView: View {
         isOn: Binding<Bool>,
         readiness: AgentCapabilityReadiness
     ) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: theme.space.s12) {
+            SettingsRowText(compact: true) {
                 Text(title, bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 Text(subtitle, bundle: .module)
-                    .font(SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
                 if readiness.configured, let status = readiness.statusMessage {
-                    HStack(spacing: 5) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: readiness.isCallable ? "checkmark.circle.fill" : "info.circle.fill")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                         Text(verbatim: status)
                             .font(SettingsFont.chip)
                     }
@@ -4577,10 +4554,19 @@ struct AgentDetailView: View {
                 fill: theme.surface.raised,
                 stroke:
                     isOn.wrappedValue
-                    ? subagentReadinessColor(readiness.state).opacity(0.5)
+                    ? subagentReadinessBorder(readiness.state)
                     : theme.border.strong
             )
         )
+    }
+
+    private func subagentReadinessBorder(_ state: AgentCapabilityReadinessState) -> Color {
+        switch state {
+        case .disabled: return theme.border.strong
+        case .active: return theme.status.success.border
+        case .paused, .needsSetup: return theme.status.warning.border
+        case .unavailable: return theme.status.error.border
+        }
     }
 
     private func subagentReadinessColor(_ state: AgentCapabilityReadinessState) -> Color {
@@ -4603,7 +4589,7 @@ struct AgentDetailView: View {
     private func subagentConfigPanel<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -4634,16 +4620,12 @@ struct AgentDetailView: View {
         subtitle: LocalizedStringKey? = nil,
         @ViewBuilder control: () -> Control
     ) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: theme.space.s12) {
+            SettingsRowText(compact: true) {
                 Text(title, bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 if let subtitle {
                     Text(subtitle, bundle: .module)
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 12)
@@ -4751,7 +4733,7 @@ struct AgentDetailView: View {
     /// Generation + edit model pickers for the Image card. `nil` (Choose
     /// automatically) resolves to the first ready model at run time.
     private var imageModelPickerRows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsFieldLabel("Models")
             subagentModelPicker(
                 title: "Generation model",
@@ -4767,7 +4749,7 @@ struct AgentDetailView: View {
     }
 
     private var videoModelPickerRows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsFieldLabel("Models")
             subagentModelPicker(
                 title: "Text-to-video",
@@ -4798,7 +4780,7 @@ struct AgentDetailView: View {
     /// falls back to the first installed catalog model when no global model is
     /// configured. A stored id no longer on disk shows an "(unavailable)" row.
     private var appleScriptModelPickerRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsFieldLabel("Model")
             subagentModelPicker(
                 title: "AppleScript Model",
@@ -4817,7 +4799,7 @@ struct AgentDetailView: View {
     /// (safe default) vs auto-run with a warning. The caption spells out the
     /// safety trade-off of the selected mode.
     private var appleScriptExecutionModeRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             subagentControlRow("Script execution") {
                 AssignedBaseSegmentedPicker(
                     selection: appleScriptExecutionModeSelection,
@@ -5051,7 +5033,7 @@ struct AgentDetailView: View {
     /// captures is described in the row subtitle, and the Preview link below
     /// shows exactly what a new chat would freeze and share.
     private var screenContextToggleRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             subagentControlRow(
                 "Share screen context",
                 subtitle:
@@ -5080,9 +5062,9 @@ struct AgentDetailView: View {
         Button {
             showScreenContextPreview = true
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "eye")
-                    .glyphSize(10)
+                    .glyphSize(.micro)
                 Text(L("Preview screen context"))
                     .font(SettingsFont.smallLabel)
             }
@@ -5178,7 +5160,7 @@ struct AgentDetailView: View {
         let entries = PluginOnceLogger.entries(forPlugin: pluginId)
         if !entries.isEmpty {
             SettingsSection(title: "Diagnostics") {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text(
                         String(
                             format: L("Host emitted %d one-shot warning%@ for this plugin."),
@@ -5193,7 +5175,7 @@ struct AgentDetailView: View {
                     // Most-recent first so the latest issue is at the
                     // top — matches how console viewers usually order.
                     ForEach(entries.reversed()) { entry in
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
                             Text(entry.message)
                                 .font(SettingsFont.monoSmall)
                                 .foregroundColor(theme.text.primary)
@@ -5242,7 +5224,7 @@ struct AgentDetailView: View {
         )
 
         SettingsSection(title: "Plugin Failed to Load") {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 failedPluginField(label: "Error") {
                     Text(error)
                         .font(SettingsFont.monoSmall)
@@ -5282,7 +5264,7 @@ struct AgentDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
 
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     failedPluginActionButton(
                         title: "Retry Load",
                         icon: "arrow.clockwise",
@@ -5320,8 +5302,8 @@ struct AgentDetailView: View {
         @ViewBuilder trailing: () -> Trailing,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s6) {
                 Text(label, bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.tertiary)
@@ -5345,9 +5327,9 @@ struct AgentDetailView: View {
         Button {
             NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "folder")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                 Text("Reveal in Finder", bundle: .module)
                     .font(SettingsFont.smallLabel)
             }
@@ -5364,9 +5346,9 @@ struct AgentDetailView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: icon)
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                 Text(title, bundle: .module)
                     .font(SettingsFont.compactLabel)
             }
@@ -5404,7 +5386,7 @@ struct AgentDetailView: View {
         let manifestDefault = loaded.plugin.manifest.instructions ?? ""
 
         SettingsSection(title: "Instructions") {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 HStack {
                     Text("Customize how the AI uses this plugin.", bundle: .module)
                         .font(SettingsFont.caption)
@@ -5460,7 +5442,7 @@ struct AgentDetailView: View {
         let pid = loaded.plugin.id
 
         SettingsSection(title: "Route Endpoints") {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 if let baseURL = tunnelBaseURL {
                     routeBaseURLRow(
                         label: "Public URL",
@@ -5468,9 +5450,9 @@ struct AgentDetailView: View {
                         dotColor: theme.status.success.foreground
                     )
                 } else {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "info.circle")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                             .foregroundColor(theme.text.tertiary)
                         Text("Turn on remote access in Sharing → Access to get a public URL.", bundle: .module)
                             .font(SettingsFont.rowDescription)
@@ -5478,10 +5460,10 @@ struct AgentDetailView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     ForEach(Array(loaded.routes.enumerated()), id: \.element.id) { idx, route in
                         if idx > 0 {
-                            Divider().opacity(0.3)
+                            ThemeHairlineDivider()
                         }
                         routeRow(route: route, pluginId: pid, baseURL: tunnelBaseURL)
                     }
@@ -5492,7 +5474,7 @@ struct AgentDetailView: View {
     }
 
     private func routeBaseURLRow(label: String, url: String, dotColor: Color) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Circle()
                 .fill(dotColor)
                 .frame(width: 6, height: 6)
@@ -5514,22 +5496,15 @@ struct AgentDetailView: View {
             routeCopyButton(url: url)
         }
         .padding(theme.space.s8)
-        .background(
-            RoundedRectangle(cornerRadius: theme.radius.medium)
-                .fill(dotColor.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: theme.radius.medium)
-                        .stroke(dotColor.opacity(0.15), lineWidth: theme.stroke.default)
-                )
-        )
+        .settingsChrome(.tinted(dotColor))
     }
 
     private func routeRow(route: PluginManifest.RouteSpec, pluginId: String, baseURL: String?) -> some View {
         let fullPath = "/plugins/\(pluginId)\(route.path)"
         let fullURL = baseURL.map { "\($0)\(route.path)" }
 
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Text(route.methods.joined(separator: ", "))
                     .font(SettingsFont.monoSmall)
                     .foregroundColor(routeMethodColor(route.methods.first ?? "GET"))
@@ -5537,7 +5512,7 @@ struct AgentDetailView: View {
                     .padding(.vertical, theme.space.s2)
                     .background(
                         RoundedRectangle(cornerRadius: theme.radius.small)
-                            .fill(routeMethodColor(route.methods.first ?? "GET").opacity(0.12))
+                            .fill(routeMethodWash(route.methods.first ?? "GET"))
                     )
 
                 Text(fullPath)
@@ -5567,39 +5542,29 @@ struct AgentDetailView: View {
 
     private func routeCopyButton(url: String) -> some View {
         let isCopied = copiedRouteURL == url
-        return Button {
+        return SettingsIconButton(isCopied ? "checkmark" : "doc.on.doc", help: isCopied ? "Copied" : "Copy URL", size: .extraSmall) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(url, forType: .string)
             copiedRouteURL = url
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 if copiedRouteURL == url { copiedRouteURL = nil }
             }
-        } label: {
-            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                .glyphSize(9, weight: .medium)
-                .foregroundColor(isCopied ? theme.status.success.foreground : theme.text.tertiary)
-                .frame(width: 20, height: 20)
-                .background(Circle().fill(theme.surface.hover))
         }
-        .buttonStyle(PlainButtonStyle())
-        .help(isCopied ? Text(localized: "Copied") : Text(localized: "Copy URL"))
     }
 
     private func routeMethodColor(_ method: String) -> Color {
-        switch method.uppercased() {
-        case "GET": return .green
-        case "POST": return .blue
-        case "PUT", "PATCH": return .orange
-        case "DELETE": return .red
-        default: return theme.action.primary.default.background
-        }
+        DataInk.httpMethod(method).map(theme.dataInk) ?? theme.action.primary.default.background
+    }
+
+    private func routeMethodWash(_ method: String) -> Color {
+        DataInk.httpMethod(method).map(theme.dataWash) ?? theme.surface.hover
     }
 
     private func routeAuthColor(_ auth: PluginManifest.RouteAuth) -> Color {
         switch auth {
-        case .none: return .green
-        case .verify: return .orange
-        case .owner: return .blue
+        case .none: return theme.dataInk(.green)
+        case .verify: return theme.dataInk(.orange)
+        case .owner: return theme.dataInk(.blue)
         }
     }
 
@@ -5617,7 +5582,7 @@ struct AgentDetailView: View {
         }()
 
         SettingsSection(title: "Sandbox", caption: subtitle) {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 if !sandboxAvailable {
                     SettingsEmptyState(
                         inline: "shippingbox",
@@ -5652,19 +5617,10 @@ struct AgentDetailView: View {
         let workspaceURL = OsaurusPaths.containerAgentDir(linuxName)
         let isProvisioned = SandboxManager.State.shared.status != .notProvisioned
 
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Workspace Folder", bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
-                Text(
-                    "Browse and edit files in this agent's /workspace/agents/… home.",
-                    bundle: .module
-                )
-                .font(SettingsFont.rowDescription)
-                .foregroundColor(theme.text.tertiary)
-            }
-            Spacer()
+        return SettingsRow(
+            title: "Workspace Folder",
+            description: "Browse and edit files in this agent's /workspace/agents/… home."
+        ) {
             SettingsButton(
                 .secondary,
                 "Open in Finder",
@@ -5678,6 +5634,7 @@ struct AgentDetailView: View {
             }
             .disabled(!isProvisioned)
         }
+        .environment(\.settingsInGroup, true)
         .settingsLandingAnchor("agents.sandbox.workspaceFolder")
     }
 
@@ -5695,7 +5652,7 @@ struct AgentDetailView: View {
     /// availability.
     @ViewBuilder
     private var workingFolderRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(
                 "Applies to new chats and to background runs without a folder of their own. A project's folder still wins for chats started inside that project.",
                 bundle: .module
@@ -5703,7 +5660,7 @@ struct AgentDetailView: View {
             .font(SettingsFont.rowDescription)
             .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Text(workingFolderPath ?? L("No folder selected"))
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(
@@ -5956,9 +5913,9 @@ struct AgentDetailView: View {
     /// Small explanatory line shown under the sandbox toggles when they're
     /// disabled because the sandbox isn't ready.
     private func sandboxFeatureHint(_ text: LocalizedStringKey) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s6) {
             Image(systemName: "info.circle")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.tertiary)
             Text(text, bundle: .module)
                 .font(SettingsFont.rowDescription)
@@ -6013,10 +5970,10 @@ struct AgentDetailView: View {
         let resolved = actions.wrappedValue ?? defaults
         let isCustomized = actions.wrappedValue != nil
 
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: theme.space.s10) {
             HStack {
                 Image(systemName: icon)
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.text.link)
                     .frame(width: 16)
                 Text(label)
@@ -6048,7 +6005,7 @@ struct AgentDetailView: View {
             }
 
             if enabled {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(Array(resolved.enumerated()), id: \.element.id) { index, action in
                         if index > 0 {
                             Divider().background(theme.border.subtle)
@@ -6064,7 +6021,7 @@ struct AgentDetailView: View {
                 .settingsChrome(.control)
                 .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
 
-                HStack(spacing: 12) {
+                HStack(spacing: theme.space.s12) {
                     Button {
                         if actions.wrappedValue == nil {
                             actions.wrappedValue = defaults
@@ -6074,9 +6031,9 @@ struct AgentDetailView: View {
                         editingQuickActionId = newAction.id
                         debouncedSave()
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: "plus")
-                                .glyphSize(10, weight: .semibold)
+                                .glyphSize(.micro, weight: .semibold)
                             Text("Add", bundle: .module)
                                 .font(SettingsFont.compactLabel)
                         }
@@ -6090,9 +6047,9 @@ struct AgentDetailView: View {
                             editingQuickActionId = nil
                             debouncedSave()
                         } label: {
-                            HStack(spacing: 4) {
+                            HStack(spacing: theme.space.s4) {
                                 Image(systemName: "arrow.uturn.backward")
-                                    .glyphSize(10)
+                                    .glyphSize(.micro)
                                 Text("Reset to Defaults", bundle: .module)
                                     .font(SettingsFont.compactLabel)
                             }
@@ -6115,33 +6072,31 @@ struct AgentDetailView: View {
     ) -> some View {
         let isEditing = editingQuickActionId == action.id
 
-        return VStack(spacing: 0) {
-            HStack(spacing: 10) {
+        return VStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: action.icon)
-                    .glyphSize(13, weight: .medium)
+                    .glyphSize(.label, weight: .medium)
                     .foregroundColor(theme.text.link)
                     .frame(width: 20)
 
-                VStack(alignment: .leading, spacing: 2) {
+                SettingsRowText {
                     Text(action.text.isEmpty ? L("Untitled") : action.text)
-                        .font(SettingsFont.rowTitle)
                         .foregroundColor(action.text.isEmpty ? theme.text.placeholder : theme.text.primary)
                         .lineLimit(1)
+                } description: {
                     Text(action.prompt.isEmpty ? L("No prompt") : action.prompt)
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
 
                 Spacer()
 
                 if isCustomized {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Button {
                             editingQuickActionId = isEditing ? nil : action.id
                         } label: {
                             Image(systemName: "pencil")
-                                .glyphSize(11, weight: .medium)
+                                .glyphSize(.footnote, weight: .medium)
                                 .foregroundColor(isEditing ? theme.text.link : theme.text.tertiary)
                                 .frame(width: 24, height: 24)
                         }
@@ -6152,7 +6107,7 @@ struct AgentDetailView: View {
                                 moveQuickAction(in: actions, from: index, direction: -1)
                             } label: {
                                 Image(systemName: "chevron.up")
-                                    .glyphSize(10, weight: .semibold)
+                                    .glyphSize(.micro, weight: .semibold)
                                     .foregroundColor(theme.text.tertiary)
                                     .frame(width: 24, height: 24)
                             }
@@ -6164,7 +6119,7 @@ struct AgentDetailView: View {
                                 moveQuickAction(in: actions, from: index, direction: 1)
                             } label: {
                                 Image(systemName: "chevron.down")
-                                    .glyphSize(10, weight: .semibold)
+                                    .glyphSize(.micro, weight: .semibold)
                                     .foregroundColor(theme.text.tertiary)
                                     .frame(width: 24, height: 24)
                             }
@@ -6185,10 +6140,10 @@ struct AgentDetailView: View {
             }
 
             if isEditing, isCustomized {
-                VStack(spacing: 10) {
+                VStack(spacing: theme.space.s10) {
                     Divider().background(theme.border.subtle)
 
-                    HStack(spacing: 10) {
+                    HStack(spacing: theme.space.s10) {
                         SettingsTextField(
                             placeholder: L("SF Symbol name"),
                             text: quickActionBinding(in: actions, for: action.id, keyPath: \.icon),
@@ -6261,7 +6216,7 @@ struct AgentDetailView: View {
             title: "Automations",
             caption: linkedEvents.isEmpty ? L("None") : "\(linkedEvents.count)"
         ) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 if linkedEvents.isEmpty {
                     SettingsEmptyState(
                         inline: "bolt.badge.clock",
@@ -6274,13 +6229,13 @@ struct AgentDetailView: View {
                         eventRow(event)
                     }
 
-                    HStack(spacing: 16) {
+                    HStack(spacing: theme.space.s16) {
                         Button {
                             eventEditor = EventEditorRequest(initialAgentId: agent.id)
                         } label: {
-                            HStack(spacing: 4) {
+                            HStack(spacing: theme.space.s4) {
                                 Image(systemName: "plus.circle")
-                                    .glyphSize(11)
+                                    .glyphSize(.footnote)
                                 Text("Add Automation", bundle: .module)
                                     .font(SettingsFont.smallLabel)
                             }
@@ -6303,31 +6258,24 @@ struct AgentDetailView: View {
     }
 
     private func eventRow(_ event: OsaurusEvent) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             Image(systemName: EventSourceTemplate.icon(for: event))
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(event.isEnabled ? theme.status.success.foreground : theme.text.tertiary)
                 .frame(width: 14)
 
-            VStack(alignment: .leading, spacing: 2) {
+            SettingsRowText {
                 Text(event.name)
-                    .font(SettingsFont.rowTitle)
-                    .foregroundColor(theme.text.primary)
-
-                HStack(spacing: 8) {
+            } description: {
+                HStack(spacing: theme.space.s8) {
                     Text(event.sourceSummary)
-                        .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)
                         .lineLimit(1)
 
                     if let nextRun = event.nextRunDescription {
                         Text("Next: \(nextRun)", bundle: .module)
-                            .font(SettingsFont.footnote)
-                            .foregroundColor(theme.text.tertiary)
                     } else if let last = event.lastFiredAt {
                         Text("Last: \(last.formatted(date: .abbreviated, time: .shortened))", bundle: .module)
-                            .font(SettingsFont.footnote)
-                            .foregroundColor(theme.text.tertiary)
                     }
                 }
             }
@@ -6347,12 +6295,12 @@ struct AgentDetailView: View {
             title: "History",
             subtitle: L("\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s")")
         ) {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     HStack {
-                        HStack(spacing: 6) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "bubble.left.and.bubble.right.fill")
-                                .glyphSize(10, weight: .medium)
+                                .glyphSize(.micro, weight: .medium)
                                 .foregroundColor(theme.text.link)
                             Text("Recent chats", bundle: .module)
                                 .font(SettingsFont.compactLabel)
@@ -6362,9 +6310,9 @@ struct AgentDetailView: View {
                         Button {
                             ChatWindowManager.shared.createWindow(agentId: agent.id)
                         } label: {
-                            HStack(spacing: 3) {
+                            HStack(spacing: theme.space.s2) {
                                 Image(systemName: "plus")
-                                    .glyphSize(9, weight: .semibold)
+                                    .glyphSize(.tiny, weight: .semibold)
                                 Text("New Chat", bundle: .module)
                                     .font(SettingsFont.chip)
                             }
@@ -6388,8 +6336,8 @@ struct AgentDetailView: View {
                                     sessionData: session
                                 )
                             } content: {
-                                HStack(spacing: 10) {
-                                    VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: theme.space.s10) {
+                                    VStack(alignment: .leading, spacing: theme.space.s2) {
                                         Text(session.title)
                                             .font(SettingsFont.compactLabel)
                                             .foregroundColor(theme.text.primary)
@@ -6400,7 +6348,7 @@ struct AgentDetailView: View {
                                             .foregroundColor(theme.text.tertiary)
                                     }
                                     Spacer()
-                                    HStack(spacing: 4) {
+                                    HStack(spacing: theme.space.s4) {
                                         let turnCount =
                                             sessionTurnCounts[session.id]
                                             ?? session.turns.count
@@ -6408,7 +6356,7 @@ struct AgentDetailView: View {
                                             .font(SettingsFont.footnote)
                                             .foregroundColor(theme.text.tertiary)
                                         Image(systemName: "arrow.up.right")
-                                            .glyphSize(8, weight: .medium)
+                                            .glyphSize(.tiny, weight: .medium)
                                             .foregroundColor(theme.text.tertiary)
                                     }
                                 }
@@ -6461,12 +6409,12 @@ struct AgentDetailView: View {
                     hint: "After each chat, the agent distills the conversation into a short summary. Episodes accumulate here so the agent can recall past sessions."
                 )
             } else {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     let displayed = showAllSummaries ? episodes : Array(episodes.prefix(10))
 
                     ForEach(Array(displayed.enumerated()), id: \.element.id) { index, episode in
                         if index > 0 {
-                            Divider().opacity(0.5)
+                            ThemeHairlineDivider()
                         }
                         EpisodeRow(episode: episode)
                     }
@@ -6501,9 +6449,9 @@ struct AgentDetailView: View {
             Button {
                 presentDeleteAllData()
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "trash")
-                        .glyphSize(11, weight: .medium)
+                        .glyphSize(.footnote, weight: .medium)
                     Text("Delete Data…", bundle: .module)
                         .font(SettingsFont.compactLabel)
                 }
@@ -6937,14 +6885,12 @@ private struct AgentDataWipeDialogContent: View {
     let onDelete: () async -> Void
 
     @State private var isDeleting = false
-    @State private var hoveredButton: String?
-
     private var nothingSelected: Bool {
         !selection.chats && !selection.pinnedFacts && !selection.episodes
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             Text(message)
                 .font(SettingsFont.body)
                 .foregroundColor(theme.text.secondary)
@@ -6952,7 +6898,7 @@ private struct AgentDataWipeDialogContent: View {
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 row(L("Chat history"), count: chatCount, isOn: $selection.chats)
 
                 Text(L("Memory"))
@@ -6976,12 +6922,11 @@ private struct AgentDataWipeDialogContent: View {
             .disabled(isDeleting)
             .opacity(isDeleting ? 0.6 : 1)
 
-            Rectangle()
-                .fill(theme.border.subtle)
-                .frame(height: 1)
+            ThemeHairlineDivider()
                 .padding(.top, theme.space.s16)
 
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s8) {
+                Spacer()
                 cancelButton
                 deleteButton
             }
@@ -6990,7 +6935,7 @@ private struct AgentDataWipeDialogContent: View {
     }
 
     private func row(_ title: String, count: Int, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Toggle(isOn: isOn) {
                 Text(title)
                     .font(SettingsFont.caption)
@@ -7008,58 +6953,19 @@ private struct AgentDataWipeDialogContent: View {
     }
 
     private var cancelButton: some View {
-        let isHovered = hoveredButton == "cancel" && !isDeleting
-        return Button {
-            onCancel()
-        } label: {
-            Text(L("Cancel"))
-                .font(SettingsFont.sectionTitle)
-                .foregroundColor(theme.text.primary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, theme.space.s8)
-                .background(isHovered ? theme.surface.hover : theme.surface.subtle)
-                .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                        .stroke(isHovered ? theme.border.subtle : theme.border.default, lineWidth: theme.stroke.default)
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .keyboardShortcut(.cancelAction)
-        .disabled(isDeleting)
-        .opacity(isDeleting ? 0.5 : 1)
-        .onHover { hoveredButton = $0 ? "cancel" : nil }
+        SettingsButton(.secondary, "Cancel", action: onCancel)
+            .keyboardShortcut(.cancelAction)
+            .disabled(isDeleting)
     }
 
     private var deleteButton: some View {
-        let disabled = isDeleting || nothingSelected
-        let isHovered = hoveredButton == "delete" && !disabled
-        let labelColor = theme.action.destructive.default.foreground
-        return Button {
+        SettingsButton(.destructive, "Delete Selected", isLoading: isDeleting) {
             guard !isDeleting else { return }
             isDeleting = true
             Task { await onDelete() }
-        } label: {
-            HStack(spacing: 6) {
-                if isDeleting {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(labelColor)
-                }
-                Text(L("Delete Selected"))
-                    .font(SettingsFont.sectionTitle)
-            }
-            .foregroundColor(labelColor)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, theme.space.s8)
-            .background(isHovered ? theme.action.destructive.hover.background : theme.action.destructive.default.background)
-            .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
         }
-        .buttonStyle(PlainButtonStyle())
         .keyboardShortcut(.defaultAction)
-        .disabled(disabled)
-        .opacity(disabled && !isDeleting ? 0.5 : 1)
-        .onHover { hoveredButton = $0 ? "delete" : nil }
+        .disabled(isDeleting || nothingSelected)
     }
 }
 
@@ -7082,9 +6988,9 @@ private struct AgentDetailVoiceSection: View {
 
     var body: some View {
         SettingsSection(title: "Voice") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text("Auto Speak Responses", bundle: .module)
                             .font(SettingsFont.compactLabel)
                             .foregroundColor(theme.text.primary)
@@ -7113,9 +7019,9 @@ private struct AgentDetailVoiceSection: View {
                             object: nil
                         )
                     } label: {
-                        HStack(spacing: 6) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "arrow.down.circle")
-                                .glyphSize(11, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                             Text("Open Voice Settings", bundle: .module)
                                 .font(SettingsFont.smallLabel)
                         }

@@ -206,9 +206,7 @@ private struct SettingsButtonBody<Label: View>: View {
         let shape = RoundedRectangle(cornerRadius: theme.assignedMetric(size.assignment("radius"), fallback: theme.radius.medium), style: .continuous)
         HStack(spacing: theme.assignedMetric(size.assignment("gap"), fallback: theme.space.s6)) {
             if isLoading {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(state.foreground)
+                SettingsSpinner(size: .mini, tint: state.foreground)
             }
             label
         }
@@ -221,9 +219,7 @@ private struct SettingsButtonBody<Label: View>: View {
         .padding(.vertical, theme.assignedMetric(size.assignment("paddingY"), fallback: size.libraryName != nil ? 0 : theme.space.s2))
         .frame(minHeight: theme.assignedMetric(size.assignment("height"), fallback: size.minHeight(theme)))
         .background(shape.fill(state.background))
-        #if OSAURUS_DESIGN_SYSTEM
         .assignedDesignEffect("component.button.\(role.assignmentName).\(interaction).effect", theme: theme, radius: theme.assignedMetric(size.assignment("radius"), fallback: theme.radius.medium))
-        #endif
         .overlay(shape.strokeBorder(theme.assignedColor("component.button.\(role.assignmentName).\(interaction).border", fallback: theme.action.border), lineWidth: theme.assignedMetric(size.assignment("borderWidth"), fallback: size.libraryName != nil ? 0 : theme.stroke.default)))
         .assignedFocusRing((assignedKeyboardFocus ?? isFocused) && isEnabled, radius: theme.assignedMetric(size.assignment("radius"), fallback: theme.radius.medium), buttonKind: role.kind)
         .contentShape(shape)
@@ -288,16 +284,8 @@ extension View {
         size: SettingsButtonSize = .regular,
         forceKeyboardFocus: Bool = false
     ) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         self.buttonStyle(.settings(role, isLoading: isLoading, size: size))
             .modifier(AssignedButtonFocus(forceKeyboardFocus: forceKeyboardFocus))
-        #else
-        if forceKeyboardFocus {
-            self.buttonStyle(.settings(role, isLoading: isLoading, size: size)).focusable()
-        } else {
-            self.buttonStyle(.settings(role, isLoading: isLoading, size: size))
-        }
-        #endif
     }
 
     @ViewBuilder func assignedSettingsIconButtonStyle(
@@ -306,12 +294,8 @@ extension View {
         isDestructive: Bool = false,
         role: SettingsButtonRole? = nil
     ) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         self.buttonStyle(SettingsIconButtonStyle(size: size, isActive: isActive, isDestructive: isDestructive, role: role))
             .modifier(AssignedButtonFocus(forceKeyboardFocus: false))
-        #else
-        self.buttonStyle(SettingsIconButtonStyle(size: size, isActive: isActive, isDestructive: isDestructive, role: role))
-        #endif
     }
 }
 
@@ -400,7 +384,7 @@ struct SettingsButton: View {
         if collapsesLabel, role != .primary, let icon {
             Button(action: action) {
                 if isLoading {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 } else {
                     Image(systemName: icon)
                 }
@@ -496,15 +480,25 @@ private struct SettingsIconButtonBody<Label: View>: View {
         return state.background
     }
 
+    /// The role's button assignments describe the resting button, so the
+    /// active (toggled-on) chip is drawn from the selection roles instead.
+    private var showsActiveChip: Bool { isActive && isEnabled }
+
     var body: some View {
         let radius = size.libraryName != nil ? theme.assignedMetric(size.assignment("height"), fallback: size.iconSide(theme)) / 2 : theme.assignedMetric("component.button.radius", fallback: theme.radius.medium)
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        label
-            .assignedTypography(size.libraryName != nil ? size.assignment("label") : "component.button.legacyIconLabel", fallback: size == .regular ? SettingsFont.glyph : SettingsFont.glyphSmall)
-            .foregroundColor(theme.assignedColor(assignmentPrefix + "foreground", fallback: glyphColor))
+        let glyphFont = size == .regular ? SettingsFont.glyph : SettingsFont.glyphSmall
+        Group {
+            if size.libraryName != nil { label.assignedTypography(size.assignment("label"), fallback: glyphFont) } else { label.font(glyphFont) }
+        }
+            .foregroundColor(showsActiveChip ? glyphColor : theme.assignedColor(assignmentPrefix + "foreground", fallback: glyphColor))
             .frame(width: theme.assignedMetric(size.assignment("height"), fallback: size.iconSide(theme)), height: theme.assignedMetric(size.assignment("height"), fallback: size.iconSide(theme)))
-            .background(shape.fill(theme.assignedColor(assignmentPrefix + "background", fallback: fill)))
-            .overlay(shape.strokeBorder(theme.assignedColor(assignmentPrefix + "border", fallback: theme.action.border), lineWidth: theme.assignedMetric(size.assignment("borderWidth"), fallback: size.libraryName != nil ? 0 : theme.stroke.default)))
+            .background(shape.fill(showsActiveChip ? fill : theme.assignedColor(assignmentPrefix + "background", fallback: fill)))
+            .overlay(shape.strokeBorder(
+                showsActiveChip ? (theme.isDark ? theme.border.default : theme.selectionBorder)
+                    : theme.assignedColor(assignmentPrefix + "border", fallback: theme.action.border),
+                lineWidth: showsActiveChip ? theme.selectionStroke
+                    : theme.assignedMetric(size.assignment("borderWidth"), fallback: size.libraryName != nil ? 0 : theme.stroke.default)))
             .assignedFocusRing((assignedKeyboardFocus ?? isFocused) && isEnabled, radius: radius, buttonKind: assignmentKind)
             .contentShape(shape)
             .animation(theme.motion.quick, value: isHovering)
@@ -561,7 +555,7 @@ struct SettingsIconButton: View {
     var body: some View {
         Button(action: action) {
             if isLoading {
-                ProgressView().controlSize(.mini)
+                SettingsSpinner(size: .mini)
             } else if size == .extraExtraSmall {
                 // The smallest shared icon button must leave room around its
                 // glyph instead of drawing a caption-sized X edge to edge.
@@ -683,7 +677,7 @@ struct SettingsMenuButton<Content: View>: View {
                 }
                 titleText
                 Image(systemName: "chevron.down")
-                    .glyphSize(9, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
             }
         }
         .menuStyle(.button)
@@ -728,22 +722,16 @@ struct SettingsActionMenu<Content: View, Label: View>: View {
         self.content = content; self.label = label; self.accessibilityLabel = accessibilityLabel
     }
     var body: some View {
-        #if OSAURUS_DESIGN_SYSTEM
         AssignedActionMenu(accessibilityLabel: accessibilityLabel, content: content, label: label)
-        #else
-        Menu(content: content, label: label)
-        #endif
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension View {
     func assignedActionMenuVisualState(_ state: AssignedMenuButtonInteraction) -> some View {
         environment(\.assignedButtonHasKeyboardFocus, state.focused)
             .environment(\.assignedMenuButtonInteraction, state)
     }
 }
-#endif
 private extension View {
     func assignedSettingsIconMenuStyle(size: SettingsButtonSize) -> some View {
         buttonStyle(SettingsIconButtonStyle(size: size))

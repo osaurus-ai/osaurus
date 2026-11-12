@@ -19,7 +19,7 @@ struct HostedApprovalCard: View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: "hand.raised.fill")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                 Text(String(format: L("Allow %1$@ on %2$@?"), approval.tool, hostName))
                     .textStyle(.label, weight: 600)

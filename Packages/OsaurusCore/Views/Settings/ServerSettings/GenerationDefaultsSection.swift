@@ -12,6 +12,7 @@
 import SwiftUI
 
 struct GenerationDefaultsSection: View {
+    @Environment(\.theme) private var theme
     @Binding var draft: VMLXServerRuntimeSettings
 
     var body: some View {
@@ -82,7 +83,7 @@ struct GenerationDefaultsSection: View {
 
 
             SettingsFieldRow(label: "Streaming") {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     ServerSettingsPlannedBanner(
                         blurb:
                             "Validated today; the streaming coalescer bridge ships in a follow-up."

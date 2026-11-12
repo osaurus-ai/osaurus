@@ -142,7 +142,7 @@ struct WorkflowRunInputBody: View {
                 if let issue = form.generalIssue {
                     Text(verbatim: issue)
                         .textStyle(.caption)
-                        .foregroundStyle(theme.statusInk.error)
+                        .foregroundStyle(theme.statusInk(.error))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -159,7 +159,7 @@ struct WorkflowRunInputBody: View {
             ForEach(blocking) { item in
                 HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundStyle(theme.statusInk.warning)
+                        .foregroundStyle(theme.statusInk(.warning))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(verbatim: item.title)
@@ -370,7 +370,7 @@ struct WorkflowRunPage: View {
     private var windowAgent: UUID { agentId }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             if let workflow {
                 ScrollView {
                     VStack(alignment: .leading, spacing: theme.space.s24) {
@@ -567,7 +567,7 @@ struct WorkflowRunPage: View {
     @ViewBuilder
     private func footer(_ workflow: InstalledWorkflow) -> some View {
         let content = footerContent(workflow)
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             ThemeHairlineDivider(color: theme.border.subtle)
             content
                 .frame(maxWidth: WorkflowLibraryLayout.columnWidth)

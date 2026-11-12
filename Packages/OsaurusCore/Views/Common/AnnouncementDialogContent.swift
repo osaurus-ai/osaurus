@@ -18,7 +18,7 @@ struct AnnouncementDialogContent: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
 
     init(body: String, imageURL: URL?) {
         self.body_ = body
@@ -28,7 +28,7 @@ struct AnnouncementDialogContent: View {
     var body: some View {
         Group {
 
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.announcementDialogContent.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", 14, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.55.elements.layout.announcementDialogContent.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(55, "gap", theme.space.s14, theme))) {
             if let imageURL {
                 // Loaded asynchronously; the dialog shows without it on
                 // failure (the contract says never block on the image).
@@ -45,7 +45,7 @@ struct AnnouncementDialogContent: View {
                         RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                             .fill(theme.surface.hover)
                             .frame(height: 120)
-                            .overlay(ProgressView().controlSize(.small))
+                            .overlay(SettingsSpinner())
                     default:
                         EmptyView()
                     }
@@ -63,7 +63,7 @@ struct AnnouncementDialogContent: View {
             .fixedSize(horizontal: false, vertical: true)
         }.catalogLayoutTarget("component.library.55.elements.layout.announcementDialogContent.body.verticalGap")
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 4)
+        .padding(.top, theme.space.s4)
     
         }.environment(\.theme, theme)
 }

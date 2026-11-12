@@ -103,6 +103,10 @@ public enum ThemeTextStyleRole: String, Codable, Sendable, CaseIterable {
     case bodyEmphasis
     case subheading
     case labelEmphasis
+    /// The one oversized greeting on a welcome screen.
+    case hero
+    /// Card and dialog titles that sit between `subheading` and `heading`.
+    case lead
 }
 
 public struct ThemeTextStyles: Codable, Equatable, Hashable, Sendable {
@@ -120,6 +124,8 @@ public struct ThemeTextStyles: Codable, Equatable, Hashable, Sendable {
     public var bodyEmphasis: ThemeTextStyle
     public var subheading: ThemeTextStyle
     public var labelEmphasis: ThemeTextStyle
+    public var hero: ThemeTextStyle
+    public var lead: ThemeTextStyle
 
     public init(
         display: ThemeTextStyle = ThemeTextStyle(size: 40, weight: 700, lineHeight: 48),
@@ -127,7 +133,7 @@ public struct ThemeTextStyles: Codable, Equatable, Hashable, Sendable {
         heading: ThemeTextStyle = ThemeTextStyle(size: 18, weight: 600, lineHeight: 24),
         body: ThemeTextStyle = ThemeTextStyle(size: 15, weight: 400, lineHeight: 22),
         bodySmall: ThemeTextStyle = ThemeTextStyle(size: 14, weight: 400, lineHeight: 20),
-        label: ThemeTextStyle = ThemeTextStyle(size: 13, weight: 500, lineHeight: 18),
+        label: ThemeTextStyle = ThemeTextStyle(size: 13, weight: 400, lineHeight: 13),
         caption: ThemeTextStyle = ThemeTextStyle(size: 12, weight: 400, lineHeight: 16),
         footnote: ThemeTextStyle = ThemeTextStyle(size: 11, weight: 400, lineHeight: 14),
         micro: ThemeTextStyle = ThemeTextStyle(size: 10, weight: 400, lineHeight: 13),
@@ -135,7 +141,9 @@ public struct ThemeTextStyles: Codable, Equatable, Hashable, Sendable {
         chatBody: ThemeTextStyle = ThemeTextStyle(size: 14, weight: 400, lineHeight: 22),
         bodyEmphasis: ThemeTextStyle = ThemeTextStyle(size: 15, weight: 600, lineHeight: 22),
         subheading: ThemeTextStyle = ThemeTextStyle(size: 16, weight: 600, lineHeight: 22),
-        labelEmphasis: ThemeTextStyle = ThemeTextStyle(size: 13, weight: 500, lineHeight: 22)
+        labelEmphasis: ThemeTextStyle = ThemeTextStyle(size: 13, weight: 500, lineHeight: 22),
+        hero: ThemeTextStyle = ThemeTextStyle(size: 46, weight: 700, lineHeight: 52),
+        lead: ThemeTextStyle = ThemeTextStyle(size: 17, weight: 600, lineHeight: 22)
     ) {
         self.display = display
         self.title = title
@@ -151,11 +159,13 @@ public struct ThemeTextStyles: Codable, Equatable, Hashable, Sendable {
         self.bodyEmphasis = bodyEmphasis
         self.subheading = subheading
         self.labelEmphasis = labelEmphasis
+        self.hero = hero
+        self.lead = lead
     }
 
     private enum CodingKeys: String, CodingKey {
         case display, title, heading, body, bodySmall, label, caption, footnote, micro, code
-        case chatBody, bodyEmphasis, subheading, labelEmphasis
+        case chatBody, bodyEmphasis, subheading, labelEmphasis, hero, lead
     }
 
     /// Themes saved before `footnote` and `micro` existed derive them from
@@ -182,6 +192,8 @@ public struct ThemeTextStyles: Codable, Equatable, Hashable, Sendable {
         bodyEmphasis = try c.decodeIfPresent(ThemeTextStyle.self, forKey: .bodyEmphasis) ?? seed.bodyEmphasis
         subheading = try c.decodeIfPresent(ThemeTextStyle.self, forKey: .subheading) ?? seed.subheading
         labelEmphasis = try c.decodeIfPresent(ThemeTextStyle.self, forKey: .labelEmphasis) ?? seed.labelEmphasis
+        hero = try c.decodeIfPresent(ThemeTextStyle.self, forKey: .hero) ?? seed.hero
+        lead = try c.decodeIfPresent(ThemeTextStyle.self, forKey: .lead) ?? seed.lead
     }
 
     /// Keeps `template`'s offset from the default caption, applied to `caption`.
@@ -213,6 +225,8 @@ public struct ThemeTextStyles: Codable, Equatable, Hashable, Sendable {
             case .bodyEmphasis: return bodyEmphasis
             case .subheading: return subheading
             case .labelEmphasis: return labelEmphasis
+            case .hero: return hero
+            case .lead: return lead
             }
         }
         set {
@@ -231,6 +245,8 @@ public struct ThemeTextStyles: Codable, Equatable, Hashable, Sendable {
             case .bodyEmphasis: bodyEmphasis = newValue
             case .subheading: subheading = newValue
             case .labelEmphasis: labelEmphasis = newValue
+            case .hero: hero = newValue
+            case .lead: lead = newValue
             }
         }
     }
@@ -416,8 +432,11 @@ public struct ThemeSpaceScale: Codable, Equatable, Hashable, Sendable {
     public var s4: Double
     public var s6: Double
     public var s8: Double
+    public var s10: Double
     public var s12: Double
+    public var s14: Double
     public var s16: Double
+    public var s20: Double
     public var s24: Double
     public var s32: Double
     public var s40: Double
@@ -425,21 +444,43 @@ public struct ThemeSpaceScale: Codable, Equatable, Hashable, Sendable {
     public var s64: Double
 
     public init(
-        s0: Double = 0, s2: Double = 2, s4: Double = 4, s6: Double = 6, s8: Double = 8, s12: Double = 12,
-        s16: Double = 16, s24: Double = 24, s32: Double = 32, s40: Double = 40, s48: Double = 48, s64: Double = 64
+        s0: Double = 0, s2: Double = 2, s4: Double = 4, s6: Double = 6, s8: Double = 8, s10: Double = 10,
+        s12: Double = 12, s14: Double = 14, s16: Double = 16, s20: Double = 20, s24: Double = 24, s32: Double = 32,
+        s40: Double = 40, s48: Double = 48, s64: Double = 64
     ) {
         self.s0 = s0
         self.s2 = s2
         self.s4 = s4
         self.s6 = s6
         self.s8 = s8
+        self.s10 = s10
         self.s12 = s12
+        self.s14 = s14
         self.s16 = s16
+        self.s20 = s20
         self.s24 = s24
         self.s32 = s32
         self.s40 = s40
         self.s48 = s48
         self.s64 = s64
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case s0, s2, s4, s6, s8, s10, s12, s14, s16, s20, s24, s32, s40, s48, s64
+    }
+
+    /// `s10`, `s14` and `s20` postdate saved themes; they keep their defaults when absent.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            s0: try c.decode(Double.self, forKey: .s0), s2: try c.decode(Double.self, forKey: .s2),
+            s4: try c.decode(Double.self, forKey: .s4), s6: try c.decode(Double.self, forKey: .s6),
+            s8: try c.decode(Double.self, forKey: .s8), s10: try c.decodeIfPresent(Double.self, forKey: .s10) ?? 10,
+            s12: try c.decode(Double.self, forKey: .s12), s14: try c.decodeIfPresent(Double.self, forKey: .s14) ?? 14,
+            s16: try c.decode(Double.self, forKey: .s16), s20: try c.decodeIfPresent(Double.self, forKey: .s20) ?? 20,
+            s24: try c.decode(Double.self, forKey: .s24), s32: try c.decode(Double.self, forKey: .s32),
+            s40: try c.decode(Double.self, forKey: .s40), s48: try c.decode(Double.self, forKey: .s48),
+            s64: try c.decode(Double.self, forKey: .s64))
     }
 
     public static var `default`: ThemeSpaceScale { ThemeSpaceScale() }
@@ -775,8 +816,12 @@ public struct ThemeWindowMaterial: Codable, Equatable, Hashable, Sendable {
         self.fallback = fallback
     }
 
-    public static var lightDefaults: ThemeWindowMaterial { ThemeWindowMaterial(tint: "#F5F5F7", fallback: "#F5F5F7") }
-    public static var darkDefaults: ThemeWindowMaterial { ThemeWindowMaterial(tint: "#1C1C1E", fallback: "#1C1C1E") }
+    public static var lightDefaults: ThemeWindowMaterial {
+        ThemeWindowMaterial(tint: "#F0EFEDFF", tintOpacity: 0.55, fallback: "#F0EFEDFF")
+    }
+    public static var darkDefaults: ThemeWindowMaterial {
+        ThemeWindowMaterial(tint: "#201F1DFF", tintOpacity: 0.55, fallback: "#201F1DFF")
+    }
 }
 
 // MARK: - Message preferences (product behavior, not styling)

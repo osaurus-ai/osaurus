@@ -71,7 +71,7 @@ struct SandboxEnvironmentsSection: View {
             subtitle: "Each agent gets its own Linux container and user. Its home folder is on this Mac; the rest of its environment, such as apk packages, lives in the sandbox.",
             anchorId: "sandbox.environments"
         ) {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 if entries.isEmpty {
                     SettingsEmptyState(
                         inline: "person.2",

@@ -10,6 +10,7 @@
 import SwiftUI
 
 struct ModelDefaultsView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject private var managementState = ManagementStateManager.shared
     @StateObject private var subagentEditor = SubagentConfigurationEditorModel()
 
@@ -42,7 +43,7 @@ struct ModelDefaultsView: View {
     }
 
     private var textGroup: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsSectionHeader(title: "Text")
             SettingsGroup {
                 SettingsRow(
@@ -97,6 +98,7 @@ private struct ModelUpdatesToggle: View {
 
 /// Default speech-to-text model, chosen from the downloaded speech models.
 private struct SpeechDefaultModelGroup: View {
+    @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = SpeechModelManager.shared
 
     private var installed: [SpeechModel] {
@@ -104,7 +106,7 @@ private struct SpeechDefaultModelGroup: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsSectionHeader(title: "Speech")
             SettingsGroup {
                 SettingsRow(
@@ -143,6 +145,7 @@ private struct SpeechDefaultModelGroup: View {
 
 /// Which installed on-device model powers the Privacy Filter's AI detection.
 private struct DetectionDefaultModelGroup: View {
+    @Environment(\.theme) private var theme
     @ObservedObject private var downloader = PrivacyFilterModelDownloader.shared
     @ObservedObject private var rampart = RampartModelManager.shared
     @State private var configuration = PrivacyFilterStore.snapshot()
@@ -170,7 +173,7 @@ private struct DetectionDefaultModelGroup: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsSectionHeader(title: "Privacy Detection")
             SettingsGroup {
                 SettingsRow(

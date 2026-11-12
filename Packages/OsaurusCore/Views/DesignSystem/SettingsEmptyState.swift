@@ -43,15 +43,9 @@ struct SettingsEmptyState: View {
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var theme: any ThemeProtocol { baseTheme.catalogFamily(19, enabled: baseComponentEnabled) }
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    #if OSAURUS_DESIGN_SYSTEM
     @Environment(\.inspectorForceReducedMotion) private var forceReducedMotion
-    #endif
     private var reduceMotion: Bool {
-        #if OSAURUS_DESIGN_SYSTEM
         systemReduceMotion || forceReducedMotion
-        #else
-        systemReduceMotion
-        #endif
     }
 
     let icon: String
@@ -82,10 +76,8 @@ struct SettingsEmptyState: View {
             case .inline, .loading: inline
             }
         }
-        #if OSAURUS_DESIGN_SYSTEM
         .frame(minHeight: theme.catalogMetric("height", fallback: 0))
         .assignedBaseChrome(19, fallback: nil)
-        #endif
     }
 
     // MARK: - Inline
@@ -94,19 +86,15 @@ struct SettingsEmptyState: View {
         VStack(spacing: theme.catalogLayoutMetric("component.library.19.elements.layout.settingsEmptyState.inline.verticalGap", inheriting: theme.space.s8)) {
             Group {
                 if style == .loading {
-                    #if OSAURUS_DESIGN_SYSTEM
                     Group {
                         let color = theme.assignedColor("component.library.19." + (baseComponentEnabled ? "accent" : "disabledForeground"), fallback: theme.text.secondary)
-                        ProgressView().controlSize(.regular).assignedProgressIndicator(tintOverride: color)
+                        SettingsSpinner(size: .large, tint: color)
                     }.accessibilityRepresentation {
-                        ProgressView().accessibilityLabel(Text(LocalizedStringKey(title), bundle: .module))
+                        SettingsSpinner(size: .large).accessibilityLabel(Text(LocalizedStringKey(title), bundle: .module))
                     }
-                    #else
-                    ProgressView().controlSize(.small)
-                    #endif
                 } else {
                     Image(systemName: icon)
-                        .glyphSize(18, weight: .light)
+                        .glyphSize(.large, weight: .light)
                         .foregroundColor(theme.text.tertiary)
                 }
             }
@@ -132,7 +120,7 @@ struct SettingsEmptyState: View {
                     if let secondaryAction { inlineButton(.secondary, secondaryAction) }
                     if let primaryAction { inlineButton(.primary, primaryAction) }
                 }.catalogLayoutTarget("component.library.19.elements.layout.settingsEmptyState.inline.horizontalGap")
-                .padding(.top, 2)
+                .padding(.top, theme.space.s2)
             }
         }.catalogLayoutTarget("component.library.19.elements.layout.settingsEmptyState.inline.verticalGap")
         .frame(maxWidth: .infinity)
@@ -159,16 +147,10 @@ struct SettingsEmptyState: View {
 
             if !compact {
                 glowingIcon
-                    #if OSAURUS_DESIGN_SYSTEM
                     .id(reduceMotion)
-                    #endif
                     .opacity(hasAppeared ? 1 : 0)
                     .scaleEffect(hasAppeared || reduceMotion ? 1 : 0.8)
-                    #if OSAURUS_DESIGN_SYSTEM
                     .animation(reduceMotion ? nil : theme.motion.springAnimation.delay(0.1), value: hasAppeared)
-                    #else
-                    .animation(theme.motion.springAnimation.delay(0.1), value: hasAppeared)
-                    #endif
             }
 
             VStack(spacing: theme.catalogLayoutMetric("component.library.19.elements.layout.settingsEmptyState.hero.verticalGap2", inheriting: theme.space.s8)) {
@@ -181,9 +163,6 @@ struct SettingsEmptyState: View {
                     .assignedTypography("component.library.19.text", fallback: SettingsFont.pageSubtitle)
                     .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
-                    #if !OSAURUS_DESIGN_SYSTEM
-                    .lineSpacing(2)
-                    #endif
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 560)
             }.catalogLayoutTarget("component.library.19.elements.layout.settingsEmptyState.hero.verticalGap2")
@@ -191,10 +170,8 @@ struct SettingsEmptyState: View {
 
             if let content {
                 content
-                    #if OSAURUS_DESIGN_SYSTEM
                     .assignedTypography("component.library.19.text", fallback: SettingsFont.body)
                     .foregroundColor(theme.text.primary)
-                    #endif
                     .entrance(hasAppeared, offset: 20, delay: 0.3, reduceMotion: reduceMotion)
             } else if !examples.isEmpty {
                 exampleCards
@@ -233,17 +210,8 @@ struct SettingsEmptyState: View {
         }.catalogLayoutTarget("component.library.19.elements.layout.settingsEmptyState.hero.verticalGap")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, theme.catalogLayoutMetric("component.library.19.elements.layout.settingsEmptyState.hero.paddingX", inheriting: theme.space.s24)).catalogLayoutTarget("component.library.19.elements.layout.settingsEmptyState.hero.paddingX")
-        #if OSAURUS_DESIGN_SYSTEM
         .animation(reduceMotion ? nil : theme.motion.loop(.easeInOut, duration: 2, autoreverses: true), value: glowIntensity)
         .task(id: reduceMotion) { glowIntensity = reduceMotion ? 0.6 : 1 }
-        #else
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(theme.motion.loop(.easeInOut, duration: 2, autoreverses: true)) {
-                glowIntensity = 1.0
-            }
-        }
-        #endif
     }
 
     /// Flat hero glyph on a `surface.selected` disc; `glowIntensity` only
@@ -254,14 +222,10 @@ struct SettingsEmptyState: View {
                 .fill(theme.surface.selected)
                 .frame(width: 88, height: 88)
                 .overlay(Circle().strokeBorder(theme.border.default, lineWidth: theme.stroke.default))
-                #if OSAURUS_DESIGN_SYSTEM
                 .opacity(reduceMotion ? 1 : 0.5 + glowIntensity * 0.5)
-                #else
-                .opacity(0.5 + glowIntensity * 0.5)
-                #endif
 
             Image(systemName: icon)
-                .glyphSize(36, weight: .medium)
+                .glyphSize(.hero, weight: .medium)
                 .foregroundColor(theme.text.primary)
         }
     }
@@ -319,11 +283,7 @@ private struct EntranceModifier: ViewModifier {
         content
             .opacity(shown ? 1 : 0)
             .offset(y: shown || reduceMotion ? 0 : offset)
-            #if OSAURUS_DESIGN_SYSTEM
             .animation(reduceMotion ? nil : theme.motion.springAnimation.delay(delay), value: shown)
-            #else
-            .animation(theme.motion.springAnimation.delay(delay), value: shown)
-            #endif
     }
 }
 

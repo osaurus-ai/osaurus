@@ -48,7 +48,7 @@ struct CacheSection: View {
 
 
             SettingsFieldRow(label: "GPU Cache (Paged KV)") {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     SettingsToggle(
                         title: "Enable GPU Cache",
                         description:
@@ -125,7 +125,7 @@ struct CacheSection: View {
     // MARK: - Subviews
 
     private var contextAndKVPolicyControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             policyRow(
                 label: "Model maximum",
                 value: "Per selected model",
@@ -290,7 +290,7 @@ struct CacheSection: View {
     }
 
     private var diskCacheControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             SettingsToggle(
                 title: "Disk Cache",
                 description:
@@ -319,7 +319,7 @@ struct CacheSection: View {
             Text(verbatim: resolvedDiskCacheLabel)
                 .font(SettingsFont.footnote)
                 .foregroundColor(hasDiskSpaceWarning ? theme.status.error.foreground : .secondary)
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 Button {
                     Task {
                         guard !hasUnsavedDiskCacheDirectory else { return }
@@ -337,7 +337,7 @@ struct CacheSection: View {
                     }
                 } label: {
                     if isClearingDiskCache {
-                        ProgressView().controlSize(.small)
+                        SettingsSpinner()
                     } else {
                         Text("Clear SSD Cache", bundle: .module)
                     }
@@ -348,20 +348,20 @@ struct CacheSection: View {
                 if let clearedCacheSummary {
                     Text(verbatim: clearedCacheSummary)
                         .textStyle(.micro)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.text.secondary)
                 }
             }
             if hasUnsavedDiskCacheDirectory {
                 Text("Save directory changes before clearing the SSD cache.", bundle: .module)
                     .textStyle(.micro)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.text.secondary)
             }
             Text(
                 "Clears indexed conversation cache files. Chats and models are not deleted. Unrecognized files are left untouched; future replies may rebuild a cold cache.",
                 bundle: .module
             )
             .textStyle(.micro)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
             OptionalStringField(
@@ -376,7 +376,7 @@ struct CacheSection: View {
 
     @ViewBuilder
     private var liveKVCodecControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             SettingsRow(
                 title: "Codec",
                 description:
@@ -412,7 +412,7 @@ struct CacheSection: View {
 
     @ViewBuilder
     private var plannedControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             ServerSettingsPlannedBanner(
                 blurb:
                     "Persisted today; the cache coordinator does not yet consume these. Ships in a follow-up."
@@ -474,11 +474,11 @@ struct CacheSection: View {
     }
 
     private func policyRow(label: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
                 Text(LocalizedStringKey(label), bundle: .module)
                     .font(SettingsFont.smallLabel)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.text.secondary)
                 Spacer()
                 Text(value)
                     .font(SettingsFont.monoSmall)
@@ -487,7 +487,7 @@ struct CacheSection: View {
             }
             Text(LocalizedStringKey(detail), bundle: .module)
                 .font(SettingsFont.footnote)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(theme.space.s8)

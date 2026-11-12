@@ -35,13 +35,14 @@ struct HostedAgentHero: Equatable, Sendable {
 /// backing, leaving the dino floating against the chat background.
 /// Shared by `ChatEmptyState.heroAvatar` and `ChatEmptyStateNoModels.welcomeAvatar`.
 private struct HeroAgentAvatar: View {
+    @Environment(\.theme) private var theme
     let agent: Agent
 
     var body: some View {
         AgentAvatarView(
             mascotId: agent.avatar,
             name: agent.name,
-            tint: agentColorFor(agent.name),
+            tint: theme.dataInk(seed: agent.name),
             diameter: heroAvatarDiameter,
             customImageURL: agent.customAvatarURL,
             monogramFontSize: heroAvatarIconFontSize,
@@ -272,7 +273,7 @@ struct ChatEmptyState: View {
     var body: some View {
         GeometryReader { geometry in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     Spacer(minLength: 20)
 
                     if let pendingModelId = pendingLocalModelId {
@@ -315,7 +316,7 @@ struct ChatEmptyState: View {
     // MARK: - Ready State (has models)
 
     private var readyState: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             // Hero avatar — agent's mascot as the focal point
             heroAvatar
                 .opacity(hasAppeared ? 1 : 0)
@@ -324,15 +325,15 @@ struct ChatEmptyState: View {
 
             greetingBlock
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 
     /// Greeting + subtitle + quick actions block.
     @ViewBuilder
     private var greetingBlock: some View {
-        VStack(spacing: 14) {
-            VStack(spacing: 8) {
-                HStack(spacing: 6) {
+        VStack(spacing: theme.space.s14) {
+            VStack(spacing: theme.space.s8) {
+                HStack(spacing: theme.space.s6) {
                     Text(greetingText)
                         .textStyle(.title)
                         .foregroundColor(theme.text.primary)
@@ -360,18 +361,18 @@ struct ChatEmptyState: View {
                 // facts that distinguish it from a local agent of the same
                 // name.
                 if sharedAttribution != nil || securityBadgeState != nil {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         if let attribution = sharedAttribution {
-                            HStack(spacing: 5) {
+                            HStack(spacing: theme.space.s4) {
                                 Image(systemName: "person.2.fill")
-                                    .glyphSize(9, weight: .semibold)
+                                    .glyphSize(.tiny, weight: .semibold)
                                 Text(verbatim: attribution)
                                     .lineLimit(1)
                             }
                             .textStyle(.footnote, weight: 500)
                             .foregroundColor(theme.text.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
+                            .padding(.horizontal, theme.space.s10)
+                            .padding(.vertical, theme.space.s4)
                             .background(Capsule().fill(theme.surface.hover))
                             .help(sharedAgent?.shortAddress ?? "")
                         }
@@ -416,7 +417,7 @@ struct ChatEmptyState: View {
             AgentAvatarView(
                 mascotId: remoteAgentAvatar ?? sharedAgent?.avatar ?? hostedAgent?.avatar,
                 name: remoteDisplayName,
-                tint: agentColorFor(remoteDisplayName),
+                tint: theme.dataInk(seed: remoteDisplayName),
                 diameter: heroAvatarDiameter,
                 customImageURL: sharedAgent?.customAvatarURL,
                 monogramFontSize: heroAvatarIconFontSize,
@@ -484,7 +485,7 @@ struct ChatEmptyState: View {
             MorphingStatusIcon(state: .active, accentColor: theme.status.info.foreground, size: 12)
         case .encrypted, .offline, .notConnected, .unavailable, .readOnly:
             Image(systemName: securityBadgeSymbol(state))
-                .glyphSize(9, weight: .semibold)
+                .glyphSize(.tiny, weight: .semibold)
         }
     }
 
@@ -541,7 +542,7 @@ struct ChatEmptyState: View {
     private var securityBadge: some View {
         if let state = securityBadgeState {
             let tint = securityBadgeTint(state)
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 securityBadgeIcon(state)
                     .frame(width: 14, height: 14)
                     .id(state)
@@ -551,9 +552,9 @@ struct ChatEmptyState: View {
             }
             .textStyle(.footnote, weight: 500)
             .foregroundColor(tint)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(tint.opacity(theme.isDark ? 0.14 : 0.10)))
+            .padding(.horizontal, theme.space.s10)
+            .padding(.vertical, theme.space.s4)
+            .background(Capsule().fill(theme.wash(behind: tint)))
             .animation(theme.motion.springAnimation, value: state)
             .help(securityBadgeHelp(state))
         }
@@ -564,7 +565,7 @@ struct ChatEmptyState: View {
     /// repartitions rows to even widths, so any action count lays out
     /// cleanly — no orphan grid cells, wrapped labels, or clipped rows.
     private var staggeredQuickActions: some View {
-        FlowLayout(spacing: 8, alignment: .center, balanced: true) {
+        FlowLayout(spacing: theme.space.s8, alignment: .center, balanced: true) {
             ForEach(Array(effectiveQuickActions.enumerated()), id: \.element.id) { index, action in
                 QuickActionButton(action: action, onTap: onQuickAction)
                     .opacity(hasAppeared ? 1 : 0)
@@ -576,7 +577,7 @@ struct ChatEmptyState: View {
             }
         }
         .frame(maxWidth: 460)
-        .padding(.top, 8)
+        .padding(.top, theme.space.s8)
     }
 
     // MARK: - Helpers
@@ -677,17 +678,17 @@ private struct EmptyStateSecondaryButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 if let icon {
                     Image(systemName: icon)
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                 }
                 Text(title, bundle: .module)
                     .textStyle(.label)
             }
             .foregroundColor(isHovered ? theme.text.primary : theme.text.secondary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s8)
             .background(
                 Capsule()
                     .fill(isHovered ? theme.surface.subtle : Color.clear)
@@ -729,13 +730,13 @@ private struct ChatEmptyStateLocalSetup: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: theme.space.s16) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 6) {
+            VStack(spacing: theme.space.s6) {
                 Text(headline, bundle: .module)
                     .textStyle(.title)
                     .foregroundColor(theme.text.primary)
@@ -766,7 +767,7 @@ private struct ChatEmptyStateLocalSetup: View {
             .offset(y: hasAppeared ? 0 : 12)
             .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 
     private var headline: LocalizedStringKey {
@@ -934,14 +935,13 @@ struct LocalSetupPanel: View {
         Group {
             if let style = stripGlyphStyle {
                 Image(systemName: style.symbol)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundStyle(theme.status[style.kind].foreground)
                     .frame(width: Self.glyphSize, height: Self.glyphSize)
                     .background(shape.fill(theme.status[style.kind].background))
                     .contentTransition(.symbolEffect(.replace))
             } else {
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
                     .frame(width: Self.glyphSize, height: Self.glyphSize)
             }
         }
@@ -1013,7 +1013,7 @@ struct LocalSetupPanel: View {
             switch bridgePhase {
             case .idle, .connecting:
                 HStack(spacing: theme.space.s6) {
-                    ProgressView().controlSize(.mini)
+                    SettingsSpinner(size: .mini)
                     if !compact {
                         Text("Getting Osaurus Cloud ready…", bundle: .module)
                             .textStyle(.caption, weight: 500)
@@ -1036,7 +1036,7 @@ struct LocalSetupPanel: View {
     private func chipLabel(icon: String, tint: Color, title: String?) -> some View {
         HStack(spacing: theme.space.s6) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(tint)
             if let title {
                 Text(title)
@@ -1067,16 +1067,14 @@ struct LocalSetupPanel: View {
 
     private var setupPanel: some View {
         let shape = RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
-        return VStack(spacing: 14) {
+        return VStack(spacing: theme.space.s14) {
             downloadStatus
             if onUseHostedMeanwhile != nil {
-                Rectangle()
-                    .fill(theme.border.subtle)
-                    .frame(height: 1)
+                ThemeHairlineDivider()
                 cloudStatus
             }
         }
-        .padding(18)
+        .padding(theme.space.s16)
         .frame(maxWidth: 480)
         .background(shape.fill(theme.surface.subtle))
         .overlay(shape.strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default))
@@ -1088,8 +1086,8 @@ struct LocalSetupPanel: View {
     private var downloadStatus: some View {
         switch downloadState {
         case .downloading(let progress):
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
+            VStack(spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s10) {
                     statusIcon("arrow.down", color: theme.status.info.foreground)
                     Text(L("Downloading \(modelName)"))
                         .textStyle(.label, weight: 600)
@@ -1110,8 +1108,8 @@ struct LocalSetupPanel: View {
             }
 
         case .paused(let progress):
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
+            VStack(spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s10) {
                     statusIcon("pause.fill", color: theme.status.warning.foreground)
                     Text("Download paused", bundle: .module)
                         .textStyle(.label, weight: 600)
@@ -1134,8 +1132,8 @@ struct LocalSetupPanel: View {
             }
 
         case .failed(let error):
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s10) {
                     statusIcon("exclamationmark", color: theme.status.warning.foreground)
                     Text("Local download needs attention", bundle: .module)
                         .textStyle(.label, weight: 600)
@@ -1145,7 +1143,7 @@ struct LocalSetupPanel: View {
                     .textStyle(.footnote)
                     .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     EmptyStateSecondaryButton(title: "Try again", icon: "arrow.clockwise") {
                         restartDownload(forModelId: modelId)
                     }
@@ -1158,7 +1156,7 @@ struct LocalSetupPanel: View {
             }
 
         case .completed:
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 statusIcon("checkmark", color: theme.status.success.foreground)
                 Text("Private model ready", bundle: .module)
                     .textStyle(.label, weight: 600)
@@ -1167,8 +1165,8 @@ struct LocalSetupPanel: View {
             }
 
         case .notStarted:
-            HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s10) {
+                SettingsSpinner()
                 Text("Preparing local download…", bundle: .module)
                     .textStyle(.label, weight: 600)
                     .foregroundColor(theme.text.primary)
@@ -1180,9 +1178,9 @@ struct LocalSetupPanel: View {
     @ViewBuilder
     private var cloudStatus: some View {
         if let cloudModel = temporaryCloudModelName {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 statusIcon("checkmark", color: theme.status.success.foreground)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Ready to chat now", bundle: .module)
                         .textStyle(.caption, weight: 600)
                         .foregroundColor(theme.text.primary)
@@ -1196,17 +1194,17 @@ struct LocalSetupPanel: View {
         } else {
             switch bridgePhase {
             case .idle, .connecting:
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
+                HStack(spacing: theme.space.s10) {
+                    SettingsSpinner()
                     Text("Getting Osaurus Cloud ready…", bundle: .module)
                         .textStyle(.caption, weight: 500)
                         .foregroundColor(theme.text.secondary)
                     Spacer()
                 }
             case .failed:
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     statusIcon("exclamationmark", color: theme.status.warning.foreground)
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: theme.space.s4) {
                         Text("Couldn't reach Osaurus Cloud", bundle: .module)
                             .textStyle(.caption, weight: 600)
                             .foregroundColor(theme.text.primary)
@@ -1224,9 +1222,9 @@ struct LocalSetupPanel: View {
 
     private func statusIcon(_ systemName: String, color: Color) -> some View {
         ZStack {
-            Circle().fill(color.opacity(0.14))
+            Circle().fill(theme.wash(behind: color))
             Image(systemName: systemName)
-                .glyphSize(9, weight: .bold)
+                .glyphSize(.tiny, weight: .bold)
                 .foregroundColor(color)
         }
         .frame(width: 22, height: 22)
@@ -1318,13 +1316,13 @@ private struct ChatEmptyStateNoModels: View {
     }
 
     private var noModelsState: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Text("One more step", bundle: .module)
                     .textStyle(.title)
                     .foregroundColor(theme.text.primary)
@@ -1350,19 +1348,19 @@ private struct ChatEmptyStateNoModels: View {
             .scaleEffect(hasAppeared ? 1 : 0.97)
             .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 
     /// Recoverable first-chat state for a completed onboarding whose brain
     /// isn't reachable (e.g. the Osaurus connection failed while offline).
     private var connectionRecoveryState: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Text("Couldn't reach your AI", bundle: .module)
                     .textStyle(.title)
                     .foregroundColor(theme.text.primary)
@@ -1383,7 +1381,7 @@ private struct ChatEmptyStateNoModels: View {
             }
             .frame(maxWidth: 420)
 
-            VStack(spacing: 10) {
+            VStack(spacing: theme.space.s10) {
                 if onRetryConnection != nil {
                     GetStartedButton(
                         title: isRetryingConnection ? "Retrying…" : "Retry connection"
@@ -1391,7 +1389,7 @@ private struct ChatEmptyStateNoModels: View {
                         retryConnection()
                     }
                 }
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     if let onOpenModelManager {
                         EmptyStateSecondaryButton(
                             title: "Run a local model",
@@ -1412,7 +1410,7 @@ private struct ChatEmptyStateNoModels: View {
             .offset(y: hasAppeared ? 0 : 12)
             .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 
     private func retryConnection() {
@@ -1427,13 +1425,13 @@ private struct ChatEmptyStateNoModels: View {
     /// The only download that could have produced a model failed and nothing
     /// else is available — surface the error with a way forward in place.
     private func failedDownloadState(_ failure: (modelId: String, message: String)) -> some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Text("Download hit a snag", bundle: .module)
                     .textStyle(.title)
                     .foregroundColor(theme.text.primary)
@@ -1451,7 +1449,7 @@ private struct ChatEmptyStateNoModels: View {
             }
             .frame(maxWidth: 420)
 
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 GetStartedButton(title: "Try again") {
                     restartDownload(forModelId: failure.modelId)
                 }
@@ -1463,17 +1461,17 @@ private struct ChatEmptyStateNoModels: View {
             .offset(y: hasAppeared ? 0 : 12)
             .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 
     private var downloadingState: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Text("Almost ready...", bundle: .module)
                     .textStyle(.title)
                     .foregroundColor(theme.text.primary)
@@ -1494,13 +1492,11 @@ private struct ChatEmptyStateNoModels: View {
             .frame(maxWidth: 340)
 
             if let progress = downloadProgress, let modelId = activeDownload?.modelId {
-                VStack(spacing: 10) {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
+                VStack(spacing: theme.space.s10) {
+                    SettingsProgressBar(value: progress, tint: theme.status.info.foreground)
                         .frame(maxWidth: 280)
-                        .tint(theme.status.info.foreground)
 
-                    HStack(spacing: 0) {
+                    HStack(spacing: theme.space.s0) {
                         if let text = downloadMetricsText(for: modelId) {
                             Text(text)
                                 .textStyle(.caption)
@@ -1517,7 +1513,7 @@ private struct ChatEmptyStateNoModels: View {
                 .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
             }
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 }
 
@@ -1569,7 +1565,7 @@ struct DiscoveryCardView: View {
                         isHovered ? theme.border.strong : theme.action.border, lineWidth: theme.stroke.default))
         )
         .onHover { isHovered = $0 }
-        .padding(.top, 4)
+        .padding(.top, theme.space.s4)
     }
 }
 
@@ -1589,7 +1585,7 @@ struct SetUpOsaurusLink: View {
             Button(action: onOpen) {
                 HStack(spacing: theme.space.s4) {
                     Image(systemName: "checklist")
-                        .glyphSize(11, weight: .medium)
+                        .glyphSize(.footnote, weight: .medium)
                     Text(String(format: L("Set Up Osaurus: %lld left"), left))
                         .textStyle(.caption, weight: 500)
                 }
@@ -1619,7 +1615,7 @@ struct SetUpOsaurusLink: View {
                 .accessibilityHint(Text("Stop suggesting setup in new chats", bundle: .module))
             }
         }
-        .padding(.top, 2)
+        .padding(.top, theme.space.s2)
     }
 }
 
@@ -1634,9 +1630,9 @@ struct QuickActionButton: View {
         Button {
             onTap(action.prompt)
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: action.icon)
-                    .glyphSize(12, weight: .medium)
+                    .glyphSize(.caption, weight: .medium)
                     .foregroundColor(isHovered ? theme.text.primary : theme.text.secondary)
 
                 // Single line, capped so an unusually long custom-agent
@@ -1650,8 +1646,8 @@ struct QuickActionButton: View {
                     .frame(maxWidth: 280, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 8)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s8)
             .background(
                 Capsule()
                     .fill(theme.action.secondary[isHovered ? .hover : .default].background)
@@ -1685,17 +1681,17 @@ private struct GetStartedButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Text(title, bundle: .module)
                     .textStyle(.label, weight: 600)
 
                 Image(systemName: "arrow.right")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .offset(x: isHovered ? 2 : 0)
             }
             .foregroundColor(theme.action.primary[isHovered ? .hover : .default].foreground)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s12)
             .background(
                 Capsule()
                     .fill(theme.action.primary[isHovered ? .hover : .default].background)
@@ -1703,7 +1699,7 @@ private struct GetStartedButton: View {
             .themeElevation(theme.elevation.raised)
         }
         .buttonStyle(.plain)
-        .padding(.top, 8)
+        .padding(.top, theme.space.s8)
         .onHover { hovering in
             withAnimation(theme.motion.quick) {
                 isHovered = hovering

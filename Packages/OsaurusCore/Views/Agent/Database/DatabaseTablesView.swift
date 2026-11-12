@@ -199,7 +199,7 @@ struct DatabaseTablesView: View {
 
     @ViewBuilder
     private var tableList: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             HStack {
                 Text("Tables", bundle: .module)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
@@ -209,7 +209,7 @@ struct DatabaseTablesView: View {
                 Button {
                     Task { await loadTables(applyFocus: false) }
                 } label: {
-                    Image(systemName: "arrow.clockwise").glyphSize(11)
+                    Image(systemName: "arrow.clockwise").glyphSize(.footnote)
                 }
                 .buttonStyle(.borderless)
                 .localizedHelp("Refresh the table list")
@@ -256,7 +256,7 @@ struct DatabaseTablesView: View {
         Button(action: action) {
             HStack(alignment: .center, spacing: theme.space.s8) {
                 Image(systemName: isSystem ? "gearshape" : "tablecells")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(
                         isSelected
                             ? theme.action.primary.default.background
@@ -291,7 +291,7 @@ struct DatabaseTablesView: View {
     @ViewBuilder
     private var detailPane: some View {
         if let table = selectedTableSchema {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 detailHeader(table)
                 Divider().foregroundColor(theme.border.subtle)
                 if let actionError {
@@ -359,7 +359,7 @@ struct DatabaseTablesView: View {
 
     @ViewBuilder
     private func rowsPane(_ table: AgentTableSchema) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             rowsControlBar
                 .padding(.horizontal, theme.space.s16)
                 .padding(.vertical, theme.space.s8)
@@ -369,7 +369,7 @@ struct DatabaseTablesView: View {
             }
             if browser.isLoadingFirstPage {
                 HStack {
-                    ProgressView()
+                    SettingsSpinner(size: .large)
                     Text("Loading rows…", bundle: .module)
                         .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                         .foregroundColor(theme.text.tertiary)
@@ -460,24 +460,11 @@ struct DatabaseTablesView: View {
         systemImage: String,
         isBusy: Bool,
         disabled: Bool,
-        help: LocalizedStringKey,
+        help: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Group {
-                if isBusy {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: systemImage)
-                        .glyphSize(11, weight: .medium)
-                }
-            }
-            .frame(width: 16, height: 14)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .disabled(disabled)
-        .help(Text(help, bundle: .module))
+        SettingsIconButton(systemImage, isLoading: isBusy, help: help, size: .compact, action: action)
+            .disabled(disabled)
     }
 
     /// `?` button next to the filter picker. Opens a small popover
@@ -489,7 +476,7 @@ struct DatabaseTablesView: View {
             showFilterHelp.toggle()
         } label: {
             Image(systemName: "questionmark.circle")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.text.tertiary)
         }
         .buttonStyle(.plain)
@@ -522,7 +509,7 @@ struct DatabaseTablesView: View {
     private var dataTipCaption: some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: "lightbulb")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundColor(theme.text.tertiary)
             Text(
                 "Double-click a row (or press ↗) to open it · check rows to delete several at once · deleted rows are dimmed.",
@@ -542,7 +529,7 @@ struct DatabaseTablesView: View {
     private func errorBanner(_ message: String) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundColor(theme.status.error.foreground)
             Text(verbatim: message)
                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
@@ -561,7 +548,7 @@ struct DatabaseTablesView: View {
     private func importSummaryBanner(_ summary: String) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: "checkmark.circle")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundColor(theme.text.link)
             Text(verbatim: summary)
                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
@@ -671,7 +658,7 @@ struct DatabaseTablesView: View {
                     .foregroundColor(theme.text.secondary)
             }
             if browser.isLoadingMore {
-                ProgressView().controlSize(.mini)
+                SettingsSpinner(size: .mini)
                 Text("Loading more…", bundle: .module)
                     .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
                     .foregroundColor(theme.text.tertiary)
@@ -1158,7 +1145,7 @@ struct InspectorDatabaseTableNames: View {
     @State private var selected = "local_notes"
     private var theme: any ThemeProtocol { inheritedTheme }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text("Table list · sample data")
             ForEach(["local_notes", "local_history"], id: \.self) { name in
                 DatabaseTablesView.renderTableListRow(.init(name: name, purpose: "Local display", columns: [], indexes: [], rowCount: 3, lastWriteAt: nil), isSystem: false, isSelected: selected == name, theme: theme) { selected = name }

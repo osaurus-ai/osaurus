@@ -141,10 +141,10 @@ private struct ConfigApprovalPlanContent: View {
     let request: ConfigApprovalRequest
     var resolve: ((ConfigApprovalOutcome) -> Void)? = nil
 
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap", inheriting: PromptInspectionStyle.metric("gap", 12, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s12, theme))) {
             if request.plan.hasHighRiskChanges {
                 HStack {
                     Spacer(minLength: 0)
@@ -165,7 +165,7 @@ private struct ConfigApprovalPlanContent: View {
             }
 
             if !request.plan.notes.isEmpty {
-                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap2", inheriting: PromptInspectionStyle.metric("gap", 2, theme))) {
+                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s2, theme))) {
                     ForEach(Array(request.plan.notes.enumerated()), id: \.offset) { _, note in
                         Text(note)
                             .promptText(.caption, fallback: .micro, theme: theme)
@@ -175,26 +175,21 @@ private struct ConfigApprovalPlanContent: View {
                 }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap2")
             }
 
-            HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planContent.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 10, theme))) {
-                Spacer()
-                // Resolving pops the request off the queue, which drives
-                // `syncPresentation` to dismiss the alert.
-                secondaryButton(L("Cancel")) {
-                    resolve?(.denied)
-                }
-                primaryButton(L("Apply Changes")) {
-                    resolve?(.approved)
-                }
-            }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planContent.horizontalGap")
-                .disabled(resolve == nil)
+            // Resolving pops the request off the queue, which drives
+            // `syncPresentation` to dismiss the alert.
+            SettingsSheetFooter(
+                primary: .init(label: "Apply Changes", isEnabled: resolve != nil) { resolve?(.approved) },
+                secondary: .init(label: "Cancel", isEnabled: resolve != nil) { resolve?(.denied) },
+                embedded: true
+            )
         }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planContent.verticalGap")
         .environment(\.theme, theme)
     }
 
     private var pruneBanner: some View {
-        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.pruneBanner.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 6, theme))) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.pruneBanner.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s6, theme))) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.status[.urgentWarning].foreground)
             Text(
                 "Prune is on: entries not listed in the document will be deleted.",
@@ -204,7 +199,7 @@ private struct ConfigApprovalPlanContent: View {
             .foregroundColor(theme.status[.urgentWarning].foreground)
             .fixedSize(horizontal: false, vertical: true)
         }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.pruneBanner.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", 8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", 8, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.pruneBanner.padding.vertical")
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: theme.radius.medium).fill(theme.status[.urgentWarning].background)
@@ -216,9 +211,9 @@ private struct ConfigApprovalPlanContent: View {
     private func planList(_ plan: ConfigPlan) -> some View {
         let sections = groupedActions(plan)
         return ScrollView {
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.verticalGap", inheriting: PromptInspectionStyle.metric("gap", 10, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s10, theme))) {
                 ForEach(sections, id: \.section) { group in
-                    VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.verticalGap2", inheriting: PromptInspectionStyle.metric("gap", 5, theme))) {
+                    VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.verticalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s4, theme))) {
                         Text(group.section)
                             .promptText(.caption, fallback: .micro, weight: 700, theme: theme)
                             .foregroundColor(theme.text.tertiary)
@@ -230,7 +225,7 @@ private struct ConfigApprovalPlanContent: View {
                 }
             }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planList.verticalGap")
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", 10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", 10, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planList.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planList.padding.vertical")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.planList.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planList.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.planList.padding.vertical")
         }
         .frame(maxHeight: 240)
         .background(
@@ -243,8 +238,8 @@ private struct ConfigApprovalPlanContent: View {
     }
 
     private func actionRow(_ action: ConfigPlanAction) -> some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.actionRow.verticalGap", inheriting: PromptInspectionStyle.metric("gap", 2, theme))) {
-            HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.actionRow.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 6, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.actionRow.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s2, theme))) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.actionRow.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s6, theme))) {
                 Text(kindSymbol(action.kind))
                     .promptText(.code, fallback: .code, weight: 700, theme: theme)
                     .foregroundColor(kindColor(action.kind))
@@ -263,19 +258,19 @@ private struct ConfigApprovalPlanContent: View {
                     .promptText(.code, fallback: .footnote, family: .code, theme: theme)
                     .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 18)
+                    .padding(.leading, theme.space.s16)
             }
             ForEach(Array(action.risks.enumerated()), id: \.offset) { _, risk in
-                HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.actionRow.horizontalGap2", inheriting: PromptInspectionStyle.metric("gap", 4, theme))) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.actionRow.horizontalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s4, theme))) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(9)
+                        .glyphSize(.tiny)
                         .foregroundColor(theme.status.warning.foreground)
                     Text(risk)
                         .promptText(.body, fallback: .footnote, weight: 500, theme: theme)
                         .foregroundColor(theme.status.warning.foreground)
                         .fixedSize(horizontal: false, vertical: true)
                 }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.actionRow.horizontalGap2")
-                .padding(.leading, 18)
+                .padding(.leading, theme.space.s16)
             }
         }.catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.actionRow.verticalGap")
     }
@@ -314,45 +309,8 @@ private struct ConfigApprovalPlanContent: View {
         case .needsUserInput: return theme.status.warning.foreground
         }
     }
-
-    // MARK: - Chrome
-
-    private func secondaryButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .promptText(.label, fallback: .caption, weight: 500, theme: theme)
-                .foregroundColor(theme.text.secondary)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.secondaryButton.paddingX", inheriting: PromptInspectionStyle.metric("padding", 14, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.secondaryButton.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.secondaryButton.paddingY", inheriting: PromptInspectionStyle.metric("padding", 7, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.secondaryButton.paddingY")
-                .background(
-                    RoundedRectangle(cornerRadius: theme.radius.medium)
-                        .fill(theme.surface.hover)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: theme.radius.medium).stroke(theme.border.strong, lineWidth: theme.stroke.default)
-                        )
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        // Themed-alert convention: Esc activates cancel.
-        .keyboardShortcut(.cancelAction)
-    }
-
-    private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .promptText(.label, fallback: .caption, weight: 600, theme: theme)
-                .foregroundColor(theme.action.primary.default.foreground)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.primaryButton.paddingX", inheriting: PromptInspectionStyle.metric("padding", 14, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.primaryButton.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.configApprovalModal.primaryButton.paddingY", inheriting: PromptInspectionStyle.metric("padding", 7, theme))).catalogLayoutTarget("component.library.36.elements.layout.configApprovalModal.primaryButton.paddingY")
-                .background(RoundedRectangle(cornerRadius: theme.radius.medium).fill(theme.action.primary.default.background))
-        }
-        .buttonStyle(PlainButtonStyle())
-        // Themed-alert convention: Return activates the primary action.
-        .keyboardShortcut(.defaultAction)
-    }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension ConfigApprovalModal {
     @MainActor static func inspectionPlan() -> some View {
         let plan = ConfigPlan(actions: [
@@ -364,4 +322,3 @@ extension ConfigApprovalModal {
         return ConfigApprovalPlanContent(request: .init(plan: plan, prune: true))
     }
 }
-#endif

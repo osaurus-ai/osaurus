@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import Foundation
 
 struct DesignPrimitiveColor: Codable, Equatable, Sendable {
@@ -61,4 +60,3 @@ extension DesignWorkingDocument {
         return resolved
     }
 }
-#endif

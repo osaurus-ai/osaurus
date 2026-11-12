@@ -51,7 +51,7 @@ struct AgentKeysSection: View {
                     hint: "Add a key here or in the Vault, and turn on “Agents Can Use This When Running Code”.")
                     .settingsChrome(.inset)
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                         if index > 0 {
                             ThemeHairlineDivider()
@@ -107,7 +107,7 @@ struct AgentKeysSection: View {
         HStack(spacing: theme.space.s8) {
             LibraryIcon(
                 symbol: entry.record?.origin.symbol ?? "clock.arrow.circlepath",
-                tint: entry.record?.origin.tint ?? theme.status.warning.foreground,
+                tint: entry.record.map { theme.dataInk($0.origin.ink) } ?? theme.status.warning.foreground,
                 size: 24)
             Text(verbatim: entry.key)
                 .font(SettingsFont.rowTitle)

@@ -174,7 +174,7 @@ struct ScheduleFrequencyEditor: View {
     private var oncePreview: some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: "calendar.badge.clock")
-                .glyphSize(14, weight: .medium)
+                .glyphSize(.body, weight: .medium)
                 .foregroundColor(theme.text.link)
 
             VStack(alignment: .leading, spacing: theme.space.s2) {
@@ -476,7 +476,7 @@ struct ScheduleFrequencyEditor: View {
     private func schedulePreview(text: String, isError: Bool = false) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: isError ? "exclamationmark.triangle.fill" : "repeat")
-                .glyphSize(14, weight: .medium)
+                .glyphSize(.body, weight: .medium)
                 .foregroundColor(isError ? theme.status.error.foreground : theme.text.link)
 
             VStack(alignment: .leading, spacing: theme.space.s2) {
@@ -519,7 +519,7 @@ struct FrequencySelector: View {
         } label: {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: selection.icon)
-                    .glyphSize(12, weight: .medium)
+                    .glyphSize(.caption, weight: .medium)
                     .foregroundColor(theme.text.link)
 
                 Text(selection.rawValue)
@@ -564,7 +564,7 @@ struct FrequencyOptionRow: View {
         Button(action: action) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: type.icon)
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                     .foregroundColor(isSelected ? theme.text.link : theme.text.secondary)
                     .frame(width: 16)
 
@@ -576,7 +576,7 @@ struct FrequencyOptionRow: View {
 
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.link)
                 }
             }
@@ -605,9 +605,7 @@ struct FrequencyOptionRow: View {
 // MARK: - Schedule Time Picker
 
 struct ScheduleTimePicker: View {
-    #if OSAURUS_DESIGN_SYSTEM
     @State private var inspectorComposing = false
-    #endif
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
@@ -634,21 +632,17 @@ struct ScheduleTimePicker: View {
     var body: some View {
         HStack(spacing: theme.space.s4) {
             Image(systemName: "clock")
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.assignedColor("component.library.8.elements.label.foreground", fallback: theme.text.link))
                 .nativeCatalogTarget(["component.library.8.elements.label.foreground"], "Clock icon")
 
             Group {
-                #if OSAURUS_DESIGN_SYSTEM
                 InspectorAssignedTextField(text: $hourText, isComposing: $inspectorComposing,
                     font: theme.assignedNativeFont("component.library.8.text", fallback: theme.nsFont(.label)),
                     textColor: NSColor(theme.assignedColor("component.library.8." + (inspectionEnabled ? "foreground" : "disabledForeground"), fallback: theme.text.primary)), onSubmit: validateHour,
                     onFocusChange: { hourFocused = $0 }, tracking: theme.assignedTracking("component.library.8.text"),
                     editable: inspectionEnabled, requestedFocus: hourFocused, alignment: .center)
                     .frame(minHeight: theme.assignedLineHeight("component.library.8.text", fallback: theme.scaledTextStyle(.label).lineHeight))
-                #else
-                TextField("", text: $hourText)
-                #endif
             }
                 .textFieldStyle(.plain)
                 .assignedTypography("component.library.8.text", fallback: SettingsFont.rowTitle)
@@ -680,16 +674,12 @@ struct ScheduleTimePicker: View {
                 .nativeCatalogTarget(["component.library.8.elements.supportingText.secondary"], "Time separator")
 
             Group {
-                #if OSAURUS_DESIGN_SYSTEM
                 InspectorAssignedTextField(text: $minuteText, isComposing: $inspectorComposing,
                     font: theme.assignedNativeFont("component.library.8.text", fallback: theme.nsFont(.label)),
                     textColor: NSColor(theme.assignedColor("component.library.8." + (inspectionEnabled ? "foreground" : "disabledForeground"), fallback: theme.text.primary)), onSubmit: validateMinute,
                     onFocusChange: { minuteFocused = $0 }, tracking: theme.assignedTracking("component.library.8.text"),
                     editable: inspectionEnabled, requestedFocus: minuteFocused, alignment: .center)
                     .frame(minHeight: theme.assignedLineHeight("component.library.8.text", fallback: theme.scaledTextStyle(.label).lineHeight))
-                #else
-                TextField("", text: $minuteText)
-                #endif
             }
                 .textFieldStyle(.plain)
                 .assignedTypography("component.library.8.text", fallback: SettingsFont.rowTitle)
@@ -772,27 +762,17 @@ struct ScheduleTimePicker: View {
     }
 
     private func inspectionNumberWidth(_ fallback: CGFloat) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(fallback, twoDigitWidth(theme.assignedNativeFont("component.library.8.text", fallback: theme.nsFont(.label))))
-        #else
-        return fallback
-        #endif
     }
     private var inspectionFieldHeight: CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(NativeComponentInspectionStyle.metric(8, "height", 38, theme), theme.assignedLineHeight("component.library.8.text", fallback: theme.lineHeight(.label)) + 6)
-        #else
-        return 38
-        #endif
     }
 }
 
 // MARK: - Hourly Minute Picker
 
 struct HourlyMinutePicker: View {
-    #if OSAURUS_DESIGN_SYSTEM
     @State private var inspectorComposing = false
-    #endif
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
@@ -806,7 +786,7 @@ struct HourlyMinutePicker: View {
     var body: some View {
         HStack(spacing: theme.space.s4) {
             Image(systemName: "clock")
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.text.link)
                 .padding(.leading, theme.space.s8)
 
@@ -815,16 +795,12 @@ struct HourlyMinutePicker: View {
                 .foregroundColor(theme.text.secondary)
 
             Group {
-                #if OSAURUS_DESIGN_SYSTEM
                 InspectorAssignedTextField(text: $minuteText, isComposing: $inspectorComposing,
                     font: theme.assignedNativeFont("component.library.50.label", fallback: theme.nsFont(.label)),
                     textColor: NSColor(theme.text.primary), onSubmit: validateMinute,
                     onFocusChange: { textFieldFocused = $0 }, tracking: theme.assignedTracking("component.library.50.label"),
                     editable: inspectionEnabled, requestedFocus: textFieldFocused, alignment: .center)
                     .frame(minHeight: theme.assignedLineHeight("component.library.50.label", fallback: theme.scaledTextStyle(.label).lineHeight))
-                #else
-                TextField("", text: $minuteText)
-                #endif
             }
                 .textFieldStyle(.plain)
                 .componentInspectionText(50, role: .label, fallback: .label, theme: theme)
@@ -852,10 +828,10 @@ struct HourlyMinutePicker: View {
                     if textFieldFocused { commitMinuteLive() }
                 }
 
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 Button(action: { incrementMinute() }) {
                     Image(systemName: "chevron.up")
-                        .glyphSize(8, weight: .bold)
+                        .glyphSize(.tiny, weight: .bold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: 20, height: 12)
                 }
@@ -863,7 +839,7 @@ struct HourlyMinutePicker: View {
 
                 Button(action: { decrementMinute() }) {
                     Image(systemName: "chevron.down")
-                        .glyphSize(8, weight: .bold)
+                        .glyphSize(.tiny, weight: .bold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: 20, height: 12)
                 }
@@ -899,18 +875,10 @@ struct HourlyMinutePicker: View {
     }
 
     private func inspectionNumberWidth(_ fallback: CGFloat) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(fallback, twoDigitWidth(theme.nsFont(.label)))
-        #else
-        return fallback
-        #endif
     }
     private var inspectionFieldHeight: CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(NativeComponentInspectionStyle.metric(50, "height", 38, theme), theme.lineHeight(.label) + 4)
-        #else
-        return 38
-        #endif
     }
 }
 
@@ -937,7 +905,7 @@ struct WeekdayButton: View {
                 .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                 .foregroundColor(
                     isSelected
-                        ? theme.inspectionColor("component.library.50.onForeground", fallback: .white)
+                        ? theme.inspectionColor("component.library.50.onForeground", fallback: theme.action.primary.default.foreground)
                         : (isHovering ? theme.text.primary : theme.text.secondary)
                 )
                 .frame(width: theme.catalogMetric("height", fallback: 34), height: theme.catalogMetric("height", fallback: 34))
@@ -996,7 +964,7 @@ struct OnceDatePicker: View {
         } label: {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: "calendar")
-                    .glyphSize(12, weight: .medium)
+                    .glyphSize(.caption, weight: .medium)
                     .foregroundColor(theme.text.link)
 
                 Text(formattedDate)
@@ -1005,7 +973,7 @@ struct OnceDatePicker: View {
             }
         }
         .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 DatePicker(
                     "",
                     selection: $selectedDate,
@@ -1024,9 +992,7 @@ struct OnceDatePicker: View {
 // MARK: - Once Time Picker
 
 struct OnceTimePicker: View {
-    #if OSAURUS_DESIGN_SYSTEM
     @State private var inspectorComposing = false
-    #endif
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
@@ -1075,21 +1041,17 @@ struct OnceTimePicker: View {
     var body: some View {
         HStack(spacing: theme.space.s4) {
             Image(systemName: "clock")
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.assignedColor("component.library.8.elements.label.foreground", fallback: theme.text.link))
                 .nativeCatalogTarget(["component.library.8.elements.label.foreground"], "Clock icon")
 
             Group {
-                #if OSAURUS_DESIGN_SYSTEM
                 InspectorAssignedTextField(text: $hourText, isComposing: $inspectorComposing,
                     font: theme.assignedNativeFont("component.library.8.text", fallback: theme.nsFont(.label)),
                     textColor: NSColor(theme.assignedColor("component.library.8." + (inspectionEnabled ? "foreground" : "disabledForeground"), fallback: theme.text.primary)), onSubmit: validateHour,
                     onFocusChange: { hourFocused = $0 }, tracking: theme.assignedTracking("component.library.8.text"),
                     editable: inspectionEnabled, requestedFocus: hourFocused, alignment: .center)
                     .frame(minHeight: theme.assignedLineHeight("component.library.8.text", fallback: theme.scaledTextStyle(.label).lineHeight))
-                #else
-                TextField("", text: $hourText)
-                #endif
             }
                 .textFieldStyle(.plain)
                 .assignedTypography("component.library.8.text", fallback: SettingsFont.rowTitle)
@@ -1121,16 +1083,12 @@ struct OnceTimePicker: View {
                 .nativeCatalogTarget(["component.library.8.elements.supportingText.secondary"], "Time separator")
 
             Group {
-                #if OSAURUS_DESIGN_SYSTEM
                 InspectorAssignedTextField(text: $minuteText, isComposing: $inspectorComposing,
                     font: theme.assignedNativeFont("component.library.8.text", fallback: theme.nsFont(.label)),
                     textColor: NSColor(theme.assignedColor("component.library.8." + (inspectionEnabled ? "foreground" : "disabledForeground"), fallback: theme.text.primary)), onSubmit: validateMinute,
                     onFocusChange: { minuteFocused = $0 }, tracking: theme.assignedTracking("component.library.8.text"),
                     editable: inspectionEnabled, requestedFocus: minuteFocused, alignment: .center)
                     .frame(minHeight: theme.assignedLineHeight("component.library.8.text", fallback: theme.scaledTextStyle(.label).lineHeight))
-                #else
-                TextField("", text: $minuteText)
-                #endif
             }
                 .textFieldStyle(.plain)
                 .assignedTypography("component.library.8.text", fallback: SettingsFont.rowTitle)
@@ -1211,18 +1169,10 @@ struct OnceTimePicker: View {
     }
 
     private func inspectionNumberWidth(_ fallback: CGFloat) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(fallback, twoDigitWidth(theme.assignedNativeFont("component.library.8.text", fallback: theme.nsFont(.label))))
-        #else
-        return fallback
-        #endif
     }
     private var inspectionFieldHeight: CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(NativeComponentInspectionStyle.metric(8, "height", 38, theme), theme.assignedLineHeight("component.library.8.text", fallback: theme.lineHeight(.label)) + 6)
-        #else
-        return 38
-        #endif
     }
 }
 
@@ -1299,7 +1249,7 @@ struct MonthOptionRow: View {
 
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.link)
                 }
             }
@@ -1328,9 +1278,7 @@ struct MonthOptionRow: View {
 // MARK: - Day of Month Input
 
 struct DayOfMonthPicker: View {
-    #if OSAURUS_DESIGN_SYSTEM
     @State private var inspectorComposing = false
-    #endif
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
@@ -1342,18 +1290,14 @@ struct DayOfMonthPicker: View {
     @FocusState private var textFieldFocused: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: theme.space.s0) {
             Group {
-                #if OSAURUS_DESIGN_SYSTEM
                 InspectorAssignedTextField(text: $dayText, isComposing: $inspectorComposing,
                     font: theme.assignedNativeFont("component.library.50.label", fallback: theme.nsFont(.label)),
                     textColor: NSColor(theme.text.primary), onSubmit: validateAndUpdateDay,
                     onFocusChange: { textFieldFocused = $0 }, tracking: theme.assignedTracking("component.library.50.label"),
                     editable: inspectionEnabled, requestedFocus: textFieldFocused, alignment: .center)
                     .frame(minHeight: theme.assignedLineHeight("component.library.50.label", fallback: theme.scaledTextStyle(.label).lineHeight))
-                #else
-                TextField("", text: $dayText)
-                #endif
             }
                 .textFieldStyle(.plain)
                 .componentInspectionText(50, role: .label, fallback: .label, theme: theme)
@@ -1384,10 +1328,10 @@ struct DayOfMonthPicker: View {
                     }
                 }
 
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 Button(action: { incrementDay() }) {
                     Image(systemName: "chevron.up")
-                        .glyphSize(8, weight: .bold)
+                        .glyphSize(.tiny, weight: .bold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: 20, height: 12)
                 }
@@ -1395,7 +1339,7 @@ struct DayOfMonthPicker: View {
 
                 Button(action: { decrementDay() }) {
                     Image(systemName: "chevron.down")
-                        .glyphSize(8, weight: .bold)
+                        .glyphSize(.tiny, weight: .bold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: 20, height: 12)
                 }
@@ -1426,18 +1370,10 @@ struct DayOfMonthPicker: View {
     }
 
     private func inspectionNumberWidth(_ fallback: CGFloat) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(fallback, twoDigitWidth(theme.nsFont(.label)))
-        #else
-        return fallback
-        #endif
     }
     private var inspectionFieldHeight: CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(NativeComponentInspectionStyle.metric(50, "height", 38, theme), theme.lineHeight(.label) + 4)
-        #else
-        return 38
-        #endif
     }
 }
 
@@ -1491,22 +1427,19 @@ struct AgentPicker: View {
         selectedAgentDescription != nil
     }
 
-    private func agentColor(for name: String) -> Color {
-        let hue = Double(abs(name.hashValue % 360)) / 360.0
-        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
-    }
+    private func agentColor(for name: String) -> Color { theme.dataInk(seed: name) }
 
     var body: some View {
         SettingsPopUpButton(style: .field, isActive: showingPopover) {
             showingPopover.toggle()
         } label: {
-            HStack(spacing: AgentPickerInspectionStyle.metric("gap", 12, theme)) {
+            HStack(spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s12, theme)) {
                 Circle()
-                    .fill(agentColor(for: selectedAgentName).opacity(0.2))
+                    .fill(theme.dataWash(seed: selectedAgentName))
                     .frame(width: 32, height: 32)
                     .overlay(
                         Image(systemName: selectedWorkspaceOption == nil ? "person.fill" : "person.2.fill")
-                            .glyphSize(14, weight: .medium)
+                            .glyphSize(.body, weight: .medium)
                             .foregroundColor(agentColor(for: selectedAgentName))
                     )
                     .overlay(alignment: .bottomTrailing) {
@@ -1520,7 +1453,7 @@ struct AgentPicker: View {
                     }
 
                 if hasDescription {
-                    VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", 2, theme)) {
+                    VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s2, theme)) {
                         Text(selectedAgentName)
                             .agentPickerFont(SettingsFont.rowTitle, property: "label")
                             .agentPickerInk("foreground", fallback: theme.text.primary)
@@ -1540,12 +1473,10 @@ struct AgentPicker: View {
         .popover(isPresented: $showingPopover, arrowEdge: .bottom) { pickerContent }
     }
 
-    #if OSAURUS_DESIGN_SYSTEM
     var inspectorMenu: some View { pickerContent }
-    #endif
 
     private var pickerContent: some View {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 AgentOptionRow(
                     name: "Default",
                     description: "Uses the default system behavior",
@@ -1558,7 +1489,7 @@ struct AgentPicker: View {
 
                 if !agents.isEmpty {
                     Divider()
-                        .padding(.vertical, AgentPickerInspectionStyle.metric("gap", 4, theme))
+                        .padding(.vertical, AgentPickerInspectionStyle.metric("gap", theme.space.s4, theme))
 
                     VStack(alignment: .leading, spacing: theme.space.s4) {
                         ForEach(agents, id: \.id) { agent in
@@ -1577,13 +1508,13 @@ struct AgentPicker: View {
 
                 if !workspaceAgents.isEmpty {
                     Divider()
-                        .padding(.vertical, AgentPickerInspectionStyle.metric("gap", 4, theme))
+                        .padding(.vertical, AgentPickerInspectionStyle.metric("gap", theme.space.s4, theme))
 
                     Text("Workspace agents", bundle: .module)
                         .agentPickerFont(SettingsFont.chip, property: "heading")
                         .agentPickerInk("secondary", fallback: theme.text.tertiary)
-                        .padding(.horizontal, AgentPickerInspectionStyle.metric("padding", 10, theme))
-                        .padding(.bottom, AgentPickerInspectionStyle.metric("gap", 2, theme))
+                        .padding(.horizontal, AgentPickerInspectionStyle.metric("padding", theme.space.s10, theme))
+                        .padding(.bottom, AgentPickerInspectionStyle.metric("gap", theme.space.s2, theme))
 
                     VStack(alignment: .leading, spacing: theme.space.s4) {
                         ForEach(workspaceAgents) { option in
@@ -1601,13 +1532,9 @@ struct AgentPicker: View {
                     }
                 }
             }
-            .padding(.horizontal, AgentPickerInspectionStyle.metric("padding", 8, theme)).padding(.vertical, AgentPickerInspectionStyle.metric("padding", 8, theme))
+            .padding(.horizontal, AgentPickerInspectionStyle.metric("padding", theme.space.s8, theme)).padding(.vertical, AgentPickerInspectionStyle.metric("padding", theme.space.s8, theme))
             .frame(width: 360)
-            #if OSAURUS_DESIGN_SYSTEM
             .agentPickerSurface()
-            #else
-            .background(theme.surface.raised)
-            #endif
     }
 }
 
@@ -1629,13 +1556,13 @@ struct AgentOptionRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: AgentPickerInspectionStyle.metric("gap", 10, theme)) {
+            HStack(spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s10, theme)) {
                 if let presence {
                     Circle()
                         .fill(presence.agentPickerIndicatorColor(theme: theme, enabled: inspectorEnabled))
                         .frame(width: 7, height: 7)
                 }
-                VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", 2, theme)) {
+                VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s2, theme)) {
                     Text(name)
                         .agentPickerFont(SettingsFont.rowTitle, property: "label")
                         .agentPickerInk("foreground", fallback: theme.text.primary)
@@ -1652,14 +1579,11 @@ struct AgentOptionRow: View {
 
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .agentPickerInk("accent", fallback: theme.text.link)
                 }
             }
             .agentPickerRowLayout(horizontal: 10, vertical: 8, selected: isSelected)
-            #if !OSAURUS_DESIGN_SYSTEM
-            .settingsChrome(isHovering ? .hover : nil)
-            #endif
             .contentShape(Rectangle())
         }
         .agentPickerButtonStyle()
@@ -1695,21 +1619,16 @@ private struct AssignedTimePeriod: ViewModifier {
     let theme: any ThemeProtocol
     let enabled: Bool
     func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         let key = "component.library.8.elements.chip."
         content.assignedTypography(key + "text", fallback: SettingsFont.smallLabel)
             .foregroundStyle(theme.assignedColor(key + (enabled ? "foreground" : "disabledForeground"), fallback: theme.text.link))
-            .padding(.horizontal, theme.assignedMetric(key + "padding", fallback: 6))
+            .padding(.horizontal, theme.assignedMetric(key + "padding", fallback: theme.space.s6))
             .padding(.vertical, theme.space.s4)
             .background(RoundedRectangle(cornerRadius: theme.assignedMetric(key + "radius", fallback: theme.radius.medium))
                 .fill(theme.assignedColor(key + "selected", fallback: theme.surface.selected)))
             .overlay(RoundedRectangle(cornerRadius: theme.assignedMetric(key + "radius", fallback: theme.radius.medium))
                 .strokeBorder(theme.assignedColor(key + "border", fallback: theme.border.default), lineWidth: theme.assignedMetric(key + "borderWidth", fallback: theme.stroke.default)))
             .nativeCatalogTarget(["text", "foreground", "disabledForeground", "padding", "selected", "border", "borderWidth", "radius"].map { key + $0 }, "AM/PM button")
-        #else
-        content.catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
-            .foregroundColor(theme.text.link).padding(.horizontal, theme.space.s6).padding(.vertical, theme.space.s4).settingsChrome(.selected)
-        #endif
     }
 }
 private struct AssignedTimeField: ViewModifier {
@@ -1717,16 +1636,11 @@ private struct AssignedTimeField: ViewModifier {
     let focused: Bool
     let enabled: Bool
     func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         let key = "component.library.8.elements.container."
-        content.padding(.horizontal, theme.assignedMetric(key + "padding", fallback: 10))
+        content.padding(.horizontal, theme.assignedMetric(key + "padding", fallback: theme.space.s10))
             .assignedBaseChrome(8)
             .assignedBaseFocusRing(8, visible: focused && enabled, radius: theme.assignedMetric(key + "radius", fallback: theme.radius.medium), keyboardOnly: false)
             .nativeCatalogTarget(["padding", "height", "gap", "hover", "disabledBackground"].map { key + $0 } + ["component.library.8.accent"], "Time field")
-        #else
-        content.padding(.leading, theme.space.s8).padding(.trailing, theme.space.s8).settingsChrome(.control)
-            .settingsFocusRing(focused, radius: theme.radius.medium)
-        #endif
     }
 }
 private extension View {

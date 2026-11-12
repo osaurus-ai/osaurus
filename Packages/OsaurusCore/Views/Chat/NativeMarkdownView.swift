@@ -426,9 +426,7 @@ final class NativeMarkdownView: NSView {
     /// Cross-painted state is detected by reading the existing
     /// `.redactionPlaceholder` attribute runs, so a partial scan
     /// can't double-paint a range.
-    #if OSAURUS_DESIGN_SYSTEM
     private var redactionInspectionFingerprint: Int?
-    #endif
     private func applyRedactionHighlightsIfNeeded(theme: any ThemeProtocol) {
         guard let tv = textView, let storage = tv.textStorage else {
             appliedHighlightRanges = []
@@ -443,14 +441,9 @@ final class NativeMarkdownView: NSView {
             hoverController = nil
             return
         }
-        #if OSAURUS_DESIGN_SYSTEM
-        let highlightTheme = theme.catalogFamily(52, authoritative: true)
+        let highlightTheme = theme.catalogFamily(52)
         let styleChanged = redactionInspectionFingerprint != highlightTheme.renderFingerprint
         redactionInspectionFingerprint = highlightTheme.renderFingerprint
-        #else
-        let highlightTheme = theme
-        let styleChanged = false
-        #endif
         let accent = NSColor(highlightTheme.status.info.foreground)
         let dictHash = highlightsFingerprint(redactionHighlights)
         let canIncrement =
@@ -586,7 +579,7 @@ final class NativeMarkdownView: NSView {
         // one, and skips the parse cache, whose key hashes the whole text.
         guard !(isStreaming && textChanged && !reflowParagraphs) else {
             applySegments(
-                groupBlocksIntoSegments(streamingParser.parse(text)),
+                groupBlocksIntoSegments(streamingParser.parse(text), space: theme.space),
                 cacheKey: cacheKey,
                 textChanged: true,
                 widthChanged: false,
@@ -621,7 +614,7 @@ final class NativeMarkdownView: NSView {
         let blocks = ChatPerfTrace.shared.time("markdown.parse") {
             reflowParagraphs ? parseDocumentBlocks(parseInput) : parseBlocks(parseInput)
         }
-        let segs = groupBlocksIntoSegments(blocks)
+        let segs = groupBlocksIntoSegments(blocks, space: theme.space)
         if !reflowParagraphs {
             ThreadCache.shared.setMarkdown(blocks: blocks, segments: segs, for: parseInput)
         }
@@ -1011,9 +1004,7 @@ final class NativeMarkdownView: NSView {
         invalidateHeightMemo()
         removeTextView()
         lastMixedSegments = segments
-        #if OSAURUS_DESIGN_SYSTEM
         catalogAssignmentTarget(["textBlockGap", "codeBlockGap", "imageGap", "mathGap", "tableGap"].map { RichTextInspectionStyle.key + "elements.layout." + $0 }, name: "Rich text content blocks", theme: theme)
-        #endif
 
         let requiredKeys = segments.map { $0.id }
         // remove stale segment views
@@ -1328,10 +1319,11 @@ final class NativeMarkdownView: NSView {
 
     private func scheduleBackgroundParse(text: String) {
         parseTask?.cancel()
+        let space = (lastThemeForLayout ?? ThemeManager.shared.currentTheme).space
         parseTask = Task {
             let (blocks, segs) = await Task.detached(priority: .userInitiated) {
                 let b = parseBlocks(text)
-                return (b, groupBlocksIntoSegments(b))
+                return (b, groupBlocksIntoSegments(b, space: space))
             }.value
             guard !Task.isCancelled else { return }
             await MainActor.run {
@@ -1491,11 +1483,9 @@ final class NativeMarkdownView: NSView {
     /// elapsed time, decided by `idleTick`.
     fileprivate func enterStreamingMode(theme: any ThemeProtocol) {
         streamingCursorColor = NSColor(theme.text.primary)
-        #if OSAURUS_DESIGN_SYSTEM
         if let scoped = theme as? CatalogResolvedTheme, [28,29,31].contains(scoped.family) {
             streamingCursorColor = NSColor(theme.cursor)
         }
-        #endif
         guard idleTimer == nil else { return }
         idleTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in

@@ -16,12 +16,13 @@
 import SwiftUI
 
 struct SubagentSettingsSection: View {
+    @Environment(\.theme) private var theme
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var modelPickerCache = ModelPickerItemCache.shared
     @Binding var configuration: SubagentConfiguration
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             subagentsSection
             localModelsSection
         }

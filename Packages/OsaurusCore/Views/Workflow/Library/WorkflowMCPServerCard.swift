@@ -35,10 +35,10 @@ struct WorkflowMCPServerCard: View {
 
     var body: some View {
         let candidate = MCPServerResolution.liveCandidate(for: name, in: template, bindings: bindings)
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "server.rack")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.text.link)
                 Text(verbatim: name)
                     .font(SettingsFont.sectionTitle)
@@ -139,8 +139,8 @@ struct WorkflowMCPServerCard: View {
                 manager.setEnabled(true, for: server.id)
             }
         } else if state?.isConnecting == true {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
                 Text(verbatim: L("Connecting to \(server.name)…"))
                     .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.secondary)
@@ -196,7 +196,7 @@ struct WorkflowMCPServerCard: View {
     // MARK: - Parts
 
     private func line(_ icon: String, tint: Color, _ text: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: icon).foregroundColor(tint)
             Text(verbatim: text)
                 .font(SettingsFont.smallLabel)
@@ -206,7 +206,7 @@ struct WorkflowMCPServerCard: View {
     }
 
     private func action(_ icon: String, _ text: String, button: String, perform: @escaping () -> Void) -> some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: theme.space.s8) {
             Image(systemName: icon).foregroundColor(theme.status.info.foreground)
             Text(verbatim: text)
                 .font(SettingsFont.rowDescription)

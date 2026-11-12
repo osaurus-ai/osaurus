@@ -25,7 +25,7 @@ struct StatusPanelView: View {
             theme.surface.canvas
                 .ignoresSafeArea()
 
-            VStack(spacing: 12) {
+            VStack(spacing: theme.space.s12) {
                 TopStatusHeader(
                     appName: "Osaurus",
                     serverURL: "http://\(server.localNetworkAddress):\(String(server.port))",
@@ -148,7 +148,7 @@ private struct TopStatusHeader: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(nsImage: NSImage(named: "AppIcon") ?? NSApp.applicationIconImage)
                 .resizable()
                 .interpolation(.high)
@@ -162,9 +162,9 @@ private struct TopStatusHeader: View {
                 }
                 .localizedHelp("Open Server Management")
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s8) {
+                    HStack(spacing: theme.space.s6) {
                         Text(appName)
                             .font(SettingsFont.detailTitle)
                             .foregroundColor(theme.text.primary)
@@ -186,12 +186,12 @@ private struct TopStatusHeader: View {
                             .localizedHelp("Server is running")
                     } else {
                         // Show full badge for transitional states
-                        StatusBadge(status: badgeText, kind: badgeKind, isAnimating: badgeAnimating)
+                        StatusChip(badgeText, tone: StatusChip.Tone(badgeKind), showsDot: true, pulses: badgeAnimating)
                     }
                 }
 
                 if server.isRunning || server.isRestarting {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Text(serverURL)
                             .font(SettingsFont.monoSmall)
                             .minimumScaleFactor(0.8)
@@ -199,7 +199,7 @@ private struct TopStatusHeader: View {
 
                         Button(action: copyURL) {
                             Image(systemName: "doc.on.doc")
-                                .glyphSize(10)
+                                .glyphSize(.micro)
                                 .foregroundColor(theme.text.tertiary)
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -237,13 +237,13 @@ private struct StatusDot: View {
         ZStack {
             // Glow ring
             Circle()
-                .fill(color.opacity(0.2))
+                .fill(theme.wash(behind: color))
                 .frame(width: 16, height: 16)
                 .blur(radius: 2)
 
             // Pulse animation
             Circle()
-                .stroke(color.opacity(0.3), lineWidth: theme.stroke.focus)
+                .stroke(theme.rule(around: color), lineWidth: theme.stroke.focus)
                 .frame(width: 14, height: 14)
                 .scaleEffect(isAnimating ? 1.8 : 1.0)
                 .opacity(isAnimating ? 0 : 0.6)
@@ -285,12 +285,12 @@ private struct BottomActionBar: View {
     @Binding var portString: String
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: theme.space.s4) {
             SystemResourceMonitor()
 
             Spacer()
 
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 // Primary "Ask AI" button
                 AskAIButton {
                     AppDelegate.shared?.showChatOverlay()
@@ -301,11 +301,11 @@ private struct BottomActionBar: View {
                 // VAD Toggle Button
                 VADToggleButton()
 
-                CircularIconButton(systemName: "gearshape", help: "Settings") {
+                SettingsIconButton("gearshape", help: "Settings") {
                     AppDelegate.shared?.showManagementWindow()
                 }
 
-                CircularIconButton(systemName: "questionmark.circle", help: "Documentation") {
+                SettingsIconButton("questionmark.circle", help: "Documentation") {
                     if let url = URL(string: "https://docs.osaurus.ai/") {
                         // Async variant avoids a synchronous LaunchServices XPC
                         // round-trip that can hang the main thread.
@@ -313,7 +313,7 @@ private struct BottomActionBar: View {
                     }
                 }
 
-                CircularIconButton(systemName: "power", help: "Quit") {
+                SettingsIconButton("power", help: "Quit") {
                     NSApp.terminate(nil)
                 }
             }
@@ -399,42 +399,12 @@ private struct VADToggleButton: View {
 
     var body: some View {
         Button(action: toggleVAD) {
-            ZStack {
-                // Background
-                Circle()
-                    .fill(isActive ? iconColor.opacity(0.15) : theme.action.secondary.default.background)
-
-                // Accent gradient when active
-                if isActive {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [iconColor.opacity(0.15), Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-
-                // Icon
-                Image(systemName: isActive ? "waveform.circle.fill" : "waveform.circle")
-                    .glyphSize(14)
-                    .foregroundColor(iconColor)
-                    .scaleEffect(pulseAnimation && vadService.state == .listening ? 1.08 : 1.0)
-            }
-            .frame(width: 28, height: 28)
-            .overlay(
-                Circle()
-                    .strokeBorder(
-                        isActive ? iconColor.opacity(0.4) : theme.border.subtle,
-                        lineWidth: theme.stroke.default
-                    )
-            )
-            .themeElevation(isActive ? theme.elevation.raised : .none)
+            Image(systemName: isActive ? "waveform.circle.fill" : "waveform.circle")
+                .foregroundColor(iconColor)
+                .scaleEffect(pulseAnimation && vadService.state == .listening ? 1.08 : 1.0)
         }
-        .buttonStyle(PlainButtonStyle())
+        .assignedSettingsIconButtonStyle(isActive: isActive)
         .disabled(!canToggleVAD || !isVADConfigured)
-        .opacity(canToggleVAD && isVADConfigured ? 1.0 : 0.4)
         .help(tooltipText)
         .onAppear {
             startPulseIfNeeded()

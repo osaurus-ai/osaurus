@@ -51,7 +51,7 @@ struct PromptReplyField: View {
     var body: some View {
         switch chrome {
         case .field:
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 editor
                     .background(
                         RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
@@ -116,15 +116,15 @@ struct PromptReplyField: View {
         .fixedSize(horizontal: false, vertical: true)
         // EditableTextView carries a 6pt/2pt internal container inset;
         // pad the remainder so the visual frame is 12/9.
-        .padding(.horizontal, 6)
-        .padding(.vertical, 7)
+        .padding(.horizontal, theme.space.s6)
+        .padding(.vertical, theme.space.s6)
         .overlay(alignment: .topLeading) {
             if text.isEmpty {
                 Text(placeholder, bundle: .module)
                     .textStyle(textRole)
                     .foregroundColor(theme.text.placeholder)
                     .lineLimit(1)
-                    .padding(.leading, 12)
+                    .padding(.leading, theme.space.s12)
                     .padding(.top, 9 + theme.lineSpacing(textRole) / 2)
                     .allowsHitTesting(false)
             }

@@ -239,7 +239,7 @@ struct WorkflowMediaThumbnail: View {
                 .help(L("This file is missing or can't be opened."))
         } else {
             Image(systemName: isVideo ? "film" : "photo")
-                .foregroundColor(theme.text.disabled)
+                .foregroundColor(theme.text.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(theme.surface.subtle)
         }
@@ -347,7 +347,7 @@ struct WorkflowMediaLightbox: View {
     private var file: WorkflowArtifact? { items.indices.contains(index) ? items[index] : nil }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             ZStack {
                 FixedPalette.mediaBackdrop
                 if let file, file.isVideo {
@@ -581,9 +581,7 @@ enum WorkflowMediaActions {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 @MainActor func inspectorWorkflowMediaContext(_ path: String, action: @escaping () -> Void) -> some View {
     WorkflowMediaTile(file: WorkflowArtifact(id: "local-media-menu", source: .generated, filename: "menu-image.png", mimeType: "image/png", path: path, metadata: ["action": .string("generate"), "prompt": .string("Local sample"), "seed": .number(42)]), onOpen: action)
         .frame(width: 180, height: 180)
 }
-#endif

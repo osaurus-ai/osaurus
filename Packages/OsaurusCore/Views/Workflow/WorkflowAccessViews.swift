@@ -31,7 +31,7 @@ struct WorkflowAccessRows: View {
             ForEach(scope.rows) { row in
                 HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                     Image(systemName: row.systemImage)
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                         .foregroundColor(tint(row.verb))
                         .frame(width: theme.space.s16)
                     Text(verbatim: row.title)
@@ -85,14 +85,14 @@ struct WorkflowAccessLine: View {
         HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
             ForEach(scope.places, id: \.self) { place in
                 Image(systemName: place.systemImage)
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(theme.text.tertiary)
                     .help(place.title)
                     .accessibilityLabel(Text(verbatim: place.title))
             }
             if scope.places.isEmpty {
                 Image(systemName: "lock")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(theme.text.tertiary)
             }
             Text(verbatim: scope.oneLine)
@@ -125,7 +125,7 @@ struct WorkflowHostWritesSummary: View {
             ForEach(summaries) { summary in
                 HStack(spacing: theme.space.s8) {
                     Image(systemName: WorkflowAccessScope.Place.mac.systemImage)
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                         .foregroundColor(theme.text.secondary)
                         .accessibilityHidden(true)
                     Text(verbatim: summary.text)
@@ -161,7 +161,7 @@ struct WorkflowAccessStrip: View {
 
     private var arrow: some View {
         Image(systemName: "arrow.right")
-            .glyphSize(10)
+            .glyphSize(.micro)
             .foregroundColor(theme.text.tertiary)
             .accessibilityHidden(true)
     }
@@ -169,7 +169,7 @@ struct WorkflowAccessStrip: View {
     private func step(_ symbol: String, _ title: String) -> some View {
         HStack(spacing: theme.space.s4) {
             Image(systemName: symbol)
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.secondary)
             Text(verbatim: title)
                 .textStyle(.caption)

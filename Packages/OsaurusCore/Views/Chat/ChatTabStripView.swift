@@ -18,14 +18,10 @@ import SwiftUI
 struct ChatTabStripView: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var enabled
-    #if OSAURUS_DESIGN_SYSTEM
     @Environment(\.nativeCatalogPreview) private var catalogPreview
-    #endif
     private var theme: any ThemeProtocol {
-        #if OSAURUS_DESIGN_SYSTEM
-        if catalogPreview { return inheritedTheme.catalogFamily(43, enabled: enabled, authoritative: true) }
-        #endif
-        return windowState.theme.catalogFamily(43, enabled: enabled, authoritative: true)
+        if catalogPreview { return inheritedTheme.catalogFamily(43, enabled: enabled) }
+        return windowState.theme.catalogFamily(43, enabled: enabled)
     }
     @ObservedObject var windowState: ChatWindowState
     /// Fallback for the width of the chrome preceding this item, used only
@@ -182,11 +178,9 @@ struct ChatTabStripView: View {
             guard !inside, frozenTabWidth != nil else { return }
             withAnimation(theme.motion.quick) { frozenTabWidth = nil }
         }
-        #if OSAURUS_DESIGN_SYSTEM
         // A close streak may hold the old width, but live design edits
         // must measure the current recipe and geometry again.
         .onChange(of: theme.inspectionRevision) { _, _ in frozenTabWidth = nil }
-        #endif
         .environment(\.theme, theme)
     }
 
@@ -249,22 +243,14 @@ struct ChatTabStripView: View {
         minTabWidth + 2 * trackPadding + overflowButtonReserve + plusButtonReserve
 
     static func inspectionStripHeight(_ theme: any ThemeProtocol) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
-        let scoped = theme.catalogFamily(43, authoritative: true)
+        let scoped = theme.catalogFamily(43)
         return max(scoped.assignedMetric("component.library.43.height", fallback: stripHeight), scoped.lineHeight(.label) + 2 * scoped.assignedMetric("component.library.43.padding", fallback: trackPadding) + 2)
-        #else
-        return stripHeight
-        #endif
     }
     static func inspectionMinimumItemWidth(_ theme: any ThemeProtocol) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         let pad = theme.assignedMetric("component.library.43.padding", fallback: trackPadding)
         let side = theme.assignedMetric("component.library.43.height", fallback: 28)
         let gap = theme.assignedMetric("component.library.43.gap", fallback: edgeGap)
         return minTabWidth + 2 * pad + max(overflowButtonReserve, side + 16) + gap + side + pad
-        #else
-        return minimumItemWidth
-        #endif
     }
     private var edgeSpacing: CGFloat { NativeComponentInspectionStyle.metric(43, "gap", Self.edgeGap, theme) }
     private var headerPadding: CGFloat { NativeComponentInspectionStyle.metric(43, "padding", Self.headerButtonPadding, theme) }
@@ -302,8 +288,8 @@ struct ChatTabStripView: View {
         // A lone tab reads as the window title; the recessed track only
         // appears once there are tabs to group.
         let showsTrack = shown.count + hiddenTabs.count > 1
-        return HStack(spacing: 0) {
-            HStack(spacing: 0) {
+        return HStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s0) {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, tab in
                     // Hairline divider between adjacent tabs, suppressed
                     // when either neighbor is active or hovered (their
@@ -337,7 +323,7 @@ struct ChatTabStripView: View {
 
             if !hiddenTabs.isEmpty {
                 overflowButton(hiddenTabs: hiddenTabs)
-                    .padding(.leading, 6)
+                    .padding(.leading, theme.space.s6)
             }
 
             newTabButton
@@ -460,30 +446,22 @@ struct ChatTabStripView: View {
     /// visible tab.
     @ViewBuilder
     private func overflowButton(hiddenTabs: [ChatTab]) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         AssignedExistingActionMenu(accessibilityLabel: L("More Tabs"), makeMenu: { overflowMenu(hiddenTabs) }, label: overflowLabel(hiddenTabs))
             .buttonStyle(TabHoverCapsuleButtonStyle(theme: theme))
-        #else
-        Button(action: { presentOverflowTabs(hiddenTabs) }) { overflowLabel(hiddenTabs) }
-            .buttonStyle(TabHoverCapsuleButtonStyle(theme: theme))
-            .help(Text(LocalizedStringKey("More Tabs"), bundle: .module))
-        #endif
     }
     private func overflowLabel(_ hiddenTabs: [ChatTab]) -> some View {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabStripView.overflowLabel.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(43, "gap", 2, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabStripView.overflowLabel.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(43, "gap", theme.space.s2, theme))) {
                 Image(systemName: "chevron.down")
-                    .glyphSize(9, weight: .bold)
+                    .glyphSize(.tiny, weight: .bold)
                 Text(verbatim: "\(hiddenTabs.count)")
                     .componentInspectionText(43, role: .caption, fallback: .micro, weight: 600, theme: theme)
             }.catalogLayoutTarget("component.library.43.elements.layout.chatTabStripView.overflowLabel.horizontalGap")
             .foregroundColor(theme.text.secondary)
             // Wide enough that the capsule highlight reads as a pill, not a
             // squeezed circle around the chevron and count.
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabStripView.overflowLabel.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", 8, theme))).catalogLayoutTarget("component.library.43.elements.layout.chatTabStripView.overflowLabel.paddingX")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabStripView.overflowLabel.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.43.elements.layout.chatTabStripView.overflowLabel.paddingX")
             .frame(height: NativeComponentInspectionStyle.metric(43, "height", 22, theme))
-            #if OSAURUS_DESIGN_SYSTEM
             .fixedSize(horizontal: true, vertical: false)
-            #endif
             .contentShape(Capsule())
     }
 
@@ -569,7 +547,7 @@ private struct ChatTabItemView: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var enabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled) }
     /// Live activity for this tab's session — drives the avatar's spinning
     /// ring, the same signal the sidebar rows use.
     @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
@@ -737,7 +715,7 @@ private struct ChatTabItemView: View {
     }
 
     private var identity: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabItemView.identity.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(43, "gap", 6, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabItemView.identity.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(43, "gap", theme.space.s6, theme))) {
             if isCompact, canClose, isHovered {
                 // No room for both: the × takes the avatar's slot on hover.
                 closeButton
@@ -749,7 +727,7 @@ private struct ChatTabItemView: View {
             // tooltip names the project.
             if !isNarrow, let project = projectManager.project(for: session.projectId) {
                 Image(systemName: "folder.fill")
-                    .glyphSize(9.5, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(glyphColor)
                     .frame(width: 14, height: 14)
                     .contentShape(Rectangle())
@@ -760,7 +738,7 @@ private struct ChatTabItemView: View {
             // ahead of the title; the tooltip spells it out.
             if !isNarrow, let originIconName {
                 Image(systemName: originIconName)
-                    .glyphSize(9, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
                     .foregroundColor(glyphColor)
                     .frame(width: 12, height: 12)
                     .accessibilityHidden(true)
@@ -782,7 +760,7 @@ private struct ChatTabItemView: View {
     private var closeButton: some View {
         Button(action: onClose) {
             Image(systemName: "xmark")
-                .glyphSize(8, weight: .bold)
+                .glyphSize(.tiny, weight: .bold)
                 .foregroundColor(glyphColor)
                 .frame(width: Self.closeButtonSize, height: Self.closeButtonSize)
                 .contentShape(Rectangle())
@@ -803,6 +781,16 @@ private struct ChatTabItemView: View {
         return isHovered ? theme.surface.hover : theme.assignedColor("component.library.43.background", fallback: .clear)
     }
 
+    private var marksActive: Bool { hasSiblings && isActive && !theme.isDark }
+
+    private var pillStroke: Color {
+        marksActive ? theme.selectionBorder : theme.assignedColor("component.library.43.border", fallback: .clear)
+    }
+
+    private var pillStrokeWidth: CGFloat {
+        marksActive ? theme.selectionStroke : theme.assignedMetric("component.library.43.borderWidth", fallback: 0)
+    }
+
     var body: some View {
         chipContent
         .frame(width: width)
@@ -811,7 +799,7 @@ private struct ChatTabItemView: View {
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .fill(pillFill)
         )
-        .overlay(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous).strokeBorder(theme.assignedColor("component.library.43.border", fallback: .clear), lineWidth: theme.assignedMetric("component.library.43.borderWidth", fallback: 0)))
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous).strokeBorder(pillStroke, lineWidth: pillStrokeWidth))
         .contentShape(Rectangle())
         .offset(x: dragOffset)
         .zIndex(isDragging ? 1 : 0)
@@ -1264,7 +1252,7 @@ private struct TabActivityRing: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var enabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSpinning = false
 
@@ -1344,20 +1332,15 @@ private struct TabRightClickCatcher: NSViewRepresentable {
 
     func updateNSView(_ view: CatcherView, context: Context) {
         view.makeMenu = makeMenu
-        #if OSAURUS_DESIGN_SYSTEM
         view.menuTheme = theme
         if view.presenter.isPresented { view.showAssignedMenu() }
-        #endif
     }
     static func dismantleNSView(_ view: CatcherView, coordinator: ()) {
-        #if OSAURUS_DESIGN_SYSTEM
         view.presenter.close(notify: false)
-        #endif
     }
 
     final class CatcherView: NSView {
         var makeMenu: @MainActor () -> NSMenu
-        #if OSAURUS_DESIGN_SYSTEM
         var menuTheme: (any ThemeProtocol)?
         let presenter = AssignedMenuPanelPresenter()
         func showAssignedMenu() {
@@ -1365,7 +1348,6 @@ private struct TabRightClickCatcher: NSViewRepresentable {
             let menu = makeMenu()
             presenter.showContextMenu(menu, from: self, theme: menuTheme)
         }
-        #endif
         // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
         // monitor; all writes happen on the main thread (same pattern as
         // WindowEdgeReader's resize observer).
@@ -1400,11 +1382,7 @@ private struct TabRightClickCatcher: NSViewRepresentable {
                 nonisolated(unsafe) let event = incoming
                 let handled = MainActor.assumeIsolated { () -> Bool in
                     guard let self, self.shouldHandle(event) else { return false }
-                    #if OSAURUS_DESIGN_SYSTEM
                     self.showAssignedMenu()
-                    #else
-                    NSMenu.popUpContextMenu(self.makeMenu(), with: event, for: self)
-                    #endif
                     return true
                 }
                 return handled ? nil : incoming

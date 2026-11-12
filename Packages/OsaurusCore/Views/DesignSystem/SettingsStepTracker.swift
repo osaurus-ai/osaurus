@@ -41,7 +41,7 @@ struct SettingsStepTracker: View {
     private let marker: CGFloat = 22
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
+        HStack(alignment: .top, spacing: theme.space.s0) {
             ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                 column(step, index: index)
             }
@@ -53,7 +53,7 @@ struct SettingsStepTracker: View {
     private func column(_ step: SettingsStep, index: Int) -> some View {
         VStack(spacing: theme.space.s6) {
             ZStack {
-                HStack(spacing: 0) {
+                HStack(spacing: theme.space.s0) {
                     rail(index > 0 ? railTint(into: index) : .clear)
                     rail(index < steps.count - 1 ? railTint(into: index + 1) : .clear)
                 }
@@ -100,14 +100,14 @@ struct SettingsStepTracker: View {
             Circle().strokeBorder(markerStroke(step.state), lineWidth: theme.stroke.focus)
             switch step.state {
             case .working:
-                ProgressView().controlSize(.mini)
+                SettingsSpinner(size: .mini)
             case .upcoming:
                 Text(verbatim: "\(index + 1)")
                     .font(SettingsFont.chip.monospacedDigit())
                     .foregroundColor(theme.text.tertiary)
             default:
                 Image(systemName: glyph(step.state))
-                    .glyphSize(10, weight: .bold)
+                    .glyphSize(.micro, weight: .bold)
                     .foregroundColor(glyphTint(step.state))
             }
         }

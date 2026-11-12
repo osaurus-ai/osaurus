@@ -206,7 +206,6 @@ struct EditableTextView: NSViewRepresentable {
             var attributes = theme.textAttributes(textRole, color: NSColor(textColor))
             let paragraph = theme.paragraphStyle(textRole)
             var lineHeight = theme.lineHeight(textRole)
-            #if OSAURUS_DESIGN_SYSTEM
             if let typographyAssignment {
                 attributes[.font] = theme.assignedNativeFont(typographyAssignment, fallback: theme.nsFont(textRole))
                 lineHeight = theme.assignedLineHeight(typographyAssignment, fallback: lineHeight)
@@ -214,7 +213,6 @@ struct EditableTextView: NSViewRepresentable {
                 attributes[.paragraphStyle] = paragraph
                 attributes[.kern] = theme.assignedTracking(typographyAssignment) ?? theme.tracking(textRole)
             }
-            #endif
             textView.font = attributes[.font] as? NSFont
             textView.textColor = NSColor(textColor)
             textView.defaultParagraphStyle = paragraph

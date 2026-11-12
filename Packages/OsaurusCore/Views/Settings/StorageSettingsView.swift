@@ -43,7 +43,7 @@ public struct StorageSettingsView: View {
     public init() {}
 
     private var sectionsContent: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: theme.space.s24) {
             postureCard
                 .settingsLandingAnchor("storage.encryption")
             if !storeIssues.isEmpty {
@@ -106,7 +106,7 @@ public struct StorageSettingsView: View {
                 title: postureTitle, description: postureSubtitle, verbatimTitle: true, verbatimDescription: true
             ) {
                 Image(systemName: postureIcon)
-                    .glyphSize(16, weight: .medium)
+                    .glyphSize(.medium, weight: .medium)
                     .foregroundColor(postureColor)
             } trailing: {
                 EmptyView()
@@ -117,8 +117,8 @@ public struct StorageSettingsView: View {
                     title: "Encrypt Local Data at Rest (SQLCipher)",
                     description: "Turning this on or off migrates every database and attachment to the new format."
                 ) {
-                    HStack(spacing: 6) {
-                        ProgressView().scaleEffect(0.6)
+                    HStack(spacing: theme.space.s6) {
+                        SettingsSpinner()
                         Text(LocalizedStringKey(workingLabel), bundle: .module)
                             .font(SettingsFont.rowDescription)
                             .foregroundColor(theme.text.secondary)
@@ -145,7 +145,7 @@ public struct StorageSettingsView: View {
 
     private var tradeoffsCard: some View {
         SettingsSection(title: "Why Encryption Is Opt-In") {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 fileVaultRow
                 aboutRow(
                     icon: "externaldrive.fill.badge.checkmark",
@@ -176,9 +176,9 @@ public struct StorageSettingsView: View {
     /// caution when off (since plaintext then has no disk encryption behind it,
     /// and it's also why an existing encrypted install was kept encrypted).
     private var fileVaultRow: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: fileVaultOn ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(fileVaultOn ? theme.status.success.foreground : theme.status.warning.foreground)
                 .frame(width: 16, alignment: .center)
                 .padding(.top, theme.space.s2)
@@ -204,7 +204,7 @@ public struct StorageSettingsView: View {
     /// subsystem and no way forward.
     private var recoveryCard: some View {
         SettingsSection(title: "Stores Needing Attention") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 ForEach(sortedStoreIssues, id: \.store) { issue in
                     storeIssueRow(issue)
                     if issue.store != sortedStoreIssues.last?.store {
@@ -223,17 +223,17 @@ public struct StorageSettingsView: View {
     private func storeIssueRow(_ issue: StorageStoreIssue) -> some View {
         let store = StorageRecoveryService.Store(rawValue: issue.store)
         let label = store?.displayName ?? issue.store
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Text(LocalizedStringKey(label), bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
                 StatusChip(LCached(issueKindBadge(issue.kind)), tint: issueKindColor(issue.kind))
                 Spacer(minLength: 8)
                 if recoveringStore == issue.store {
-                    ProgressView().scaleEffect(0.55)
+                    SettingsSpinner()
                 } else if store != nil {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         actionButton(
                             icon: "arrow.clockwise",
                             label: "Retry",
@@ -312,9 +312,9 @@ public struct StorageSettingsView: View {
     }
 
     private func aboutRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .medium)
+                .glyphSize(.footnote, weight: .medium)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: 16, alignment: .center)
                 .padding(.top, theme.space.s2)
@@ -364,7 +364,7 @@ public struct StorageSettingsView: View {
 
     private var technicalDetails: some View {
         SettingsAdvancedDisclosure(title: "Technical Details") {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text("Service: com.osaurus.storage", bundle: .module)
                 Text("Account: data-encryption-key", bundle: .module)
                 Text("Cipher: AES-256-CBC + HMAC-SHA512, page size 4096, kdf_iter 256000", bundle: .module)
@@ -412,9 +412,9 @@ public struct StorageSettingsView: View {
     }
 
     private func statusLine(text: String, color: Color, icon: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(color)
                 .padding(.top, theme.space.s2)
             Text(text)

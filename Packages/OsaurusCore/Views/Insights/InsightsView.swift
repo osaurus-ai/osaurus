@@ -38,7 +38,7 @@ struct InsightsView: View {
     static let inspectorWidth: CGFloat = 440
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerView
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
@@ -97,9 +97,9 @@ struct InsightsView: View {
 
     /// Wide: chrome on top, list and inspector side by side underneath.
     private var inspectorLayout: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             chrome
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 eventList(compact: selectedLog != nil, presentation: .inspector)
                     .frame(maxWidth: .infinity)
                 if let selected = selectedLog {
@@ -120,7 +120,7 @@ struct InsightsView: View {
                 InsightsDetailPane(log: selected, presentation: .page, onBack: pop)
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .trailing)))
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     chrome
                     eventList(compact: false, presentation: .page)
                 }
@@ -201,13 +201,13 @@ struct InsightsView: View {
     // MARK: - Event list
 
     private func eventList(compact: Bool, presentation: InsightsDetailPresentation) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             if !insightsService.pagedLogs.isEmpty {
                 tableHeader(compact: compact)
             }
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    LazyVStack(spacing: theme.space.s0, pinnedViews: [.sectionHeaders]) {
                         if insightsService.pagedLogs.isEmpty {
                             emptyStateView
                                 .frame(maxWidth: .infinity)
@@ -252,7 +252,7 @@ struct InsightsView: View {
 
     private func tableHeader(compact: Bool) -> some View {
         let columns = ActivityTableColumns(compact: compact, fontScale: theme.fontScale)
-        return HStack(spacing: 0) {
+        return HStack(spacing: theme.space.s0) {
             Spacer().frame(width: columns.status)
             Text("TIME", bundle: .module).frame(width: columns.time, alignment: .leading)
             Text("EVENT", bundle: .module).frame(maxWidth: .infinity, alignment: .leading)
@@ -269,7 +269,7 @@ struct InsightsView: View {
     }
 
     private func dayHeader(_ key: String, count: Int) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Text(Self.dayLabel(key))
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
@@ -288,7 +288,7 @@ struct InsightsView: View {
         HStack {
             Spacer()
             if insightsService.isLoading {
-                ProgressView().scaleEffect(0.7)
+                SettingsSpinner()
             } else {
                 Button(action: { insightsService.loadMore() }) {
                     Text(
@@ -389,8 +389,8 @@ struct InsightsView: View {
 // MARK: - Category tint
 
 extension ActivityCategory {
-    /// Muted hue used only for the row glyph and the detail header glyph.
-    var tint: Color {
+    /// Hue used only for the row glyph and the detail header glyph.
+    var ink: DataInk {
         switch self {
         case .inference: return .purple
         case .compaction: return .indigo
@@ -401,15 +401,15 @@ extension ActivityCategory {
         case .routerControl: return .blue
         case .inboundAPI: return .blue
         case .pluginCall, .pluginLog: return .teal
-        case .embedding: return .mint
+        case .embedding: return .teal
         case .audioTranscription: return .green
-        case .speechSynthesis: return .yellow
+        case .speechSynthesis: return .orange
         case .mediaGeneration: return .pink
         case .workflowRun, .workflowNode: return .indigo
         case .event: return .orange
         case .task: return .orange
         case .system: return .gray
-        case .interaction: return .brown
+        case .interaction: return .orange
         }
     }
 }
@@ -448,9 +448,9 @@ private struct InsightsGlanceStrip: View {
                     splitBar
                     destinationsDisclosure
                 } else {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "lock.laptopcomputer")
-                            .glyphSize(10, weight: .semibold)
+                            .glyphSize(.micro, weight: .semibold)
                         Text("Everything stayed on this Mac", bundle: .module)
                             .font(SettingsFont.smallLabel)
                     }
@@ -491,9 +491,9 @@ private struct InsightsGlanceStrip: View {
 
     private var splitBar: some View {
         GeometryReader { geo in
-            HStack(spacing: 2) {
+            HStack(spacing: theme.space.s2) {
                 RoundedRectangle(cornerRadius: theme.radius.small)
-                    .fill(theme.text.disabled)
+                    .fill(theme.border.strong)
                     .frame(width: max(0, geo.size.width * (1 - summary.remoteShare) - 1))
                 RoundedRectangle(cornerRadius: theme.radius.small)
                     .fill(theme.status.info.foreground)
@@ -504,11 +504,11 @@ private struct InsightsGlanceStrip: View {
     }
 
     private var destinationsDisclosure: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Button(action: { withAnimation(theme.motion.quick) { showDestinations.toggle() } }) {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "chevron.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .rotationEffect(.degrees(showDestinations ? 90 : 0))
                     Text(destinationsLine)
                         .font(SettingsFont.smallLabel)
@@ -520,7 +520,7 @@ private struct InsightsGlanceStrip: View {
             .buttonStyle(.plain)
 
             if showDestinations {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(summary.destinations.prefix(14)) { dest in
                         destinationRow(dest)
                         if dest.id != summary.destinations.prefix(14).last?.id {
@@ -548,12 +548,12 @@ private struct InsightsGlanceStrip: View {
             guard !dest.host.isEmpty else { return }
             filter.destinationHost = isActive ? nil : dest.host
         }) {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: dest.errorCount > 0 ? "exclamationmark.icloud" : "icloud")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(dest.errorCount > 0 ? theme.status.warning.foreground : theme.text.link)
                     .frame(width: 14)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(dest.label)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -577,7 +577,7 @@ private struct InsightsGlanceStrip: View {
                 }
                 if isActive {
                     Image(systemName: "checkmark")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(theme.text.link)
                 }
             }
@@ -622,7 +622,7 @@ private struct InsightsToolbar: View {
 
             let tokens = ActivityFilterToken.tokens(for: filter.wrappedValue).filter { $0.kind != .dateRange && $0.kind != .text }
             if !tokens.isEmpty {
-                FlowLayout(spacing: 6) {
+                FlowLayout(spacing: theme.space.s6) {
                     ForEach(tokens) { token in
                         InsightsFilterToken(token: token) {
                             var f = filter.wrappedValue
@@ -644,27 +644,11 @@ private struct InsightsToolbar: View {
     }
 
     private var timeRangeControl: some View {
-        HStack(spacing: 2) {
-            ForEach(ActivityDateRange.presets, id: \.self) { range in
-                let isSelected = filter.wrappedValue.dateRange == range
-                Button(action: { filter.wrappedValue.dateRange = range }) {
-                    Text(range.displayName)
-                        .textStyle(.footnote, weight: isSelected ? 600 : 500)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
-                        .padding(.horizontal, theme.space.s8)
-                        .frame(minHeight: theme.controlSize.defaultHeight - 2 * theme.space.s4)
-                        .background(
-                            RoundedRectangle(cornerRadius: theme.radius.small).fill(isSelected ? theme.surface.selected : Color.clear)
-                        )
-                        .contentShape(RoundedRectangle(cornerRadius: theme.radius.small))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(theme.space.s4)
-        .settingsChrome(.inset)
+        AssignedBaseSegmentedPicker(
+            selection: filter.dateRange,
+            options: ActivityDateRange.presets.map { .init($0, $0.displayName, verbatim: true) },
+            size: .compact
+        )
         .fixedSize()
     }
 
@@ -673,8 +657,8 @@ private struct InsightsToolbar: View {
         // only what is hidden behind the popover.
         let hidden = ActivityFilterToken.tokens(for: filter.wrappedValue).filter { $0.kind != .dateRange && $0.kind != .text }.count
         return Button(action: { showFilterPopover.toggle() }) {
-            HStack(spacing: 5) {
-                Image(systemName: "line.3.horizontal.decrease").glyphSize(10, weight: .semibold)
+            HStack(spacing: theme.space.s4) {
+                Image(systemName: "line.3.horizontal.decrease").glyphSize(.micro, weight: .semibold)
                 Text("Filter", bundle: .module).font(SettingsFont.smallLabel)
                 if hidden > 0 {
                     CountBadge(hidden, prominence: .attention)
@@ -734,7 +718,7 @@ private struct InsightsFilterPopover: View {
     private var filter: Binding<ActivityFilter> { $service.filter }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             HStack {
                 Text("Filter activity", bundle: .module)
                     .font(SettingsFont.sectionTitle)
@@ -767,7 +751,7 @@ private struct InsightsFilterPopover: View {
             }
 
             group(Text("Source", bundle: .module)) {
-                FlowLayout(spacing: 6) {
+                FlowLayout(spacing: theme.space.s6) {
                     ForEach(RequestSource.allCases.filter { $0 != .system }, id: \.self) { source in
                         let isOn = filter.wrappedValue.sources.contains(source)
                         toggleChip(source.displayName, isOn: isOn) {
@@ -778,7 +762,7 @@ private struct InsightsFilterPopover: View {
             }
 
             if !service.knownDestinations.isEmpty || !service.knownModels.isEmpty {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: theme.space.s12) {
                     if !service.knownDestinations.isEmpty {
                         group(Text("Destination", bundle: .module)) {
                             pickerMenu(
@@ -827,7 +811,7 @@ private struct InsightsFilterPopover: View {
     }
 
     private func group<Content: View>(_ title: Text, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             title
                 .textStyle(.micro, weight: 600)
                 .foregroundColor(theme.text.tertiary)
@@ -843,26 +827,11 @@ private struct InsightsFilterPopover: View {
         label: @escaping (T) -> String,
         onSelect: @escaping (T) -> Void
     ) -> some View {
-        HStack(spacing: 2) {
-            ForEach(items, id: \.self) { item in
-                let isSelected = selected(item)
-                Button(action: { onSelect(item) }) {
-                    Text(label(item))
-                        .textStyle(.footnote, weight: isSelected ? 600 : 500)
-                        .lineLimit(1)
-                        .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, theme.space.s6)
-                        .background(
-                            RoundedRectangle(cornerRadius: theme.radius.small).fill(isSelected ? theme.surface.selected : Color.clear)
-                        )
-                        .contentShape(RoundedRectangle(cornerRadius: theme.radius.small))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(theme.space.s4)
-        .settingsChrome(.inset)
+        AssignedBaseSegmentedPicker(
+            selection: Binding(get: { items.first(where: selected) ?? items[0] }, set: onSelect),
+            options: items.map { .init($0, label($0), verbatim: true) },
+            size: .compact
+        )
     }
 
     private func toggleChip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
@@ -922,7 +891,7 @@ private struct ActivityRow: View {
     var body: some View {
         let columns = ActivityTableColumns(compact: compact, fontScale: theme.fontScale)
         Button(action: onTap) {
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 statusDot
                     .frame(width: columns.status, alignment: .leading)
 
@@ -931,19 +900,18 @@ private struct ActivityRow: View {
                     .foregroundColor(theme.text.tertiary)
                     .frame(width: columns.time, alignment: .leading)
 
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     ZStack {
-                        Circle().fill(log.category.tint.opacity(0.14))
+                        Circle().fill(theme.dataWash(log.category.ink))
                         Image(systemName: log.category.icon)
-                            .glyphSize(11, weight: .semibold)
-                            .foregroundColor(log.category.tint.opacity(0.9))
+                            .glyphSize(.footnote, weight: .semibold)
+                            .foregroundColor(theme.dataInk(log.category.ink))
                     }
                     .frame(width: 26, height: 26)
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(log.title)
-                            .textStyle(usesMonospacedTitle ? .code : .caption)
-                            .fontWeight(.medium)
+                            .textStyle(usesMonospacedTitle ? .code : .caption, weight: 500)
                             .foregroundColor(
                                 log.isError
                                     ? theme.status.error.foreground
@@ -1002,7 +970,7 @@ private struct ActivityRow: View {
     }
 
     private var secondaryLine: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             Text(secondaryText)
                 .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.tertiary)
@@ -1010,7 +978,7 @@ private struct ActivityRow: View {
                 .truncationMode(.middle)
             if log.egress?.privacyFilterApplied == true {
                 Image(systemName: "hand.raised.fill")
-                    .glyphSize(9, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
                     .foregroundColor(theme.status.success.foreground)
                     .help(Text("Privacy Filter rewrote spans before send", bundle: .module))
             }
@@ -1058,8 +1026,8 @@ private struct ActivityExportSheet: View {
     @State private var options = ActivityExportOptions()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text("Export Activity Log", bundle: .module)
                     .font(SettingsFont.detailTitle)
                     .foregroundColor(theme.text.primary)
@@ -1072,22 +1040,18 @@ private struct ActivityExportSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Text("Format", bundle: .module).font(SettingsFont.smallLabel).foregroundColor(theme.text.tertiary)
                 ForEach(ActivityExportFormat.allCases) { format in
                     Button(action: { options.format = format }) {
-                        HStack(alignment: .top, spacing: 10) {
+                        HStack(alignment: .top, spacing: theme.space.s10) {
                             Image(systemName: options.format == format ? "largecircle.fill.circle" : "circle")
-                                .glyphSize(13)
+                                .glyphSize(.label)
                                 .foregroundColor(options.format == format ? theme.text.link : theme.text.tertiary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(format.displayName).font(SettingsFont.compactLabel).foregroundColor(
-                                    theme.text.primary
-                                )
-                                Text(format.summary).font(SettingsFont.rowDescription).foregroundColor(
-                                    theme.text.secondary
-                                )
-                                .fixedSize(horizontal: false, vertical: true)
+                            SettingsRowText(compact: true) {
+                                Text(format.displayName)
+                            } description: {
+                                Text(format.summary).foregroundColor(theme.text.secondary)
                             }
                             Spacer()
                         }
@@ -1097,36 +1061,31 @@ private struct ActivityExportSheet: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Text("Scope", bundle: .module).font(SettingsFont.smallLabel).foregroundColor(theme.text.tertiary)
                 Toggle(isOn: $options.filteredOnly) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    SettingsRowText(compact: true) {
                         Text(
                             filter.isEmpty
                                 ? L("Current view (all records)")
                                 : String(format: L("Current view only (%d records)"), filteredCount)
                         )
-                        .font(SettingsFont.caption).foregroundColor(theme.text.primary)
+                    } description: {
                         if !filter.isEmpty {
-                            Text(ActivityExportService.describe(filter)).font(SettingsFont.footnote).foregroundColor(
-                                theme.text.tertiary
-                            )
+                            Text(ActivityExportService.describe(filter))
                         }
                     }
                 }
                 .settingsCheckbox()
                 .disabled(filter.isEmpty)
                 Toggle(isOn: $options.includeContent) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Include message content", bundle: .module).font(SettingsFont.caption).foregroundColor(
-                            theme.text.primary
-                        )
+                    SettingsRowText(compact: true) {
+                        Text("Include message content", bundle: .module)
+                    } description: {
                         Text(
                             "Off: prompts, responses and tool arguments are replaced with a marker. Destinations, sizes and tool names are kept.",
                             bundle: .module
                         )
-                        .font(SettingsFont.footnote).foregroundColor(theme.text.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .settingsCheckbox()

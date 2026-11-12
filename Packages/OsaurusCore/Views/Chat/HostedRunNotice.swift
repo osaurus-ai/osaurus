@@ -34,13 +34,11 @@ struct HostedRunNotice: View {
     var servedBy: String?
     /// Owner turns this chat has from the user's devices.
     var ownerDeviceTurnIds: [UUID] = []
-    #if OSAURUS_DESIGN_SYSTEM
     var inspectionStep: String? = nil
     var inspectionStop: (() -> Void)? = nil
-    #endif
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(40, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(40) }
     @ObservedObject private var taskManager = BackgroundTaskManager.shared
     @ObservedObject private var servedChats = SyncServedChats.shared
 
@@ -52,20 +50,18 @@ struct HostedRunNotice: View {
 
     private var caller: String { callerName ?? L("a teammate") }
     private var activeRun: (step: String?, cancel: () -> Void)? {
-        #if OSAURUS_DESIGN_SYSTEM
         if let inspectionStep { return (inspectionStep, inspectionStop ?? {}) }
-        #endif
         guard let task = liveTask else { return nil }
         return (task.currentStep, { taskManager.cancelTask(task.id) })
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             statusRow
             if let servedBy, let sessionId, isAwaitingDelivery(sessionId) {
                 ComposerNoticeRow(tone: theme.status.warning) {
                     Image(systemName: "clock")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(theme.status.warning.foreground)
                     Text(String(format: L("Waiting for %@"), SyncHostedRunMonitor.shared.hostName(servedBy)))
                         .componentInspectionText(40, role: .body, fallback: .caption, weight: 500, theme: theme)
@@ -92,8 +88,7 @@ struct HostedRunNotice: View {
     private var statusRow: some View {
         if let run = activeRun {
             ComposerNoticeRow(tone: theme.status.info) {
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
                 Text(liveText(step: run.step))
                     .componentInspectionText(40, role: .body, fallback: .caption, weight: 500, theme: theme)
                     .foregroundColor(theme.text.primary)
@@ -109,7 +104,7 @@ struct HostedRunNotice: View {
                 Image(
                     systemName: isFromPairedPhone ? "iphone" : isWorkspace ? "rectangle.3.group.fill" : "person.2.fill"
                 )
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(theme.status.info.foreground)
                 Text(readOnlyText)
                     .componentInspectionText(40, role: .body, fallback: .caption, weight: 500, theme: theme)

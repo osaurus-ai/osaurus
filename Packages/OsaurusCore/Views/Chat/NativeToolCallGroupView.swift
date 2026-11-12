@@ -545,12 +545,10 @@ final class TimelineNodeView: NSView {
         get { shape.strokeColor }
         set { shape.strokeColor = newValue }
     }
-    #if OSAURUS_DESIGN_SYSTEM
     var inspectionStrokeWidth: CGFloat {
         get { shape.lineWidth }
         set { shape.lineWidth = newValue; updatePath() }
     }
-    #endif
 
     override func layout() {
         super.layout()
@@ -706,11 +704,9 @@ final class NativeToolCallGroupView: NSView {
         onToggle: @escaping (String) -> Void,
         onHeightChanged: @escaping () -> Void
     ) {
-        let theme = theme.catalogFamily(34, authoritative: true)
-        #if OSAURUS_DESIGN_SYSTEM
+        let theme = theme.catalogFamily(34)
         rowStack.spacing = max(0, ActivityInspectionStyle.layout("resultCardsGap", "gap", theme.space.s8, theme))
         rowStack.catalogAssignmentTarget([ActivityInspectionStyle.key + "elements.layout.resultCardsGap"], name: "Individual tool result cards", theme: theme)
-        #endif
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
 
@@ -980,9 +976,7 @@ final class NativeToolCallRowView: NSView {
     private var outerInset: CGFloat { ActivityInspectionStyle.layout("toolOuterPaddingX", "padding", Self.sectionContentInset, lastConfiguredTheme ?? CustomizableTheme.light()) }
     private var sectionWidthDeduction: CGFloat { 2 * outerInset + 2 * sectionInset }
     private var assignedHeaderHeight: CGFloat { ActivityInspectionStyle.headerHeight(lastConfiguredTheme ?? CustomizableTheme.light()) }
-    #if OSAURUS_DESIGN_SYSTEM
     private let inspectionHeader = InspectorActivityHeaderSurface()
-    #endif
     /// `nonisolated(unsafe)` so deinit can read it; only ever set in
     /// init on the main actor.
     nonisolated(unsafe) private var ttsObservation: NSObjectProtocol?
@@ -1100,7 +1094,7 @@ final class NativeToolCallRowView: NSView {
         onToggle: @escaping () -> Void,
         onHeightChanged: @escaping () -> Void
     ) {
-        let theme = theme.catalogFamily(34, authoritative: true)
+        let theme = theme.catalogFamily(34)
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
         // Streaming reconfigures the whole group on every sync. An unchanged
@@ -1377,19 +1371,16 @@ final class NativeToolCallRowView: NSView {
         // extra beat makes the reveal register.
         if expandTransition { ExpandFade.run(contentContainer, duration: 0.38) }
 
-        #if OSAURUS_DESIGN_SYSTEM
         ActivityInspectionStyle.label(nameLabel, property: "label", theme: theme)
         ActivityInspectionStyle.label(argPreviewLabel, property: "caption", theme: theme)
         applyAssignedLayout(theme)
         inspectionHeader.configure(theme: theme, selected: isExpanded)
-        #endif
         applyHeight()
     }
 
-    #if OSAURUS_DESIGN_SYSTEM
     private func applyAssignedLayout(_ theme: any ThemeProtocol) {
         let pad = ActivityInspectionStyle.layout("toolHeaderPaddingX", "padding", Self.sectionContentInset, theme)
-        let gap = ActivityInspectionStyle.layout("toolContentGap", "gap", 8, theme)
+        let gap = ActivityInspectionStyle.layout("toolContentGap", "gap", theme.space.s8, theme)
         let height = assignedHeaderHeight
         headerButton.catalogAssignmentTarget(["toolHeaderPaddingX", "toolHeaderPaddingY", "toolHeaderIconGap", "toolHeaderMetadataGap"].map { ActivityInspectionStyle.key + "elements.layout." + $0 }, name: "Tool result header", theme: theme)
         contentContainer.catalogAssignmentTarget(["toolOuterPaddingX", "toolInnerPaddingX", "toolContentGap", "toolBottomPadding"].map { ActivityInspectionStyle.key + "elements.layout." + $0 } + [AgentContentSurfaceAssignments.key(34, "toolContent")], name: "Expanded tool arguments and result", theme: theme)
@@ -1408,8 +1399,8 @@ final class NativeToolCallRowView: NSView {
             let view = c.firstItem as? NSView
             if view === categoryBg, c.firstAttribute == .leading { c.constant = pad }
             if view === categoryBg, c.firstAttribute == .centerY { c.constant = height / 2 }
-            if (view === nameLabel || view === shimmerLabel), c.firstAttribute == .leading { c.constant = ActivityInspectionStyle.layout("toolHeaderIconGap", "gap", 8, theme) }
-            if view === argPreviewLabel, c.firstAttribute == .leading { c.constant = ActivityInspectionStyle.layout("toolHeaderMetadataGap", "gap", 8, theme) }
+            if (view === nameLabel || view === shimmerLabel), c.firstAttribute == .leading { c.constant = ActivityInspectionStyle.layout("toolHeaderIconGap", "gap", theme.space.s8, theme) }
+            if view === argPreviewLabel, c.firstAttribute == .leading { c.constant = ActivityInspectionStyle.layout("toolHeaderMetadataGap", "gap", theme.space.s8, theme) }
             if view === chevron, c.firstAttribute == .trailing { c.constant = -pad }
             if view === separatorView, c.firstAttribute == .top { c.constant = height }
             if view === separatorView, c.firstAttribute == .leading { c.constant = 2 * pad }
@@ -1427,7 +1418,6 @@ final class NativeToolCallRowView: NSView {
         resultTitleTopToArgs?.constant = gap
         resultViewTopToTitle?.constant = gap
     }
-    #endif
 
     // MARK: Measured height
 
@@ -1436,7 +1426,7 @@ final class NativeToolCallRowView: NSView {
         let theme = lastConfiguredTheme ?? CustomizableTheme.light()
         guard isExpanded else { return rowH + ActivityInspectionStyle.metric("borderWidth", 1, theme) }
         // matches InlineToolCallView ToolDetailSection header row (~9pt bold + padding)
-        let gap = ActivityInspectionStyle.layout("toolContentGap", "gap", 8, theme)
+        let gap = ActivityInspectionStyle.layout("toolContentGap", "gap", theme.space.s8, theme)
         let sectionTitleH = ActivityInspectionStyle.fieldHeight("caption", theme, fallback: 22)
         let textW = max(0, currentWidth - sectionWidthDeduction)
         let argsH = argsView?.measuredHeight(for: textW) ?? 0
@@ -1455,7 +1445,7 @@ final class NativeToolCallRowView: NSView {
             terminalH = 0
         }
         let subagentH: CGFloat = subagentFeedHostingView != nil ? (gap + Self.subagentPaneHeight) : 0
-        return rowH + ActivityInspectionStyle.metric("borderWidth", 1, theme) + gap + sectionTitleH + argsH + terminalH + subagentH + resultH + ActivityInspectionStyle.layout("toolBottomPadding", "padding", 8, theme)
+        return rowH + ActivityInspectionStyle.metric("borderWidth", 1, theme) + gap + sectionTitleH + argsH + terminalH + subagentH + resultH + ActivityInspectionStyle.layout("toolBottomPadding", "padding", theme.space.s8, theme)
     }
 
     // MARK: - Terminal pane bindings
@@ -2111,11 +2101,9 @@ final class NativeToolCallRowView: NSView {
 
         let rowH = assignedHeaderHeight
 
-        #if OSAURUS_DESIGN_SYSTEM
         inspectionHeader.translatesAutoresizingMaskIntoConstraints = false
         addSubview(inspectionHeader, positioned: .below, relativeTo: categoryBg)
         NSLayoutConstraint.activate([inspectionHeader.leadingAnchor.constraint(equalTo: leadingAnchor), inspectionHeader.trailingAnchor.constraint(equalTo: trailingAnchor), inspectionHeader.topAnchor.constraint(equalTo: topAnchor), inspectionHeader.heightAnchor.constraint(equalTo: headerButton.heightAnchor)])
-        #endif
         // self-sizing height constraint
         let h = heightAnchor.constraint(equalToConstant: rowH + 1)
         h.priority = NSLayoutConstraint.Priority(rawValue: 750)
@@ -2438,29 +2426,19 @@ final class NativeToolCallRowView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         categoryIcon.contentTintColor = color
-        #if OSAURUS_DESIGN_SYSTEM
         let backing = NSColor(theme.surface.raised)
         categoryBg.fillColor = (backing.blended(withFraction: 0.14, of: color) ?? backing).cgColor
         categoryBg.strokeColor = (backing.blended(withFraction: 0.55, of: color) ?? color).cgColor
-        #else
-        categoryBg.fillColor = color.withAlphaComponent(0.14).cgColor
-        categoryBg.strokeColor = color.withAlphaComponent(0.55).cgColor
-        #endif
         CATransaction.commit()
 
         if isRunning(item) {
             let progress = MCPToolProgressRegistry.shared.message(for: item.call.id)
-            #if OSAURUS_DESIGN_SYSTEM
             let titleTracking = theme.assignedTracking(ActivityInspectionStyle.key + "label")
             let titleLineHeight: CGFloat? = theme.assignedLineHeight(ActivityInspectionStyle.key + "label", fallback: 18)
-            #else
-            let titleTracking: CGFloat? = nil
-            let titleLineHeight: CGFloat? = nil
-            #endif
             shimmerLabel.configure(
                 text: progress.map { "\(runningTitle) · \($0)" } ?? runningTitle,
                 font: theme.assignedNativeFont(ActivityInspectionStyle.key + "label", fallback: nameLabel.font ?? theme.nsFont(.caption, weight: .semibold)),
-                baseColor: NSColor(theme.text.primary).withAlphaComponent(0.4),
+                baseColor: NSColor(theme.text.tertiary),
                 highlightColor: NSColor(theme.text.primary),
                 tracking: titleTracking,
                 lineHeight: titleLineHeight

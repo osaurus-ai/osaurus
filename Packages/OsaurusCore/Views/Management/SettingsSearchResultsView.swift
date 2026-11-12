@@ -12,6 +12,7 @@
 import SwiftUI
 
 struct SettingsSearchResultsView: View {
+    @Environment(\.theme) private var theme
     let query: String
     let onSelect: (SettingsSearchEntry) -> Void
     let onOpenEntity: (SettingsEntityCandidate) -> Void
@@ -46,7 +47,7 @@ struct SettingsSearchResultsView: View {
         let current = snapshot ?? Snapshot(query: query, candidates: candidates)
         let results = current.results
         let entities = current.entities
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             SettingsPageHeader(title: "Search Results", subtitle: matchSummary(current))
             if results.isEmpty && entities.isEmpty {
                 SettingsEmptyState(

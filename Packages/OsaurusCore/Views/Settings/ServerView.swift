@@ -107,7 +107,7 @@ struct ServerView: View {
 
     @ViewBuilder
     private func detail(_ item: ServerTab) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsPageHeader(
                 title: item.title,
                 subtitle: item.subtitle,
@@ -529,8 +529,7 @@ private struct CodexCLISetupSection: View {
     private var modelRow: some View {
         SettingsRow(title: "Model", description: contextWindowDescription, verbatimDescription: true) {
             if !hasLoadedModels {
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
             } else if modelIds.isEmpty {
                 Text("No local models installed. Download one from the Models manager first.", bundle: .module)
                     .font(SettingsFont.caption)
@@ -714,7 +713,7 @@ private struct APIReferenceTabContent: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
+            LazyVStack(alignment: .leading, spacing: theme.space.s24) {
                 if !server.isRunning {
                     serverStoppedBanner
                 }
@@ -730,16 +729,15 @@ private struct APIReferenceTabContent: View {
     // MARK: - Sections
 
     private var serverStoppedBanner: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(13, weight: .semibold)
+                .glyphSize(.label, weight: .semibold)
                 .foregroundColor(theme.status.warning.foreground)
-            VStack(alignment: .leading, spacing: 2) {
+            SettingsRowText(compact: true) {
                 Text("Server is not running", bundle: .module)
-                    .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.status.warning.foreground)
+            } description: {
                 Text("Start the server from the Overview tab to test endpoints.", bundle: .module)
-                    .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.secondary)
             }
             Spacer()
@@ -749,7 +747,7 @@ private struct APIReferenceTabContent: View {
     }
 
     private var endpointsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             Label {
                 Text("API Endpoints", bundle: .module)
             } icon: {
@@ -765,9 +763,9 @@ private struct APIReferenceTabContent: View {
             let groups = filteredGroups
 
             if groups.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "magnifyingglass")
-                        .glyphSize(14)
+                        .glyphSize(.body)
                         .foregroundColor(theme.text.tertiary)
                     Text("No endpoints match \"\(searchText)\"", bundle: .module)
                         .font(SettingsFont.caption)
@@ -776,7 +774,7 @@ private struct APIReferenceTabContent: View {
                 .padding(theme.space.s12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                VStack(spacing: 16) {
+                VStack(spacing: theme.space.s16) {
                     ForEach(groups, id: \.category.rawValue) { group in
                         endpointCategoryGroup(group)
                     }
@@ -790,18 +788,18 @@ private struct APIReferenceTabContent: View {
     private func endpointCategoryGroup(
         _ group: (category: APIEndpoint.EndpointCategory, endpoints: [APIEndpoint])
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: group.category.icon)
-                    .glyphSize(10, weight: .semibold)
-                    .foregroundColor(group.category.color)
+                    .glyphSize(.micro, weight: .semibold)
+                    .foregroundColor(theme.dataInk(group.category.ink))
                 Text(group.category.rawValue)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
             }
             .padding(.leading, theme.space.s4)
 
-            VStack(spacing: 2) {
+            VStack(spacing: theme.space.s2) {
                 ForEach(group.endpoints, id: \.id) { endpoint in
                     if endpoint.isAudioEndpoint {
                         TranscriptionTestRow(
@@ -844,7 +842,7 @@ private struct APIReferenceTabContent: View {
     }
 
     private var documentationSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Label {
                 Text("Documentation", bundle: .module)
             } icon: {
@@ -862,7 +860,7 @@ private struct APIReferenceTabContent: View {
                     NSWorkspace.shared.open(url)
                 }
             }) {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "arrow.up.right.square")
                     Text("Open Documentation", bundle: .module)
                 }
@@ -1050,7 +1048,7 @@ struct APIEndpoint {
             }
         }
 
-        var color: Color {
+        var ink: DataInk {
             switch self {
             case .core: return .blue
             case .chat: return .green
@@ -1395,7 +1393,7 @@ private struct EndpointRowHeader: View {
         Button(action: {
             if isServerRunning { onToggleExpand() }
         }) {
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Text(endpoint.method)
                     .font(SettingsFont.monoSmall)
                     .foregroundColor(methodColor)
@@ -1403,7 +1401,7 @@ private struct EndpointRowHeader: View {
                     .padding(.vertical, theme.space.s4)
                     .background(
                         RoundedRectangle(cornerRadius: theme.radius.small)
-                            .fill(methodColor.opacity(0.15))
+                            .fill(DataInk.httpMethod(endpoint.method).map(theme.dataWash) ?? theme.surface.hover)
                     )
                     .frame(width: 58)
 
@@ -1419,7 +1417,7 @@ private struct EndpointRowHeader: View {
                         .padding(.vertical, theme.space.s2)
                         .background(
                             RoundedRectangle(cornerRadius: theme.radius.small)
-                                .fill(compatColor(compat).opacity(0.1))
+                                .fill(compatWash(compat))
                         )
                 }
 
@@ -1431,15 +1429,13 @@ private struct EndpointRowHeader: View {
                     .lineLimit(1)
 
                 if isLoading {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .frame(width: 20, height: 20)
+                    SettingsSpinner()
                 } else if let resp = response {
                     StatusChip("\(resp.statusCode)", tone: resp.isSuccess ? .success : .error)
                 }
 
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(theme.text.tertiary)
             }
             .padding(.horizontal, theme.space.s12)
@@ -1455,21 +1451,24 @@ private struct EndpointRowHeader: View {
     }
 
     private var methodColor: Color {
-        switch endpoint.method {
-        case "GET": return .green
-        case "POST": return .blue
-        case "PUT": return .orange
-        case "DELETE": return .red
-        default: return theme.text.tertiary
-        }
+        DataInk.httpMethod(endpoint.method).map(theme.dataInk) ?? theme.text.tertiary
     }
 
     private func compatColor(_ compat: String) -> Color {
         switch compat {
-        case "OpenAI": return .green
-        case "Ollama": return .orange
-        case "MCP": return .purple
+        case "OpenAI": return theme.dataInk(.green)
+        case "Ollama": return theme.dataInk(.orange)
+        case "MCP": return theme.dataInk(.purple)
         default: return theme.action.primary.default.background
+        }
+    }
+
+    private func compatWash(_ compat: String) -> Color {
+        switch compat {
+        case "OpenAI": return theme.dataWash(.green)
+        case "Ollama": return theme.dataWash(.orange)
+        case "MCP": return theme.dataWash(.purple)
+        default: return theme.surface.hover
         }
     }
 }
@@ -1485,7 +1484,7 @@ private struct ResponsePanel: View {
     let onClearResponse: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Label {
                     Text("Response", bundle: .module)
@@ -1507,7 +1506,7 @@ private struct ResponsePanel: View {
                         NSPasteboard.general.setString(resp.formattedBody, forType: .string)
                     }) {
                         Image(systemName: "doc.on.doc")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                             .foregroundColor(theme.text.tertiary)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -1519,7 +1518,7 @@ private struct ResponsePanel: View {
 
             if isLoading {
                 VStack {
-                    ProgressView().scaleEffect(0.8)
+                    SettingsSpinner(size: .large)
                     Text("Waiting for response...", bundle: .module)
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.tertiary)
@@ -1538,10 +1537,10 @@ private struct ResponsePanel: View {
                 .frame(minHeight: 120, maxHeight: 200)
                 .settingsChrome(.subtle)
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     Image(systemName: "arrow.left.circle")
-                        .glyphSize(24)
-                        .foregroundColor(theme.text.disabled)
+                        .glyphSize(.xxlarge)
+                        .foregroundColor(theme.text.tertiary)
                     Text(emptyMessage)
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.tertiary)
@@ -1571,7 +1570,7 @@ private struct EndpointRow: View {
     let onClearResponse: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             EndpointRowHeader(
                 endpoint: endpoint,
                 isServerRunning: isServerRunning,
@@ -1582,12 +1581,12 @@ private struct EndpointRow: View {
             )
 
             if isExpanded {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     Divider().background(theme.border.subtle)
 
-                    HStack(alignment: .top, spacing: 16) {
+                    HStack(alignment: .top, spacing: theme.space.s16) {
                         requestPanel
-                        Rectangle().fill(theme.border.subtle).frame(width: 1)
+                        ThemeHairlineDivider(axis: .vertical)
                         ResponsePanel(
                             isLoading: isLoading,
                             response: response,
@@ -1609,7 +1608,7 @@ private struct EndpointRow: View {
     }
 
     private var requestPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Label {
                     Text("Request", bundle: .module)
@@ -1630,7 +1629,7 @@ private struct EndpointRow: View {
             }
 
             if endpoint.hasPathParameters {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     Text("\(endpoint.method) \(serverURL)\(endpoint.path)", bundle: .module)
                         .font(SettingsFont.monoSmall)
                         .foregroundColor(theme.text.primary)
@@ -1647,9 +1646,9 @@ private struct EndpointRow: View {
                 .padding(theme.space.s12)
                 .settingsChrome(.inset)
 
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "info.circle")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                     Text(
                         "Replace path parameters with real values. Test via curl or your HTTP client.",
                         bundle: .module
@@ -1671,11 +1670,11 @@ private struct EndpointRow: View {
 
             if !endpoint.hasPathParameters {
                 Button(action: onTest) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         if isLoading {
-                            ProgressView().scaleEffect(0.7)
+                            SettingsSpinner()
                         } else {
-                            Image(systemName: "paperplane.fill").glyphSize(10)
+                            Image(systemName: "paperplane.fill").glyphSize(.micro)
                         }
                         Text(LocalizedStringKey(isLoading ? "Sending..." : "Send Request"), bundle: .module)
                             .font(SettingsFont.smallLabel)
@@ -1712,7 +1711,7 @@ private struct TranscriptionTestRow: View {
     @State private var fileError: String?
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             EndpointRowHeader(
                 endpoint: endpoint,
                 isServerRunning: isServerRunning,
@@ -1723,12 +1722,12 @@ private struct TranscriptionTestRow: View {
             )
 
             if isExpanded {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     Divider().background(theme.border.subtle)
 
-                    HStack(alignment: .top, spacing: 16) {
+                    HStack(alignment: .top, spacing: theme.space.s16) {
                         requestPanel
-                        Rectangle().fill(theme.border.subtle).frame(width: 1)
+                        ThemeHairlineDivider(axis: .vertical)
                         ResponsePanel(
                             isLoading: isLoading,
                             response: response,
@@ -1748,7 +1747,7 @@ private struct TranscriptionTestRow: View {
     }
 
     private var requestPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Label {
                 Text("Request", bundle: .module)
             } icon: {
@@ -1757,14 +1756,14 @@ private struct TranscriptionTestRow: View {
             .textStyle(.footnote, weight: 600)
             .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Model", bundle: .module)
                     .font(SettingsFont.chip)
                     .foregroundColor(theme.text.tertiary)
 
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "waveform")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.status.warning.foreground)
 
                     if let model = speechModelManager.selectedModel {
@@ -1786,10 +1785,10 @@ private struct TranscriptionTestRow: View {
 
             audioFileField
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Button(action: selectFile) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder").glyphSize(10)
+                    HStack(spacing: theme.space.s6) {
+                        Image(systemName: "folder").glyphSize(.micro)
                         Text("Choose File", bundle: .module).font(SettingsFont.smallLabel)
                     }
                     .foregroundColor(theme.text.secondary)
@@ -1800,11 +1799,11 @@ private struct TranscriptionTestRow: View {
                 .buttonStyle(PlainButtonStyle())
 
                 Button(action: { if let data = audioData { onTest(data) } }) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         if isLoading {
-                            ProgressView().scaleEffect(0.7).frame(width: 12, height: 12)
+                            SettingsSpinner(size: .mini)
                         } else {
-                            Image(systemName: "paperplane.fill").glyphSize(10)
+                            Image(systemName: "paperplane.fill").glyphSize(.micro)
                         }
                         Text(LocalizedStringKey(isLoading ? "Sending..." : "Send Request"), bundle: .module)
                             .font(SettingsFont.smallLabel)
@@ -1820,15 +1819,15 @@ private struct TranscriptionTestRow: View {
 
     @ViewBuilder
     private var audioFileField: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Audio File", bundle: .module)
                 .font(SettingsFont.chip)
                 .foregroundColor(theme.text.tertiary)
 
             if let fileName = selectedFileName {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Image(systemName: "waveform")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.text.link)
                     Text(fileName)
                         .font(SettingsFont.compactLabel)
@@ -1846,9 +1845,9 @@ private struct TranscriptionTestRow: View {
                 .padding(.vertical, theme.space.s8)
                 .settingsChrome(.control)
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "doc.badge.plus")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.text.tertiary)
                     Text("No file selected", bundle: .module)
                         .font(SettingsFont.caption)
@@ -1865,8 +1864,8 @@ private struct TranscriptionTestRow: View {
             }
 
             if let error = fileError {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill").glyphSize(10)
+                HStack(spacing: theme.space.s6) {
+                    Image(systemName: "exclamationmark.triangle.fill").glyphSize(.micro)
                     Text(error).font(SettingsFont.rowDescription)
                 }
                 .foregroundColor(theme.status.error.foreground)

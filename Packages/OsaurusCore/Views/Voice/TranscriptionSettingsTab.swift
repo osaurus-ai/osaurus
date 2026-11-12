@@ -226,7 +226,7 @@ struct TranscriptionSettingsTab: View {
                 label: "Global Hotkey",
                 hint: "Press this shortcut to start/stop transcription"
             ) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     HotkeyRecorder(value: $hotkey)
                         .onChange(of: hotkey) { _, _ in saveSettings() }
 
@@ -339,7 +339,7 @@ struct TranscriptionSettingsTab: View {
 
     private var testAreaCard: some View {
         SettingsSection(title: "Test Transcription") {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 HStack {
                     Text(
                         "Test transcription mode here. Text will be typed into the field below.",
@@ -358,7 +358,7 @@ struct TranscriptionSettingsTab: View {
                 SettingsTextField(placeholder: L("Transcribed text will appear here..."), text: .constant(""))
 
                 if case .error(let message) = transcriptionService.state {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(theme.status.error.foreground)
                         Text(message)
@@ -367,9 +367,9 @@ struct TranscriptionSettingsTab: View {
                     }
                 }
 
-                HStack(spacing: 16) {
+                HStack(spacing: theme.space.s16) {
                     Button(action: { transcriptionService.toggle() }) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: theme.space.s8) {
                             Image(
                                 systemName: transcriptionService.state == .transcribing ? "stop.fill" : "mic.fill"
                             )

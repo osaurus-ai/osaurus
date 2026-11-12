@@ -92,7 +92,7 @@ struct PrivacyCustomRuleEditor: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "wand.and.rays",
                 title: LocalizedStringKey(
@@ -147,14 +147,10 @@ struct PrivacyCustomRuleEditor: View {
     private var modeField: some View {
         VStack(alignment: .leading, spacing: theme.space.s6) {
             SettingsFieldLabel("Mode")
-            Picker(selection: $mode) {
-                Text("Simple", bundle: .module).tag(RuleKind.builder)
-                Text("Regex", bundle: .module).tag(RuleKind.regex)
-            } label: {
-                EmptyView()
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            AssignedBaseSegmentedPicker(
+                selection: $mode, options: [.init(RuleKind.builder, "Simple"), .init(RuleKind.regex, "Regex")]
+            )
+            .accessibilityLabel(Text("Mode", bundle: .module))
         }
     }
 

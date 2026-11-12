@@ -92,13 +92,9 @@ struct ModelPickerOptionsControl {
     /// Height of the "Model Options" section header the view renders above
     /// the rows, included in `estimatedHeight` for the popover frame.
     @MainActor static var headerHeight: CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         let theme = ThemeManager.shared.currentTheme
         return theme.assignedLineHeight(ModelPickerInspectionStyle.key + "label", fallback: 16)
-            + 12 + ModelPickerInspectionStyle.metric("gap", 4, theme)
-        #else
-        return 28
-        #endif
+            + 12 + ModelPickerInspectionStyle.metric("gap", theme.space.s4, theme)
     }
 
     /// Estimated rendered height of the options section (header + rows),
@@ -111,11 +107,10 @@ struct ModelPickerOptionsControl {
     /// region once the section exceeds its cap). Segmented rows account for
     /// chip wrapping in the picker's fixed content width.
     @MainActor var rowsEstimatedHeight: CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         let theme = ThemeManager.shared.currentTheme
         let key = ModelPickerInspectionStyle.key
-        let padding = theme.assignedMetric(key + "padding", fallback: 10)
-        let gap = theme.assignedMetric(key + "gap", fallback: 6)
+        let padding = theme.assignedMetric(key + "padding", fallback: theme.space.s10)
+        let gap = theme.assignedMetric(key + "gap", fallback: theme.space.s6)
         let label = theme.assignedLineHeight(key + "label", fallback: 18)
         let text = theme.assignedLineHeight(key + "text", fallback: 16)
         let caption = theme.assignedLineHeight(key + "caption", fallback: 16)
@@ -137,38 +132,6 @@ struct ModelPickerOptionsControl {
                 return total + row + (option.help == nil ? 0 : text + gap)
             }
         }
-        #else
-        let availableWidth: CGFloat = 352
-        // Thinking row: icon container + title/description stack + padding.
-        let thinkingHeight: CGFloat = thinking != nil ? 50 : 0
-        let validationHeight: CGFloat = reasoningValidationMessage == nil ? 0 : 44
-        let resetHeight: CGFloat = reasoningValidationMessage != nil && thinking == nil
-            && !options.contains(where: { $0.id == "reasoningEffort" }) ? 24 : 0
-        return validationHeight + resetHeight + thinkingHeight + options.reduce(CGFloat(0)) { total, option in
-            switch option.kind {
-            case .segmented(let segments):
-                var lines: CGFloat = 1
-                var lineWidth: CGFloat = 0
-                for segment in segments {
-                    // chip ≈ label width (~6.5pt/char) + horizontal padding + spacing
-                    let chipWidth = CGFloat(segment.label.count) * 6.5 + 26
-                    if lineWidth + chipWidth > availableWidth {
-                        lines += 1
-                        lineWidth = chipWidth
-                    } else {
-                        lineWidth += chipWidth
-                    }
-                }
-                // header + chip lines + row padding (+ description line when
-                // the catalog publishes level copy)
-                let descriptionHeight: CGFloat =
-                    (option.id == "reasoningEffort" && capabilities != nil) ? 16 : 0
-                return total + 28 + lines * 31 + 20 + descriptionHeight
-            case .toggle:
-                return total + 44
-            }
-        }
-        #endif
     }
 }
 
@@ -220,7 +183,7 @@ struct ModelPickerView: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var inspectorEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(26, enabled: inspectorEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(26, enabled: inspectorEnabled) }
 
     /// Stable key/title for the synthetic Favorites tab. It only exists while
     /// the user has at least one favourite among the currently visible models.
@@ -497,15 +460,10 @@ struct ModelPickerView: View {
     private static let optionsSectionMaxHeight: CGFloat = 240
 
     private func pickerFrameHeight(rows: [ModelPickerRow]) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         let recipe = InspectorNativeModelPickerRecipe(theme: theme)
         let content = rows.prefix(8).reduce(CGFloat(160)) { $0 + recipe.rowHeight($1) }
         return min(content + optionsSectionHeight + footerSectionHeight,
             (optionsSectionHeight > 0 ? 480 + min(optionsSectionHeight, 200) : 480) + footerSectionHeight)
-        #else
-        return min(CGFloat(visibleOptions.count * 48 + 160) + optionsSectionHeight + footerSectionHeight,
-            (optionsSectionHeight > 0 ? 480 + min(optionsSectionHeight, 200) : 480) + footerSectionHeight)
-        #endif
     }
 
     var body: some View {
@@ -522,7 +480,7 @@ struct ModelPickerView: View {
             && ((activeTab?.isOsaurus ?? false)
                 || (activeTab?.isLocal == true
                     && !(activeTab?.models.distinctExternalSources.isEmpty ?? true)))
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             VStack(spacing: theme.space.s8) {
                 header(showSort: showSort)
                     .padding(.top, theme.space.s12)
@@ -564,9 +522,7 @@ struct ModelPickerView: View {
         .background(popoverBackground)
         .overlay(popoverBorder)
         .nativeCatalogTarget(["background", "border", "borderWidth", "radius"].map { "component.library.26.elements.container." + $0 }, "Searchable picker container")
-        #if OSAURUS_DESIGN_SYSTEM
         .environment(\.theme, theme)
-        #endif
         .onAppear {
             ensureSelectedTabValid()
         }
@@ -645,7 +601,7 @@ struct ModelPickerView: View {
                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                 }
             }) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.header.horizontalGap2", inheriting: ModelPickerInspectionStyle.metric("gap", 4, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.header.horizontalGap2", inheriting: ModelPickerInspectionStyle.metric("gap", theme.space.s4, theme))) {
                     Image(systemName: "plus")
                     Text("Add Model", bundle: .module)
                 }.catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.header.horizontalGap2")
@@ -668,7 +624,7 @@ struct ModelPickerView: View {
     private var sortButton: some View {
         Button(action: { showSortPopover.toggle() }) {
             Image(systemName: "arrow.up.arrow.down")
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .modelPickerInk("accent", fallback: theme.text.link)
                 .frame(width: 22, height: 22)
                 .background(
@@ -709,18 +665,18 @@ struct ModelPickerView: View {
         // vision; the Osaurus tab keeps its price sort + context + vision.
         let isLocalTab =
             currentTabs.first { $0.key == effectiveSelectedTabKey(in: currentTabs) }?.isLocal == true
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: theme.space.s4) {
             if isLocalTab {
                 sortSectionHeader(Text("Source", bundle: .module))
 
-                FlowLayout(spacing: 8) {
+                FlowLayout(spacing: theme.space.s8) {
                     ForEach(localSourceOptions) { option in
                         FilterChip(option.label, isSelected: localSourceFilter == option) {
                             localSourceFilter = option
                         }
                     }
                 }
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", 12, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX")
             } else {
                 sortSectionHeader(Text("Sort by price", bundle: .module))
 
@@ -730,27 +686,27 @@ struct ModelPickerView: View {
 
                 sortSectionHeader(Text("Context limit", bundle: .module))
 
-                FlowLayout(spacing: 8) {
+                FlowLayout(spacing: theme.space.s8) {
                     ForEach(ModelPickerContextFilter.allCases) { option in
                         FilterChip(option.label, isSelected: contextFilter == option) {
                             contextFilter = option
                         }
                     }
                 }
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX2", inheriting: ModelPickerInspectionStyle.metric("padding", 12, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX2")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX2", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX2")
             }
 
             sortSectionHeader(Text("Vision", bundle: .module))
 
-            FlowLayout(spacing: 8) {
+            FlowLayout(spacing: theme.space.s8) {
                 ForEach(ModelPickerVisionFilter.allCases) { option in
                     FilterChip(option.label, isSelected: visionFilter == option) {
                         visionFilter = option
                     }
                 }
             }
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX3", inheriting: ModelPickerInspectionStyle.metric("padding", 12, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX3")
-            .padding(.bottom, 12)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX3", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortPopoverView.paddingX3")
+            .padding(.bottom, theme.space.s12)
         }
         .frame(width: 240)
         .background(theme.surface.canvas)
@@ -760,14 +716,11 @@ struct ModelPickerView: View {
     private func sortSectionHeader(_ text: Text) -> some View {
         text
             .modelPickerTextStyle(.micro, property: "caption", weight: 700)
-            #if !OSAURUS_DESIGN_SYSTEM
-            .tracking(0.6)
-            #endif
             .foregroundColor(theme.text.tertiary)
             .textCase(.uppercase)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortSectionHeader.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", 12, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortSectionHeader.paddingX")
-            .padding(.top, 12)
-            .padding(.bottom, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortSectionHeader.paddingY", inheriting: ModelPickerInspectionStyle.metric("gap", 6, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortSectionHeader.paddingY")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortSectionHeader.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortSectionHeader.paddingX")
+            .padding(.top, theme.space.s12)
+            .padding(.bottom, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.sortSectionHeader.paddingY", inheriting: ModelPickerInspectionStyle.metric("gap", theme.space.s6, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.sortSectionHeader.paddingY")
     }
 
     private func sortRow(_ order: ModelPickerSortOrder, _ title: Text, icon: String) -> some View {
@@ -787,9 +740,9 @@ struct ModelPickerView: View {
 
         var body: some View {
             Button(action: action) {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Image(systemName: icon)
-                        .glyphSize(12, weight: .medium)
+                        .glyphSize(.caption, weight: .medium)
                         .frame(width: 16)
                         .foregroundColor(isSelected ? theme.text.link : theme.text.secondary)
                     title
@@ -798,12 +751,12 @@ struct ModelPickerView: View {
                     Spacer(minLength: 0)
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .glyphSize(10, weight: .bold)
+                            .glyphSize(.micro, weight: .bold)
                             .modelPickerInk("accent", fallback: theme.text.link)
                     }
                 }
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.sortOptionRow.body.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", 12, theme))).catalogLayoutTarget("component.library.26.elements.layout.sortOptionRow.body.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.sortOptionRow.body.paddingY", inheriting: ModelPickerInspectionStyle.metric("padding", 8, theme))).catalogLayoutTarget("component.library.26.elements.layout.sortOptionRow.body.paddingY")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.sortOptionRow.body.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.26.elements.layout.sortOptionRow.body.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.sortOptionRow.body.paddingY", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.26.elements.layout.sortOptionRow.body.paddingY")
                 .background(
                     RoundedRectangle(cornerRadius: theme.radius.medium)
                         .fill(
@@ -814,7 +767,7 @@ struct ModelPickerView: View {
                                     : Color.clear)
                         )
                 )
-                .padding(.horizontal, 6)
+                .padding(.horizontal, theme.space.s6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -841,46 +794,7 @@ struct ModelPickerView: View {
     }
 
     @ViewBuilder private var searchFieldContent: some View {
-        #if OSAURUS_DESIGN_SYSTEM
         SearchField(text: $searchText, placeholder: "Search models...", fillsAvailableWidth: true)
-        #else
-        HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.searchField.horizontalGap", inheriting: ModelPickerInspectionStyle.metric("gap", 8, theme))) {
-            Image(systemName: "magnifyingglass")
-                .glyphSize(13)
-                .foregroundColor(theme.text.secondary)
-
-            ZStack(alignment: .leading) {
-                if searchText.isEmpty && !isSearchComposing {
-                    Text("Search models...", bundle: .module)
-                        .modelPickerFont(SettingsFont.body, property: "text")
-                        .foregroundColor(theme.text.secondary)
-                        .allowsHitTesting(false)
-                }
-                IMEAwareTextField(
-                    text: $searchText,
-                    isComposing: $isSearchComposing,
-                    font: theme.nsFont(.label, weight: .regular),
-                    textColor: NSColor(theme.text.primary)
-                )
-                .accessibilityLabel(Text("Search models", bundle: .module))
-                .frame(height: 17)
-            }
-
-            if !searchText.isEmpty {
-                Button(action: { searchText = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .glyphSize(12)
-                        .foregroundColor(theme.text.tertiary)
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
-            }
-        }.catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.searchField.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.searchField.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", 12, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.searchField.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.searchField.paddingY", inheriting: ModelPickerInspectionStyle.metric("padding", 10, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.searchField.paddingY")
-        .background(ModelPickerInspectionStyle.color("background", theme.surface.subtle, theme))
-        .animation(theme.motion.quick, value: searchText.isEmpty)
-        #endif
     }
 
     // MARK: - Tab Bar
@@ -935,7 +849,7 @@ struct ModelPickerView: View {
     /// crowd out the model list; the section header stays pinned.
     @ViewBuilder
     private func optionsSection(_ control: ModelPickerOptionsControl) -> some View {
-        let rows = VStack(alignment: .leading, spacing: 0) {
+        let rows = VStack(alignment: .leading, spacing: theme.space.s0) {
             if let message = control.reasoningValidationMessage {
                 Text(message)
                     .modelPickerFont(SettingsFont.footnote, property: "caption")
@@ -951,14 +865,14 @@ struct ModelPickerView: View {
                 if !control.options.isEmpty {
                     Divider()
                         .background(theme.border.subtle)
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, theme.space.s16)
                 }
             }
             ForEach(Array(control.options.enumerated()), id: \.element.id) { index, option in
                 if index > 0 {
                     Divider()
                         .background(theme.border.subtle)
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, theme.space.s16)
                 }
                 switch option.kind {
                 case .segmented:
@@ -968,7 +882,7 @@ struct ModelPickerView: View {
                 }
             }
         }
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             optionsSectionHeader
             if control.rowsEstimatedHeight > Self.optionsSectionMaxHeight {
                 ScrollView(.vertical, showsIndicators: true) {
@@ -986,13 +900,10 @@ struct ModelPickerView: View {
     private var optionsSectionHeader: some View {
         Text("Model Options", bundle: .module)
             .modelPickerFont(SettingsFont.compactLabel, property: "label")
-            #if !OSAURUS_DESIGN_SYSTEM
-            .kerning(0.8)
-            #endif
             .foregroundColor(theme.text.tertiary)
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.optionsSectionHeader.paddingY", inheriting: ModelPickerInspectionStyle.metric("gap", 4, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.optionsSectionHeader.paddingY")
+            .padding(.horizontal, theme.space.s16)
+            .padding(.top, theme.space.s12)
+            .padding(.bottom, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.optionsSectionHeader.paddingY", inheriting: ModelPickerInspectionStyle.metric("gap", theme.space.s4, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.optionsSectionHeader.paddingY")
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -1004,7 +915,7 @@ struct ModelPickerView: View {
     /// affordance.
     @ViewBuilder
     private func thinkingOptionRow(_ thinking: ModelPickerThinkingControl) -> some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: theme.space.s10) {
             ZStack {
                 RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                     .fill(
@@ -1013,15 +924,15 @@ struct ModelPickerView: View {
                             : ModelPickerInspectionStyle.color("background", theme.surface.subtle, theme)
                     )
                 Image(systemName: "brain")
-                    .glyphSize(12, weight: .medium)
+                    .glyphSize(.caption, weight: .medium)
                     .foregroundColor(
                         thinking.selectionIsValid && thinking.isEnabled ? theme.text.link : theme.text.tertiary
                     )
             }
             .frame(width: 26, height: 26)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.thinkingOptionRow.horizontalGap", inheriting: ModelPickerInspectionStyle.metric("gap", 6, theme))) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.thinkingOptionRow.horizontalGap", inheriting: ModelPickerInspectionStyle.metric("gap", theme.space.s6, theme))) {
                     // Label context (the name of the mode), distinct from the
                     // streaming "Thinking" status so translators can use a
                     // noun form here and a progressive form there (#2621).
@@ -1047,7 +958,6 @@ struct ModelPickerView: View {
             }
 
             if thinking.supportsUnspecifiedDefault || !thinking.selectionIsValid {
-                #if OSAURUS_DESIGN_SYSTEM
                 SettingsMenuPicker(
                     selection: Binding(
                         get: { thinking.selectedMode ?? "unsupported" },
@@ -1059,27 +969,6 @@ struct ModelPickerView: View {
                     disabledValues: ["unsupported"]
                 )
                     .accessibilityIdentifier("model-thinking-mode")
-                #else
-                Picker(
-                    L("thinking.mode.label"),
-                    selection: Binding(
-                        get: { thinking.selectedMode ?? "unsupported" },
-                        set: { thinking.onSetEnabled($0 == "default" ? nil : $0 == "on") }
-                    )
-                ) {
-                    if !thinking.selectionIsValid {
-                        Text("Choose reasoning", bundle: .module).tag("unsupported").disabled(true)
-                    }
-                    if thinking.supportsUnspecifiedDefault {
-                        Text("Default", bundle: .module).tag("default")
-                    }
-                    Text("On", bundle: .module).tag("on")
-                    Text("Off", bundle: .module).tag("off")
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .accessibilityIdentifier("model-thinking-mode")
-                #endif
             } else {
                 Toggle(
                     "",
@@ -1091,8 +980,8 @@ struct ModelPickerView: View {
                 .settingsSwitch()
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.thinkingOptionRow.paddingY", inheriting: ModelPickerInspectionStyle.metric("padding", 10, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.thinkingOptionRow.paddingY")
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.thinkingOptionRow.paddingY", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.thinkingOptionRow.paddingY")
         .animation(theme.motion.springAnimation, value: thinking.isEnabled)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("thinking.mode.label", bundle: .module))
@@ -1110,17 +999,7 @@ struct ModelPickerView: View {
     /// Icon-only reset affordance for compact rows where the labeled
     /// `resetButton` would crowd the switch; the label moves to the tooltip.
     private func compactResetButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: "arrow.uturn.backward")
-                .glyphSize(9, weight: .semibold)
-                .foregroundColor(theme.text.secondary)
-                .frame(width: 20, height: 20)
-                .background(Circle().fill(ModelPickerInspectionStyle.color("background", theme.surface.subtle, theme)))
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .help(String(localized: "Reset to default", bundle: .module))
-        .accessibilityLabel(Text("Reset to default", bundle: .module))
+        SettingsIconButton("arrow.uturn.backward", help: "Reset to default", size: .extraSmall, action: action)
     }
 
     /// Segmented option row: the option's segments in declared order, the
@@ -1145,10 +1024,10 @@ struct ModelPickerView: View {
         let capabilityLevels: [ModelReasoningCapabilities.Level]? =
             (option.id == "reasoningEffort") ? control.capabilities?.levels : nil
 
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             optionRowHeader(option: option, isExplicit: isExplicit, control: control)
 
-            FlowLayout(spacing: 6) {
+            FlowLayout(spacing: theme.space.s6) {
                 ForEach(segments) { segment in
                     segmentChip(
                         label: segment.label,
@@ -1176,8 +1055,8 @@ struct ModelPickerView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.paddingY", inheriting: ModelPickerInspectionStyle.metric("padding", 10, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.content.paddingY")
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.paddingY", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.content.paddingY")
     }
 
     /// Toggle option row in the same visual family as the segmented rows.
@@ -1189,10 +1068,10 @@ struct ModelPickerView: View {
         let isExplicit = control.values[option.id] != nil
         let isOn = control.effectiveToggleValue(for: option)
 
-        HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.horizontalGap", inheriting: ModelPickerInspectionStyle.metric("gap", 6, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.horizontalGap", inheriting: ModelPickerInspectionStyle.metric("gap", theme.space.s6, theme))) {
             if let icon = option.icon {
                 Image(systemName: icon)
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                     .foregroundColor(isExplicit ? theme.text.link : theme.text.tertiary)
             }
             Text(option.label)
@@ -1219,8 +1098,8 @@ struct ModelPickerView: View {
             )
             .settingsSwitch()
         }.catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.content.horizontalGap")
-        .padding(.horizontal, 16)
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.paddingY2", inheriting: ModelPickerInspectionStyle.metric("padding", 10, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.content.paddingY2")
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.paddingY2", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.content.paddingY2")
     }
 
     /// Shared header line for option rows: icon, label, "Default" pill while
@@ -1230,10 +1109,10 @@ struct ModelPickerView: View {
         isExplicit: Bool,
         control: ModelPickerOptionsControl
     ) -> some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.horizontalGap2", inheriting: ModelPickerInspectionStyle.metric("gap", 6, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.horizontalGap2", inheriting: ModelPickerInspectionStyle.metric("gap", theme.space.s6, theme))) {
             if let icon = option.icon {
                 Image(systemName: icon)
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                     .foregroundColor(isExplicit ? theme.text.link : theme.text.tertiary)
             }
 
@@ -1260,9 +1139,9 @@ struct ModelPickerView: View {
 
     private func resetButton(action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 3) {
+            HStack(spacing: theme.space.s2) {
                 Image(systemName: "arrow.uturn.backward")
-                    .glyphSize(9)
+                    .glyphSize(.tiny)
                 Text("Reset to default", bundle: .module)
                     .modelPickerFont(SettingsFont.smallLabel, property: "caption")
             }
@@ -1282,8 +1161,8 @@ struct ModelPickerView: View {
             Text(label)
                 .modelPickerTextStyle(.footnote, property: "caption", weight: isSelected ? 600 : 500)
                 .foregroundColor(isSelected ? theme.text.link : theme.text.secondary)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", 10, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.content.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.paddingY3", inheriting: ModelPickerInspectionStyle.metric("padding", 5, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.content.paddingY3")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.content.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.content.paddingY3", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.content.paddingY3")
                 .background(
                     RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                         .fill(
@@ -1312,18 +1191,14 @@ struct ModelPickerView: View {
     private static let footerRowHeight: CGFloat = 36
 
     private var footerSectionHeight: CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         guard !footerActions.isEmpty else { return 0 }
         let row = max(ModelPickerInspectionStyle.metric("height", Self.footerRowHeight, theme),
             theme.assignedLineHeight(ModelPickerInspectionStyle.key + "label", fallback: 16))
-        return CGFloat(footerActions.count) * row + 2 * ModelPickerInspectionStyle.metric("padding", 4, theme)
-        #else
-        footerActions.isEmpty ? 0 : CGFloat(footerActions.count) * Self.footerRowHeight + 8
-        #endif
+        return CGFloat(footerActions.count) * row + 2 * ModelPickerInspectionStyle.metric("padding", theme.space.s4, theme)
     }
 
     private var footerSection: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             ForEach(footerActions) { item in
                 Button {
                     // The caller presents its own UI, so the popover has to
@@ -1331,9 +1206,9 @@ struct ModelPickerView: View {
                     onDismiss()
                     item.action()
                 } label: {
-                    HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.footerSection.horizontalGap", inheriting: ModelPickerInspectionStyle.metric("gap", 8, theme))) {
+                    HStack(spacing: theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.footerSection.horizontalGap", inheriting: ModelPickerInspectionStyle.metric("gap", theme.space.s8, theme))) {
                         Image(systemName: item.icon)
-                            .glyphSize(12, weight: .medium)
+                            .glyphSize(.caption, weight: .medium)
                             .modelPickerInk("accent", fallback: theme.text.link)
                             .frame(width: 16)
                         Text(item.title)
@@ -1341,14 +1216,14 @@ struct ModelPickerView: View {
                             .modelPickerInk("accent", fallback: theme.text.link)
                         Spacer(minLength: 0)
                     }.catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.footerSection.horizontalGap")
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.footerSection.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", 14, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.footerSection.paddingX")
+                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.footerSection.paddingX", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.footerSection.paddingX")
                     .frame(minHeight: ModelPickerInspectionStyle.metric("height", Self.footerRowHeight, theme))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.footerSection.paddingY", inheriting: ModelPickerInspectionStyle.metric("padding", 4, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.footerSection.paddingY")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.26.elements.layout.modelPickerView.footerSection.paddingY", inheriting: ModelPickerInspectionStyle.metric("padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.26.elements.layout.modelPickerView.footerSection.paddingY")
     }
 
     // MARK: - Empty State
@@ -1356,9 +1231,9 @@ struct ModelPickerView: View {
     /// With a footer present the rows below say what to do next, so the
     /// empty state only has to explain why the list is bare.
     private var emptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             Image(systemName: footerActions.isEmpty ? "magnifyingglass" : "cube")
-                .glyphSize(24)
+                .glyphSize(.xxlarge)
                 .foregroundColor(theme.text.tertiary)
             Group {
                 if isSearching || footerActions.isEmpty {
@@ -1403,11 +1278,12 @@ struct ModelPickerView: View {
 #if DEBUG
     struct ModelPickerView_Previews: PreviewProvider {
         struct PreviewWrapper: View {
+            @Environment(\.theme) private var theme
             @State private var selected: String? = "foundation"
             @State private var useMockData = true
 
             var body: some View {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     // toggle for mock data
                     HStack {
                         Toggle(isOn: $useMockData) {

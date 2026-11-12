@@ -202,10 +202,8 @@ extension ThemeProtocol {
     func nsFont(
         _ role: ThemeTextStyleRole, weight: NSFont.Weight? = nil, family: ThemeFontFamilyRole? = nil
     ) -> NSFont {
-        #if OSAURUS_DESIGN_SYSTEM
         if family == nil, let scoped = self as? CatalogResolvedTheme,
             let assigned = scoped.nativeAssignedFont(role) { return assigned }
-        #endif
         var style = scaledTextStyle(role)
         if let family { style.family = family }
         guard let weight else { return nsFont(for: style) }
@@ -521,13 +519,9 @@ struct CustomizableTheme: ThemeProtocol {
     let inspectionRevision: String
 
     init(config: CustomTheme, fontScale: Double = ThemeManager.fontScale) {
-        #if OSAURUS_DESIGN_SYSTEM
         self.init(
             resolved: DesignThemeOverlay.shared.resolve(config), fontScale: fontScale,
             inspectionRevision: DesignThemeOverlay.shared.current()?.generation ?? "")
-        #else
-        self.init(resolved: config, fontScale: fontScale)
-        #endif
     }
 
     /// A theme over `config` exactly as given, without the design overlay
@@ -536,7 +530,7 @@ struct CustomizableTheme: ThemeProtocol {
         self.config = config
         self.fontScale = fontScale
         self.inspectionRevision = inspectionRevision
-        self.colors = config.colors.map { Color(themeHex: $0) }
+        self.colors = config.colors.map { Color(themeHex: $0) }.fillingStatusInk()
         self.renderFingerprint = Self.fingerprint(config: config, fontScale: fontScale)
     }
 
@@ -644,7 +638,6 @@ public class ThemeManager: ObservableObject {
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
-    #if OSAURUS_DESIGN_SYSTEM
     /// Rebuild published app themes from the immutable working snapshot, without
     /// changing the persisted appearance or the sent engineering handoff.
     /// Development preview range is independent of the saved product zoom limit.
@@ -658,7 +651,6 @@ public class ThemeManager: ObservableObject {
         chatTheme = refreshed
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
-    #endif
 
     private init() {
         let config = ServerConfigurationStore.load() ?? ServerConfiguration.default

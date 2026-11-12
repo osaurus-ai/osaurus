@@ -16,6 +16,7 @@
 import SwiftUI
 
 struct ConcurrencySection: View {
+    @Environment(\.theme) private var theme
     @Binding var draft: VMLXServerRuntimeSettings
 
     @State private var maxConcurrentText: String = ""
@@ -48,7 +49,7 @@ struct ConcurrencySection: View {
 
             Text(effectiveBatchEngineSummary)
                 .textStyle(.micro)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.text.secondary)
 
             SettingsToggle(
                 title: "Continuous Batching",

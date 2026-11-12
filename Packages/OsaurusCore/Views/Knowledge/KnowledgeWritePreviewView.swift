@@ -28,14 +28,14 @@ struct KnowledgeWritePreviewView: View {
     @State private var expanded: Set<String> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             header
 
             if let parseError = preview.parseError {
                 problemRow(parseError)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
                         ForEach(preview.entries) { entry in
                             entryRow(entry)
                         }
@@ -51,17 +51,13 @@ struct KnowledgeWritePreviewView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        SettingsRowText(compact: true) {
             Text(preview.summary)
-                .font(SettingsFont.compactLabel)
-                .foregroundColor(theme.text.primary)
                 .fixedSize(horizontal: false, vertical: true)
-
+        } description: {
             if !preview.rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(preview.rationale)
-                    .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -70,11 +66,11 @@ struct KnowledgeWritePreviewView: View {
     // MARK: - Entries
 
     private func entryRow(_ entry: KnowledgeWritePreviewEntry) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Button {
                 toggle(entry.id)
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     operationBadge(entry.operation)
 
                     Text(entry.relPath)
@@ -103,7 +99,7 @@ struct KnowledgeWritePreviewView: View {
                     }
 
                     Image(systemName: isExpanded(entry) ? "chevron.down" : "chevron.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
                 }
                 .padding(.horizontal, theme.space.s8)
@@ -142,7 +138,7 @@ struct KnowledgeWritePreviewView: View {
                 .font(SettingsFont.footnote)
                 .foregroundColor(theme.text.secondary)
         } else {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 ScrollView(.horizontal, showsIndicators: true) {
                     Text(body)
                         .textStyle(.micro, family: .code)
@@ -168,9 +164,9 @@ struct KnowledgeWritePreviewView: View {
     }
 
     private func problemRow(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 4) {
+        HStack(alignment: .top, spacing: theme.space.s4) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(9)
+                .glyphSize(.tiny)
             Text(text)
                 .font(SettingsFont.footnote)
                 .fixedSize(horizontal: false, vertical: true)

@@ -64,7 +64,7 @@ struct GitHubImportSheet: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerView
             contentView
             footerView
@@ -172,10 +172,10 @@ struct GitHubImportSheet: View {
     // MARK: - URL Input View
 
     private var urlInputView: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             Spacer()
 
-            VStack(spacing: 24) {
+            VStack(spacing: theme.space.s24) {
                 // Icon
                 ZStack {
                     Circle()
@@ -187,11 +187,11 @@ struct GitHubImportSheet: View {
                         .frame(width: 56, height: 56)
 
                     Image(systemName: "link.badge.plus")
-                        .glyphSize(24, weight: .medium)
+                        .glyphSize(.xxlarge, weight: .medium)
                         .foregroundColor(theme.text.link)
                 }
 
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     Text("Enter Repository URL", bundle: .module)
                         .font(SettingsFont.detailTitle)
                         .foregroundColor(theme.text.primary)
@@ -219,12 +219,10 @@ struct GitHubImportSheet: View {
     // MARK: - Loading View
 
     private var loadingView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: theme.space.s16) {
             Spacer()
 
-            ProgressView()
-                .scaleEffect(1.0)
-                .progressViewStyle(CircularProgressViewStyle(tint: theme.action.primary.default.background))
+            SettingsSpinner(size: .large, tint: theme.action.primary.default.background)
 
             Text("Fetching skills...", bundle: .module)
                 .font(SettingsFont.body)
@@ -237,9 +235,9 @@ struct GitHubImportSheet: View {
     // MARK: - Skill Selection View
 
     private func skillSelectionView(_ result: GitHubSkillsResult) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Repository info card
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 ZStack {
                     RoundedRectangle(cornerRadius: theme.radius.medium)
                         .fill(
@@ -250,12 +248,12 @@ struct GitHubImportSheet: View {
                             )
                         )
                     Image(systemName: "folder.fill")
-                        .glyphSize(14, weight: .medium)
+                        .glyphSize(.body, weight: .medium)
                         .foregroundColor(theme.text.link)
                 }
                 .frame(width: 32, height: 32)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     if let description = result.repoDescription {
                         Text(description)
                             .font(SettingsFont.caption)
@@ -285,7 +283,7 @@ struct GitHubImportSheet: View {
                         }
                     }
                 }) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(
                             systemName: selectedSkillPaths.count == result.skills.count
                                 ? "checkmark.circle.fill" : "circle"
@@ -314,7 +312,7 @@ struct GitHubImportSheet: View {
 
             // Skills list
             ScrollView {
-                LazyVStack(spacing: 4) {
+                LazyVStack(spacing: theme.space.s4) {
                     ForEach(result.skills) { skill in
                         GitHubSkillSelectionRow(
                             skill: skill,
@@ -339,9 +337,9 @@ struct GitHubImportSheet: View {
     // MARK: - Plugin Selection View (new-style marketplaces)
 
     private func pluginSelectionView(_ result: GitHubPluginsResult) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Repository info + selected count.
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 ZStack {
                     RoundedRectangle(cornerRadius: theme.radius.medium)
                         .fill(
@@ -352,12 +350,12 @@ struct GitHubImportSheet: View {
                             )
                         )
                     Image(systemName: "shippingbox.fill")
-                        .glyphSize(14, weight: .medium)
+                        .glyphSize(.body, weight: .medium)
                         .foregroundColor(theme.text.link)
                 }
                 .frame(width: 32, height: 32)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     if let description = result.repoDescription {
                         Text(description)
                             .font(SettingsFont.caption)
@@ -377,7 +375,7 @@ struct GitHubImportSheet: View {
             .padding(.bottom, theme.space.s8)
 
             // Select-all header + options.
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Button(action: {
                     withAnimation(theme.motion.quick) {
                         if selectedPluginNames.count == result.plugins.count {
@@ -387,7 +385,7 @@ struct GitHubImportSheet: View {
                         }
                     }
                 }) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(
                             systemName: selectedPluginNames.count == result.plugins.count
                                 ? "checkmark.circle.fill" : "circle"
@@ -425,9 +423,9 @@ struct GitHubImportSheet: View {
             // Auto-selection footer — only renders when the user just
             // toggled a plugin whose agents reference siblings.
             if let source = lastAutoSelectionSource, !lastAutoSelectedPlugins.isEmpty {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: theme.space.s6) {
                     Image(systemName: "link")
-                        .glyphSize(10, weight: .medium)
+                        .glyphSize(.micro, weight: .medium)
                         .foregroundColor(theme.text.link)
                         .padding(.top, theme.space.s2)
                     Text(
@@ -445,7 +443,7 @@ struct GitHubImportSheet: View {
 
             // Plugin list.
             ScrollView {
-                LazyVStack(spacing: 4) {
+                LazyVStack(spacing: theme.space.s4) {
                     ForEach(result.plugins, id: \.name) { plugin in
                         ClaudePluginRow(
                             plugin: plugin,
@@ -491,9 +489,9 @@ struct GitHubImportSheet: View {
 
     private func installCompleteView(_ report: ClaudePluginInstallReport) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 // Top-line counts.
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     InstallReportLine(
                         icon: "sparkles",
                         label: L("Skills"),
@@ -600,7 +598,7 @@ struct GitHubImportSheet: View {
     // MARK: - Importing View
 
     private func importingView(progress: Int, total: Int) -> some View {
-        VStack(spacing: 20) {
+        VStack(spacing: theme.space.s20) {
             Spacer()
 
             ZStack {
@@ -624,7 +622,7 @@ struct GitHubImportSheet: View {
                     .foregroundColor(theme.text.primary)
             }
 
-            VStack(spacing: 4) {
+            VStack(spacing: theme.space.s4) {
                 Text("Installing", bundle: .module)
                     .font(SettingsFont.cardTitle)
                     .foregroundColor(theme.text.primary)
@@ -644,7 +642,7 @@ struct GitHubImportSheet: View {
     private func errorView(_ error: GitHubSkillError) -> some View {
         let isRateLimit: Bool
         if case .rateLimited = error { isRateLimit = true } else { isRateLimit = false }
-        return VStack(spacing: 20) {
+        return VStack(spacing: theme.space.s20) {
             Spacer()
 
             ZStack {
@@ -653,11 +651,11 @@ struct GitHubImportSheet: View {
                     .frame(width: 64, height: 64)
 
                 Image(systemName: isRateLimit ? "clock.badge.exclamationmark" : "exclamationmark.triangle.fill")
-                    .glyphSize(26)
+                    .glyphSize(.display)
                     .foregroundColor(theme.status.error.foreground)
             }
 
-            VStack(spacing: 6) {
+            VStack(spacing: theme.space.s6) {
                 Text(
                     isRateLimit ? "GitHub rate limit reached" : "Something went wrong",
                     bundle: .module
@@ -673,9 +671,9 @@ struct GitHubImportSheet: View {
             }
 
             Button(action: { importState = .urlInput }) {
-                HStack(spacing: 5) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "arrow.counterclockwise")
-                        .glyphSize(11, weight: .medium)
+                        .glyphSize(.footnote, weight: .medium)
                     Text("Try Again", bundle: .module)
                         .font(SettingsFont.compactLabel)
                 }
@@ -693,7 +691,7 @@ struct GitHubImportSheet: View {
     // MARK: - Footer
 
     private var footerView: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Spacer()
 
             switch importState {
@@ -757,7 +755,7 @@ struct GitHubImportSheet: View {
         .background(
             theme.surface.subtle
                 .overlay(
-                    Rectangle().fill(theme.border.subtle).frame(height: 1),
+                    ThemeHairlineDivider(),
                     alignment: .top
                 )
         )
@@ -946,14 +944,12 @@ private struct GitHubSkillSelectionRow: View {
 
     @State private var isHovered = false
 
-    private var skillColor: Color {
-        let hue = Double(abs(skill.displayName.hashValue % 360)) / 360.0
-        return Color(hue: hue, saturation: 0.55, brightness: 0.75)
-    }
+    private var skillColor: Color { theme.dataInk(seed: skill.displayName) }
+    private var skillWash: Color { theme.dataWash(seed: skill.displayName) }
 
     var body: some View {
         Button(action: onToggle) {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 // Checkbox
                 ZStack {
                     RoundedRectangle(cornerRadius: theme.radius.small)
@@ -962,14 +958,14 @@ private struct GitHubSkillSelectionRow: View {
 
                     RoundedRectangle(cornerRadius: theme.radius.small)
                         .stroke(
-                            isSelected ? theme.action.primary.default.background : theme.text.disabled,
+                            isSelected ? theme.action.primary.default.background : theme.border.strong,
                             lineWidth: theme.stroke.default
                         )
                         .frame(width: 16, height: 16)
 
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .glyphSize(9, weight: .bold)
+                            .glyphSize(.tiny, weight: .bold)
                             .foregroundColor(theme.action.primary.default.foreground)
                     }
                 }
@@ -977,9 +973,9 @@ private struct GitHubSkillSelectionRow: View {
                 // Skill icon
                 ZStack {
                     RoundedRectangle(cornerRadius: theme.radius.medium)
-                        .fill(skillColor.opacity(0.12))
+                        .fill(skillWash)
                     Image(systemName: "sparkles")
-                        .glyphSize(10, weight: .medium)
+                        .glyphSize(.micro, weight: .medium)
                         .foregroundColor(skillColor)
                 }
                 .frame(width: 26, height: 26)
@@ -1016,10 +1012,8 @@ private struct ClaudePluginRow: View {
 
     @State private var isHovered = false
 
-    private var pluginColor: Color {
-        let hue = Double(abs(plugin.name.hashValue % 360)) / 360.0
-        return Color(hue: hue, saturation: 0.55, brightness: 0.75)
-    }
+    private var pluginColor: Color { theme.dataInk(seed: plugin.name) }
+    private var pluginWash: Color { theme.dataWash(seed: plugin.name) }
 
     private var summaryLine: String {
         var pieces: [String] = []
@@ -1039,7 +1033,7 @@ private struct ClaudePluginRow: View {
 
     var body: some View {
         Button(action: onToggle) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 // Checkbox
                 ZStack {
                     RoundedRectangle(cornerRadius: theme.radius.small)
@@ -1048,14 +1042,14 @@ private struct ClaudePluginRow: View {
 
                     RoundedRectangle(cornerRadius: theme.radius.small)
                         .stroke(
-                            isSelected ? theme.action.primary.default.background : theme.text.disabled,
+                            isSelected ? theme.action.primary.default.background : theme.border.strong,
                             lineWidth: theme.stroke.default
                         )
                         .frame(width: 16, height: 16)
 
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .glyphSize(9, weight: .bold)
+                            .glyphSize(.tiny, weight: .bold)
                             .foregroundColor(theme.action.primary.default.foreground)
                     }
                 }
@@ -1064,26 +1058,22 @@ private struct ClaudePluginRow: View {
                 // Plugin icon
                 ZStack {
                     RoundedRectangle(cornerRadius: theme.radius.medium)
-                        .fill(pluginColor.opacity(0.12))
+                        .fill(pluginWash)
                     Image(systemName: "shippingbox")
-                        .glyphSize(11, weight: .medium)
+                        .glyphSize(.footnote, weight: .medium)
                         .foregroundColor(pluginColor)
                 }
                 .frame(width: 28, height: 28)
 
-                VStack(alignment: .leading, spacing: 2) {
+                SettingsRowText(compact: true) {
                     Text(plugin.name)
-                        .font(SettingsFont.compactLabel)
-                        .foregroundColor(theme.text.primary)
+                } description: {
                     if let description = plugin.description, !description.isEmpty {
                         Text(description)
-                            .font(SettingsFont.rowDescription)
                             .foregroundColor(theme.text.secondary)
                             .lineLimit(2)
                     }
                     Text(summaryLine)
-                        .font(SettingsFont.footnote)
-                        .foregroundColor(theme.text.tertiary)
                 }
 
                 Spacer(minLength: 0)
@@ -1112,9 +1102,9 @@ private struct InstallReportLine: View {
     let count: Int
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.text.link)
                 .frame(width: 16)
             Text(label)
@@ -1142,10 +1132,10 @@ private struct InstallReportNotice: View {
     var onAction: (() -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                 Text(title)
                     .font(SettingsFont.compactLabel)
@@ -1166,7 +1156,7 @@ private struct InstallReportNotice: View {
             Text(message)
                 .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.secondary)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 ForEach(items, id: \.self) { item in
                     Text("• \(item)")
                         .font(SettingsFont.monoSmall)
@@ -1191,10 +1181,10 @@ private struct InstallReportPendingSchedulesNotice: View {
     let onSelect: (UUID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "exclamationmark.circle")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                 Text("Automations need review", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -1207,10 +1197,10 @@ private struct InstallReportPendingSchedulesNotice: View {
             .font(SettingsFont.rowDescription)
             .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 ForEach(items) { item in
                     Button(action: { onSelect(item.id) }) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: theme.space.s6) {
                             Text("•")
                                 .font(SettingsFont.monoSmall)
                                 .foregroundColor(theme.text.secondary)
@@ -1220,7 +1210,7 @@ private struct InstallReportPendingSchedulesNotice: View {
                                 .underline()
                                 .lineLimit(2)
                             Image(systemName: "arrow.up.right.square")
-                                .glyphSize(9, weight: .semibold)
+                                .glyphSize(.tiny, weight: .semibold)
                                 .foregroundColor(theme.text.link)
                             Spacer()
                         }
@@ -1249,10 +1239,10 @@ private struct InstallReportPendingProvidersNotice: View {
     let onSelect: (UUID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                 Text(title)
                     .font(SettingsFont.compactLabel)
@@ -1263,11 +1253,11 @@ private struct InstallReportPendingProvidersNotice: View {
                 .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 ForEach(items) { item in
                     Button(action: { onSelect(item.id) }) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
+                            HStack(spacing: theme.space.s6) {
                                 Text("•")
                                     .font(SettingsFont.monoSmall)
                                     .foregroundColor(theme.text.secondary)
@@ -1277,7 +1267,7 @@ private struct InstallReportPendingProvidersNotice: View {
                                     .underline()
                                     .lineLimit(1)
                                 Image(systemName: "arrow.up.right.square")
-                                    .glyphSize(9, weight: .semibold)
+                                    .glyphSize(.tiny, weight: .semibold)
                                     .foregroundColor(theme.text.link)
                                 Spacer()
                             }

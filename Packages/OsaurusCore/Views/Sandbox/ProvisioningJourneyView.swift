@@ -78,7 +78,7 @@ import SwiftUI
                 {
                     HStack(spacing: theme.space.s6) {
                         Image(systemName: "clock")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                         // Count up MM:SS from `startedAt`. The default
                         // `countsDown: true` would render time until
                         // `.distantFuture` (~17M hours).
@@ -118,7 +118,7 @@ import SwiftUI
                 if let activity = sandboxState.currentActivity, !activity.isEmpty {
                     HStack(spacing: theme.space.s6) {
                         Image(systemName: "waveform")
-                            .glyphSize(11, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                             .foregroundColor(theme.text.link)
                         Text(activity)
                             .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
@@ -142,15 +142,10 @@ import SwiftUI
         private var legacyContent: some View {
             VStack(spacing: theme.space.s16) {
                 if let progress = sandboxState.provisioningProgress {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
+                    SettingsProgressBar(value: progress, tint: theme.action.primary.default.background)
                         .frame(width: 220)
-                        .tint(theme.action.primary.default.background)
-                        .animation(theme.motion.standard, value: progress)
                 } else {
-                    ProgressView()
-                        .controlSize(.large)
-                        .tint(theme.action.primary.default.background)
+                    SettingsSpinner(size: .large, tint: theme.action.primary.default.background)
                 }
 
                 if let phase = sandboxState.provisioningPhase {
@@ -176,7 +171,7 @@ import SwiftUI
             VStack(spacing: theme.space.s8) {
                 HStack(spacing: theme.space.s4) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                     Text(message)
                         .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                         .lineLimit(3)
@@ -261,13 +256,9 @@ import SwiftUI
         private var activeProgress: some View {
             VStack(alignment: .leading, spacing: theme.space.s4) {
                 if let progress = step.progress {
-                    ProgressView(value: max(0, min(progress, 1)))
-                        .progressViewStyle(.linear)
-                        .tint(theme.action.primary.default.background)
+                    SettingsProgressBar(value: progress, tint: theme.action.primary.default.background)
                 } else {
-                    ProgressView()
-                        .progressViewStyle(.linear)
-                        .tint(theme.action.primary.default.background)
+                    SettingsProgressBar(value: nil, tint: theme.action.primary.default.background)
                 }
 
                 if let total = step.bytesTotal, total > 0 {
@@ -296,23 +287,21 @@ import SwiftUI
             switch step.status {
             case .completed:
                 Image(systemName: "checkmark.circle.fill")
-                    .glyphSize(14)
+                    .glyphSize(.body)
                     .foregroundColor(theme.status.success.foreground)
             case .skipped:
                 Image(systemName: "checkmark.circle")
-                    .glyphSize(14)
+                    .glyphSize(.body)
                     .foregroundColor(theme.text.tertiary)
             case .inProgress:
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.7)
+                SettingsSpinner(size: .mini)
             case .pending:
                 Image(systemName: "circle")
-                    .glyphSize(14)
-                    .foregroundColor(theme.text.disabled)
+                    .glyphSize(.body)
+                    .foregroundColor(theme.text.tertiary)
             case .failed:
                 Image(systemName: "xmark.octagon.fill")
-                    .glyphSize(14)
+                    .glyphSize(.body)
                     .foregroundColor(theme.status.error.foreground)
             }
         }
@@ -333,15 +322,14 @@ import SwiftUI
         }
     }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension ProvisioningJourneyView {
     @MainActor static func inspectionRows() -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let theme = ThemeManager.shared.currentTheme
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
             StepRow(step: .init(id: .downloadKernel, label: "Local download display", status: .inProgress, progress: 0.5, bytesProcessed: 32_000_000, bytesTotal: 64_000_000, bytesPerSecond: 8_000_000, etaSeconds: 4), isActive: true)
             StepRow(step: .init(id: .downloadInitFS, label: "Cached local display", status: .skipped), isActive: false)
             StepRow(step: .init(id: .createContainer, label: "Failed local display", status: .failed), isActive: false)
         }
     }
 }
-#endif
 #endif

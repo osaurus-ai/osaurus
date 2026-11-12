@@ -221,7 +221,7 @@ struct ListingExampleRow: View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: draft.status == .failed ? "xmark.octagon" : "checkmark.circle")
-                    .glyphSize(13)
+                    .glyphSize(.label)
                     .foregroundColor(
                         draft.status == .failed ? theme.status.error.foreground : theme.status.success.foreground)
                 SettingsTextField(placeholder: L("Title"), text: $draft.title)
@@ -378,13 +378,13 @@ struct ListingExamplesPickerSheet: View {
     @State private var isLoading = true
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "text.badge.checkmark", title: "Add Example Runs", subtitleText: template.name, onClose: onCancel)
             ScrollView {
                 VStack(alignment: .leading, spacing: theme.space.s8) {
                     if isLoading {
-                        ProgressView().controlSize(.small)
+                        SettingsSpinner()
                             .frame(maxWidth: .infinity)
                             .padding(.top, theme.space.s24)
                     } else if candidates.isEmpty {
@@ -436,14 +436,11 @@ struct ListingExamplesPickerSheet: View {
                     }
                 })
         ) {
-            VStack(alignment: .leading, spacing: theme.space.s2) {
+            SettingsRowText(compact: true) {
                 Text(verbatim: candidate.title)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
+            } description: {
                 Text(verbatim: details(candidate))
-                    .font(SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(1)
             }
         }
@@ -488,17 +485,16 @@ struct ListingEditsStatusView: View {
             if result.hasFailures {
                 HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(13)
+                        .glyphSize(.label)
                         .foregroundColor(theme.status.warning.foreground)
                     VStack(alignment: .leading, spacing: theme.space.s6) {
-                        Text("Some listing changes didn't save.", bundle: .module)
-                            .font(SettingsFont.compactLabel)
-                            .foregroundColor(theme.text.primary)
-                        ForEach(failures, id: \.self) { line in
-                            Text(verbatim: line)
-                                .font(SettingsFont.rowDescription)
-                                .foregroundColor(theme.text.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                        SettingsRowText(compact: true) {
+                            Text("Some listing changes didn't save.", bundle: .module)
+                        } description: {
+                            ForEach(failures, id: \.self) { line in
+                                Text(verbatim: line)
+                                    .foregroundColor(theme.text.secondary)
+                            }
                         }
                         Button(action: onRetry) {
                             Text("Try Again", bundle: .module)
@@ -514,7 +510,7 @@ struct ListingEditsStatusView: View {
             ForEach(notes, id: \.self) { note in
                 HStack(alignment: .top, spacing: theme.space.s6) {
                     Image(systemName: "info.circle")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                         .foregroundColor(theme.text.tertiary)
                     Text(verbatim: note)
                         .font(SettingsFont.rowDescription)

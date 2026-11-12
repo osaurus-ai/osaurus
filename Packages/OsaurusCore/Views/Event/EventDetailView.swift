@@ -39,7 +39,7 @@ struct EventDetailView: View {
     private var event: OsaurusEvent? { manager.event(for: eventId) }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             if let event {
                 hero(event)
                 ScrollView {
@@ -76,7 +76,7 @@ struct EventDetailView: View {
     // MARK: Hero / footer
 
     private func hero(_ event: OsaurusEvent) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsDetailHeader(
                 icon: EventSourceTemplate.icon(for: event),
                 title: event.name,
@@ -93,7 +93,7 @@ struct EventDetailView: View {
             .padding(.vertical, theme.space.s16)
             .background(theme.surface.subtle)
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
         }
     }
 
@@ -140,8 +140,8 @@ struct EventDetailView: View {
     }
 
     private func footer(_ event: OsaurusEvent) -> some View {
-        VStack(spacing: 0) {
-            Divider().opacity(0.5)
+        VStack(spacing: theme.space.s0) {
+            ThemeHairlineDivider()
             HStack(spacing: theme.space.s8) {
                 if let notice {
                     Text(verbatim: notice)
@@ -197,7 +197,7 @@ struct EventDetailView: View {
     /// When → Do → Result: how it is called, what it runs (with the
     /// workflow inputs it passes), and what each run leaves behind.
     private func summary(_ event: OsaurusEvent) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             step(icon: event.sourceKind.icon, title: L("When")) {
                 row(L("Trigger"), event.sourceSummary)
                 if let next = event.nextRunDescription { row(L("Next run"), next) }
@@ -254,7 +254,7 @@ struct EventDetailView: View {
             ZStack {
                 Circle().fill(theme.status.info.background)
                 Image(systemName: icon)
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.text.link)
             }
             .frame(width: 26, height: 26)
@@ -394,11 +394,11 @@ struct EventDetailView: View {
                     }
                 }
 
-                Divider().opacity(0.5)
+                ThemeHairlineDivider()
 
                 verificationBlock(event, webhook)
 
-                Divider().opacity(0.5)
+                ThemeHairlineDivider()
 
                 if webhook.provider != .generic {
                     Text(
@@ -480,16 +480,17 @@ struct EventDetailView: View {
 
     private func providerVerificationBlock(_ event: OsaurusEvent, _ provider: WebhookProvider) -> some View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
-            HStack(spacing: theme.space.s8) {
-                fieldLabel(L("Verification"))
-                Text(verbatim: provider.verificationSummary)
-                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
+            SettingsRowText(compact: true) {
+                HStack(spacing: theme.space.s8) {
+                    fieldLabel(L("Verification"))
+                    Text(verbatim: provider.verificationSummary)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                }
+            } description: {
+                Text(verbatim: provider.setupHint)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
             }
-            Text(verbatim: provider.setupHint)
-                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-                .foregroundColor(theme.text.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             if provider.issuesSecret {
                 let stored = EventSecretsKeychain.hasSecret(eventID: event.id)
                 HStack(spacing: theme.space.s8) {
@@ -578,7 +579,7 @@ struct EventDetailView: View {
                     notice = L("No secret stored — rotate to create one.")
                 }
             } label: {
-                Image(systemName: "doc.on.doc").glyphSize(11)
+                Image(systemName: "doc.on.doc").glyphSize(.footnote)
             }
             .buttonStyle(.plain)
             .foregroundColor(theme.text.link)
@@ -700,7 +701,7 @@ struct EventDetailView: View {
         Button {
             copy(value)
         } label: {
-            Image(systemName: "doc.on.doc").glyphSize(11)
+            Image(systemName: "doc.on.doc").glyphSize(.footnote)
         }
         .buttonStyle(.plain)
         .foregroundColor(theme.text.link)

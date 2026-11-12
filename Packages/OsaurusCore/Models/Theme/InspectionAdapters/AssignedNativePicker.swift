@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import AppKit
 import SwiftUI
 
@@ -295,7 +294,6 @@ struct AssignedNativePicker<Content: View>: NSViewRepresentable {
         }
     }
 }
-#endif
 
 import SwiftUI
 
@@ -305,7 +303,6 @@ private struct ExistingPickerInspectionPresentation: ViewModifier {
     @Environment(\.isEnabled) private var enabled
     @State private var focused = false
     @ViewBuilder func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         if popupOnly {
             AssignedNativePicker(content: content, theme: inheritedTheme, enabled: enabled, stylesClosedControl: false)
         } else {
@@ -313,16 +310,13 @@ private struct ExistingPickerInspectionPresentation: ViewModifier {
             AssignedNativePicker(content: content, theme: theme, enabled: enabled, onFocusChange: { focused = $0 })
                 .assignedTypography("component.library.5.text", fallback: SettingsFont.compactLabel)
                 .foregroundStyle(theme.text.primary).tint(theme.border.focus)
-                .padding(.horizontal, theme.catalogMetric("padding", fallback: 0))
-                .padding(.vertical, theme.catalogMetric("paddingY", fallback: 6))
+                .padding(.horizontal, theme.catalogMetric("padding", fallback: theme.space.s0))
+                .padding(.vertical, theme.catalogMetric("paddingY", fallback: theme.space.s6))
                 .nativeCatalogTarget(["padding", "paddingY", "height"].map { "component.library.5.elements.container." + $0 }, "Select / picker")
                 .frame(minHeight: theme.catalogMetric("height", fallback: 0))
                 .assignedBaseChrome(5)
                 .assignedBaseFocusRing(5, visible: focused && enabled, radius: theme.radius.medium)
         }
-        #else
-        content
-        #endif
     }
 }
 extension View {

@@ -31,7 +31,7 @@ struct ChatModelRolePicker: View {
             (explainsUnavailable && !identifier.isEmpty && currentItem == nil)
             ? CoreModelService.unavailableReason(modelId: identifier)
             : nil
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: theme.space.s6) {
             ModelSearchablePicker(
                 items: items,
                 selection: Binding(get: { identifier.isEmpty ? nil : identifier }, set: { select($0) }),
@@ -40,9 +40,9 @@ struct ChatModelRolePicker: View {
                 style: .compact
             )
             if let unavailableReason {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: theme.space.s6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(theme.status.warning.foreground)
                     Text(
                         "\(unavailableReason) Until then, your active chat model handles these tasks.",

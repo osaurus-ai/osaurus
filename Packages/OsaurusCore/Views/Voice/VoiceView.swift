@@ -163,7 +163,7 @@ struct VoiceView: View {
 
             SettingsDrillInList(items: VoiceTab.drillInItems) { selection = $0 }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 SettingsSectionHeader(title: "Models")
                 SettingsGroup {
                     SettingsNavigationRow(
@@ -190,7 +190,7 @@ struct VoiceView: View {
     @ViewBuilder
     private func detail(_ item: VoiceTab) -> some View {
         ScrollViewReader { proxy in
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 SettingsPageHeader(title: item.title, subtitle: item.subtitle)
                 switch item {
                 case .setup, .speechToText, .models:

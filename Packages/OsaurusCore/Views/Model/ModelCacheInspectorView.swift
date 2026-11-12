@@ -22,10 +22,10 @@ struct ModelCacheInspectorView: View {
     var onRefresh: (() -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             // Header
             HStack {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     SettingsIconTile(icon: "cube.box.fill", size: 28)
 
                     Text("Loaded Models", bundle: .module)
@@ -43,7 +43,7 @@ struct ModelCacheInspectorView: View {
             if items.isEmpty && imageItem == nil {
                 SettingsEmptyState(inline: "tray", title: "No models currently cached.")
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(items, id: \.name) { item in
                         ModelCacheRow(
                             item: item,
@@ -189,7 +189,7 @@ private struct RefreshButton: View {
                 }
 
                 Image(systemName: "arrow.clockwise")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(isHovered ? theme.text.link : theme.text.secondary)
                     .rotationEffect(.degrees(isRefreshing ? 360 : 0))
                     .animation(
@@ -227,9 +227,9 @@ private struct ModelCacheRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+        HStack(alignment: .center, spacing: theme.space.s10) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s6) {
                     Text(item.name)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -285,9 +285,9 @@ private struct ImageModelCacheRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+        HStack(alignment: .center, spacing: theme.space.s10) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s6) {
                     Text(item.name)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -334,57 +334,10 @@ private struct ImageModelCacheRow: View {
 
 // MARK: - Clear All Button
 private struct ClearAllButton: View {
-    @Environment(\.theme) private var theme
     let isClearing: Bool
     let action: () -> Void
 
-    @State private var isHovered = false
-
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                if isClearing {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .frame(width: 12, height: 12)
-                } else {
-                    Image(systemName: "trash")
-                        .glyphSize(11, weight: .medium)
-                }
-                Text("Clear All", bundle: .module)
-                    .font(SettingsFont.smallLabel)
-            }
-            .foregroundColor(isHovered ? .white : theme.status.error.foreground)
-            .padding(.horizontal, theme.space.s12)
-            .padding(.vertical, theme.space.s6)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                        .fill(isHovered ? theme.status.error.foreground : theme.status.error.background)
-                }
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.status.error.border,
-                                (isHovered ? theme.status.error.border : theme.status.error.background),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: theme.stroke.default
-                    )
-            )
-            .themeElevation(isHovered ? theme.elevation.raised : .none)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .disabled(isClearing)
-        .onHover { hovering in
-            withAnimation(theme.motion.quick) {
-                isHovered = hovering
-            }
-        }
+        SettingsButton(.destructive, "Clear All", icon: "trash", isLoading: isClearing, size: .compact, action: action)
     }
 }

@@ -26,7 +26,7 @@ struct SystemStatusBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: theme.space.s20) {
             ResourceGauge(
                 label: L("RAM"),
                 icon: "memorychip",
@@ -73,13 +73,13 @@ struct ResourceGauge: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s4) {
                     Text(label)
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(theme.text.secondary)
