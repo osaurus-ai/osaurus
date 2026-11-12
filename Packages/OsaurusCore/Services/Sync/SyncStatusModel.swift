@@ -462,7 +462,12 @@ final class SyncStatusModel: ObservableObject {
 
     func revoke(_ device: Device) throws {
         guard let core = SyncService.shared.core else { return }
-        try core.revokeDevice(device: device.id)
+        do {
+            try core.revokeDevice(device: device.id)
+        } catch {
+            Self.logRemoveFailure(error, device: device)
+            throw error
+        }
         FeatureTelemetry.syncDeviceRemoved(rotatedKeys: false)
         dismissPairingResult()
         refresh()
@@ -472,12 +477,28 @@ final class SyncStatusModel: ObservableObject {
     /// recovery phrase.
     func revokeAndRotate(_ device: Device) throws -> [String] {
         guard let core = SyncService.shared.core else { return [] }
-        _ = try core.revokeAndRotate(devices: [device.id])
+        do {
+            _ = try core.revokeAndRotate(devices: [device.id])
+        } catch {
+            Self.logRemoveFailure(error, device: device)
+            throw error
+        }
         FeatureTelemetry.syncDeviceRemoved(rotatedKeys: true)
         SyncWalletLink.clear()
         dismissPairingResult()
         refresh()
         return try core.recoveryPhrase()
+    }
+
+    /// Removing a device shows only "That Didn't Work" and a short message; the full error goes to
+    /// the log (2026-11-12: two leftover simulator iPhones that never come off).
+    private static func logRemoveFailure(_ error: Error, device: Device) {
+        let detail = error.syncLogDetail
+        let id = String(device.id.prefix(8))
+        log.error("removing \(id, privacy: .public) failed: \(detail, privacy: .public)")
+        #if DEBUG
+            print("[SyncDevices] removing \(id) failed: \(detail)")
+        #endif
     }
 
     // MARK: - Recovery
