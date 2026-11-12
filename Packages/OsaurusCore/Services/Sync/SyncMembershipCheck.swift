@@ -20,6 +20,28 @@ enum SyncMembershipCheck {
                 let me = "u:\(user)"
                 let missing = all.filter { conversation in !conversation.members.contains { $0.principal == me } }
                 print("[SyncMembers] \(missing.count) of \(all.count) conversations don't list u:\(user.prefix(8))")
+                // The system conversations (directory, manage, attention): which are synced, when they were
+                // made and who is in them. A new iPad got the manage one but neither of the others.
+                for conversation in all where conversation.tag(SyncConversationMapper.TagKey.kind) != nil {
+                    let kind = conversation.tag(SyncConversationMapper.TagKey.kind) ?? "-"
+                    let members = conversation.members.map { "\($0.principal.prefix(10)) \($0.role)" }
+                    let role = conversation.myRole.map { "\($0)" } ?? "none"
+                    print(
+                        "[SyncMembers] system \(conversation.scope.prefix(8)) kind \(kind) \(conversation.replication)"
+                            + " created \(conversation.createdMs) my role \(role)"
+                            + " members [\(members.joined(separator: ", "))]")
+                }
+                // Adds each of this user's other devices to every conversation it can reach, as pairing did,
+                // and says where it was missing.
+                for device in (try? core.devices()) ?? [] where !device.revoked && !device.isSelf {
+                    let added = (try? core.approveDevice(device: device.id)) ?? []
+                    let kinds = added.map { scope in
+                        let kind = all.first { $0.scope == scope }?.tag(SyncConversationMapper.TagKey.kind) ?? "chat"
+                        return "\(scope.prefix(8)) \(kind)"
+                    }
+                    let list = kinds.joined(separator: ", ")
+                    print("[SyncMembers] approved \(device.id.prefix(8)): added to \(added.count) [\(list)]")
+                }
                 for conversation in missing.prefix(20) {
                     let kind = conversation.tag(SyncConversationMapper.TagKey.kind) ?? "chat"
                     let tagged = conversation.tag(SyncConversationMapper.TagKey.device)
