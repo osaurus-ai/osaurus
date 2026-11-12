@@ -489,6 +489,9 @@ While an iPhone is in the account, each Mac keeps one conversation tagged
   - `privacy_review`: `{items: [{id, category, original, placeholder}]}`, the detections the
     Privacy Filter found in a hosted run's message, before it goes to the provider.
   - `workflow_dialog` (`workflow_forms`): a form a workflow run waits on.
+    Any run on the Mac, including one started there (its Run button, an agent in an open chat):
+    the Mac shows that form too, and whichever device answers first wins. A form answered on
+    the Mac is retracted from the feed, so the iPhone closes it.
     `{workflow, run_id, node_id, title, message, message_truncated?, fields: [{key, label, type,
     required, options?, help?, default?}], prefill?, phone_answerable}`.
     - `type` is `text | long_text | number | bool | choice | date | file | folder | secret`;
