@@ -394234,6 +394234,138 @@
           }
         }
       }
+    },
+    "%@ runs a version of Osaurus that can't sync with this one. Update both to the latest version." : {
+
+    },
+    "%@ · Connected directly" : {
+
+    },
+    "%@ · Connected through a relay server" : {
+
+    },
+    "Another device is being added right now. Wait for it to finish, then try again." : {
+
+    },
+    "Check the Number" : {
+
+    },
+    "Does %@ show this number? Look at its screen. Only confirm if both show the same number." : {
+
+    },
+    "Downloading for %lld chats" : {
+
+    },
+    "I Wrote It Down" : {
+
+    },
+    "It stops receiving your chats. Unless it was wiped, it still holds your account's keys, so changing the recovery phrase is what keeps it out. %@ Your other devices pick up the change the next time they connect. Choose Remove Only for a device you've wiped." : {
+
+    },
+    "Join the other device's account?" : {
+
+    },
+    "Numbers Match" : {
+
+    },
+    "Older Messages" : {
+
+    },
+    "Pairing stopped, and no device was added. To add your own device, start again with a new code." : {
+
+    },
+    "Pairing was cancelled on the other device." : {
+
+    },
+    "Paused on this network or in Low Power Mode" : {
+
+    },
+    "Remove Only" : {
+
+    },
+    "Remove and Change Phrase" : {
+
+    },
+    "Removing the device changed your recovery phrase. The old one no longer works." : {
+
+    },
+    "Same Network only reaches devices on this Mac's Wi-Fi or Ethernet. If your other devices are somewhere else, use Anywhere (Beta) here and on each of them." : {
+
+    },
+    "Sync then gets its own recovery phrase again, since anyone with your Osaurus recovery phrase could derive the old one." : {
+
+    },
+    "The code expired before both devices confirmed the number. Show a new code and try again." : {
+
+    },
+    "The code was wrong or has expired. Show a new code on your other device and paste its link again." : {
+
+    },
+    "The new device needs the latest version of Osaurus to pair. Update it, then try again." : {
+
+    },
+    "The old recovery phrase stops working." : {
+
+    },
+    "The other device couldn't confirm the code. Use a link shown on your own device's screen, then try again." : {
+
+    },
+    "The other device disconnected before pairing finished. Try again." : {
+
+    },
+    "The other device stopped pairing, so no device was added. If you're adding your own device, start again with a new code." : {
+
+    },
+    "They're Different" : {
+
+    },
+    "This Mac couldn't reach the other device. Check that it still shows the code and is on the same network, or set Find Devices to Anywhere (Beta) on both." : {
+
+    },
+    "This Mac couldn't reach the other device. Check that it still shows the code and is online, then try again." : {
+
+    },
+    "This Mac got your message more than an hour after you sent it, so it didn't start it. Send it again to run it now." : {
+
+    },
+    "This Mac's chats move to the account of the device that shows this link, and its chats come here. Only use a link shown on your own device's screen." : {
+
+    },
+    "Use Anywhere" : {
+
+    },
+    "Waiting for you to confirm the same number on %@." : {
+
+    },
+    "Windows PC" : {
+
+    },
+    "Write Down Your New Recovery Phrase" : {
+
+    },
+    "Your Devices Aren't Connecting" : {
+
+    },
+    "add this Mac to another device's sync account" : {
+
+    },
+    "change your sync recovery phrase" : {
+
+    },
+    "move this Mac to another sync account" : {
+
+    },
+    "remove a device from your sync account" : {
+
+    },
+    "show a code that adds a device to your sync account" : {
+
+    },
+    "show your sync recovery phrase" : {
+
+    },
+    "sign this Mac out of sync" : {
+
     }
   },
   "version" : "1.1"
