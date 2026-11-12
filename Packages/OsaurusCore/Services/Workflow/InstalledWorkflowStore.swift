@@ -26,6 +26,9 @@ public final class InstalledWorkflowStore: ObservableObject {
         Task { @MainActor in
             self.clearStaleSetupFlags()
             _ = HostedWorkflowLinkStore.shared
+            #if DEBUG
+                PushTestWorkflow.installIfAsked()
+            #endif
         }
     }
 
