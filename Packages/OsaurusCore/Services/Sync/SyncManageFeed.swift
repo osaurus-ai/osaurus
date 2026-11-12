@@ -150,6 +150,7 @@ final class SyncManageFeed {
                 feed.schedulePublish()
                 SyncWorkflowRunsFeed.shared.reset()
                 SyncWorkflowPush.shared.refresh()
+                SyncMembershipCheck.run(core: core)
             },
             detach: { SyncManageFeed.shared.detach() })
     }
