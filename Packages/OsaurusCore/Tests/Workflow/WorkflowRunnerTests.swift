@@ -504,46 +504,49 @@ struct WorkflowRunnerTests {
     }
 
     @Test
-    func resumedDialog_isAskedAgainWithTheTimeItHadLeft() async {
+    func resumedDialog_isAskedAgainWithItsFullTimeout_andTheTimeItAlreadyWaited() async {
         let def = Self.askDefinition(timeout: 600)
         var request = Self.request(def, input: .object([:]))
         request.resuming = Self.abandonedAsk(request, waitingSince: Date(timeIntervalSinceNow: -500))
-        actor Seen { var timeout: TimeInterval?; func set(_ t: TimeInterval) { timeout = t } }
+        actor Seen {
+            var timeout: TimeInterval?
+            var elapsed: TimeInterval?
+            func set(_ t: TimeInterval, _ e: TimeInterval) { timeout = t; elapsed = e }
+        }
         let seen = Seen()
         let run = await WorkflowRunner(
             request: request,
             executor: ClosureExecutor { ctx, awaiting in
-                await seen.set(ctx.timeout)
+                await seen.set(ctx.timeout, ctx.elapsedBeforeResume)
                 await awaiting(true)
                 await awaiting(false)
                 return WorkflowNodeOutcome(output: .object(["email": .string("a@b.co")]))
             }
         ).execute()
         #expect(run.status == .completed)
-        let remaining = await seen.timeout ?? 0
-        #expect(remaining > 90 && remaining <= 100, "\(remaining)")
+        #expect(await seen.timeout == 600)
+        let elapsed = await seen.elapsed ?? 0
+        #expect(elapsed >= 500 && elapsed < 510, "\(elapsed)")
         #expect(run.node("ask")?.status == .done)
         #expect(run.output == .object(["email": .string("a@b.co")]))
     }
 
     @Test
-    func resumedDialog_whoseTimeRanOutWhileTheAppWasClosed_timesOutAtOnce() async {
-        let def = Self.askDefinition(timeout: 60)
+    func resumedDialog_whoseTimeoutPassedWhileTheAppWasClosed_isStillAsked() async {
+        let def = Self.askDefinition(timeout: 0.5)
         var request = Self.request(def, input: .object([:]))
         request.resuming = Self.abandonedAsk(request, waitingSince: Date(timeIntervalSinceNow: -3_600))
-        let started = Date()
         let run = await WorkflowRunner(
             request: request,
             executor: ClosureExecutor { _, awaiting in
+                // The person takes three times the step's timeout to answer.
                 await awaiting(true)
-                // Never answered: the deadline must fire without waiting.
-                try await Task.sleep(nanoseconds: 30_000_000_000)
-                return WorkflowNodeOutcome(output: .object([:]))
+                try await Task.sleep(nanoseconds: 1_500_000_000)
+                await awaiting(false)
+                return WorkflowNodeOutcome(output: .object(["email": .string("a@b.co")]))
             }
         ).execute()
-        #expect(run.status == .failed)
-        #expect(run.error?.nodeID == "ask")
-        #expect(run.error?.reason.lowercased().contains("timed out") == true, "\(run.error?.reason ?? "")")
-        #expect(Date().timeIntervalSince(started) < 10)
+        #expect(run.status == .completed, "\(String(describing: run.error))")
+        #expect(run.output == .object(["email": .string("a@b.co")]))
     }
 }

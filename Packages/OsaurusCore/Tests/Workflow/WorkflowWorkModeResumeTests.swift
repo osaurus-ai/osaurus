@@ -13,6 +13,8 @@ import Testing
 
 @testable import OsaurusCore
 
+/// Drives `DialogCoordinator.shared`, so it runs with the other suites that do.
+extension DialogSharedQueueTests {
 @Suite(.serialized)
 @MainActor
 struct WorkflowWorkModeResumeTests {
@@ -395,4 +397,5 @@ struct WorkflowWorkModeResumeTests {
             }
         }
     }
+}
 }

@@ -57,7 +57,30 @@ public final class DialogCoordinator: ObservableObject {
 
     private var continuations: [UUID: CheckedContinuation<[String: JSONValue], Error>] = [:]
 
+    /// What was typed into a form that closed without an answer (it
+    /// expired, its run stopped or failed), by workflow and node, so the
+    /// next time that form is asked it starts from there. Memory only, and
+    /// never secret fields.
+    private var drafts: [String: [String: JSONValue]] = [:]
+
     private init() {}
+
+    private static func draftKey(workflowID: UUID, nodeID: String) -> String {
+        workflowID.uuidString + "/" + nodeID
+    }
+
+    /// Keeps what is typed into `dialog` until it is answered.
+    func saveDraft(for dialog: PendingDialog, values: [String: JSONValue]) {
+        guard pending.contains(where: { $0.id == dialog.id }) else { return }
+        let keep = Set(dialog.fields.filter { $0.type != .secret }.map(\.key))
+        drafts[Self.draftKey(workflowID: dialog.workflowID, nodeID: dialog.nodeID)] = values.filter {
+            keep.contains($0.key)
+        }
+    }
+
+    func draft(workflowID: UUID, nodeID: String) -> [String: JSONValue] {
+        drafts[Self.draftKey(workflowID: workflowID, nodeID: nodeID)] ?? [:]
+    }
 
     /// Heads of each workflow's queue: the forms to show now.
     public var presentable: [PendingDialog] {
@@ -100,6 +123,7 @@ public final class DialogCoordinator: ObservableObject {
         let cleaned = Self.normalize(values, fields: dialog.fields)
         let issues = JSONSchemaValidator.validate(.object(cleaned), against: dialog.answerSchema)
         if !issues.isEmpty { return .failure(.invalid(issues.map(\.description))) }
+        drafts[Self.draftKey(workflowID: dialog.workflowID, nodeID: dialog.nodeID)] = nil
         resolve(id, with: .success(cleaned))
         return .success(())
     }
@@ -200,6 +224,7 @@ public final class DialogCoordinator: ObservableObject {
 
     func resetForTesting() {
         for id in pending.map(\.id) { resolve(id, with: .failure(CancellationError())) }
+        drafts.removeAll()
     }
 }
 

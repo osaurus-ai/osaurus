@@ -50,6 +50,8 @@ struct WorkflowToolShapeTests {
     }
 }
 
+/// Drives `DialogCoordinator.shared`, so it runs with the other suites that do.
+extension DialogSharedQueueTests {
 @Suite(.serialized)
 @MainActor
 struct WorkflowCallingTests {
@@ -291,6 +293,7 @@ struct WorkflowCallingTests {
             #expect(visible.contains(WorkflowCallResult.Status.needsSetup.rawValue), "resolved and reached setup")
         }
     }
+}
 }
 
 @Suite(.serialized)
