@@ -253,7 +253,7 @@ final class SyncWorkflowRunsFeed {
     private static let debounce: Duration = .milliseconds(500)
     /// Notifications don't wait for the list's debounce: they only compare statuses. A short
     /// window still folds a streaming step's per-token store changes into one check.
-    private static let pushDebounce: Duration = .milliseconds(100)
+    private static let pushDebounce: Duration = .milliseconds(250)
     private var pushTask: Task<Void, Never>?
 
     private var cancellable: AnyCancellable?
