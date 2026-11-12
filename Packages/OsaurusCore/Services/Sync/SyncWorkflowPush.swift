@@ -112,9 +112,6 @@ final class SyncWorkflowPush {
             guard !Task.isCancelled else { return }
             self.targets = targets
             let devices = targets.map(\.device).sorted()
-            #if DEBUG
-                startDrillIfAsked()
-            #endif
             if devices != registeredDevices {
                 registeredDevices = devices
                 Self.trace("\(devices.count) iPhones registered")
@@ -170,9 +167,6 @@ final class SyncWorkflowPush {
 
     /// Called with each runs list the runs feed computes.
     func observe(_ runs: [SyncDeviceFeedContract.WorkflowRunEntry]) {
-        #if DEBUG
-            latestRun = runs.max { ($0.startedMs) < ($1.startedMs) } ?? latestRun
-        #endif
         let (events, next) = Self.events(previous: lastStatus, runs: runs, sinceMs: sinceMs)
         lastStatus = next
         guard !events.isEmpty, !targets.isEmpty else { return }
@@ -237,45 +231,6 @@ final class SyncWorkflowPush {
         if event.kind == "started", registration.onlyOthers ?? true, fromPhone.contains(event.runId) { return false }
         return true
     }
-
-    // MARK: Drill (Debug)
-
-    #if DEBUG
-        /// The newest run seen, so a drill's notifications open a real run page.
-        private var latestRun: SyncDeviceFeedContract.WorkflowRunEntry?
-        private var drillStarted = false
-
-        /// With `OSAURUS_PUSH_DRILL=1` in the scheme: once an iPhone is registered, one scripted run
-        /// goes out through the real path (`wants`, `send`, the service, APNs): started, waiting for
-        /// an answer, cleared, finished, 8 seconds apart. Tests push end to end without running a
-        /// workflow. KEEP: how push is checked on device after a change.
-        private func startDrillIfAsked() {
-            guard !drillStarted, !targets.isEmpty,
-                ProcessInfo.processInfo.environment["OSAURUS_PUSH_DRILL"] == "1"
-            else { return }
-            drillStarted = true
-            Task { @MainActor [weak self] in
-                // The runs list first, for a real run to borrow.
-                try? await Task.sleep(for: .seconds(5))
-                guard let first = self else { return }
-                let run = first.latestRun
-                let runId = run?.card.runId ?? UUID().uuidString.lowercased()
-                let workflowId = run?.workflowId ?? "push-drill"
-                let name = run?.card.name ?? "Push Drill"
-                Self.trace("drill: \(name) (\(runId.prefix(8))) to \(first.targets.count) iPhones")
-                for kind in ["started", "awaiting_user", "cleared", "completed"] {
-                    guard let self else { return }
-                    let event = Event(kind: kind, runId: runId, workflowId: workflowId, name: name, error: nil)
-                    // The drill comes from this Mac, so a phone filter on `started` doesn't apply.
-                    for target in self.targets where Self.wants(target.registration, event, fromPhone: []) {
-                        Self.trace("drill: \(kind)")
-                        self.send(event, to: target)
-                    }
-                    try? await Task.sleep(for: .seconds(8))
-                }
-            }
-        }
-    #endif
 
     // MARK: Sending
 
