@@ -359,6 +359,11 @@ struct DevicesView: View {
         }
     }
 
+    /// The six-digit confirmation number in two groups of three, as the iPhone shows it.
+    private static func spacedCode(_ code: String) -> String {
+        code.count == 6 ? "\(code.prefix(3)) \(code.suffix(3))" : code
+    }
+
     /// The core may already group the code with dashes; regroup the bare characters.
     private static func grouped(_ code: String) -> String {
         let code = code.filter { $0.isLetter || $0.isNumber }
@@ -372,6 +377,16 @@ struct DevicesView: View {
     @ViewBuilder
     private var pairingResult: some View {
         switch model.pairing {
+        case let .confirming(_, name, code):
+            SettingsCallout(
+                icon: "number.circle.fill",
+                title: Self.spacedCode(code),
+                message: String(format: L("Does %@ show this number? Check before you add it."), name),
+                tone: .info
+            ) {
+                SettingsButton(.tertiary, "It Doesn't") { model.answerPairingConfirmation(matches: false) }
+                SettingsButton(.primary, "It Matches") { model.answerPairingConfirmation(matches: true) }
+            }
         case let .paired(name):
             SettingsCallout(
                 icon: "checkmark.circle.fill",

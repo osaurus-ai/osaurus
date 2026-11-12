@@ -20,6 +20,8 @@ final class SyncStatusModel: ObservableObject {
         case idle
         case offering(PairingOffer)
         case joining
+        /// Both devices show `code` (osaurus-sync beta.6); the user says whether they match.
+        case confirming(device: String, deviceName: String, code: String)
         case paired(deviceName: String)
         case failed(String)
     }
@@ -168,6 +170,9 @@ final class SyncStatusModel: ObservableObject {
             pairing = .paired(deviceName: name)
             FeatureTelemetry.syncDevicePaired(platform: SyncPhoneDevices.isPhone(deviceKey: device) ? "iphone" : "other")
             ToastManager.shared.success(L("Device added"), message: String(format: L("Your chats now sync with %@."), name))
+        case let .pairingConfirmation(device, name, _, code):
+            pairingExpiry?.cancel()
+            pairing = .confirming(device: device, deviceName: name, code: code)
         case let .pairingFailed(reason):
             pairingExpiry?.cancel()
             Self.log.notice("pairing failed: \(reason, privacy: .public)")
@@ -240,6 +245,24 @@ final class SyncStatusModel: ObservableObject {
             }
         } catch {
             pairing = .failed(error.syncUserMessage)
+        }
+    }
+
+    /// The other device shows the same number (or not): the account is handed over only once both
+    /// devices confirmed. Off the main thread, as every core call.
+    func answerPairingConfirmation(matches: Bool) {
+        guard case let .confirming(device, _, _) = pairing, let core = SyncService.shared.core else { return }
+        pairing = matches ? .joining : .idle
+        Task.detached(priority: .userInitiated) {
+            do {
+                if matches {
+                    try core.confirmPairing(device: device)
+                } else {
+                    try core.rejectPairing(device: device)
+                }
+            } catch {
+                await MainActor.run { self.pairing = .failed(error.syncUserMessage) }
+            }
         }
     }
 
