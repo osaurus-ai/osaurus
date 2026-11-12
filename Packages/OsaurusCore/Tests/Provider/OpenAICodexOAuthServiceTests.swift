@@ -111,6 +111,9 @@ struct OpenAICodexOAuthServiceTests {
         let expected = [
             "gpt-6.1-sol",
             "gpt-6-astra",
+            "gpt-6.1-terra",
+            "gpt-6-sol",
+            "gpt-6-luna",
             "gpt-5.6",
             "gpt-5.6-terra",
             "gpt-5.6-luna",
@@ -124,6 +127,10 @@ struct OpenAICodexOAuthServiceTests {
         ]
         for slug in expected {
             #expect(models.contains(slug), "static fallback is missing \(slug)")
+        }
+        // Shut down on the OpenAI API 2026-07-23.
+        for retired in ["gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex", "gpt-5.1-codex-mini"] {
+            #expect(!models.contains(retired), "static fallback still lists retired \(retired)")
         }
         #expect(Set(models).count == models.count, "static fallback has duplicate slugs")
     }

@@ -39,6 +39,16 @@ enum CredentialReveal {
         }
     }
 
+    /// Like `authenticate`, for account actions that must stay possible on a
+    /// Mac with no login password or Touch ID: there it passes.
+    static func confirmOwner(reason: String) async -> Bool {
+        var error: NSError?
+        guard makeContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            return error?.domain == LAErrorDomain && error?.code == LAError.Code.passcodeNotSet.rawValue
+        }
+        return await authenticate(reason: reason)
+    }
+
     /// Authenticates, then reads the value off the main actor.
     static func read(reason: String, _ load: @escaping @Sendable () -> String?) async -> String? {
         guard await authenticate(reason: reason) else { return nil }

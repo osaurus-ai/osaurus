@@ -41,7 +41,7 @@ final class SyncAttentionFeed {
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncAttentionFeed.shared.schedulePublish() } }
             .store(in: &cancellables)
-        SyncPhoneDevices.shared.$hasPhone
+        SyncPhoneDevices.shared.$hasFeedReader
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncAttentionFeed.shared.schedulePublish() } }
@@ -113,7 +113,7 @@ final class SyncAttentionFeed {
 
     func publishNow() async {
         guard SyncService.shared.core != nil else { return }
-        let hasPhone = SyncPhoneDevices.shared.hasPhone
+        let hasReader = SyncPhoneDevices.shared.hasFeedReader
         let body = Self.payload(
             items: PairedDeviceChannel.shared.feed(),
             recent: Array(AttentionCenter.shared.recent)
@@ -124,7 +124,7 @@ final class SyncAttentionFeed {
         let written = await Task.detached(priority: .utility) { () -> Bool in
             do {
                 return try SyncConversationStore.shared.performWrite { core in
-                    try Self.publish(bytes, core: core, createIfMissing: hasPhone)
+                    try Self.publish(bytes, core: core, createIfMissing: hasReader)
                 }
             } catch SyncConversationStoreError.notOpen {
                 return false
@@ -193,7 +193,8 @@ final class SyncAttentionFeed {
         let perDevice = SyncDeviceFeedContract.perDevice(
             SyncDeviceFeedContract.AttentionAnswers.self,
             prefix: SyncDeviceFeedContract.attentionAnswerNamespacePrefix,
-            in: conversation
+            in: conversation,
+            writtenByThatDevice: true
         )
         for (device, set) in perDevice {
             guard let name = deviceNames[device] else { continue }
@@ -209,13 +210,13 @@ final class SyncAttentionFeed {
         return entries.sorted { ($0.answer.answeredMs, $0.id) < ($1.answer.answeredMs, $1.id) }
     }
 
-    /// Who answers say they're from. Only iPhones write answers, and Sync
-    /// doesn't say which one did: with one iPhone in the account that's its
-    /// name, with several it's "Your iPhone".
+    /// Who answers say they're from. Only devices that read the feeds write
+    /// answers, and Sync doesn't say which one did: with one in the account
+    /// that's its name, with several iPhones "Your iPhone".
     static func answerLabel(devices: [Device]) -> String {
-        let phones = devices.filter { !$0.isSelf && !$0.revoked && $0.devicePlatform == .iPhone }
-        if phones.count == 1, let name = phones.first?.name, !name.isEmpty { return name }
-        return L("Your iPhone")
+        let readers = devices.filter { !$0.isSelf && !$0.revoked && $0.devicePlatform.usesMacFeeds }
+        if readers.count == 1, let name = readers.first?.name, !name.isEmpty { return name }
+        return readers.allSatisfy { $0.devicePlatform == .iPhone } ? L("Your iPhone") : L("Your other device")
     }
 
     /// Resolves each pending item an answer names, once. An answer the item

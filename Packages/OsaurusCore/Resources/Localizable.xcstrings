@@ -3917,15 +3917,6 @@
     "If %@" : {
 
     },
-    "Does %@ show this number? Check before you add it." : {
-
-    },
-    "It Doesn't" : {
-
-    },
-    "It Matches" : {
-
-    },
     "It finished." : {
 
     },
@@ -4995,40 +4986,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在工作日清晨"
-          }
-        }
-      }
-    },
-    "Needs about %lld GB; this Mac has %lld GB." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Benötigt etwa %1$lld GB; dieser Mac hat %2$lld GB."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "약 %1$lld GB가 필요합니다. 이 Mac은 %2$lld GB입니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нужно около %1$lld ГБ; у этого Mac %2$lld ГБ."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要约 %1$lld GB；这台 Mac 有 %2$lld GB。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要約 %1$lld GB；這台 Mac 有 %2$lld GB。"
           }
         }
       }
@@ -65773,40 +65730,6 @@
         }
       }
     },
-    "Bigger models are smarter but use more memory." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Größere Modelle sind intelligenter, benötigen aber mehr Arbeitsspeicher."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "더 큰 모델은 더 똑똑하지만 더 많은 메모리를 사용합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Большие модели умнее, но используют больше памяти."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更大的模型更智能，但占用更多内存。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更大的模型更智能，但佔用更多內存。"
-          }
-        }
-      }
-    },
     "Bill the workspace pool" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -74421,40 +74344,6 @@
         }
       }
     },
-    "Change model" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modell ändern"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "모델 변경"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сменить модель"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更换模型"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更換模型"
-          }
-        }
-      }
-    },
     "Change Project" : {
       "localizations" : {
         "de" : {
@@ -82452,40 +82341,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "選擇您的機器人，然後停用 — 否則機器人無法看到羣組訊息。"
-          }
-        }
-      }
-    },
-    "Choose your model" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wählen Sie Ihr Modell"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "모델 선택"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выберите свою модель"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择你的模型"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "選擇您的模型"
           }
         }
       }
@@ -117809,9 +117664,6 @@
         }
       }
     },
-    "Download: %@" : {
-
-    },
     "Downloaded" : {
       "localizations" : {
         "de" : {
@@ -129342,9 +129194,6 @@
 
     },
     "Est. Memory" : {
-
-    },
-    "Est. memory while running: %@" : {
 
     },
     "Establishing the Osaurus Secure Channel — forward-secret, mutually authenticated end-to-end encryption. Not encrypted until connected." : {
@@ -212495,48 +212344,6 @@
         }
       }
     },
-    "Not enough free disk space — this model needs %@ and this Mac has %@ free. Free up space or choose a smaller model." : {
-      "comment" : "Warning text displayed when a model download cannot fit on the user's Mac due to insufficient free disk space. The first argument is the formatted size of the model download. The second argument is the formatted free disk space on the user's Mac.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nicht genügend freier Speicherplatz – dieses Modell benötigt %1$@, auf diesem Mac sind %2$@ frei. Geben Sie Speicherplatz frei oder wählen Sie ein kleineres Modell."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Not enough free disk space — this model needs %1$@ and this Mac has %2$@ free. Free up space or choose a smaller model."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "디스크 여유 공간이 부족합니다 — 이 모델의 필요 공간은 %1$@, 이 Mac의 여유 공간은 %2$@입니다. 공간을 확보하거나 더 작은 모델을 선택하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Недостаточно свободного места на диске — модели нужно %1$@, а на этом Mac свободно %2$@. Освободите место или выберите модель поменьше."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "磁盘可用空间不足——此模型需要 %1$@，而这台 Mac 仅剩 %2$@。请释放空间或选择更小的模型。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "磁盤可用空間不足——此模型需要 %1$@，而這臺 Mac 僅剩 %2$@。請釋放空間或選擇更小的模型。"
-          }
-        }
-      }
-    },
     "Not enough free disk space for cold provisioning" : {
       "localizations" : {
         "de" : {
@@ -217372,9 +217179,6 @@
           }
         }
       }
-    },
-    "On disk: %@" : {
-
     },
     "on Friday afternoons" : {
       "extractionState" : "manual",
@@ -237376,42 +237180,6 @@
     "Pick which tools this agent can use. Skills come from the shared library; limit them below." : {
       "comment" : "A tooltip for the \"Pick which tools this agent can use\" section.",
       "isCommentAutoGenerated" : true
-    },
-    "Picked for your Mac" : {
-      "comment" : "Badge label for the \"Picked for your Mac\" badge in the Configure AI model chooser modal.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Für Ihren Mac ausgewählt"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 Mac에 맞는 추천"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подобрано для вашего Mac"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "为你的 Mac 精选"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "爲您的 Mac 精選"
-          }
-        }
-      }
     },
     "Picked up" : {
       "extractionState" : "manual",
@@ -298375,40 +298143,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "選擇行"
-          }
-        }
-      }
-    },
-    "Select this model" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dieses Modell auswählen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 모델 선택"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрать эту модель"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择此模型"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "選擇此模型"
           }
         }
       }
@@ -392988,34 +392722,6 @@
         }
       }
     },
-    "Bigger models give smarter answers, but they need more memory and a longer download. Lighter ones reply faster." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Größere Modelle geben klügere Antworten, brauchen aber mehr Arbeitsspeicher und einen längeren Download. Leichtere antworten schneller."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更大的模型回答更聪明，但需要更多内存和更长的下载时间。更轻的模型回复更快。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "큰 모델일수록 더 똑똑하게 답하지만, 메모리가 더 필요하고 다운로드도 오래 걸려요. 가벼운 모델은 더 빨리 답해요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Крупные модели отвечают умнее, но им нужно больше памяти и дольше загрузка. Лёгкие отвечают быстрее."
-          }
-        }
-      }
-    },
     "Hi! Click me any time you want to know more. Osaurus gives you a team of AI helpers that chat, write, plan, and get things done on your Mac." : {
       "localizations" : {
         "de" : {
@@ -393236,34 +392942,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Всё готово. Нажмите «Используйте эту модель», чтобы продолжить."
-          }
-        }
-      }
-    },
-    "It's the lightest option, the best fit for your Mac's %lld GB of memory." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Es ist die leichteste Option und passt am besten zu den %lld GB Arbeitsspeicher deines Macs."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这是最轻量的选项，最适合你 Mac 的 %lld GB 内存。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "가장 가벼운 옵션으로, Mac의 %lld GB 메모리에 가장 잘 맞아요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Это самый лёгкий вариант, он лучше всего подходит для %lld GB памяти вашего Mac."
           }
         }
       }
@@ -393576,146 +393254,6 @@
         }
       }
     },
-    "Picked for your Mac's %lld GB of memory, so Osaurus can work privately, even offline." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ausgewählt für die %lld GB Arbeitsspeicher deines Macs, damit Osaurus privat arbeiten kann, sogar offline."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "根据你 Mac 的 %lld GB 内存挑选，让 Osaurus 可以私密地工作，甚至离线使用。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac의 %lld GB 메모리에 맞춰 골랐어요. 그래서 Osaurus가 오프라인에서도 비공개로 작동할 수 있어요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрано под %lld GB памяти вашего Mac, чтобы Osaurus работал приватно, даже офлайн."
-          }
-        }
-      }
-    },
-    "Picked for your Mac: %@, a one-time %@ download." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ausgewählt für deinen Mac: %1$@, ein einmaliger Download von %2$@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "为你的 Mac 挑选：%1$@，一次性下载 %2$@。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac에 맞춰 고른 모델: %1$@, 1회 %2$@ 다운로드."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрано для вашего Mac: %1$@, разовая загрузка %2$@."
-          }
-        }
-      }
-    },
-    "Picked for your Mac: %@." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ausgewählt für deinen Mac: %@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "为你的 Mac 挑选：%@。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac에 맞춰 고른 모델: %@."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрано для вашего Mac: %@."
-          }
-        }
-      }
-    },
-    "Picked for your %lld GB Mac: %@, a one-time %@ download." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ausgewählt für deinen Mac mit %1$lld GB: %2$@, ein einmaliger Download von %3$@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "为你的 %1$lld GB Mac 挑选：%2$@，一次性下载 %3$@。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$lld GB Mac에 맞춰 고른 모델: %2$@, 1회 %3$@ 다운로드."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрано для вашего Mac с %1$lld GB: %2$@, разовая загрузка %3$@."
-          }
-        }
-      }
-    },
-    "Picked for your %lld GB Mac: %@." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ausgewählt für deinen Mac mit %1$lld GB: %2$@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "为你的 %1$lld GB Mac 挑选：%2$@。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$lld GB Mac에 맞춰 고른 모델: %2$@."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрано для вашего Mac с %1$lld GB: %2$@."
-          }
-        }
-      }
-    },
     "Picked to run smoothly on your Mac, so Osaurus can work privately, even offline." : {
       "localizations" : {
         "de" : {
@@ -393996,34 +393534,6 @@
         }
       }
     },
-    "Want a different one? Change model shows how well each one fits your Mac. You can switch any time in Settings." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lieber ein anderes? „Modell ändern“ zeigt, wie gut jedes zu deinem Mac passt. Du kannst jederzeit in den Einstellungen wechseln."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "想换一个？“更换模型”会显示每个模型与你 Mac 的匹配程度。你随时可以在设置中更换。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다른 모델을 원하세요? '모델 변경'에서 각 모델이 Mac에 얼마나 잘 맞는지 볼 수 있어요. 설정에서 언제든 바꿀 수 있어요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Хотите другую? «Сменить модель» показывает, насколько каждая подходит вашему Mac. Сменить её можно в любой момент в настройках."
-          }
-        }
-      }
-    },
     "What can you help me with?" : {
       "localizations" : {
         "de" : {
@@ -394076,34 +393586,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Давайте вместе спланируем ваш день."
-          }
-        }
-      }
-    },
-    "You picked %@. It stays on this Mac, so it works offline." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Du hast %@ gewählt. Es bleibt auf diesem Mac und funktioniert deshalb offline."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "你选了 %@。它保存在这台 Mac 上，所以可以离线使用。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@을(를) 골랐어요. 이 Mac에 머무르니 오프라인에서도 작동해요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вы выбрали %@. Она остаётся на этом Mac, поэтому работает офлайн."
           }
         }
       }
@@ -394272,62 +393754,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Здесь можно спросить меня о чём угодно. Я отвечаю на вопросы, меняю настройки Osaurus по вашей просьбе и передаю задачи вроде поиска или почты тому члену команды, который справится лучше всех. Попробуйте одно из этого:"
-          }
-        }
-      }
-    },
-    "Your Mac has %lld GB of memory and %@ of free storage. Models that run smoothly here leave room for your other apps." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dein Mac hat %1$lld GB Arbeitsspeicher und %2$@ freien Speicherplatz. Modelle, die hier flüssig laufen, lassen Platz für deine anderen Apps."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "你的 Mac 有 %1$lld GB 内存和 %2$@ 可用存储空间。在这里运行流畅的模型会为其他应用留出空间。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac에 %1$lld GB 메모리와 %2$@의 여유 저장 공간이 있어요. 여기서 원활하게 실행되는 모델은 다른 앱을 위한 여유를 남겨 둬요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "На вашем Mac %1$lld GB памяти и %2$@ свободного места. Модели, которые здесь работают плавно, оставляют место другим приложениям."
-          }
-        }
-      }
-    },
-    "Your Mac has %lld GB of memory. Models that run smoothly here leave room for your other apps." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dein Mac hat %lld GB Arbeitsspeicher. Modelle, die hier flüssig laufen, lassen Platz für deine anderen Apps."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "你的 Mac 有 %lld GB 内存。在这里运行流畅的模型会为其他应用留出空间。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac에 %lld GB 메모리가 있어요. 여기서 원활하게 실행되는 모델은 다른 앱을 위한 여유를 남겨 둬요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "На вашем Mac %lld GB памяти. Модели, которые здесь работают плавно, оставляют место другим приложениям."
           }
         }
       }
@@ -394584,90 +394010,6 @@
         }
       }
     },
-    "Bigger models give smarter answers but need more memory and a longer download. Lighter ones reply faster and leave room for your other apps. Not sure? Keep the one picked for your Mac." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Größere Modelle geben klügere Antworten, brauchen aber mehr Arbeitsspeicher und einen längeren Download. Leichtere antworten schneller und lassen Platz für deine anderen Apps. Unsicher? Behalte das für deinen Mac ausgewählte."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "更大的模型回答更聪明，但需要更多内存和更长的下载时间。更轻的模型回复更快，并为其他应用留出空间。拿不准？就用为你的 Mac 挑选的那个。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "큰 모델일수록 더 똑똑하게 답하지만, 메모리가 더 필요하고 다운로드도 오래 걸려요. 가벼운 모델은 더 빨리 답하고 다른 앱을 위한 여유를 남겨 둬요. 잘 모르겠다면 Mac에 맞춰 고른 모델을 그대로 쓰세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Крупные модели отвечают умнее, но им нужно больше памяти и дольше загрузка. Лёгкие отвечают быстрее и оставляют место другим приложениям. Не уверены? Оставьте модель, выбранную для вашего Mac."
-          }
-        }
-      }
-    },
-    "Smartest that fits" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Das klügste, das passt"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "可用中最聪明"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "맞는 것 중 가장 똑똑함"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Самая умная из подходящих"
-          }
-        }
-      }
-    },
-    "Lightest" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Am leichtesten"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "最轻量"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "가장 가벼움"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Самая лёгкая"
-          }
-        }
-      }
-    },
     "Optional. Helps improve Osaurus. Never includes your chats, prompts, files, or keys." : {
       "localizations" : {
         "de" : {
@@ -394751,6 +394093,291 @@
           }
         }
       }
+    },
+    "Not enough free disk space — this model needs %@ and this Mac has %@ free. Free up space and try again." : {
+      "comment" : "Warning text displayed when a model download cannot fit on the user's Mac due to insufficient free disk space. The first argument is the formatted size of the model download. The second argument is the formatted free disk space on the user's Mac.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht genügend freier Speicherplatz – dieses Modell benötigt %1$@, auf diesem Mac sind %2$@ frei. Geben Sie Speicherplatz frei und versuchen Sie es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Not enough free disk space — this model needs %1$@ and this Mac has %2$@ free. Free up space and try again."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "디스크 여유 공간이 부족합니다 — 이 모델의 필요 공간은 %1$@, 이 Mac의 여유 공간은 %2$@입니다. 공간을 확보한 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недостаточно свободного места на диске — модели нужно %1$@, а на этом Mac свободно %2$@. Освободите место и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁盘可用空间不足——此模型需要 %1$@，而这台 Mac 仅剩 %2$@。请释放空间后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁盤可用空間不足——此模型需要 %1$@，而這臺 Mac 僅剩 %2$@。請釋放空間後重試。"
+          }
+        }
+      }
+    },
+    "Want a different one later? You can add more models any time in Settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Später lieber ein anderes? Du kannst jederzeit in den Einstellungen weitere Modelle hinzufügen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以后想换一个？你随时可以在设置中添加更多模型。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "나중에 다른 모델을 원하세요? 설정에서 언제든 모델을 더 추가할 수 있어요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Захотите другую позже? Добавить модели можно в любой момент в настройках."
+          }
+        }
+      }
+    },
+    "%@, a one-time %@ download." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, ein einmaliger Download von %2$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@，一次性下载 %2$@。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, 1회 %2$@ 다운로드."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, разовая загрузка %2$@."
+          }
+        }
+      }
+    },
+    "This model runs right here on your Mac, so nothing you type leaves it and it works offline." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Modell läuft direkt auf deinem Mac. Nichts, was du eingibst, verlässt ihn, und es funktioniert offline."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个模型直接在你的 Mac 上运行，你输入的内容不会离开它，而且可以离线使用。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 모델은 바로 이 Mac에서 실행돼요. 입력한 내용이 Mac 밖으로 나가지 않고, 오프라인에서도 작동해요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта модель работает прямо на вашем Mac: ничего из того, что вы вводите, его не покидает, и она работает офлайн."
+          }
+        }
+      }
+    },
+    "It stays on this Mac, so it works offline." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Es bleibt auf diesem Mac und funktioniert deshalb offline."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "它保存在这台 Mac 上，所以可以离线使用。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에 머무르니 오프라인에서도 작동해요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Она остаётся на этом Mac, поэтому работает офлайн."
+          }
+        }
+      }
+    },
+    "%@ runs a version of Osaurus that can't sync with this one. Update both to the latest version." : {
+
+    },
+    "%@ · Connected directly" : {
+
+    },
+    "%@ · Connected through a relay server" : {
+
+    },
+    "Another device is being added right now. Wait for it to finish, then try again." : {
+
+    },
+    "Check the Number" : {
+
+    },
+    "Does %@ show this number? Look at its screen. Only confirm if both show the same number." : {
+
+    },
+    "Downloading for %lld chats" : {
+
+    },
+    "I Wrote It Down" : {
+
+    },
+    "It stops receiving your chats. Unless it was wiped, it still holds your account's keys, so changing the recovery phrase is what keeps it out. %@ Your other devices pick up the change the next time they connect. Choose Remove Only for a device you've wiped." : {
+
+    },
+    "Join the other device's account?" : {
+
+    },
+    "Numbers Match" : {
+
+    },
+    "Older Messages" : {
+
+    },
+    "Pairing stopped, and no device was added. To add your own device, start again with a new code." : {
+
+    },
+    "Pairing was cancelled on the other device." : {
+
+    },
+    "Paused on this network or in Low Power Mode" : {
+
+    },
+    "Remove Only" : {
+
+    },
+    "Remove and Change Phrase" : {
+
+    },
+    "Removing the device changed your recovery phrase. The old one no longer works." : {
+
+    },
+    "Same Network only reaches devices on this Mac's Wi-Fi or Ethernet. If your other devices are somewhere else, use Anywhere (Beta) here and on each of them." : {
+
+    },
+    "Sync then gets its own recovery phrase again, since anyone with your Osaurus recovery phrase could derive the old one." : {
+
+    },
+    "The code expired before both devices confirmed the number. Show a new code and try again." : {
+
+    },
+    "The code was wrong or has expired. Show a new code on your other device and paste its link again." : {
+
+    },
+    "The new device needs the latest version of Osaurus to pair. Update it, then try again." : {
+
+    },
+    "The old recovery phrase stops working." : {
+
+    },
+    "The other device couldn't confirm the code. Use a link shown on your own device's screen, then try again." : {
+
+    },
+    "The other device disconnected before pairing finished. Try again." : {
+
+    },
+    "The other device stopped pairing, so no device was added. If you're adding your own device, start again with a new code." : {
+
+    },
+    "They're Different" : {
+
+    },
+    "This Mac couldn't reach the other device. Check that it still shows the code and is on the same network, or set Find Devices to Anywhere (Beta) on both." : {
+
+    },
+    "This Mac couldn't reach the other device. Check that it still shows the code and is online, then try again." : {
+
+    },
+    "This Mac got your message more than an hour after you sent it, so it didn't start it. Send it again to run it now." : {
+
+    },
+    "This Mac's chats move to the account of the device that shows this link, and its chats come here. Only use a link shown on your own device's screen." : {
+
+    },
+    "Use Anywhere" : {
+
+    },
+    "Waiting for you to confirm the same number on %@." : {
+
+    },
+    "Windows PC" : {
+
+    },
+    "Write Down Your New Recovery Phrase" : {
+
+    },
+    "Your Devices Aren't Connecting" : {
+
+    },
+    "add this Mac to another device's sync account" : {
+
+    },
+    "change your sync recovery phrase" : {
+
+    },
+    "move this Mac to another sync account" : {
+
+    },
+    "remove a device from your sync account" : {
+
+    },
+    "show a code that adds a device to your sync account" : {
+
+    },
+    "show your sync recovery phrase" : {
+
+    },
+    "sign this Mac out of sync" : {
+
     }
   },
   "version" : "1.1"

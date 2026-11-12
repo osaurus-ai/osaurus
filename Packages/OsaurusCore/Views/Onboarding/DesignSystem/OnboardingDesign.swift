@@ -43,7 +43,7 @@ enum OnboardingPalette {
     // Accents
     /// Links and the checkbox.
     static var accentBlue: Color { theme.text.link }
-    /// The "Picked for your Mac" badge.
+    /// The "Recommended" model badge.
     static var accentCyan: Color { theme.status.info.foreground }
 
     // Primary button

@@ -87,6 +87,7 @@ struct SyncServedChatsTests {
         try peer.addPeerAddress(address: #require(mac.localAddress()))
         let offer = try mac.pairingOffer(ttlMs: 300_000)
         try await peer.pairWithOffer(payload: offer.payload)
+        try await SyncTestPairing.confirm(host: mac, joiner: peer)
         try await waitUntil("paired") {
             events.all.contains { if case .paired = $0 { return true } else { return false } }
         }

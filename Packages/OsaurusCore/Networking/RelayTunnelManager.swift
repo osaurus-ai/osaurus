@@ -321,6 +321,40 @@ public final class RelayTunnelManager: ObservableObject {
         configuration.isEnabled(for: agentId)
     }
 
+    /// Turns the agent's tunnel off and records that it was kept off on
+    /// purpose, so a paired phone's turn-on for newly addressed agents skips
+    /// it. Turning the tunnel on again clears the record.
+    public func keepTunnelOff(for agentId: UUID) {
+        if configuration.isEnabled(for: agentId) {
+            setTunnelEnabled(false, for: agentId)
+        }
+        guard !configuration.isKeptOff(agentId) else { return }
+        configuration.setKeptOff(true, for: agentId)
+        RelayConfigurationStore.save(configuration)
+    }
+
+    public func isTunnelKeptOff(for agentId: UUID) -> Bool {
+        configuration.isKeptOff(agentId)
+    }
+
+    /// A duplicate agent moved off an address an older agent keeps
+    /// (`AgentManager.applyReassignedAddresses`). The shared address stays on
+    /// the tunnel only for a keeper whose tunnel is on, and the moved agent
+    /// keeps its own setting under its new address.
+    public func handleAddressReassigned(agentId: UUID, sharedAddress: String) {
+        let lower = sharedAddress.lowercased()
+        if isConnected, authenticatedAgents.contains(lower) {
+            if let keeper = findAgent(byAddress: lower), configuration.isEnabled(for: keeper.id) {
+                addressToAgentId[lower] = keeper.id
+            } else {
+                sendJSON(["type": "remove_agent", "address": sharedAddress])
+                authenticatedAgents.remove(lower)
+                addressToAgentId.removeValue(forKey: lower)
+            }
+        }
+        handleAddressRotated(agentId: agentId, previousAddress: nil)
+    }
+
     /// The agent's address was rotated. The relay maps *addresses* to
     /// tunnels, so the live tunnel keeps serving the OLD address until told
     /// otherwise: drop it (`remove_agent`) and authenticate the new one

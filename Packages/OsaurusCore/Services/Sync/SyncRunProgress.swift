@@ -172,11 +172,14 @@ enum SyncRunProgressContract {
 }
 
 /// Writes a session's run progress as it changes: a new shape at most every
-/// half second, counters alone every two.
+/// half second, counters alone every two. Every write is a stored event, so
+/// when the other devices are reached only through a relay both intervals
+/// grow by `relayedSlowdown`.
 @MainActor
 final class SyncRunProgressPublisher {
     nonisolated static let shapeInterval: Int64 = 500
     nonisolated static let counterInterval: Int64 = 2_000
+    nonisolated static let relayedSlowdown: Int64 = 4
 
     private static let log = Logger(subsystem: "ai.osaurus", category: "sync.progress")
     private static let writes = DispatchQueue(label: "ai.osaurus.sync.run-progress")
@@ -185,12 +188,25 @@ final class SyncRunProgressPublisher {
     private var written: SyncRunProgressContract.Progress?
     private var writtenMs: Int64 = 0
     private var scope: String?
+    private var relayed = false
 
     func runStarted() {
         startedMs = SyncHostedRunContract.nowMs()
         written = nil
         writtenMs = 0
         scope = nil
+        relayed = false
+        guard let core = SyncService.shared.core else { return }
+        Task { @MainActor [weak self] in
+            let peers = await Task.detached(priority: .utility) { core.diagnostics().peers }.value
+            self?.relayed = Self.onlyRelayed(peers)
+        }
+    }
+
+    /// Whether every connected device is reached through a relay.
+    nonisolated static func onlyRelayed(_ peers: [PeerConnection]) -> Bool {
+        let connected = peers.filter(\.connected)
+        return !connected.isEmpty && connected.allSatisfy(\.relayed)
     }
 
     func update(_ session: ChatSession) {
@@ -200,7 +216,9 @@ final class SyncRunProgressPublisher {
         let now = SyncHostedRunContract.nowMs()
         guard let progress = SyncRunProgressContract.snapshot(of: session.turns, startedMs: startedMs, nowMs: now)
         else { return }
-        guard Self.shouldWrite(progress, after: written, writtenMs: writtenMs, nowMs: now) else { return }
+        guard Self.shouldWrite(progress, after: written, writtenMs: writtenMs, nowMs: now, relayed: relayed) else {
+            return
+        }
         self.scope = scope
         write(progress, scope: scope, nowMs: now)
     }
@@ -225,15 +243,17 @@ final class SyncRunProgressPublisher {
         _ progress: SyncRunProgressContract.Progress,
         after written: SyncRunProgressContract.Progress?,
         writtenMs: Int64,
-        nowMs: Int64
+        nowMs: Int64,
+        relayed: Bool = false
     ) -> Bool {
         guard let written else { return true }
+        let scale = relayed ? relayedSlowdown : 1
         if progress.sameShape(as: written) {
             var a = progress
             a.updatedMs = written.updatedMs
-            return a != written && nowMs - writtenMs >= counterInterval
+            return a != written && nowMs - writtenMs >= counterInterval * scale
         }
-        return nowMs - writtenMs >= shapeInterval
+        return nowMs - writtenMs >= shapeInterval * scale
     }
 
     private func write(_ progress: SyncRunProgressContract.Progress, scope: String, nowMs: Int64) {

@@ -195,6 +195,7 @@ final class SyncAgentDirectory: ObservableObject {
                 Tag(key: SyncConversationMapper.TagKey.kind, value: SyncHostedRunContract.directoryKind),
                 Tag(key: SyncConversationMapper.TagKey.device, value: core.deviceKey()),
             ],
+            replication: .synced,
             limit: 1
         )
         return try core.conversationsFiltered(filter: filter).first

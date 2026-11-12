@@ -172,7 +172,7 @@ computer-use-evidence:
 
 ## ── LOCOMO Benchmark ──────────────────────────────────────────────
 
-BENCH_MODEL ?= openrouter/google/gemini-2.5-flash
+BENCH_MODEL ?= openrouter/google/gemini-3.8-flash
 BENCH_BASE_URL ?= http://localhost:1337
 BENCH_BATCH ?= 20
 EASYLOCOMO_REPO ?= https://github.com/playeriv65/EasyLocomo.git
@@ -452,7 +452,7 @@ evals-capture-screen:
 # scripts/evals/optimization-loop.sh for env overrides (MODELS=, BASELINE=,
 # FILTER=, STRICT=, EVALS_REPEAT=, PARALLEL_REMOTE=).
 #   make evals-loop
-#   make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" BASELINE=build/evals/loop/<prev>
+#   make evals-loop MODELS="foundation qwen3-4b xai/grok-4.7" BASELINE=build/evals/loop/<prev>
 #   RECORD=1 LABEL="qwen fix" make evals-loop   # also refresh committed reports/SNAPSHOT + history
 #   make evals-loop EVALS_REPEAT=3              # 3 trials per case; flaky rows marked, diff flake-aware
 evals-loop:

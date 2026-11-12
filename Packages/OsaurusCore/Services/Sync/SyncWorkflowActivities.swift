@@ -109,6 +109,7 @@ final class SyncWorkflowActivities {
                 Tag(key: SyncConversationMapper.TagKey.kind, value: SyncDeviceFeedContract.manageKind),
                 Tag(key: SyncConversationMapper.TagKey.device, value: core.deviceKey()),
             ],
+            replication: .synced,
             limit: 10
         )
         var found: [String: Target] = [:]
@@ -117,7 +118,8 @@ final class SyncWorkflowActivities {
             let byDevice = SyncDeviceFeedContract.perDevice(
                 SyncDeviceFeedContract.PushActivities.self,
                 prefix: SyncDeviceFeedContract.pushActivityNamespacePrefix,
-                in: conversation
+                in: conversation,
+                writtenByThatDevice: true
             )
             for (device, record) in byDevice {
                 guard let key = keys[device] else { continue }

@@ -107,6 +107,21 @@ extension Conversation {
     public func appData(_ namespace: String) -> Data? {
         appData.first { $0.namespace == namespace }?.bytes
     }
+
+    /// Conversation-level app data under `namespace` with the device that signed it.
+    /// `authorDevice` and `hlc` are nil for a value written before 0.1.0-beta.6 or one whose
+    /// signature doesn't match; check `authorDevice` against `devices()` before trusting it.
+    public func appDataEntry(_ namespace: String) -> AppDataEntry? {
+        appData.first { $0.namespace == namespace }
+    }
+}
+
+extension PairingOffer {
+    /// The payload for a code typed on the new device, in the form `pairWithOffer` takes.
+    /// `device` is the id of the device showing the code.
+    public static func payload(device: String, code: String) -> String {
+        "osaurus-pair:2:\(device):\(code)"
+    }
 }
 
 extension Message {

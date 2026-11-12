@@ -824,20 +824,28 @@ public final class ToolRegistry: ObservableObject {
     /// workflow step that runs as the agent gets the same answer.
     private func readOnlyFolderRefusal(for name: String) -> String? {
         guard Self.readOnlyFolderBlockedToolNames.contains(name), ChatExecutionContext.currentFolderRoot != nil,
-            let agentId = ChatExecutionContext.currentAgentId, agentId != Agent.defaultId,
-            AgentManager.shared.agent(for: agentId)?.settings.workingFolderReadOnly == true
+            Self.agentHasReadOnlyWorkingFolder(ChatExecutionContext.currentAgentId)
         else { return nil }
         ToolRegistryLogger.registry.error(
             "refusing '\(name, privacy: .public)': the current agent's working folder is read only")
         return Self.readOnlyFolderEnvelope(tool: name)
     }
 
+    /// The default agent never has a read-only working folder.
+    static func agentHasReadOnlyWorkingFolder(_ agentId: UUID?) -> Bool {
+        guard let agentId, agentId != Agent.defaultId else { return false }
+        return AgentManager.shared.agent(for: agentId)?.settings.workingFolderReadOnly == true
+    }
+
+    nonisolated static let readOnlyFolderMessageSuffix =
+        "this agent's working folder is read only. "
+        + "Read and search it instead, or ask the user to turn off Read Only in the agent's Working Folder settings."
+
     nonisolated static func readOnlyFolderEnvelope(tool: String) -> String {
         ToolEnvelope.failure(
             kind: .rejected,
             message:
-                "'\(tool)' changes the working folder, and this agent's working folder is read only. "
-                + "Read and search it instead, or ask the user to turn off Read Only in the agent's Working Folder settings.",
+                "'\(tool)' changes the working folder, and " + readOnlyFolderMessageSuffix,
             tool: tool, retryable: false)
     }
 
@@ -1336,6 +1344,12 @@ public final class ToolRegistry: ObservableObject {
         // `nil` scope means the surface published none and gates its own tools — the registry then
         // behaves exactly as before. See `ChatExecutionContext.toolExecutionScope`.
         if let scope = ChatExecutionContext.toolExecutionScope, !scope.permits(name) {
+            // A read-only working folder strips its write tools from the schema, so they land
+            // here, not at the execute-time refusal below. Must precede the "no folder" answer:
+            // the folder is attached, just read only.
+            if let refusal = readOnlyFolderRefusal(for: name) {
+                return refusal
+            }
             ToolRegistryLogger.registry.error(
                 "refusing '\(name, privacy: .public)': not exposed to this request"
             )
@@ -3084,6 +3098,11 @@ public final class ToolRegistry: ObservableObject {
     ) -> AgentToolLoop.AnnouncedToolCallRecovery {
         var recovery = AgentToolLoop.AnnouncedToolCallRecovery(exposed: exposed)
         recovery.workspaceBlocked = Self.coreWorkspaceToolNames.subtracting(exposed)
+        // Exposed read tools mean a folder is attached; a read-only one withholds its write
+        // tools, which "no workspace attached" would misdescribe.
+        if exposed.contains("file_read"), Self.agentHasReadOnlyWorkingFolder(agentId) {
+            recovery.workspaceBlocked.subtract(Self.readOnlyFolderBlockedToolNames)
+        }
         recovery.loaderName =
             loaderPermitted("capabilities")
             ? "capabilities"

@@ -291,6 +291,9 @@ struct SyncMobileProtocolTests {
         #expect(SyncAttentionFeed.answerLabel(devices: [mac, phone, oldPhone]) == "Tae's iPhone")
         #expect(SyncAttentionFeed.answerLabel(devices: [mac, phone, device("p2", "Work iPhone", "ios")]) == "Your iPhone")
         #expect(SyncAttentionFeed.answerLabel(devices: [mac]) == "Your iPhone")
+        let pc = device("w1", "Studio PC", "windows")
+        #expect(SyncAttentionFeed.answerLabel(devices: [mac, pc]) == "Studio PC")
+        #expect(SyncAttentionFeed.answerLabel(devices: [mac, pc, phone]) == "Your other device")
     }
 
     private func manageRequests(_ count: Int, at nowMs: Int64) -> [SyncDeviceFeedContract.ManageRequest] {

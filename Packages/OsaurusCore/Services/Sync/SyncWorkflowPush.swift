@@ -134,6 +134,7 @@ final class SyncWorkflowPush {
                 Tag(key: SyncConversationMapper.TagKey.kind, value: SyncDeviceFeedContract.manageKind),
                 Tag(key: SyncConversationMapper.TagKey.device, value: core.deviceKey()),
             ],
+            replication: .synced,
             limit: 10
         )
         let conversations = (try? core.conversationsFiltered(filter: filter)) ?? []
@@ -142,7 +143,8 @@ final class SyncWorkflowPush {
             let byDevice = SyncDeviceFeedContract.perDevice(
                 SyncDeviceFeedContract.PushRegistration.self,
                 prefix: SyncDeviceFeedContract.pushRegistrationNamespacePrefix,
-                in: conversation
+                in: conversation,
+                writtenByThatDevice: true
             )
             found += byDevice.map { ($0.key, $0.value) }
         }

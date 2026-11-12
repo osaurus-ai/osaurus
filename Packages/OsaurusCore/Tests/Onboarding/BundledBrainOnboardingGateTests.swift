@@ -3,7 +3,7 @@
 //  osaurusTests
 //
 //  The full distribution skips the Configure AI step only when the bundled
-//  Raptor 0.6 is genuinely usable. These tests pin the four gates in
+//  Raptor 0.7 is genuinely usable. These tests pin the four gates in
 //  `ConfigureAIState.bundledLocalBrainReady`: light build, seed not landed,
 //  tight RAM, and the ready case — plus the commit that lets
 //  `finishOnboarding` pin the model without a download.
@@ -26,13 +26,13 @@ struct BundledBrainOnboardingGateTests {
         return root
     }
 
-    /// Curated Raptor 0.6 row pinned to a fixture root. `onDisk` writes the
+    /// Curated Raptor 0.7 row pinned to a fixture root. `onDisk` writes the
     /// minimal complete bundle (`config.json` + tokenizer + weights sentinel)
     /// that `isDownloaded` requires.
     private func raptor(root: URL, onDisk: Bool, isTopSuggestion: Bool = true) throws -> MLXModel {
         let model = MLXModel(
             id: ConfigureAIState.preferredOnboardingModelId,
-            name: "Raptor 0.6 4B",
+            name: "Raptor 0.7 4B",
             description: "",
             downloadURL: "https://huggingface.co/\(ConfigureAIState.preferredOnboardingModelId)",
             isTopSuggestion: isTopSuggestion,

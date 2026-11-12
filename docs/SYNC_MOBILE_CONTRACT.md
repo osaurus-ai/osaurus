@@ -4,6 +4,20 @@ How the Osaurus iPhone app (iOSaurus) works with the user's Macs. The iPhone is 
 osaurus-sync device in the user's account. Everything it does with a Mac goes through synced
 conversations and their app data: no HTTP route, relay tunnel or Secure Channel is involved.
 
+Nothing in the records is specific to iOS. "The iPhone" below means any companion client: a
+device whose `Device.platform` isn't macOS. A Mac publishes its attention, manage and detail
+feeds while any such device is in the account. It reads `windows` (or `win`) as a Windows PC
+and anything else unknown as a generic device; both get the same feeds as an iPhone. Only the
+Mac's keep-awake and reachability prompts are iPhone-specific. A Windows client SHOULD report
+`Device.platform` as `windows`, read the same fixtures, and use the same feature flags.
+
+Every client MUST open with the Osaurus relays and discovery server: relays
+`https://relay-us.sync.osaurus.ai`, `https://relay-eu.sync.osaurus.ai` and
+`https://relay-ap.sync.osaurus.ai`, discovery server `https://dns.sync.osaurus.ai/pkarr`, origin
+`dns.sync.osaurus.ai`, and `publish` left at `relayOnly`. A client on another discovery server
+can't find the Mac over the internet. Clients SHOULD read `https://osaurus.ai/sync/network.json`
+(the same shape as `SyncNetworkDirectory`) and apply a new list at the next open.
+
 Read [`SYNC.md`](SYNC.md) first: it covers the store, hosted runs and served chats this contract
 builds on. The record types are in `Packages/OsaurusCore/Services/Sync/`:
 `SyncHostedRunContract.swift`, `SyncDeviceFeedContract.swift`, `SyncRunProgress.swift`,
@@ -73,6 +87,18 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 - The iPhone scans or pastes it and calls `SyncCore.pairWithOffer(payload:)`. When pairing
   finishes, the iPhone is a device of the same user, and the Mac's Devices list shows it as
   **iPhone**.
+- Every client MUST use osaurus-sync 0.1.0-beta.6 or later: a current Mac doesn't add a device
+  on an older core. Offers are `osaurus-pair:2:`; a client that builds one from a typed code
+  MUST use `PairingOffer.payload(device:code:)`.
+- After the code checks out, both devices get `CoreEvent.pairingConfirmation(device, name,
+  platform, code)`. The client MUST show the six digits next to the Mac's name, ask whether the
+  Mac shows the same number, and call `confirmPairing(device:)` only when the user says yes;
+  otherwise `rejectPairing(device:)`. It MUST dismiss the prompt on `pairingFailed`. The Mac
+  asks the same question, and hands over the account only after both confirmed.
+- Conversation app data a client writes is signed by its device. The Mac counts run control,
+  tool approval answers and secret prompt answers only when signed by one of the user's current
+  devices, and drops a value in a per-device namespace (`…/<device>`) signed by any other
+  device, so a client MUST write only its own namespaces.
 - The iPhone MUST join only through a pairing offer. It MUST NOT offer to type the recovery
   phrase: on Macs linked to the user's wallet, that phrase is derived from the wallet and
   restores the whole identity.
@@ -86,8 +112,8 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
   answer.
 - Removing the iPhone on the Mac revokes it like any device. Once revoked, it can't read
   anything new, and the Mac's other devices turn away what it writes. A revoked device keeps the
-  account secret, so a lost or stolen iPhone is removed with **Remove and Change Recovery
-  Phrase…**, which replaces the account identity (`docs/SYNC.md` → Removing a device).
+  account secret, so **Remove Device…** defaults to **Remove and Change Phrase**, which replaces
+  the account identity (`docs/SYNC.md` → Removing a device).
 - When an `ios` device first joins, the Mac retires the old pairing (§8).
 
 ## 2. Finding agents
@@ -146,7 +172,9 @@ runs"; fixtures `hosted.json`, `mobile-hosted.json`):
    - the requested model isn't on the Mac;
    - an option is one the model doesn't take (§3.1).
 
-Requests first seen more than an hour after `requestedMs` aren't started. The iPhone SHOULD only
+A request first seen more than an hour after it was made gets a `host_declined` reply instead of a
+run. Its time is the later of `requestedMs` and the message's HLC, so a phone clock running
+behind doesn't make a fresh request look late. The iPhone SHOULD only
 send while the Mac is connected (`SyncCore` peer state), and otherwise word it as in §2.
 
 While a run is going, the Mac's own window for that chat shows **Answering for your iPhone…**,
@@ -206,7 +234,9 @@ The device running a synced turn writes `ai.osaurus.run-progress/1` on the conve
 - Every app data write is a durable event, so this record is coarse:
   - a new shape (phase, tool, step, file) is written at most every 500 ms;
   - a change only to counters (`thinkingChars`, prefill `done`, `argumentBytes`) is written at
-    most every 2 seconds.
+    most every 2 seconds;
+  - when the run starts with every connected device reached only through a relay, both intervals
+    are four times longer (2 s and 8 s). Clients MUST NOT read a slow update as a stalled run.
 - `tools[].workflow` (`workflow_runs`): when the call started a workflow run, the run as the Mac
   chat's card shows it:
 

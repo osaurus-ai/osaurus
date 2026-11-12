@@ -14,7 +14,7 @@ import Testing
 @testable import OsaurusCore
 
 @Suite struct BundledModelSeederTests {
-    private static let modelId = "OsaurusAI/Raptor-0.6-4B-JANG_6M"
+    private static let modelId = "OsaurusAI/Raptor-0.7-4B-JANG_6M"
     private static let revision = "0123456789abcdef0123456789abcdef01234567"
 
     private struct Fixture {
@@ -26,13 +26,13 @@ import Testing
         var bundledModelDirectory: URL {
             bundledRoot
                 .appendingPathComponent("OsaurusAI", isDirectory: true)
-                .appendingPathComponent("Raptor-0.6-4B-JANG_6M", isDirectory: true)
+                .appendingPathComponent("Raptor-0.7-4B-JANG_6M", isDirectory: true)
         }
 
         var destination: URL {
             modelsDirectory
                 .appendingPathComponent("OsaurusAI", isDirectory: true)
-                .appendingPathComponent("Raptor-0.6-4B-JANG_6M", isDirectory: true)
+                .appendingPathComponent("Raptor-0.7-4B-JANG_6M", isDirectory: true)
         }
 
         func tearDown() {
@@ -382,7 +382,7 @@ import Testing
     }
 
     @Test func isValidModelIdRejectsEscapes() {
-        #expect(BundledModelSeeder.isValidModelId("OsaurusAI/Raptor-0.6-4B-JANG_6M"))
+        #expect(BundledModelSeeder.isValidModelId("OsaurusAI/Raptor-0.7-4B-JANG_6M"))
         #expect(!BundledModelSeeder.isValidModelId("Raptor"))
         #expect(!BundledModelSeeder.isValidModelId("a/b/c"))
         #expect(!BundledModelSeeder.isValidModelId("../x"))

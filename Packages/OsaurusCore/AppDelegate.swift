@@ -780,7 +780,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         //    the time our window is on screen, Cmd+, routes through
         //    `settingsCommand` and AppKit won't auto-present the
         //    placeholder again.
-        // Full-distribution installs carry Raptor 0.6 inside the app bundle.
+        // Full-distribution installs carry Raptor 0.7 inside the app bundle.
         // Seed it into the models directory now (an APFS clone, so normally
         // milliseconds) so onboarding's Create Agent step can skip the brain
         // download. No-op on the light build and on later launches.

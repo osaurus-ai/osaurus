@@ -44,6 +44,7 @@ final class SyncInboundApplier {
 
     private static let streamRenderInterval: Duration = .milliseconds(100)
     private static let committedMessageWait: Duration = .seconds(10)
+    private static let committedMessageMaxWait: Duration = .seconds(120)
 
     /// Replies other devices are streaming into open chats, by session.
     private var remoteStreams: [UUID: StreamUpdate] = [:]
@@ -183,7 +184,6 @@ final class SyncInboundApplier {
             case .syncStatusChanged:
                 refreshPendingDelivery(sessionId)
             case .liveState:
-                // Live state (beta.6): nothing publishes it yet.
                 break
             }
         }
@@ -199,7 +199,7 @@ final class SyncInboundApplier {
             // The bubble stays until the committed message arrives with the same id.
             remoteStreams[sessionId] = update
             scheduleStreamRender(sessionId)
-            scheduleAbandonCheck(sessionId, messageId: update.messageId)
+            scheduleAbandonCheck(sessionId, messageId: update.messageId, host: update.host)
         case .interrupted:
             endRemoteReply(sessionId)
             markStale(sessionId)
@@ -231,14 +231,25 @@ final class SyncInboundApplier {
     }
 
     /// A finished stream whose message never arrives (the writer went
-    /// offline before it synced) stops showing as a reply.
-    private func scheduleAbandonCheck(_ sessionId: UUID, messageId: String) {
+    /// offline before it synced) stops showing as a reply. While the writer
+    /// stays connected the message is still on its way over a slow link, so
+    /// the bubble waits up to `committedMessageMaxWait`.
+    private func scheduleAbandonCheck(_ sessionId: UUID, messageId: String, host: String, waited: Duration = .zero) {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.committedMessageWait)
             guard let self, self.remoteStreams[sessionId]?.messageId == messageId else { return }
+            let waited = waited + Self.committedMessageWait
+            if waited < Self.committedMessageMaxWait, Self.isConnected(host) {
+                self.scheduleAbandonCheck(sessionId, messageId: messageId, host: host, waited: waited)
+                return
+            }
             self.endRemoteReply(sessionId)
             self.markStale(sessionId)
         }
+    }
+
+    private static func isConnected(_ device: String) -> Bool {
+        SyncService.shared.core?.diagnostics().peers.contains { $0.device == device && $0.connected } ?? false
     }
 
     private func endRemoteReply(_ sessionId: UUID) {

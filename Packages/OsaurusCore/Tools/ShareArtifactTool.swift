@@ -124,6 +124,17 @@ public struct ShareArtifactTool: OsaurusTool {
         let description = nonEmpty(json["description"])
 
         guard path != nil || providedContent != nil else {
+            if json["content"] is String {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`content` is empty, and share_artifact cannot share an empty file. "
+                        + "Pass the text to share in `content` (with `filename`), or `path` to an existing file.",
+                    field: "content",
+                    expected: "non-empty string",
+                    tool: name
+                )
+            }
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:

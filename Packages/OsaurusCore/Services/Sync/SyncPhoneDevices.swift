@@ -14,14 +14,16 @@ import OsaurusSync
 enum SyncDevicePlatform: Equatable, Sendable {
     case mac
     case iPhone
+    case windows
     case other
 
-    /// `Device.platform` as the core reports it ("macOS", "iOS", …).
+    /// `Device.platform` as the core reports it ("macOS", "iOS", "Windows", …).
     init(_ raw: String) {
         let value = raw.lowercased().filter { $0.isLetter }
         switch value {
         case "ios", "iphone", "ipados", "ipad": self = .iPhone
         case "macos", "mac", "osx": self = .mac
+        case "windows", "win": self = .windows
         default: self = .other
         }
     }
@@ -30,6 +32,7 @@ enum SyncDevicePlatform: Equatable, Sendable {
         switch self {
         case .mac: "desktopcomputer"
         case .iPhone: "iphone"
+        case .windows: "pc"
         case .other: "display"
         }
     }
@@ -39,9 +42,14 @@ enum SyncDevicePlatform: Equatable, Sendable {
         switch self {
         case .mac: L("Mac")
         case .iPhone: L("iPhone")
+        case .windows: L("Windows PC")
         case .other: L("Device")
         }
     }
+
+    /// A device that reaches this Mac's agents through the attention and
+    /// management feeds instead of running its own: anything but a Mac.
+    var usesMacFeeds: Bool { self != .mac }
 }
 
 extension Device {
@@ -56,6 +64,9 @@ final class SyncPhoneDevices: ObservableObject {
 
     /// Whether a non-revoked iPhone is in this sync account.
     @Published private(set) var hasPhone = false
+    /// Whether any non-revoked device that isn't a Mac (an iPhone, a
+    /// Windows PC) is in this sync account; the Mac publishes its feeds for it.
+    @Published private(set) var hasFeedReader = false
 
     private let defaults: UserDefaults
     private var keepAwakeToken: NSObjectProtocol?
@@ -67,6 +78,10 @@ final class SyncPhoneDevices: ObservableObject {
 
     static func hasActivePhone(_ devices: [Device]) -> Bool {
         devices.contains { !$0.isSelf && !$0.revoked && $0.devicePlatform == .iPhone }
+    }
+
+    static func hasActiveFeedReader(_ devices: [Device]) -> Bool {
+        devices.contains { !$0.isSelf && !$0.revoked && $0.devicePlatform.usesMacFeeds }
     }
 
     /// Whether `deviceKey` names one of the user's iPhones.
@@ -92,7 +107,9 @@ final class SyncPhoneDevices: ObservableObject {
     }
 
     func refresh() {
-        hasPhone = SyncService.shared.isOpen && Self.hasActivePhone(SyncService.shared.devices)
+        let devices = SyncService.shared.isOpen ? SyncService.shared.devices : []
+        hasPhone = Self.hasActivePhone(devices)
+        hasFeedReader = Self.hasActiveFeedReader(devices)
         refreshKeepAwake()
     }
 

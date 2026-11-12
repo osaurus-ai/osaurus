@@ -93,6 +93,10 @@ final class SyncService: @unchecked Sendable {
     func open() throws -> SyncCore {
         openLock.lock()
         defer { openLock.unlock() }
+        return try openLocked()
+    }
+
+    private func openLocked() throws -> SyncCore {
         let directory = OsaurusPaths.sync()
         stateLock.lock()
         let existing = _core
@@ -140,8 +144,13 @@ final class SyncService: @unchecked Sendable {
         }
     }
 
-    /// Opens off the calling thread. Repeated calls while an open is running
-    /// are ignored; `didOpenNotification` fires when it lands.
+    /// Waits before each automatic retry of an open that failed for a reason
+    /// that can clear by itself.
+    static let openRetryDelays: [Duration] = [.seconds(5), .seconds(30), .seconds(120), .seconds(600)]
+
+    /// Opens off the calling thread, retrying transient failures. Repeated
+    /// calls while an open is running are ignored; `didOpenNotification`
+    /// fires after each attempt.
     func openInBackground() {
         stateLock.lock()
         if _core != nil || _opening {
@@ -151,8 +160,18 @@ final class SyncService: @unchecked Sendable {
         _opening = true
         stateLock.unlock()
         Task.detached(priority: .userInitiated) { [self] in
-            _ = try? open()
-            stateLock.withLock { _opening = false }
+            defer { stateLock.withLock { _opening = false } }
+            for delay in [Duration.zero] + Self.openRetryDelays {
+                if delay > .zero { try? await Task.sleep(for: delay) }
+                if core != nil { return }
+                do {
+                    _ = try open()
+                    return
+                } catch {
+                    guard (error as? SyncError)?.isTransientOpenFailure == true else { return }
+                    Self.log.notice("sync open will retry")
+                }
+            }
         }
     }
 
@@ -269,6 +288,14 @@ final class SyncService: @unchecked Sendable {
     /// conversations under a new identity; otherwise this Mac's sync data and
     /// keys are deleted. Opens a fresh core afterwards.
     func signOut(keepConversations: Bool) async throws {
+        try await Task.detached(priority: .userInitiated) { [self] in
+            try openLock.withLock { try signOutLocked(keepConversations: keepConversations) }
+        }.value
+    }
+
+    /// Holds `openLock` throughout, so a settings reopen or launch open can't
+    /// land between the sign-out and the fresh core.
+    private func signOutLocked(keepConversations: Bool) throws {
         guard let core else { return }
         stopLifecycle()
         core.setListener(listener: nil)
@@ -277,19 +304,20 @@ final class SyncService: @unchecked Sendable {
             _openDirectory = nil
         }
         postOnMain(Self.didCloseNotification)
-        do {
+        let result = Self.blocking {
             if keepConversations {
                 try await core.signOut(keepConversations: true)
             } else {
                 try await core.reset()
             }
-        } catch {
+        }
+        if case .failure(let error)? = result {
             Self.log.error("sign out failed: \((error as? SyncError)?.logDetail ?? "\(error)", privacy: .public)")
-            _ = try? open()
+            _ = try? openLocked()
             throw error
         }
         postOnMain(Self.didReplaceIdentityNotification)
-        _ = try open()
+        _ = try openLocked()
     }
 
     /// The key store items the core's own reset deletes.
@@ -301,20 +329,24 @@ final class SyncService: @unchecked Sendable {
     /// Returns the quarantined directory, if one was moved.
     @discardableResult
     func resetLocalData() async throws -> URL? {
-        if core != nil {
-            try await signOut(keepConversations: false)
-            return nil
-        }
-        close()
-        let directory = OsaurusPaths.sync()
-        let quarantined = StorageFile.quarantine(path: directory.path, reason: "reset sync")
-        let keyStore = SyncKeyStores.make(dataDirectory: directory)
-        for name in Self.keyStoreItems {
-            try keyStore.delete(name: name)
-        }
-        postOnMain(Self.didReplaceIdentityNotification)
-        _ = try open()
-        return quarantined
+        try await Task.detached(priority: .userInitiated) { [self] () throws -> URL? in
+            try openLock.withLock { () throws -> URL? in
+                if core != nil {
+                    try signOutLocked(keepConversations: false)
+                    return nil
+                }
+                closeLocked()
+                let directory = OsaurusPaths.sync()
+                let quarantined = StorageFile.quarantine(path: directory.path, reason: "reset sync")
+                let keyStore = SyncKeyStores.make(dataDirectory: directory)
+                for name in Self.keyStoreItems {
+                    try keyStore.delete(name: name)
+                }
+                postOnMain(Self.didReplaceIdentityNotification)
+                _ = try openLocked()
+                return quarantined
+            }
+        }.value
     }
 
     // MARK: - Events
@@ -376,7 +408,6 @@ final class SyncService: @unchecked Sendable {
         private let core: SyncCore
         private var observers: [NSObjectProtocol] = []
         private let pathMonitor = NWPathMonitor()
-        private var lastPathSatisfied = false
         private let backfill: BackfillPolicyMonitor
 
         init(core: SyncCore) {
@@ -417,11 +448,12 @@ final class SyncService: @unchecked Sendable {
                     core.syncNow()
                 }
             )
+            // Any change while online counts: Wi-Fi to Ethernet, a VPN, a
+            // hotspot. Each can leave connections on the old route.
             pathMonitor.pathUpdateHandler = { [weak self] path in
-                guard let self else { return }
-                let satisfied = path.status == .satisfied
-                if satisfied, !self.lastPathSatisfied { self.core.syncNow() }
-                self.lastPathSatisfied = satisfied
+                guard let self, path.status == .satisfied else { return }
+                self.core.syncNow()
+                SyncNetworkDirectoryStore.refreshInBackground()
             }
             pathMonitor.start(queue: DispatchQueue(label: "ai.osaurus.sync.path"))
             backfill.start()
