@@ -28,6 +28,9 @@ struct DevicesView: View {
     @State private var joinLink = ""
     @State private var isJoining = false
     @State private var phrase: [String]?
+    /// Shown at the top after a removal changes the phrase, so it can't go
+    /// unnoticed at the bottom of the page.
+    @State private var newPhrase: [String]?
     @State private var restoreText = ""
     @State private var isRestoring = false
     @State private var isSigningOut = false
@@ -59,6 +62,7 @@ struct DevicesView: View {
         .onDisappear {
             model.endWatching()
             phrase = nil
+            newPhrase = nil
         }
         .onChange(of: keepMacAwake) { _, _ in phones.refreshKeepAwake() }
     }
@@ -104,6 +108,19 @@ struct DevicesView: View {
                 ) {
                     SettingsButton(.secondary, "Enter phrase") { isRestoring = true }
                 }
+            }
+        }
+        if let newPhrase {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                SettingsCallout(
+                    icon: "key.horizontal.fill",
+                    title: "Write Down Your New Recovery Phrase",
+                    message: "Removing the device changed your recovery phrase. The old one no longer works.",
+                    tone: .warning
+                ) {
+                    SettingsButton(.secondary, "I Wrote It Down") { self.newPhrase = nil }
+                }
+                phraseGrid(newPhrase)
             }
         }
         if let actionError {
@@ -650,7 +667,8 @@ struct DevicesView: View {
         asOwner(L("remove a device from your sync account")) {
             do {
                 if rotate {
-                    phrase = try model.revokeAndRotate(device)
+                    phrase = nil
+                    newPhrase = try model.revokeAndRotate(device)
                 } else {
                     try model.revoke(device)
                 }
