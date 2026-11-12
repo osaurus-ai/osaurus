@@ -31,6 +31,17 @@ enum SyncMembershipCheck {
                             + " created \(conversation.createdMs) my role \(role)"
                             + " members [\(members.joined(separator: ", "))]")
                 }
+                // Each other device's standing in each system conversation (certificates, membership,
+                // revocation, roles): why the engine does or doesn't offer one to a device.
+                let others = ((try? core.devices()) ?? []).filter { !$0.revoked && !$0.isSelf }
+                for conversation in all where conversation.tag(SyncConversationMapper.TagKey.kind) != nil {
+                    let kind = conversation.tag(SyncConversationMapper.TagKey.kind) ?? "-"
+                    for device in others {
+                        let access = (try? core.describeAccess(scope: conversation.scope, device: device.id)) ?? "?"
+                        let scope = conversation.scope.prefix(8)
+                        print("[SyncMembers] access \(kind) \(scope) for \(device.id.prefix(8)): \(access)")
+                    }
+                }
                 // Adds each of this user's other devices to every conversation it can reach, as pairing did,
                 // and says where it was missing.
                 for device in (try? core.devices()) ?? [] where !device.revoked && !device.isSelf {
