@@ -25,13 +25,17 @@ struct OnboardingSetupHeader: View {
             HStack(spacing: theme.space.s8) {
                 OnboardingSetupStepper(current: .of(step))
                 Spacer(minLength: theme.space.s8)
-                SettingsButton(.tertiary, L("Skip setup"), size: .small, verbatim: true, action: onSkip)
+                // The offer's own Done ends setup there.
+                if step != .explore {
+                    SettingsButton(.tertiary, L("Skip setup"), size: .small, verbatim: true, action: onSkip)
+                }
             }
 
             HStack(alignment: .center, spacing: theme.space.s12) {
                 if step == .firstTask, let teammate {
                     OnboardingTeammateAvatar(
-                        mascotId: teammate.mascotId, name: teammate.name, imageURL: teammate.imageURL, size: 36)
+                        mascotId: teammate.mascotId, name: teammate.name, imageURL: teammate.imageURL,
+                        roleSymbol: OnboardingPaths.path(id: teammate.pathId)?.icon, size: 36)
                 }
                 VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(title, bundle: .module)
@@ -53,6 +57,7 @@ struct OnboardingSetupHeader: View {
         case .firstTask:
             guard let teammate else { return "Your first task" }
             return "Your first task with \(teammate.name)"
+        case .explore: return "Keep exploring"
         }
     }
 
@@ -61,6 +66,7 @@ struct OnboardingSetupHeader: View {
         case .brain: return "Choose where Osaurus runs to start chatting."
         case .team, nil: return "Pick who to start with. You can switch any time."
         case .firstTask: return "Try one of these, or ask me anything."
+        case .explore: return "Try another teammate, or finish setup and ask me anything."
         }
     }
 }
@@ -110,13 +116,14 @@ struct OnboardingSetupStepper: View {
 // MARK: - Teammates
 
 /// The teammate's avatar exactly as the sidebar draws it: a still image,
-/// never the animated dino.
+/// never the animated dino, badged with what it works with.
 struct OnboardingTeammateAvatar: View {
     @Environment(\.theme) private var theme
     let mascotId: String?
     let name: String
     var imageURL: URL? = nil
-    var size: CGFloat = 32
+    var roleSymbol: String? = nil
+    var size: CGFloat = 40
 
     var body: some View {
         AgentAvatarView(
@@ -128,6 +135,12 @@ struct OnboardingTeammateAvatar: View {
             monogramFontSize: size * 0.45,
             borderWidth: 0
         )
+        .overlay(alignment: .bottomTrailing) {
+            if let roleSymbol {
+                AgentRoleBadge(symbol: roleSymbol, diameter: size * 0.45)
+                    .offset(x: size * 0.08, y: size * 0.08)
+            }
+        }
         .accessibilityHidden(true)
     }
 }
@@ -145,7 +158,8 @@ struct OnboardingTeamList: View {
                 if index > 0 { ThemeHairlineDivider() }
                 OnboardingPanelRow(action: { onPick(card) }) {
                     HStack(spacing: theme.space.s12) {
-                        OnboardingTeammateAvatar(mascotId: card.mascotId, name: card.name, imageURL: card.imageURL)
+                        OnboardingTeammateAvatar(
+                            mascotId: card.mascotId, name: card.name, imageURL: card.imageURL, roleSymbol: card.icon)
                         VStack(alignment: .leading, spacing: theme.space.s2) {
                             Text(card.name)
                                 .textStyle(.label, weight: 600)

@@ -93,7 +93,13 @@ struct AgentAvatarView: View {
     private var theme: any ThemeProtocol { baseTheme.catalogFamily(11, enabled: baseComponentEnabled) }
     @Environment(\.displayScale) private var displayScale
 
-    private var resolvedDiameter: CGFloat { theme.catalogMetric("avatarSize", fallback: diameter) }
+    /// The library's avatar size is the chat avatar's. A caller asking for
+    /// that size follows a reassignment; any other diameter (a hero, a
+    /// team list, a tiny row) is the call site's own and stands.
+    private var resolvedDiameter: CGFloat {
+        guard diameter == CGFloat(baseTheme.controlSize.chatAvatar) else { return diameter }
+        return theme.catalogMetric("avatarSize", fallback: diameter)
+    }
     private var avatarShape: AnyShape {
         AnyShape(RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2)))
     }

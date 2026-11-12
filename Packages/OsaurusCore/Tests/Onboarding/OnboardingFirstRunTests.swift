@@ -238,6 +238,41 @@ struct OnboardingPlanTests {
     }
 
     @Test
+    func afterTheFirstTask_theTeamStaysOpen_untilDone_andTheFirstTaskKeepsItsRecord() throws {
+        var plan = advanced(OnboardingPlan(sessionId: UUID()), .local(comfortable: true))
+        plan.select(pathId: "planner")
+        plan.requestOutcome = .granted
+        plan = advanced(plan, .local(comfortable: true))
+        #expect(!plan.canExplore, "the walkthrough is still on its first task")
+        plan.finish(.firstTask, askId: "planner.today")
+        #expect(plan.canExplore && plan.offerPending == true && !plan.isClosed)
+
+        plan.exploreTeam()
+        plan.browseSelect(pathId: "keeper")
+        #expect(plan.browse?.path?.id == "keeper")
+        plan.browseBack()
+        #expect(plan.browse == .init())
+        plan.browseSelect(pathId: "scout")
+        plan.offerPending = nil
+        plan.browseSent()
+        #expect(plan.browse == nil && plan.offerPending == true, "the browsed ask's reply gets the offer again")
+        #expect(plan.pathId == "planner" && plan.requestOutcome == .granted && plan.firstAskId == "planner.today")
+
+        plan.exploreTeam()
+        let decoded = try JSONDecoder().decode(OnboardingPlan.self, from: JSONEncoder().encode(plan))
+        #expect(decoded == plan)
+
+        plan.endExploring()
+        #expect(plan.isClosed && !plan.canExplore && plan.browse == nil && plan.offerPending == nil)
+        plan.exploreTeam()
+        #expect(plan.browse == nil, "done is done")
+
+        var dismissed = OnboardingPlan(sessionId: UUID())
+        dismissed.finish(.dismissed)
+        #expect(!dismissed.canExplore && dismissed.isClosed)
+    }
+
+    @Test
     func store_roundTrips_andAMissingFileIsNoPlan() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("plan-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -410,6 +445,37 @@ struct OnboardingPanelTests {
         var finished = plan("planner", outcome: .granted)
         finished.finish(.firstTask, askId: "planner.today")
         #expect(panel(finished) == nil)
+    }
+
+    @Test
+    func exploring_reopensTheCards_andABrowsedTeammateMakesItsOwnRequest() throws {
+        var finished = plan("planner", outcome: .granted)
+        finished.finish(.firstTask, askId: "planner.today")
+        finished.exploreTeam()
+        let cards = try #require(panel(finished))
+        #expect(cards.step == .team)
+        #expect(cards.cards.map(\.id) == ["planner", "courier", "keeper", "scout", "osaurus"])
+
+        finished.browseSelect(pathId: "courier")
+        let courier = try #require(panel(finished))
+        #expect(courier.step == .firstTask)
+        #expect(courier.teammate == .init(pathId: "courier", name: "Courier", mascotId: nil))
+        #expect(courier.buttons.first?.action == .request)
+        finished.browse?.requestOutcome = .granted
+        let granted = try #require(panel(finished))
+        #expect(!asks(granted).isEmpty && granted.buttons.contains { $0.action == .back })
+
+        finished.endExploring()
+        #expect(panel(finished) == nil)
+    }
+
+    @Test
+    func theOffer_isDoneOrMeetAnotherTeammate() {
+        let offer = OnboardingPanel.exploreOffer(sessionId: sessionId)
+        #expect(offer.step == .explore)
+        #expect(offer.buttons.map(\.action) == [.doneExploring, .exploreTeam])
+        #expect(offer.buttons.last?.style == .primary)
+        #expect(OnboardingChapter.of(.explore) == .team)
     }
 }
 
