@@ -408,9 +408,11 @@ enum SyncDeviceFeedContract {
     /// one of them is made.
     nonisolated static func offerSystemConversationsFirst(core: SyncCore) {
         let me = core.deviceKey()
-        let kinds = [SyncHostedRunContract.directoryKind]
-        let scopes = kinds.compactMap { kind in (try? conversation(kind: kind, device: me, core: core))?.scope }
-        // Fails only on a closed core; the next open sets it again.
-        try? core.setOfferFirst(scopes: scopes)
+        let scope = { (kind: String) in (try? conversation(kind: kind, device: me, core: core))?.scope }
+        // Fail only on a closed core; the next open sets them again.
+        try? core.setOfferFirst(scopes: [SyncHostedRunContract.directoryKind].compactMap(scope))
+        // After the chats: their history is the largest of all, and offered by activity it came first.
+        // Until it is in, a new iPhone has no model options or workflows (a snapshot would fix that).
+        try? core.setOfferLast(scopes: [manageKind, attentionKind].compactMap(scope))
     }
 }
