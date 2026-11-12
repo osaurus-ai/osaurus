@@ -388,6 +388,9 @@ final class SyncService: @unchecked Sendable {
             // This Mac's directory, manage and attention conversations reach a new iPhone first.
             Task.detached(priority: .utility) { [core] in
                 SyncDeviceFeedContract.offerSystemConversationsFirst(core: core)
+                // No storage server yet: compact state hourly so a new iPhone downloads current state,
+                // not every manage request, attention change and streaming write ever made.
+                try? core.setCompactWithoutStorage(on: true)
             }
             let workspace = NSWorkspace.shared.notificationCenter
             observers.append(
