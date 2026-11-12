@@ -482,7 +482,7 @@ final class WorkspacesService: ObservableObject {
     /// Land on one workspace's detail in Settings ▸ Workspaces from anywhere
     /// in the app: selects it (so the list pane drills in as soon as its
     /// summary is known), remembers the requested tab, and brings the
-    /// management window forward. The one path every "Open workspace"
+    /// Settings forward. The one path every "Open workspace"
     /// affordance uses, so they all end on the same screen. `shareAgentId`
     /// additionally opens the Share agent sheet with that agent selected.
     func openInSettings(

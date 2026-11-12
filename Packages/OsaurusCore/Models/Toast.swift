@@ -293,7 +293,7 @@ public enum ToastAction: Equatable, Sendable {
     /// Show an existing chat window by its window ID
     case showChatWindow(windowId: UUID)
 
-    /// Open settings/management window to a specific tab
+    /// Open Settings to a specific tab
     case openSettings(tab: String?)
 
     /// Open a URL in the default browser

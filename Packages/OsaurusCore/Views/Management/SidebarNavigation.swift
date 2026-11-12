@@ -81,6 +81,20 @@ private enum SidebarLayout {
     static let collapsedItemSpacing: CGFloat = 6
 }
 
+/// A sidebar hosted in a window column it does not own (Settings in the
+/// chat window): the window's titlebar strip sits above it, the window's
+/// toolbar toggles it, and it takes the column's width.
+struct SidebarNavigationColumn {
+    /// Room kept clear above the sidebar for the window's titlebar strip.
+    var topInset: CGFloat
+    /// Width while expanded.
+    var expandedWidth: CGFloat
+    /// Icons only. Owned by the window.
+    var isCollapsed: Bool
+    /// Drawn on the expanded sidebar's trailing edge.
+    var resizeHandle: AnyView?
+}
+
 // MARK: - Sidebar Navigation
 
 /// A sidebar navigation container that displays a list of items with selection state,
@@ -99,9 +113,16 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
     /// A page that wants the whole window (the New Agent creator) collapses
     /// the sidebar while it shows; the person's own choice returns after.
     var focusCollapsed = false
+    /// Set when the sidebar lives in a window column it does not own.
+    var column: SidebarNavigationColumn?
 
-    @State private var isCollapsed: Bool
+    @State private var ownCollapsed: Bool
     @State private var collapsedBeforeFocus: Bool?
+
+    private var isCollapsed: Bool {
+        guard let column else { return ownCollapsed }
+        return column.isCollapsed || focusCollapsed
+    }
     /// Off until the window's first layout settles. A width spring while a
     /// still-sparse window lays out moves every hosted view each frame until
     /// AppKit runs out of Update Constraints passes and raises.
@@ -118,7 +139,8 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
     /// Widens with a larger Text Size so the labels, which scale too, keep
     /// fitting on one line.
     private var sidebarWidth: CGFloat {
-        isCollapsed ? SidebarLayout.collapsedWidth : SidebarLayout.expandedWidth * max(1, CGFloat(theme.fontScale))
+        if isCollapsed { return SidebarLayout.collapsedWidth }
+        return column?.expandedWidth ?? SidebarLayout.expandedWidth * max(1, CGFloat(theme.fontScale))
     }
 
     // MARK: Initialization
@@ -128,6 +150,7 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
         searchText: Binding<String>,
         sections: [SidebarSectionData],
         focusCollapsed: Bool = false,
+        column: SidebarNavigationColumn? = nil,
         @ViewBuilder content: @escaping (String) -> Content,
         @ViewBuilder footer: @escaping () -> Footer
     ) {
@@ -135,8 +158,9 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
         self._searchText = searchText
         self.sections = sections
         self.focusCollapsed = focusCollapsed
+        self.column = column
         // A window opening straight onto a focused page starts collapsed.
-        self._isCollapsed = State(initialValue: focusCollapsed)
+        self._ownCollapsed = State(initialValue: focusCollapsed)
         self._collapsedBeforeFocus = State(initialValue: focusCollapsed ? false : nil)
         self.content = content
         self.footer = footer
@@ -164,18 +188,19 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
     var body: some View {
         HStack(spacing: theme.space.s0) {
             sidebar
-            divider
+            if column == nil { divider }
             contentArea
         }
         .ignoresSafeArea(edges: .top)
         .onAppear { DispatchQueue.main.async { animatesCollapse = true } }
         .onChange(of: focusCollapsed) { _, focused in
+            guard column == nil else { return }
             withAnimation(animatesCollapse ? theme.motion.springAnimation : nil) {
                 if focused {
-                    collapsedBeforeFocus = isCollapsed
-                    isCollapsed = true
+                    collapsedBeforeFocus = ownCollapsed
+                    ownCollapsed = true
                 } else if let before = collapsedBeforeFocus {
-                    isCollapsed = before
+                    ownCollapsed = before
                     collapsedBeforeFocus = nil
                 }
             }
@@ -189,7 +214,7 @@ private extension SidebarNavigation {
 
     var sidebar: some View {
         VStack(alignment: isCollapsed ? .center : .leading, spacing: theme.space.s0) {
-            collapseToggle
+            if column == nil { collapseToggle }
             if !isCollapsed { searchField }
             itemList
             if !isCollapsed {
@@ -198,21 +223,35 @@ private extension SidebarNavigation {
                     .overlay(alignment: .top) { footerScrollShadow }
             }
         }
-        .padding(.top, SidebarLayout.topPadding)
+        .padding(.top, column == nil ? SidebarLayout.topPadding : theme.space.s16)
         .padding(.bottom, SidebarLayout.bottomPadding)
         .padding(
             .horizontal,
-            isCollapsed ? SidebarLayout.collapsedHorizontalPadding : SidebarLayout.expandedHorizontalPadding
+            isCollapsed ? SidebarLayout.collapsedHorizontalPadding : expandedHorizontalPadding
         )
         .frame(width: sidebarWidth)
-        .background(theme.surface.sidebar)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background {
+            // In a window column the sidebar wears the chat sidebar's fill.
+            if column == nil { theme.surface.sidebar } else { SidebarBackground() }
+        }
+        .overlay(alignment: .trailing) {
+            if !isCollapsed, let handle = column?.resizeHandle { handle }
+        }
+        .padding(.top, column?.topInset ?? 0)
+        .zIndex(1)
         .animation(animatesCollapse ? theme.motion.springAnimation : nil, value: isCollapsed)
+    }
+
+    /// In a window column, the chat sidebar's inset.
+    var expandedHorizontalPadding: CGFloat {
+        column == nil ? SidebarLayout.expandedHorizontalPadding : theme.space.s16
     }
 
     var collapseToggle: some View {
         Button {
             withAnimation(theme.motion.springAnimation) {
-                isCollapsed.toggle()
+                ownCollapsed.toggle()
             }
         } label: {
             Image(systemName: "sidebar.left")
@@ -227,11 +266,19 @@ private extension SidebarNavigation {
         .padding(.bottom, isCollapsed ? theme.space.s12 : theme.space.s8)
     }
 
-    var searchField: some View {
-        SidebarSearchField(
-            text: $searchText, placeholder: "Search Settings", isFocused: $isSearchFocused, chrome: .field
-        )
-        .padding(.bottom, theme.space.s8)
+    @ViewBuilder var searchField: some View {
+        if column != nil {
+            // The chat sidebar's search field, so both destinations of the
+            // window share one look.
+            SearchField(text: $searchText, placeholder: "Search Settings", fillsAvailableWidth: true)
+                .frame(minHeight: 32)
+                .padding(.bottom, theme.space.s8)
+        } else {
+            SidebarSearchField(
+                text: $searchText, placeholder: "Search Settings", isFocused: $isSearchFocused, chrome: .field
+            )
+            .padding(.bottom, theme.space.s8)
+        }
     }
 
     var itemList: some View {
@@ -388,6 +435,7 @@ private extension SidebarNavigation {
                 .transition(.opacity.animation(theme.motion.quick))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, column?.topInset ?? 0)
         .animation(theme.motion.quick, value: selection)
     }
 }

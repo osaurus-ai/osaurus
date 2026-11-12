@@ -2,7 +2,7 @@
 //  ManagementTab.swift
 //  osaurus
 //
-//  The management window's information architecture, declared once:
+//  Settings' information architecture, declared once:
 //  group (`ManagementSection`) > category (a sidebar `ManagementTab`) >
 //  item (a child `ManagementTab` reached from its parent's page, or a
 //  page's own inner items). The sidebar, the category pages' drill-in
@@ -60,7 +60,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
 
 // MARK: - Management Tab
 
-/// Every addressable destination in the management window. Sidebar
+/// Every addressable destination in Settings. Sidebar
 /// categories have no `parent`; child tabs are items of their parent's page
 /// and open with a back bar to it. Raw values are persisted / deep-linked
 /// and must stay stable.
@@ -121,8 +121,8 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         sidebarCases.flatMap { [$0] + $0.children }
     }
 
-    /// Destinations that open as a surface of the main window rather than a
-    /// Management sidebar row. Their raw values still deep-link and search
+    /// Destinations that open as their own surface of the main window rather
+    /// than a Settings sidebar row. Their raw values still deep-link and search
     /// still lands on them (`showManagementWindow` redirects).
     public static let mainWindowCases: [ManagementTab] = [.workflows]
 

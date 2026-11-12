@@ -31,7 +31,7 @@ struct ManagementView: View {
     /// Observed so the pending landing anchor reaches every tab via the
     /// environment, re-rendering their glow targets when a result lands.
     @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
-    /// The New Agent creator takes the whole window while it shows.
+    /// The New Agent creator takes the whole content pane while it shows.
     @ObservedObject private var agentCreator = AgentCreatorController.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
@@ -47,48 +47,17 @@ struct ManagementView: View {
 
     // MARK: Properties
 
-    let deeplinkModelId: String?
-    let deeplinkFile: String?
-    let deeplinkAgentId: UUID?
+    /// The chat window column the sidebar sits in.
+    let column: SidebarNavigationColumn
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    // MARK: Initialization
-
-    init(
-        initialTab: ManagementTab? = nil,
-        deeplinkModelId: String? = nil,
-        deeplinkFile: String? = nil,
-        deeplinkAgentId: UUID? = nil
-    ) {
-        // Use provided initialTab if any, otherwise fall back to the last selected tab in this session.
-        if let tab = initialTab {
-            ManagementStateManager.shared.selectedTab = tab
-        }
-        self.deeplinkModelId = deeplinkModelId
-        self.deeplinkFile = deeplinkFile
-        self.deeplinkAgentId = deeplinkAgentId
-    }
 
     // MARK: Body
 
     var body: some View {
         sidebarNavigation
-            // The floor is clamped to the window's screen by `WindowManager`
-            // so a small display can still show the whole window (#2761).
-            .frame(
-                minWidth: stateManager.minimumContentSize.width,
-                maxWidth: .infinity,
-                minHeight: stateManager.minimumContentSize.height,
-                maxHeight: .infinity
-            )
-            // Base window material (the only translucent layer); all panes
-            // above it are opaque semantic surfaces.
-            .background(WindowMaterialView())
             .environment(\.theme, themeManager.currentTheme)
             .tint(theme.action.primary.default.background)
-            .themedAlertScope(.management)
-            .overlay(ThemedAlertHost(scope: .management))
             .onAppear(perform: handleAppear)
             .onChange(of: stateManager.selectedTab) { handleTabChange(to: $1) }
             // The pairing deeplink router publishes an invite here when an
@@ -96,7 +65,7 @@ struct ManagementView: View {
             // a local @State (`presentingInvite`) gives the sheet a stable
             // identity to bind to even after the coordinator nils out, and
             // lets us route the user to the Agents tab on success.
-            .onChange(of: pairCoordinator.pendingInvite) { _, newValue in
+            .onChange(of: pairCoordinator.pendingInvite, initial: true) { _, newValue in
                 if let invite = newValue {
                     presentingInvite = invite
                 }
@@ -138,7 +107,8 @@ private extension ManagementView {
             selection: selectedTabBinding,
             searchText: $searchText,
             sections: sidebarSections,
-            focusCollapsed: stateManager.selectedTab == .agents && agentCreator.isShowing
+            focusCollapsed: stateManager.selectedTab == .agents && agentCreator.isShowing,
+            column: column
         ) { _ in
             Group {
                 // A live query takes over the content pane with cross-tab
@@ -212,16 +182,13 @@ private extension ManagementView {
         case .connect:
             OsaurusConnectView()
         case .models:
-            LocalModelsView(
-                deeplinkModelId: deeplinkModelId,
-                deeplinkFile: deeplinkFile
-            )
+            LocalModelsView()
         case .imageGeneration:
             ImageGenerationView()
         case .providers:
             RemoteProvidersView()
         case .agents:
-            AgentsView(deeplinkAgentId: deeplinkAgentId)
+            AgentsView()
         case .agentChannels:
             AgentChannelConnectionCenterView()
         case .agentRuntimes:
@@ -359,10 +326,8 @@ private extension ManagementView {
             message: "management.tab \(newTab.rawValue)"
         )
 
-        // Settings-engagement signal for tab switches while the window is
-        // open; window opens themselves are counted in
-        // `AppDelegate.showManagementWindow`. The hidden launch prewarm
-        // realizes the view but never changes tabs, so it can't reach this.
+        // Settings-engagement signal for tab switches while Settings is up;
+        // opening Settings is counted in `ChatWindowState.showMainSurface`.
         FeatureTelemetry.settingsOpened(tab: newTab)
 
         // Changing tabs exits search so the chosen tab shows in full (the
@@ -390,6 +355,7 @@ private extension ManagementView {
 
 #if DEBUG && canImport(PreviewsMacros)
     #Preview {
-        ManagementView()
+        ManagementView(column: SidebarNavigationColumn(topInset: 44, expandedWidth: 260, isCollapsed: false))
+            .frame(minWidth: 1000, minHeight: 640)
     }
 #endif

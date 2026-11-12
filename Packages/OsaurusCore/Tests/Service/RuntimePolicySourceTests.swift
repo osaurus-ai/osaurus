@@ -3344,49 +3344,6 @@ struct RuntimePolicySourceTests {
         #expect(removalBody.contains("acceptResidencySnapshot(snapshot, selectedModel: selectedModel)"))
     }
 
-    /// Management-window deeplink reuse swaps the hosting controller of a
-    /// live NSWindow. A SwiftUI `.sheet`'s presentation window stays attached
-    /// through that swap and keeps observing parent frame changes; when the
-    /// new hosting view resizes the window, the orphaned sheet re-enters its
-    /// torn-down graph and traps inside SwiftUI (Sentry APPLE-MACOS-EF).
-    /// Pin the two mitigations: end attached sheets before the swap, and
-    /// build the replacement through `WindowManager.makeHostingController`,
-    /// the AppKit-owned controller with no `sizingOptions`, so it can't push
-    /// content-size extrema frame changes onto the reused window
-    /// (APPLE-MACOS-EF, APPLE-MACOS-1ZM).
-    @Test("Management window deeplink reuse detaches sheets before swapping the hosting controller")
-    func managementDeeplinkReuseDetachesSheetsBeforeControllerSwap() throws {
-        let appDelegate = try Self.source("AppDelegate.swift")
-
-        let reuseStart = try #require(
-            appDelegate.range(of: "if let existingWindow = windowManager.window(for: .management)")
-        )
-        let reuseWindow = String(
-            appDelegate[
-                reuseStart.lowerBound
-                    ..< appDelegate.index(
-                        reuseStart.lowerBound,
-                        offsetBy: 2400,
-                        limitedBy: appDelegate.endIndex
-                    )!
-            ]
-        )
-
-        let endSheets = try #require(
-            reuseWindow.range(of: "while let sheet = existingWindow.attachedSheet")
-        )
-        let swap = try #require(
-            reuseWindow.range(of: "existingWindow.contentViewController = replacement")
-        )
-        #expect(
-            endSheets.lowerBound < swap.lowerBound,
-            "attached sheets must be ended before the hosting controller swap"
-        )
-        #expect(reuseWindow.contains("existingWindow.endSheet(sheet)"))
-        #expect(reuseWindow.contains("windowManager.makeHostingController("))
-        #expect(!reuseWindow.contains("NSHostingController(rootView: root)"))
-    }
-
     @Test("Settings sidebar keeps bounded navigation rows accessibility-stable")
     func settingsSidebarUsesEagerRowsForAccessibility() throws {
         let sidebar = try Self.source("Views/Management/SidebarNavigation.swift")

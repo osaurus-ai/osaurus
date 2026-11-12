@@ -11965,9 +11965,9 @@ struct ChatView: View {
                     .animation(animatesShellLayout ? theme.motion.standard : nil, value: isCreationLayout)
                     .animation(animatesShellLayout ? theme.motion.springAnimation : nil, value: architectBlank)
                     .animation(animatesShellLayout ? theme.motion.springAnimation : nil, value: agentBlank)
-                    .opacity(windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary ? 0 : 1)
-                    .allowsHitTesting(!(windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary))
-                    .accessibilityHidden(windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary)
+                    .opacity(isChatContentCovered ? 0 : 1)
+                    .allowsHitTesting(!isChatContentCovered)
+                    .accessibilityHidden(isChatContentCovered)
 
 
                     if windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary {
@@ -11975,6 +11975,18 @@ struct ChatView: View {
                             .padding(.top, Self.headerHeight(theme))
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .zIndex(2)
+                    } else if windowState.mainSurface == .settings {
+                        SettingsMainDestination(
+                            topInset: topInset,
+                            sidebarWidth: clampedSidebarWidth,
+                            isSidebarCollapsed: windowState.isSettingsSidebarCollapsed,
+                            sidebarWidthRange: Self.sidebarWidthRange,
+                            storedSidebarWidth: $storedSidebarWidth,
+                            liveSidebarWidth: $liveSidebarWidth
+                        )
+                        .equatable()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .zIndex(2)
                     }
                 }
                 // Workflows keeps its rounded canvas; Chat meets the sidebar
@@ -12398,6 +12410,13 @@ struct ChatView: View {
 
     /// Either creation chat, which share the chat-beside-draft layout.
     private var isCreationLayout: Bool { isWorkflowCreation || isAgentCreation }
+
+    /// The Workflows home or Settings owns the content area; the live
+    /// thread and composer stay mounted underneath, hidden.
+    private var isChatContentCovered: Bool {
+        (windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary)
+            || windowState.mainSurface == .settings
+    }
 
     /// The Architect chat's draft, when it has one.
     private var architectDraft: WorkflowDraft? {
@@ -13362,7 +13381,8 @@ extension ChatView {
             {
                 guard let ourWindow = ChatWindowManager.shared.getNSWindow(id: capturedWindowId),
                     event.window === ourWindow,
-                    let windowState
+                    let windowState,
+                    windowState.mainSurface != .settings
                 else { return event }
                 windowState.isFindBarVisible = true
                 // Also fires when the bar is already open so Cmd+F always
@@ -13419,6 +13439,24 @@ extension ChatView {
                 // Esc can't close the window underneath a modal.
                 if ThemedAlertCenter.shared.cancelActive(scope: .chat(capturedWindowId)) {
                     return nil
+                }
+
+                // Stage 2.5: Settings covers the chat. Esc belongs to the
+                // page on screen (its search field, an inspector); the
+                // hidden chat's prompts and the window itself are never
+                // its target. A focused field gets it first, then lets go
+                // of focus, as in Stage 4.25.
+                if let windowState, windowState.mainSurface == .settings {
+                    if let field = ourWindow.firstResponder as? NSTextView,
+                        field.isFieldEditor || field is IMETrackingTextView, !field.hasMarkedText()
+                    {
+                        ourWindow.sendEvent(event)
+                        if ourWindow.firstResponder === field {
+                            ourWindow.makeFirstResponder(nil)
+                        }
+                        return nil
+                    }
+                    return event
                 }
 
                 // Stage 3: Voice overlay is visible.
@@ -13556,10 +13594,7 @@ private struct MainNavigationRail: View {
             destination(.workflows, symbol: "point.forward.to.point.capsulepath", label: "Workflows")
             Spacer(minLength: 8)
             NavigationUsageButton()
-            SettingsIconButton("gearshape", help: "Settings", size: .regular, role: .tertiary) {
-                AppDelegate.shared?.showManagementWindow(initialTab: nil)
-            }
-            .frame(width: 32, height: 32)
+            destination(.settings, symbol: "gearshape", label: "Settings")
         }
         .padding(.horizontal, theme.space.s6).padding(.vertical, theme.space.s8)
         .frame(width: 44)

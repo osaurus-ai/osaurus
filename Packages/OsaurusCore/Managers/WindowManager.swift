@@ -12,13 +12,11 @@ import SwiftUI
 /// Identifies managed windows in the application
 public enum WindowIdentifier: Hashable, CustomStringConvertible, Sendable {
     case chat
-    case management
     case permission
 
     public var description: String {
         switch self {
         case .chat: return L("Chat")
-        case .management: return L("Management")
         case .permission: return L("Permission")
         }
     }
@@ -27,7 +25,6 @@ public enum WindowIdentifier: Hashable, CustomStringConvertible, Sendable {
 /// Strictly typed autosave names for window frame persistence
 public enum WindowFrameAutosaveKey: String, Sendable {
     case chat = "ChatWindow"
-    case management = "ManagementWindow"
 }
 
 /// Configuration for creating a managed window
@@ -55,18 +52,6 @@ public struct WindowConfiguration: Sendable {
         hideStandardButtons: [.closeButton, .miniaturizeButton, .zoomButton],
         autosaveKey: .chat
     )
-
-    public static let management = WindowConfiguration(
-        identifier: .management,
-        defaultSize: NSSize(width: 940, height: 640),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-        usePanel: false,
-        titlebarAppearsTransparent: true,
-        titleVisibility: .hidden,
-        isMovableByWindowBackground: false,
-        hideStandardButtons: [],
-        autosaveKey: .management
-    )
 }
 
 /// Centralized window management for the application
@@ -83,9 +68,6 @@ public final class WindowManager: NSObject, ObservableObject {
 
     private var windows: [WindowIdentifier: NSWindow] = [:]
     private var windowDelegates: [WindowIdentifier: WindowManagerDelegate] = [:]
-    /// Keeps each window's hosting controller fed with the clamped floor its
-    /// SwiftUI root enforces (see `makeHostingController`).
-    private var floorSubscriptions: [WindowIdentifier: AnyCancellable] = [:]
 
     private override init() {
         super.init()
@@ -95,36 +77,13 @@ public final class WindowManager: NSObject, ObservableObject {
     // MARK: - Hosting
 
     /// The hosting controller for a window whose size AppKit owns. SwiftUI
-    /// never drives the frame (no `NSHostingSizingOptions`); the floor the
-    /// user cannot drag below is mirrored into `contentMinSize` from the
-    /// same clamped value the root applies as `.frame(minWidth:minHeight:)`,
-    /// so the two can never disagree. Used both when a window is created and
-    /// when its content is swapped for a deeplink (`AppDelegate`).
+    /// never drives the frame (no `NSHostingSizingOptions`); these windows
+    /// size their floors elsewhere (`ChatWindowManager` for chat).
     public func makeHostingController<Content: View>(
         for identifier: WindowIdentifier,
         rootView: Content
     ) -> NSViewController {
-        switch identifier {
-        case .management:
-            let controller = AppKitOwnedWindowHostingController(
-                rootView: rootView,
-                minimumContentSize: ManagementStateManager.shared.minimumContentSize
-            )
-            // `WindowManager` re-clamps the floor to the window's screen on
-            // creation, show and screen change; forward every value so the
-            // AppKit floor follows the SwiftUI one.
-            floorSubscriptions[identifier] = ManagementStateManager.shared.$minimumContentSize
-                .receive(on: RunLoop.main)
-                .sink { [weak controller] size in
-                    controller?.minimumContentSize = size
-                }
-            return controller
-        case .chat, .permission:
-            // These windows size their floors elsewhere (`ChatWindowManager`
-            // for chat). No SwiftUI sizing option here either: the frame is
-            // AppKit's.
-            return AppKitOwnedWindowHostingController(rootView: rootView, minimumContentSize: .zero)
-        }
+        AppKitOwnedWindowHostingController(rootView: rootView, minimumContentSize: .zero)
     }
 
     // MARK: - Window Registration
@@ -148,7 +107,6 @@ public final class WindowManager: NSObject, ObservableObject {
     public func unregister(_ identifier: WindowIdentifier) {
         windows.removeValue(forKey: identifier)
         windowDelegates.removeValue(forKey: identifier)
-        floorSubscriptions.removeValue(forKey: identifier)
     }
 
     /// Get the window for an identifier (if registered)
@@ -347,10 +305,7 @@ public final class WindowManager: NSObject, ObservableObject {
         // resize the window itself, and when the size it wants is one the
         // window cannot hold that resize/invalidate cycle exhausts AppKit's
         // update-constraints budget and raises (Sentry APPLE-MACOS-1ZM; see
-        // `AppKitOwnedWindowHostingController`). The floor the user cannot
-        // drag below still comes from the root's `.frame(minWidth:minHeight:)`
-        // value, mirrored into `contentMinSize` through the controller's
-        // `preferredMinimumSize` instead of through SwiftUI.
+        // `AppKitOwnedWindowHostingController`).
         let hostingController = makeHostingController(for: config.identifier, rootView: content())
 
         // Calculate centered position on active screen. The default size is
@@ -412,12 +367,6 @@ public final class WindowManager: NSObject, ObservableObject {
             window.standardWindowButton(buttonType)?.isHidden = true
         }
 
-        // The root view's floor must already fit the target screen when the
-        // hosting controller attaches: its first layout pass mirrors that
-        // floor into `contentMinSize`, and a too-tall floor at that point
-        // would grow the window past the screen before `fitToScreen` runs.
-        pushMinimumContentSize(for: window, identifier: config.identifier, on: screen)
-
         window.contentViewController = hostingController
 
         // Explicitly set the content size so the window starts at the intended
@@ -446,7 +395,6 @@ public final class WindowManager: NSObject, ObservableObject {
     private static func fallbackSize(for identifier: WindowIdentifier) -> NSSize {
         switch identifier {
         case .chat: return WindowConfiguration.chat.defaultSize
-        case .management: return WindowConfiguration.management.defaultSize
         case .permission: return NSSize(width: 800, height: 600)
         }
     }
@@ -465,42 +413,11 @@ public final class WindowManager: NSObject, ObservableObject {
         return NSSize(width: min(size.width, vf.width), height: min(size.height, vf.height))
     }
 
-    /// The largest content area `screen` can show for `window`: the visible
-    /// frame minus the window's own titlebar chrome. `.zero` when no screen
-    /// is known, which the state's clamp treats as "keep the design minimum".
-    private static func availableContentSize(for window: NSWindow, on screen: NSScreen?) -> CGSize {
-        guard let vf = screen?.visibleFrame else { return .zero }
-        // With `.fullSizeContentView` the content view runs under the
-        // titlebar, but the SwiftUI root lays out inside the safe area, so
-        // the hosting controller's minimum includes that strip on top of the
-        // root's `.frame(minHeight:)`. Leave room for it.
-        let chrome = max(0, window.frame.height - window.contentLayoutRect.height)
-        return CGSize(width: vf.width, height: vf.height - chrome)
-    }
-
-    /// Clamp the floor the window's SwiftUI root enforces to what `screen`
-    /// can show. Only the settings window drives its floor from shared
-    /// state; chat windows do the same through `ChatWindowManager`.
-    private func pushMinimumContentSize(
-        for window: NSWindow,
-        identifier: WindowIdentifier,
-        on screen: NSScreen?
-    ) {
-        switch identifier {
-        case .management:
-            ManagementStateManager.shared.updateMinimumContentSize(
-                availableContentSize: Self.availableContentSize(for: window, on: screen)
-            )
-        case .chat, .permission:
-            break
-        }
-    }
-
-    /// Keep `window` inside its screen's visible frame: clamp the floor the
-    /// SwiftUI root enforces, then shrink the frame if it is larger than the
-    /// screen and move it back on screen. Runs on creation (the restored
-    /// autosave frame may come from a larger display), on every show, and
-    /// whenever the window lands on another screen. A window taller than
+    /// Keep `window` inside its screen's visible frame: shrink the frame if
+    /// it is larger than the screen and move it back on screen. Runs on
+    /// creation (the restored autosave frame may come from a larger
+    /// display), on every show, and whenever the window lands on another
+    /// screen. A window taller than
     /// its screen could otherwise only be shown with its title bar under the
     /// menu bar and its bottom cut off (#2761).
     ///
@@ -514,7 +431,6 @@ public final class WindowManager: NSObject, ObservableObject {
         guard !window.styleMask.contains(.fullScreen),
             let screen = window.screen ?? activeScreen
         else { return }
-        pushMinimumContentSize(for: window, identifier: identifier, on: screen)
         guard NSEvent.pressedMouseButtons == 0 else {
             // A drag between displays is in progress. `windowDidChangeScreen`
             // fires mid-drag and nothing re-runs this afterwards, so without
@@ -639,7 +555,6 @@ public final class WindowManager: NSObject, ObservableObject {
         let identifiers = pinnedWindows.map { identifier -> String in
             switch identifier {
             case .chat: return "chat"
-            case .management: return "management"
             case .permission: return "permission"
             }
         }
@@ -653,7 +568,6 @@ public final class WindowManager: NSObject, ObservableObject {
         for id in identifiers {
             switch id {
             case "chat": pinnedWindows.insert(.chat)
-            case "management": pinnedWindows.insert(.management)
             case "permission": pinnedWindows.insert(.permission)
             default: break
             }

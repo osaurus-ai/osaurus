@@ -2061,7 +2061,7 @@ private struct AgentSidebarRow: View {
     @State private var hoverControlsWidth: CGFloat = 0
 
     /// Stop while a run is live on this agent, otherwise New Chat and the
-    /// gear opening this agent's settings in the management window: the
+    /// gear opening this agent's settings in Settings: the
     /// Agents detail page for a user agent, Settings → Orchestrator for the
     /// built-in Osaurus agent. Always laid out and revealed on hover, so
     /// showing them never changes the row's layout.

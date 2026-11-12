@@ -297,10 +297,21 @@ final class ChatWindowState: ObservableObject {
         if breakpoint == .compact {
             contextPanelWantedBeforeCompact = inspectorPane != nil
             inspectorPane = nil
-        } else if contextPanelWantedBeforeCompact {
-            inspectorPane = lastInspectorPane
+            settingsSidebarCollapsedBeforeCompact = isSettingsSidebarCollapsed
+            isSettingsSidebarCollapsed = true
+        } else {
+            if contextPanelWantedBeforeCompact { inspectorPane = lastInspectorPane }
+            if let before = settingsSidebarCollapsedBeforeCompact {
+                isSettingsSidebarCollapsed = before
+                settingsSidebarCollapsedBeforeCompact = nil
+            }
         }
     }
+
+    /// The Settings destination's sidebar shows icons only. A compact
+    /// window collapses it; widening again restores the person's choice.
+    @Published var isSettingsSidebarCollapsed = false
+    private var settingsSidebarCollapsedBeforeCompact: Bool?
 
     /// Whether the docked context panel was wanted when the window
     /// narrowed into compact, so widening brings it back.
@@ -377,7 +388,7 @@ final class ChatWindowState: ObservableObject {
     @Published var isFindBarVisible: Bool = false
 
     /// Main navigation is independent of the live chat/session lifecycle.
-    enum MainSurface: String { case chat, workflows }
+    enum MainSurface: String { case chat, workflows, settings }
     @Published var mainSurface: MainSurface = .chat
     @Published var showsWorkflowLibrary = true
     /// Retain the unsent workflow brief when switching between main destinations.
@@ -589,7 +600,15 @@ final class ChatWindowState: ObservableObject {
         if surface == .workflows {
             if mainSurface != .workflows { FeatureTelemetry.workflowsOpened(page: workflowsPageToken) }
             showsWorkflowLibrary = true
-        } else if activeTab?.workflowID != nil || agentId == Agent.architectId {
+        } else if surface == .settings {
+            if mainSurface != .settings {
+                // Tab switches while Settings is up are counted by
+                // `ManagementView.handleTabChange`.
+                let tab = ManagementStateManager.shared.selectedTab
+                CrashReportingService.recordBreadcrumb(category: "navigation", message: "management.window \(tab.rawValue)")
+                FeatureTelemetry.settingsOpened(tab: tab)
+            }
+        } else if surface == .chat, activeTab?.workflowID != nil || agentId == Agent.architectId {
             if let recent = tabs.filter({ $0.workflowID == nil && $0.session.agentId != Agent.architectId })
                 .max(by: { $0.lastActivatedAt < $1.lastActivatedAt }) {
                 selectTab(id: recent.id)
@@ -610,11 +629,17 @@ final class ChatWindowState: ObservableObject {
         }
     }
 
+    /// Settings, on `tab` when given. The page on screen is app-wide
+    /// (`ManagementStateManager.selectedTab`), so every window agrees.
+    func showSettings(tab: ManagementTab? = nil) {
+        if let tab { ManagementStateManager.shared.selectedTab = tab }
+        showMainSurface(.settings)
+    }
+
     func showWorkflowDetail() {
         if showsWorkflowLibrary { showsWorkflowLibrary = false }
         if mainSurface != .workflows { mainSurface = .workflows }
     }
-
 
     /// Bumped on every Cmd+F so the find bar re-focuses its text field even
     /// when the bar is already visible (e.g. focus wandered back to the

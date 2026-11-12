@@ -74,6 +74,7 @@ struct WorkspaceDetailView: View {
     /// Observed for own-agent rows: their presence is the relay tunnel state.
     @ObservedObject private var relayManager = RelayTunnelManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @Environment(\.themedAlertScope) private var alertScope
     private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let workspace: OsaurusRouterWorkspaceSummary
@@ -1294,7 +1295,7 @@ struct WorkspaceDetailView: View {
                             onChat: { chat(with: agent) },
                             onTurnOnRelay: {
                                 if let local = AgentManager.shared.agent(byAddress: agent.agentAddress) {
-                                    RemoteAccessConsent.request(for: local, scope: .management)
+                                    RemoteAccessConsent.request(for: local, scope: alertScope)
                                 }
                             },
                             onUnshare: { pendingDestruction = .unshareAgent(identity(for: agent)) },

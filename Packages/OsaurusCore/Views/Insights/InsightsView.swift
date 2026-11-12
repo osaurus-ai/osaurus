@@ -32,8 +32,8 @@ struct InsightsView: View {
     @State private var showFilterPopover = false
 
     /// Content width at or above which a selected row opens beside the list
-    /// instead of replacing it. The management window with its sidebar open
-    /// crosses this around a 1280pt window.
+    /// instead of replacing it. Settings with its sidebar open crosses this
+    /// around a 1280pt window.
     static let inspectorBreakpoint: CGFloat = 1040
     static let inspectorWidth: CGFloat = 440
 

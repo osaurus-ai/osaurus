@@ -141,8 +141,6 @@ public final class ThemedAlertCenter: ObservableObject {
 public enum ThemedAlertScope: Hashable, Sendable {
     /// Alert scoped to a specific chat window
     case chat(UUID)
-    /// Alert scoped to the management/settings view
-    case management
     /// Alert scoped to the main content area
     case content
     /// Alert scoped to toast overlay panels

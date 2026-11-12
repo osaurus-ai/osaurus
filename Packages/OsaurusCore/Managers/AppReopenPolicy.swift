@@ -16,7 +16,7 @@ enum AppReopenPolicy {
         let isMinimized: Bool
         /// A chat window. A chat hidden with the hotkey comes back; any
         /// other window that is neither on screen nor minimized counts as
-        /// closed (Settings is built hidden ahead of its first open).
+        /// closed.
         let isChat: Bool
     }
 
