@@ -16,7 +16,7 @@ enum OnboardingTelemetry {
     // tests inject a recording service to assert the exact event name and
     // properties each funnel moment produces.
 
-    /// Which DMG the user installed from. `full` ships Raptor 0.6 inside the
+    /// Which DMG the user installed from. `full` ships Raptor 0.7 inside the
     /// app (see `BundledModelSeeder`) and skips the Configure AI step, so
     /// every funnel event carries this so the two flows can be compared.
     enum Distribution: String {

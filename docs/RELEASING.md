@@ -53,7 +53,13 @@ does not.
 - Never edit `docs/appcast.xml` or `docs/appcast-next.xml` by hand. The
   pipeline writes them and refuses a feed holding the other product's items.
 - Never mark a Classic release as Latest. `releases/latest/download/Osaurus.dmg`,
-  the website and Homebrew must keep serving 1.x.
+  the website and Homebrew must keep serving 1.x. The same rule covers the full
+  DMG with the bundled model, which is too large for a GitHub release asset and
+  lives in the `OsaurusAI/osaurus-releases` Hugging Face dataset: its stable
+  link,
+  `https://huggingface.co/datasets/OsaurusAI/osaurus-releases/resolve/main/Osaurus-full.dmg`,
+  is rewritten by `upload_full_dmg_hf.sh` only for releases that
+  `release_lane.py` marks Latest (never a beta or Classic).
 
 ## Classic upgrade offer
 

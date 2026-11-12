@@ -77,7 +77,7 @@ struct OnboardingStageTests {
     // MARK: Dino help
 
     private static let pick = OnboardingHelp.Pick(
-        name: "Gemma 4 12B", downloadSize: "8 GB", isDownloaded: false,
+        name: "Raptor 0.7 4B", downloadSize: "3.68 GB", isDownloaded: false,
         reason: "It runs smoothly with your Mac's 32 GB of memory and leaves room for your other apps.")
 
     @Test func everyStepHasSeveralPagesOfHelp() {
@@ -93,16 +93,17 @@ struct OnboardingStageTests {
     @Test func theModelHelpStartsWithWhatAModelIs_andEndsWithWhy() {
         let pages = OnboardingHelp.pages(.paths, pick: Self.pick)
         #expect(pages.first?.contains("model") == true)
-        #expect(pages.contains { $0.contains("8 GB") })
-        #expect(pages.last?.contains("Gemma 4 12B") == true)
+        #expect(pages.contains { $0.contains("3.68 GB") })
+        #expect(pages.last?.contains("Raptor 0.7 4B") == true)
         #expect(pages.last?.contains("32 GB") == true)
     }
 
-    @Test func theLocalHelpTellsAPersonalPickApart() {
-        let mine = OnboardingHelp.Pick(name: "Raptor 0.6 4B", downloadSize: "4 GB", isDownloaded: false, reason: nil)
-        let pages = OnboardingHelp.pages(.localModel, pick: mine)
-        #expect(pages.contains { $0.hasPrefix("You picked Raptor 0.6 4B") })
-        #expect(!pages.contains { $0.hasPrefix("I picked") })
+    @Test func theLocalHelpNamesThePick_andNeverOffersAChooser() {
+        let pick = OnboardingHelp.Pick(name: "Raptor 0.7 4B", downloadSize: "3.68 GB", isDownloaded: false, reason: nil)
+        let pages = OnboardingHelp.pages(.localModel, pick: pick)
+        #expect(pages.contains { $0 == "I picked Raptor 0.7 4B for you. It stays on this Mac, so it works offline." })
+        #expect(!pages.contains { $0.contains("Change model") })
+        #expect(pages.last?.contains("Settings") == true)
     }
 
     @Test func clickingTheDinoTalksThroughThePages_andClickingAgainStops() {

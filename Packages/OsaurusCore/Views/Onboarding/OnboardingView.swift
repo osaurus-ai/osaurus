@@ -134,14 +134,8 @@ public struct OnboardingView: View {
                     .opacity(isFinishing ? 0 : 1)
                     .zIndex(5)
 
-                // Window-root modal hosts: each must dim and block the whole
-                // window while open, so they can't live inside a step's layout.
-                if currentStep == .configureAI && configureAIState.isChoosingModel {
-                    ConfigureModelChooserModal(state: configureAIState)
-                        .transition(OnboardingMotion.modalFade)
-                        .zIndex(10)
-                }
-
+                // Window-root modal host: it must dim and block the whole
+                // window while open, so it can't live inside a step's layout.
                 if currentStep == .configureAI && configureAIState.connectDialog != nil {
                     ProviderConnectDialog(state: configureAIState)
                         .transition(OnboardingMotion.modalFade)
@@ -153,7 +147,6 @@ public struct OnboardingView: View {
         // `smooth`, not `bouncy`: this drives the scrim's opacity, and an
         // overshooting spring makes the dimming visibly pulse past its
         // target. The dialog's own transition supplies the character.
-        .animation(OnboardingMotion.smooth, value: configureAIState.isChoosingModel)
         .animation(OnboardingMotion.smooth, value: configureAIState.connectDialog != nil)
         .animation(theme.motion.standard, value: isFinishing)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -267,11 +260,7 @@ public struct OnboardingView: View {
                 name: model.simplifiedName,
                 downloadSize: model.formattedDownloadSize,
                 isDownloaded: model.isDownloaded,
-                reason: ConfigureAIState.pickReason(
-                    for: model,
-                    recommendedId: configureAIState.recommendedModelId(totalMemoryGB: totalMemoryGB),
-                    totalMemoryGB: totalMemoryGB
-                )
+                reason: ConfigureAIState.pickReason(for: model, totalMemoryGB: totalMemoryGB)
             )
         }
         return OnboardingHelp.pages(helpTopic, pick: pick)
@@ -360,9 +349,7 @@ public struct OnboardingView: View {
         // `selectedModel`) visibly detached from the step slide. The step's
         // own `onAppear` keeps the same calls as an idempotent safety net.
         if step == .configureAI {
-            configureAIState.ensureLocalSelection(
-                totalMemoryGB: SystemMonitorService.shared.totalMemoryGB
-            )
+            configureAIState.ensureLocalSelection()
             configureAIState.refreshFreeDiskSpace()
             stage.enterBrain()
         } else {
@@ -373,7 +360,7 @@ public struct OnboardingView: View {
         }
     }
 
-    /// The step after Welcome. The full distribution ships Raptor 0.6 inside
+    /// The step after Welcome. The full distribution ships Raptor 0.7 inside
     /// the app and `BundledModelSeeder` installs it at launch, so when that
     /// model is on disk and fits comfortably there is nothing left to choose:
     /// commit it as the local brain and finish, skipping Configure AI. Every
@@ -403,7 +390,7 @@ public struct OnboardingView: View {
             finishOnboarding(via: .finishButton)
             return
         }
-        configureAIState.ensureLocalSelection(totalMemoryGB: SystemMonitorService.shared.totalMemoryGB)
+        configureAIState.ensureLocalSelection()
         configureAIState.refreshFreeDiskSpace()
         stage.enterBrain()
         prepareManagedBrainReadiness()

@@ -279,7 +279,7 @@ jobs:
 
   build_full:
     # Model-bundled ("full") DMG: the signed light app from `build` plus
-    # Raptor 0.6 under Contents/Resources/BundledModels, re-signed, packaged
+    # Raptor 0.7 under Contents/Resources/BundledModels, re-signed, packaged
     # as ULFO, notarized, and published to the Hugging Face Hub (GitHub
     # Releases cap assets at 2 GiB). Runs after `build` so the light release,
     # appcast, and Discord post are never delayed by the ~4 GB pipeline; on
@@ -329,7 +329,7 @@ jobs:
           rm -f build_output/Osaurus-app.zip
           test -d build_output/Osaurus.app
 
-      - name: Build full app (bundle Raptor 0.6)
+      - name: Build full app (bundle Raptor 0.7)
         env:
           DEVELOPER_ID_NAME: ${{ secrets.DEVELOPER_ID_NAME }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -354,7 +354,6 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GH_TOKEN: ${{ github.token }}
           PUBLIC_REPO: ${{ github.repository }}
-          IS_BETA: ${{ env.IS_BETA }}
         run: bash scripts/release/upload_full_dmg_hf.sh
 
       - name: Record full DMG checksum
