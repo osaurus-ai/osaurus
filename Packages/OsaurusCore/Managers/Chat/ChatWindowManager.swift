@@ -435,10 +435,29 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         showWindow(id: state.windowId)
     }
 
+    /// Settings in the window the person is in (else a new one), on `tab`
+    /// when given. Every Settings entry point lands here.
+    func showSettingsSurface(tab: ManagementTab? = nil) {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showSettings(tab: tab)
+        showWindow(id: state.windowId)
+    }
+
     /// ⌘B: hide/show the focused chat window's session sidebar, mirroring
     /// the toolbar's sidebar button.
     public func toggleSidebarInFocusedWindow() {
         guard let state = shortcutTargetState else { return }
+        if state.mainSurface == .settings {
+            withAnimation(state.theme.motion.springAnimation) { state.isSettingsSidebarCollapsed.toggle() }
+            return
+        }
         withAnimation(state.theme.motion.quick) {
             state.toggleSidebar()
         }
@@ -1565,6 +1584,14 @@ private final class ChatPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
+    /// NSPanel closes on an Esc nothing else took. On Settings the pages'
+    /// own Esc shortcuts and fields have had it by now, and the window
+    /// must stay open.
+    override func cancelOperation(_ sender: Any?) {
+        if chatWindowState?.mainSurface == .settings { return }
+        super.cancelOperation(sender)
+    }
+
     // MARK: Window controls
 
     private var trafficLightObservers: [NSObjectProtocol] = []
@@ -1846,6 +1873,16 @@ private struct ChatToolbarSidebarView: View {
         } else if windowState.mainSurface == .workflows {
             WorkflowsTitleBarBackButton(windowState: windowState)
                 .environment(\.theme, windowState.theme)
+        } else if windowState.mainSurface == .settings {
+            HeaderActionButton(
+                icon: "sidebar.left",
+                help: windowState.isSettingsSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"
+            ) {
+                withAnimation(windowState.theme.motion.springAnimation) {
+                    windowState.isSettingsSidebarCollapsed.toggle()
+                }
+            }
+            .environment(\.theme, windowState.theme)
         }
         }
     }

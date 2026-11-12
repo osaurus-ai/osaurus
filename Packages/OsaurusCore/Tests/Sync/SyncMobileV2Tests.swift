@@ -868,12 +868,9 @@ struct SyncMobileV2Tests {
 
     @Test func theAnywhereQuestionOpensInTheWindowTheUserIsIn() {
         let chat = UUID()
-        #expect(SyncReachabilityPrompt.scope(focusedChat: chat, chatVisible: { _ in true }, managementVisible: true)
-            == .chat(chat))
-        #expect(SyncReachabilityPrompt.scope(focusedChat: chat, chatVisible: { _ in false }, managementVisible: true)
-            == .management)
-        #expect(SyncReachabilityPrompt.scope(focusedChat: nil, chatVisible: { _ in true }, managementVisible: false)
-            == .toastOverlay)
+        #expect(SyncReachabilityPrompt.scope(focusedChat: chat, chatVisible: { _ in true }) == .chat(chat))
+        #expect(SyncReachabilityPrompt.scope(focusedChat: chat, chatVisible: { _ in false }) == .toastOverlay)
+        #expect(SyncReachabilityPrompt.scope(focusedChat: nil, chatVisible: { _ in true }) == .toastOverlay)
     }
 
     @Test func anOlderDirectoryWithoutTheNewFieldsStillDecodes() throws {

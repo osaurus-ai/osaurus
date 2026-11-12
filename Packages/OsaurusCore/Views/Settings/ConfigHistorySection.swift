@@ -76,7 +76,6 @@ struct ConfigHistorySection: View {
             }
             .settingsLandingAnchor(Self.anchorId)
         }
-        .overlay { ConfigApprovalModal(scope: .management) }
         .task { await reload(noticeDrift: true) }
         .onReceive(NotificationCenter.default.publisher(for: ConfigHistoryRecorder.didChange)) { _ in
             Task { await reload(noticeDrift: false) }

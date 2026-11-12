@@ -57,9 +57,6 @@ struct LocalModelsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
 
-    let deeplinkModelId: String?
-    let deeplinkFile: String?
-
     @AppStorage("localModelsKind") private var kindRaw: String = LocalModelKind.language.rawValue
     @StateObject private var sources = LocalModelCatalogSources()
     @State private var showSources = false
@@ -102,8 +99,7 @@ struct LocalModelsView: View {
         LocalModelsCatalogPage(
             source: sources.source(for: kind),
             kindTabs: AnyView(kindTabs),
-            sourcesButton: AnyView(sourcesButton),
-            deeplinkModelId: deeplinkModelId
+            sourcesButton: AnyView(sourcesButton)
         )
         .id(kind)
     }

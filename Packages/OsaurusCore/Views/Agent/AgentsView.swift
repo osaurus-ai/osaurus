@@ -40,19 +40,11 @@ struct AgentsView: View {
 
     private var theme: any ThemeProtocol { themeManager.currentTheme }
 
-    /// One-shot deep-link target: when set on construction (e.g. from the chat
-    /// header's gear button), the matching local agent is opened in detail
-    /// view as soon as the tab appears. Consumed exactly once via
-    /// `consumedDeeplinkAgentId` so subsequent navigation back to the grid
-    /// doesn't re-fire the auto-select.
-    let deeplinkAgentId: UUID?
-
     @State private var selectedAgent: Agent?
     @State private var selectedRemoteAgentId: UUID?
     @State private var isReordering = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
-    @State private var consumedDeeplinkAgentId: UUID?
     /// Agents | Templates switch under the header.
     @State private var section: AgentsSection = .agents
     /// Template library sheets. `templateImportText` is non-nil while the
@@ -83,10 +75,6 @@ struct AgentsView: View {
     @ObservedObject private var draftStore = AgentDraftStore.shared
     /// The agent the creator just made: its page opens with a ready banner.
     @State private var newlyCreatedAgentId: UUID?
-
-    init(deeplinkAgentId: UUID? = nil) {
-        self.deeplinkAgentId = deeplinkAgentId
-    }
 
     private var customAgents: [Agent] {
         agentManager.agents.filter { !$0.isBuiltIn }
@@ -288,7 +276,6 @@ struct AgentsView: View {
             withAnimation(theme.motion.standard.delay(0.05)) {
                 hasAppeared = true
             }
-            consumeDeeplinkIfPossible()
             applyPendingRemoteAgentDetail()
             applyPendingAgentDetail()
             // The wizard parks itself here when it sends the user to another
@@ -318,7 +305,6 @@ struct AgentsView: View {
         }
         .onChange(of: agentManager.agents) { _, _ in
             // Agent list may load asynchronously after the view appears.
-            consumeDeeplinkIfPossible()
             applyPendingAgentDetail()
         }
         .onChange(of: remoteAgentManager.remoteAgents) { _, _ in
@@ -766,22 +752,6 @@ struct AgentsView: View {
     }
 
     // MARK: - Deeplink
-
-    /// Auto-selects a non-built-in agent when the tab was opened with a
-    /// deeplink target (e.g. via the chat header's gear button). Runs at
-    /// most once per construction.
-    private func consumeDeeplinkIfPossible() {
-        guard let target = deeplinkAgentId,
-            consumedDeeplinkAgentId != target,
-            let agent = agentManager.agents.first(where: { $0.id == target }),
-            !agent.isBuiltIn
-        else { return }
-        consumedDeeplinkAgentId = target
-        withAnimation(Self.navTransition) {
-            selectedRemoteAgentId = nil
-            selectedAgent = agent
-        }
-    }
 
     /// Open a paired remote agent's detail view in response to a deep-link
     /// (`ManagementStateManager.pendingRemoteAgentDetailId`, e.g. from the chat

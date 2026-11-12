@@ -878,9 +878,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     CredentialMigration.observeUnlock()
                     await SignInSessionSync.run()
                 }
-                // Build the Settings/management window graph while idle so the
-                // first open is instant
-                // instead of stalling on a synchronous SwiftUI construct+layout.
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .seconds(1.5))
                     // These prewarms each realize a heavy SwiftUI view graph
@@ -902,9 +899,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     // (HTTP, subagents, channels) never run the ChatView
                     // prewarm, so seed it here for the whole process.
                     AgentSecretsKeychain.prewarmAccounts()
-                    self?.prewarmManagementWindow()
-                    // Warm ChatView's (deep, slow-to-realize) generic metadata too,
-                    // spaced out so the two heavy SwiftUI realizations don't stack
+                    // Warm ChatView's (deep, slow-to-realize) generic metadata,
+                    // spaced out so it doesn't stack onto the work above
                     // into a single main-thread stall during the launch settle.
                     try? await Task.sleep(for: .seconds(1.0))
                     guard !Self.isUnderResourcePressure else { return }
@@ -956,7 +952,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// (`needsConsentDecision`), so it shows at most once and never to users
     /// who already chose.
     ///
-    /// Hosted in the user's landing app window (chat overlay, else management)
+    /// Hosted in the user's landing app window (a chat window)
     /// so it behaves like an app modal and recedes when Osaurus is deactivated,
     /// falling back to the screen-level toast overlay only if no app window is
     /// up. Any dismissal (the "Not Now" button or a tap outside) records a
@@ -973,7 +969,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             guard telemetry.needsConsentDecision else { return }
 
             // Host the prompt inside whatever app window the user landed on
-            // (chat overlay, else management) so it behaves like an app modal —
+            // (a chat window) so it behaves like an app modal —
             // recedes when Osaurus is deactivated — rather than the toast
             // overlay panel, which sits at status-bar level across all spaces
             // and would hover above other apps. The toast scope is only a
@@ -982,8 +978,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
                 ChatWindowManager.shared.windowExists(id: chatId) {
                 scope = .chat(chatId)
-            } else if WindowManager.shared.isVisible(.management) {
-                scope = .management
             } else {
                 scope = .toastOverlay
             }
@@ -1070,8 +1064,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     /// Present whatever window makes sense on a launch (or dock-icon reopen)
     /// where onboarding is already complete: focus existing chat windows if
-    /// any are open, fall back to a visible management window, otherwise
-    /// pop a fresh chat overlay.
+    /// any are open, otherwise pop a fresh chat overlay.
     ///
     /// Deployment target is macOS 15, so we use the post-macOS-14
     /// `activate(options:)` API directly (the legacy
@@ -1113,7 +1106,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     /// Launch and Dock icon click: bring back the window the person was
-    /// last looking at (chat or Settings), exactly as they left it — see
+    /// last looking at, exactly as they left it — see
     /// `AppReopenPolicy`. Opens a chat only when there is nothing to bring
     /// back.
     @MainActor
@@ -1122,22 +1115,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         _ = NSRunningApplication.current.activate(options: .activateAllWindows)
 
         let chats = ChatWindowManager.shared.nsWindowsByID
-        let settings = WindowManager.shared.window(for: .management)
-        let windows = WindowFocusHistory.shared.mostRecentFirst(Array(chats.values) + [settings].compactMap { $0 })
+        let windows = WindowFocusHistory.shared.mostRecentFirst(Array(chats.values))
         let candidates = windows.map { window in
-            AppReopenPolicy.Candidate(
-                isOnScreen: window.isVisible, isMinimized: window.isMiniaturized, isChat: window !== settings)
+            AppReopenPolicy.Candidate(isOnScreen: window.isVisible, isMinimized: window.isMiniaturized, isChat: true)
         }
-        guard let index = AppReopenPolicy.pick(candidates) else {
+        guard let index = AppReopenPolicy.pick(candidates),
+            let chatId = chats.first(where: { $0.value === windows[index] })?.key
+        else {
             showChatOverlay()
             return
         }
-        let window = windows[index]
-        if let chatId = chats.first(where: { $0.value === window })?.key {
-            ChatWindowManager.shared.showWindow(id: chatId)
-        } else {
-            WindowManager.shared.show(.management, center: false)
-        }
+        ChatWindowManager.shared.showWindow(id: chatId)
     }
 
     // MARK: - VAD Service
@@ -1214,7 +1202,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             object: nil
         )
 
-        // Listen for requests to show management window
+        // Listen for requests to show Settings
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleShowManagement(_:)),
@@ -2565,7 +2553,7 @@ extension AppDelegate {
     /// `osaurus://workspaces/activate?code=<code>` — activate a Workspaces subscription purchased on osaurus.ai.
     /// `osaurus://workspaces/join?code=<code>` — join a workspace through an invite link.
     /// (`osaurus://teams/...` is the pre-rename host and is still routed to Workspaces.)
-    /// `osaurus://settings?tab=<tab>` — open the management window on a tab
+    /// `osaurus://settings?tab=<tab>` — open Settings on a tab
     /// (used by the in-chat osaurus_config result card's "Open in Settings"
     /// links for rows the user must finish by hand).
     /// `osaurus://open_from_hf?model=<org/repo>[&file=<path>]` — the link
@@ -2624,7 +2612,7 @@ extension AppDelegate {
                 return
             }
 
-            // default: pairing. bring the management window forward as the anchor
+            // default: pairing. bring Settings forward as the anchor
             // the approval is presented as its own NSPanel via PairingPromptService
             showManagementWindow(initialTab: .agents)
             _ = PairingDeepLinkRouter.handle(url)
@@ -2659,14 +2647,9 @@ extension AppDelegate {
                 showManagementWindow(initialTab: .imageGeneration)
                 return
             }
-            // The Models tab is reached through shared state, never through
-            // `showManagementWindow(deeplinkModelId:)`: that path rebuilds the
-            // window's hosting controller when the window already exists, and
-            // a SwiftUI sheet left up by the previous link (its detail sheet)
-            // then traps on the next resize (Sentry APPLE-MACOS-EF; reproduced
-            // live with two links in a row). The requests are set after the
-            // window call so a freshly created view replays them and an
-            // existing view receives them as changes.
+            // The Models tab is reached through shared state. The requests
+            // are set after the Settings call so a freshly mounted view
+            // replays them and a mounted one receives them as changes.
             if case .model = resolution {
                 showManagementWindow(initialTab: .models)
                 let state = ManagementStateManager.shared
@@ -2949,12 +2932,13 @@ extension AppDelegate {
 
 }
 
-// MARK: Management Window
+// MARK: Settings
 extension AppDelegate {
+    /// Opens Settings in the chat window the person is in (a new one when
+    /// none is up), on `initialTab` when given. Settings is a destination
+    /// of the chat window, like Workflows; the name predates that.
     @MainActor public func showManagementWindow(
         initialTab: ManagementTab? = nil,
-        deeplinkModelId: String? = nil,
-        deeplinkFile: String? = nil,
         deeplinkAgentId: UUID? = nil,
         deeplinkRemoteAgentId: UUID? = nil
     ) {
@@ -2962,119 +2946,27 @@ extension AppDelegate {
             ChatWindowManager.shared.showWorkflowsSurface()
             return
         }
-        // Remote-agent detail navigation rides the shared management state
-        // (mirrors `pendingPluginDetailId`) so it works for both a freshly
-        // created window and a reused one without rebuilding the SwiftUI graph.
-        if let deeplinkRemoteAgentId {
-            ManagementStateManager.shared.pendingRemoteAgentDetailId = deeplinkRemoteAgentId
+        let state = ManagementStateManager.shared
+        if let deeplinkAgentId, AgentManager.shared.agent(for: deeplinkAgentId)?.isBuiltIn == false {
+            state.pendingAgentDetailId = deeplinkAgentId
         }
-        closePopoverAndPerform { [weak self] in
-            guard let self = self else { return }
-            // Reopening a reused window doesn't rebuild the SwiftUI graph, so
-            // the Models grid wouldn't otherwise notice external models the
-            // user deleted on disk while the app stayed running. Prune them
-            // off the main thread; the same refresh also invalidates cached
-            // availability when an external source disappears or returns.
+        if let deeplinkRemoteAgentId {
+            state.pendingRemoteAgentDetailId = deeplinkRemoteAgentId
+        }
+        closePopoverAndPerform {
+            // The Models grid would otherwise not notice external models
+            // the user deleted on disk while the app stayed running. Prune
+            // them off the main thread; the same refresh also invalidates
+            // cached availability when an external source disappears or
+            // returns.
             Task.detached(priority: .utility) {
                 ExternalModelLocator.pruneMissing()
             }
-            // Records the screen the window opens to; `handleTabChange` only
-            // fires on later switches, so this captures the initial tab too.
-            let shownTab = initialTab ?? ManagementStateManager.shared.selectedTab
-            CrashReportingService.recordBreadcrumb(
-                category: "navigation",
-                message: "management.window \(shownTab.rawValue)"
-            )
-            // Settings-engagement signal. Every real open funnels through
-            // here (the launch-time prewarm builds the window hidden and
-            // never does), so this — plus the tab-switch emit in
-            // `ManagementView.handleTabChange` — covers settings visits.
-            FeatureTelemetry.settingsOpened(tab: shownTab)
-            let windowManager = WindowManager.shared
-            let themeManager = ThemeManager.shared
-            let root = ManagementView(
-                initialTab: initialTab,
-                deeplinkModelId: deeplinkModelId,
-                deeplinkFile: deeplinkFile,
-                deeplinkAgentId: deeplinkAgentId
-            )
-            .environmentObject(self.serverController)
-            .environmentObject(self.updater)
-            .environment(\.theme, themeManager.currentTheme)
-
-            let themeAppearance = NSAppearance(
-                named: themeManager.currentTheme.isDark ? .darkAqua : .aqua
-            )
-
-            // Reuse existing window if it exists
-            if let existingWindow = windowManager.window(for: .management) {
-                let hasDeeplink =
-                    deeplinkModelId != nil || deeplinkFile != nil || deeplinkAgentId != nil
-                if hasDeeplink {
-                    // Deeplink targets are baked into the view at creation, so the
-                    // hosting controller has to be rebuilt to deliver them.
-                    //
-                    // End any attached sheets FIRST: swapping the hosting
-                    // controller tears down the old SwiftUI graph, but a
-                    // SwiftUI `.sheet`'s presentation window stays attached to
-                    // this NSWindow and keeps observing parent frame changes.
-                    // The swap itself resizes the window (the new hosting
-                    // view's constraint pass updates the content-size extrema),
-                    // and the orphaned sheet's size callback then re-enters the
-                    // torn-down graph and traps inside SwiftUI
-                    // (Sentry APPLE-MACOS-EF).
-                    while let sheet = existingWindow.attachedSheet {
-                        existingWindow.endSheet(sheet)
-                    }
-                    // Match `WindowManager.createWindow`: AppKit owns this
-                    // window's size (defaultSize + frame autosave). A hosting
-                    // controller with sizing options on lets the swapped-in
-                    // hosting view push its measured size back onto the window
-                    // every layout pass — the frame change seen in the EF
-                    // crash stack (and the 1ZM constraint-pass exception). The
-                    // shared controller keeps them off while still mirroring
-                    // the clamped floor into `contentMinSize`.
-                    let replacement = windowManager.makeHostingController(
-                        for: .management, rootView: root)
-                    existingWindow.contentViewController = replacement
-                } else if let initialTab {
-                    // No deeplink: drive navigation through the shared state the
-                    // existing view already observes. Recreating the hosting
-                    // controller here tears down and rebuilds the whole SwiftUI
-                    // graph synchronously on the main thread, which has been seen
-                    // to hang for seconds under memory pressure.
-                    ManagementStateManager.shared.selectedTab = initialTab
-                }
-                existingWindow.appearance = themeAppearance
-                windowManager.show(.management, center: false)  // Don't re-center if user moved it
-                NSLog("[Management] Reused existing window and brought to front")
-                return
-            }
-
-            // Create new management window via WindowManager
-            let window = windowManager.createWindow(config: .management) {
-                root
-            }
-            window.isReleasedWhenClosed = false
-            window.appearance = themeAppearance
-
-            // keep window appearance in sync with theme changes so AppKit
-            // chrome stays visible after live theme switches
-            themeManager.$currentTheme
-                .receive(on: DispatchQueue.main)
-                .sink { [weak window] theme in
-                    window?.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
-                }
-                .store(in: &self.cancellables)
-
-            // Set center to false so the window respects its saved position (via setFrameAutosaveName)
-            // instead of being manually centered by the WindowManager on every show.
-            windowManager.show(.management, center: false)
-            NSLog("[Management] Created new window and presented")
+            ChatWindowManager.shared.showSettingsSurface(tab: initialTab)
         }
     }
 
-    /// Opens the management window on the Agents tab and deep-links into a
+    /// Opens Settings on the Agents tab and deep-links into a
     /// specific agent's detail view, optionally focusing an inner tab and/or a
     /// saved view. The `.agentDetailDeeplink` post is deferred a beat because
     /// `AgentsView` / `AgentDetailView` only attach their `.onReceive` once the
@@ -3109,37 +3001,6 @@ extension AppDelegate {
                 userInfo: payload
             )
         }
-    }
-
-    /// Builds the management window's SwiftUI graph + `NSHostingController`
-    /// once, while idle, WITHOUT showing it. The construction + initial layout
-    /// of `ManagementView` (sidebar, badge stores, tab shell) is the dominant
-    /// cost of opening Settings; doing it here means the first user-initiated
-    /// open (e.g. the chat "Insights" button) hits the cheap reuse path in
-    /// `showManagementWindow` instead of stalling the click. No-op if the
-    /// window already exists.
-    @MainActor public func prewarmManagementWindow() {
-        let windowManager = WindowManager.shared
-        guard windowManager.window(for: .management) == nil else { return }
-
-        let themeManager = ThemeManager.shared
-        let root = ManagementView()
-            .environmentObject(self.serverController)
-            .environmentObject(self.updater)
-            .environment(\.theme, themeManager.currentTheme)
-
-        let window = windowManager.createWindow(config: .management) { root }
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: themeManager.currentTheme.isDark ? .darkAqua : .aqua)
-        themeManager.$currentTheme
-            .receive(on: DispatchQueue.main)
-            .sink { [weak window] theme in
-                window?.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
-            }
-            .store(in: &self.cancellables)
-        // Intentionally not shown — it stays registered and hidden until the
-        // user opens Settings, at which point `showManagementWindow` reuses it.
-        NSLog("[Management] Prewarmed hidden window")
     }
 }
 
@@ -3204,8 +3065,6 @@ extension AppDelegate {
         if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
             ChatWindowManager.shared.getNSWindow(id: chatId)?.isVisible == true {
             scope = .chat(chatId)
-        } else if WindowManager.shared.isVisible(.management) {
-            scope = .management
         } else {
             scope = .toastOverlay
         }
@@ -3310,13 +3169,11 @@ extension AppDelegate {
 
         // Host in the user's landing window (same routing as the Product
         // Hunt dialog): the chat window that just opened after onboarding,
-        // else the management window, else the screen-level toast overlay.
+        // else the screen-level toast overlay.
         let scope: ThemedAlertScope
         if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
             ChatWindowManager.shared.windowExists(id: chatId) {
             scope = .chat(chatId)
-        } else if WindowManager.shared.isVisible(.management) {
-            scope = .management
         } else {
             scope = .toastOverlay
         }
