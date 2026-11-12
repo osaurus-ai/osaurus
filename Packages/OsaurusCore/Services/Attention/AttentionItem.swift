@@ -205,6 +205,10 @@ public struct AttentionItem: Identifiable, Equatable, Sendable {
     /// When the producer already shows its own card on screen. Desktop
     /// notifications skip these while the app is frontmost.
     public var hasInlineCard: Bool
+    /// The only channels that get the item, when set: a form a Mac window
+    /// already shows goes to the iPhone alone (`.phone`), with no toast or
+    /// notification on the Mac.
+    public var onlyChannels: Set<NotificationChannelID>? = nil
     public var link: AttentionLink?
 
     /// `link`, else the task, else the session.

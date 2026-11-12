@@ -208,8 +208,26 @@ public final class DialogCoordinator: ObservableObject {
 @MainActor
 enum WorkflowDialogNotifier {
     static var onPresented: (PendingDialog) -> Void = { dialog in
-        guard dialog.caller.background else { return }
-        NotificationService.shared.postWorkflowNeedsInput(dialog)
+        if dialog.caller.background {
+            NotificationService.shared.postWorkflowNeedsInput(dialog)
+        } else if reachesPhone(dialog.caller, hasReader: SyncPhoneDevices.shared.hasFeedReader) {
+            NotificationService.shared.postWorkflowNeedsInput(dialog, phoneOnly: true)
+        }
+    }
+
+    /// A form a Mac window shows (a run started on this Mac: its Run
+    /// button, an agent in an open chat, their sub-workflows) also goes to
+    /// the iPhone, so it can be answered there; whichever answers first
+    /// wins, as both go through `DialogCoordinator.answer`. Not a test run,
+    /// an event (already background), or a run for someone else.
+    static func reachesPhone(_ caller: WorkflowCaller, hasReader: Bool) -> Bool {
+        guard hasReader, !caller.background, caller.onBehalfOf == nil, !caller.isExternalSurface else {
+            return false
+        }
+        switch caller.kind {
+        case .user, .agent, .orchestrator, .workflow: return true
+        case .test, .event: return false
+        }
     }
     static var onResolved: (UUID) -> Void = { id in
         NotificationService.shared.removeWorkflowNeedsInput(dialogID: id)

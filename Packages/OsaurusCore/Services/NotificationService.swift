@@ -202,7 +202,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     /// A background run parked on a form. Tapping opens the run's tab,
     /// where the form can be answered.
-    func postWorkflowNeedsInput(_ dialog: PendingDialog) {
+    /// `phoneOnly`: a form a Mac window already shows (a run started on this
+    /// Mac). It goes to the iPhone so it can be answered there too, and the
+    /// Mac shows no toast or notification for it.
+    func postWorkflowNeedsInput(_ dialog: PendingDialog, phoneOnly: Bool = false) {
         var item = AttentionItem(
             id: dialog.id,
             kind: .workflowDialog,
@@ -211,9 +214,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             sessionId: dialog.caller.sessionID.flatMap(UUID.init(uuidString:)),
             title: L("\(dialog.workflowName) needs your input"),
             body: dialog.title,
-            hasInlineCard: false,
+            hasInlineCard: phoneOnly,
             link: .workflowRun(dialog.runID)
         )
+        if phoneOnly { item.onlyChannels = [.phone] }
         // The form's fields, for the iPhone to show and answer it (`submit`).
         item.detail = WorkflowDialogAttention.detail(for: dialog)
         AttentionCenter.shared.raise(item) { resolution in

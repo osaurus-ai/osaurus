@@ -403,3 +403,27 @@ struct InstalledWorkflowStoreTests {
         }
     }
 }
+
+/// Which forms go to the iPhone besides the background ones: forms a Mac
+/// window shows, so the phone can answer them too.
+@MainActor
+struct WorkflowDialogReachesPhoneTests {
+    @Test
+    func macStartedRunsReachThePhone() {
+        for kind in [WorkflowCaller.Kind.user, .agent, .orchestrator, .workflow] {
+            #expect(WorkflowDialogNotifier.reachesPhone(WorkflowCaller(kind: kind), hasReader: true))
+        }
+    }
+
+    @Test
+    func notWithoutAPhoneOrForTestsEventsOrOthers() {
+        #expect(!WorkflowDialogNotifier.reachesPhone(WorkflowCaller(kind: .user), hasReader: false))
+        #expect(!WorkflowDialogNotifier.reachesPhone(WorkflowCaller(kind: .test), hasReader: true))
+        #expect(!WorkflowDialogNotifier.reachesPhone(WorkflowCaller(kind: .event), hasReader: true))
+        // Background runs already go to the phone by the other path.
+        #expect(!WorkflowDialogNotifier.reachesPhone(WorkflowCaller(kind: .user, background: true), hasReader: true))
+        var external = WorkflowCaller(kind: .agent)
+        external.isExternalSurface = true
+        #expect(!WorkflowDialogNotifier.reachesPhone(external, hasReader: true))
+    }
+}

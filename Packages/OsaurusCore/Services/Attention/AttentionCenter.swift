@@ -83,6 +83,7 @@ final class AttentionCenter: ObservableObject {
         if let resolver { resolvers[item.id] = resolver }
         let prefs = preferences()
         for channel in channels where channel.supports(item.kind) {
+            guard item.onlyChannels?.contains(channel.id) ?? true else { continue }
             guard prefs.allows(item.kind, on: channel.id), channel.shouldDeliver(item) else { continue }
             channel.deliver(item)
             item.deliveredTo.append(channel.id.rawValue)
