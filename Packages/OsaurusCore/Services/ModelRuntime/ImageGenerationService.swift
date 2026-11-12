@@ -427,7 +427,15 @@ public actor ImageGenerationService {
         var result = ImageModelRequestPolicy.capabilities(
             kind: kind.rawValue, canonical: canonical, supportsLoRA: entry?.supportsLoRA ?? false
         )
-        if let limits { result.editStrength = limits.supportsStrength }
+        if let limits {
+            result.editStrength = limits.supportsStrength
+            // A broad gen/edit kind does not imply a negative-conditioning
+            // branch. Keep every picker, panel and API on the native contract.
+            result.negativePrompt = result.negativePrompt
+                && limits.supportsNegativePrompt && !limits.ignoresNegativePrompt
+            result.editNegativePrompt = result.editNegativePrompt
+                && limits.supportsEditNegativePrompt && !limits.ignoresNegativePrompt
+        }
         return result
     }
 
