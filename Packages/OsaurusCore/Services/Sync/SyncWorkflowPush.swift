@@ -112,6 +112,7 @@ final class SyncWorkflowPush {
             guard !Task.isCancelled else { return }
             self.targets = targets
             let devices = targets.map(\.device).sorted()
+            SyncWorkflowActivities.shared.refresh(registrations: targets)
             if devices != registeredDevices {
                 registeredDevices = devices
                 Self.trace("\(devices.count) iPhones registered")
@@ -167,6 +168,7 @@ final class SyncWorkflowPush {
 
     /// Called with each runs list the runs feed computes.
     func observe(_ runs: [SyncDeviceFeedContract.WorkflowRunEntry]) {
+        SyncWorkflowActivities.shared.update(runs)
         let (events, next) = Self.events(previous: lastStatus, runs: runs, sinceMs: sinceMs)
         lastStatus = next
         guard !events.isEmpty, !targets.isEmpty else { return }
@@ -348,6 +350,15 @@ final class SyncWorkflowPush {
                 collapseId: event.kind == "cleared" ? nil : event.runId,
                 payload: payload
             )
+            return await post(body)
+        } catch {
+            return .failed(error.syncLogDetail)
+        }
+    }
+
+    /// POSTs a signed send request to the push service and reads its answer.
+    nonisolated static func post(_ body: Data) async -> Outcome {
+        do {
             var request = URLRequest(url: serviceURL.appendingPathComponent("v1/send"))
             request.httpMethod = "POST"
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
