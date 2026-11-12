@@ -91,6 +91,9 @@ final class SyncWorkflowActivities {
             guard !Task.isCancelled else { return }
             let added = Set(found.targets.keys).subtracting(targets.keys)
             targets = found.targets
+            if Set(found.starters.keys) != Set(starters.keys) {
+                Self.trace("\(found.starters.count) iPhones can start Live Activities")
+            }
             starters = found.starters
             if !added.isEmpty {
                 Self.trace("\(added.count) new Live Activities")
