@@ -99,6 +99,11 @@ final class SyncWorkflowPush {
         startedFromPhone.insert(runId.uuidString.lowercased())
     }
 
+    /// `runId` lowercased.
+    func wasStartedFromPhone(_ runId: String) -> Bool {
+        startedFromPhone.contains(runId)
+    }
+
     /// Reads the registrations again (the manage conversation changed, a device came or went).
     func refresh() {
         refreshTask?.cancel()
