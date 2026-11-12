@@ -34,7 +34,7 @@
 
 <p align="center">
   <a href="https://github.com/osaurus-ai/osaurus/releases/latest/download/Osaurus.dmg">Download for Mac</a> ·
-  <a href="https://huggingface.co/datasets/OsaurusAI/osaurus-releases">Download with Raptor 0.6 bundled (~4 GB)</a> ·
+  <a href="https://huggingface.co/datasets/OsaurusAI/osaurus-releases/resolve/main/Osaurus-full.dmg">Download with Raptor 0.7 bundled (~4 GB)</a> ·
   <a href="https://docs.osaurus.ai">Docs</a> ·
   <a href="https://huggingface.co/OsaurusAI">Models</a> ·
   <a href="https://discord.gg/osaurus">Discord</a> ·
@@ -103,7 +103,7 @@ brew install --cask osaurus
 Or download a `.dmg` from [Releases](https://github.com/osaurus-ai/osaurus/releases/latest). Each release ships two builds:
 
 - **`Osaurus-<version>.dmg`** (~70 MB) is the standard build. You pick a model during setup. Homebrew and in-app updates use this build.
-- **`Osaurus-<version>-full.dmg`** (~4 GB, on [Hugging Face](https://huggingface.co/datasets/OsaurusAI/osaurus-releases)) is the same app with [Raptor 0.6](https://huggingface.co/OsaurusAI/Raptor-0.6-4B-JANG_6M) bundled, so you can chat offline right after install. Later updates use the small build.
+- **`Osaurus-<version>-full.dmg`** (~4 GB, on [Hugging Face](https://huggingface.co/datasets/OsaurusAI/osaurus-releases)) is the same app with [Raptor 0.7](https://huggingface.co/OsaurusAI/Raptor-0.7-4B-JANG_6M) bundled, so you can chat offline right after install. Later updates use the small build. The newest stable one is always at [`Osaurus-full.dmg`](https://huggingface.co/datasets/OsaurusAI/osaurus-releases/resolve/main/Osaurus-full.dmg).
 
 > Requires macOS 15.5+ and Apple Silicon. The sandbox VM and Apple Foundation Models need macOS 26+.
 

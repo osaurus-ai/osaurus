@@ -135,8 +135,8 @@ struct LanguageModelCatalogTests {
     @Test func defaultVariant_prefersCuratedOverAutoFetched() {
         // Same fit and size class: the curated build beats the auto-fetched
         // one so editorial descriptions/Top Pick flags surface on the card.
-        let curated = model(id: "OsaurusAI/Qwen3.6-27B-MXFP4", sizeGB: 15)
-        let autoFetched = model(id: "OsaurusAI/Qwen3.6-27B-JANG_4M", sizeGB: 15)
+        let curated = model(id: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4", sizeGB: 15)
+        let autoFetched = model(id: "OsaurusAI/Qwen3.6-35B-A3B-JANG_4M", sizeGB: 15)
         let pick = LanguageModelCatalog.defaultFamilyVariant(
             among: [autoFetched, curated],
             totalMemoryGB: 64,

@@ -548,7 +548,7 @@ struct RecentFirstListingTests {
     }
 }
 
-@Suite("Onboarding progress and chooser reasons")
+@Suite("Onboarding progress")
 struct OnboardingProgressTests {
     @Test
     func theChapter_followsTheWalkthroughStep() {
@@ -557,14 +557,5 @@ struct OnboardingProgressTests {
         #expect(OnboardingChapter.of(.team) == .team)
         #expect(OnboardingChapter.of(.firstTask) == .team)
         #expect(OnboardingChapter.allCases == [.welcome, .model, .team])
-    }
-
-    @Test
-    func aTooLargeModel_saysWhatItNeeds_andWhatThisMacHas() {
-        #expect(
-            ConfigureAIState.tooLargeReason(estimatedMemoryGB: 23.2, totalMemoryGB: 16)
-                == "Needs about 24 GB; this Mac has 16 GB.")
-        #expect(ConfigureAIState.tooLargeReason(estimatedMemoryGB: nil, totalMemoryGB: 16) == nil)
-        #expect(ConfigureAIState.tooLargeReason(estimatedMemoryGB: 24, totalMemoryGB: 0) == nil)
     }
 }

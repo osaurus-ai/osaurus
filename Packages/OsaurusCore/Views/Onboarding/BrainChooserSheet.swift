@@ -104,11 +104,6 @@ private struct BrainChooserView: View {
             .padding(OnboardingLayout.glassButtonInset)
             .zIndex(5)
 
-            if state.isChoosingModel {
-                ConfigureModelChooserModal(state: state)
-                    .transition(OnboardingMotion.modalFade)
-                    .zIndex(10)
-            }
             if state.connectDialog != nil {
                 ProviderConnectDialog(state: state)
                     .transition(OnboardingMotion.modalFade)
@@ -116,7 +111,6 @@ private struct BrainChooserView: View {
             }
         }
         .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
-        .animation(OnboardingMotion.smooth, value: state.isChoosingModel)
         .animation(OnboardingMotion.smooth, value: state.connectDialog != nil)
         .ignoresSafeArea()
         .onContinuousHover(coordinateSpace: .local) { phase in
