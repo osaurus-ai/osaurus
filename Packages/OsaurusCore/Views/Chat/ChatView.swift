@@ -11601,15 +11601,24 @@ struct ChatView: View {
                         .padding(.top, topInset)
                 }
                 // Sidebar, docked beside the content (regular and wide).
+                // Stays mounted at its own width while hidden: opening and
+                // closing only animates the clipped column it slides through,
+                // so the rail is neither rebuilt nor re-laid out per frame.
+                let keepsSidebarMounted = layout.breakpoint != .compact
+                    && windowState.mainSurface == .chat && !isEmbedded
+                let railWidth = sidebarDocked ? sidebarWidth : clampedSidebarWidth
                 VStack(alignment: .leading, spacing: theme.space.s0) {
-                    if sidebarDocked {
-                        navigatorRail(width: sidebarWidth)
+                    if sidebarDocked || keepsSidebarMounted {
+                        navigatorRail(width: railWidth)
                             .padding(.top, topInset)
+                            .frame(width: railWidth)
                     }
                 }
-                .frame(width: sidebarWidth, alignment: .top)
+                .frame(width: sidebarWidth, alignment: .topTrailing)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .clipped()
+                .allowsHitTesting(sidebarDocked)
+                .accessibilityHidden(!sidebarDocked)
                 .overlay(alignment: .trailing) {
                     if sidebarDocked {
                         sidebarResizeHandle.padding(.top, topInset)
@@ -12053,6 +12062,14 @@ struct ChatView: View {
             .onChange(of: sidebarWidth, initial: true) { _, width in
                 if windowState.sidebarColumnWidth != width {
                     windowState.sidebarColumnWidth = width
+                }
+            }
+            // `toggleSidebar` publishes the width it expects ahead of layout;
+            // when the layout disagrees (the rail stepping aside for the
+            // inspector) the width above may not change, so correct it here.
+            .onChange(of: windowState.showSidebar) { _, _ in
+                if !isEmbedded, windowState.sidebarColumnWidth != sidebarWidth {
+                    windowState.sidebarColumnWidth = sidebarWidth
                 }
             }
             .onChange(of: inspectorWidth, initial: true) { _, width in

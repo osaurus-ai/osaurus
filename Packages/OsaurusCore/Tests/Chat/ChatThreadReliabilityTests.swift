@@ -158,7 +158,6 @@ struct ChatThreadReliabilityTests {
         init(viewportHeight: CGFloat) {
             tableView = MessageTableRepresentable.makeTableView()
             scrollView = MessageTableRepresentable.makeScrollView(documentView: tableView)
-            scrollView.contentInsets = NSEdgeInsetsZero
             window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 700, height: viewportHeight), styleMask: [.titled],
                 backing: .buffered, defer: false)
@@ -205,7 +204,9 @@ struct ChatThreadReliabilityTests {
 
         var originY: CGFloat { scrollView.contentView.bounds.origin.y }
 
+        /// The reader moving the thread (a scroller drag or keyboard scroll).
         func scroll(toY y: CGFloat) {
+            coordinator.userDidScroll()
             scrollView.contentView.setBoundsOrigin(NSPoint(x: scrollView.contentView.bounds.origin.x, y: y))
             scrollView.reflectScrolledClipView(scrollView.contentView)
         }
@@ -255,7 +256,7 @@ struct ChatThreadReliabilityTests {
     }
 
     private func distanceFromBottom(_ t: Thread) -> CGFloat {
-        t.tableView.frame.height - (t.originY + t.scrollView.contentView.bounds.height)
+        t.coordinator.scrollAnchor.distanceFromBottom
     }
 
     @Test func pinnedReaderFollowsTheStream() async {
@@ -275,7 +276,7 @@ struct ChatThreadReliabilityTests {
         defer { t.window.close() }
         #expect(t.coordinator.scrollAnchor.isPinnedToBottom)
 
-        // Stay inside the 50pt band that otherwise still counts as "at bottom".
+        // Stay close to the bottom: a small scroll up must stop following too.
         let bottom = t.originY
         t.wheelUp(by: 8)
         if t.originY >= bottom - 0.5 {
@@ -287,9 +288,7 @@ struct ChatThreadReliabilityTests {
         await t.settle()
         let readingAt = t.originY
         #expect(readingAt < bottom - 0.5)
-        #expect(
-            distanceFromBottom(t) < t.coordinator.scrollAnchor.bottomThreshold,
-            "scrolled past the band: \(distanceFromBottom(t))pt")
+        #expect(distanceFromBottom(t) < 50, "scrolled too far: \(distanceFromBottom(t))pt")
         #expect(!t.coordinator.scrollAnchor.isPinnedToBottom, "a reader who scrolled up must not stay pinned")
         let documentBefore = t.tableView.frame.height
 
@@ -327,7 +326,7 @@ struct ChatThreadReliabilityTests {
         await stream(60, into: streaming, t)
         #expect(abs(t.originY - readingAt) <= 0.5, "streaming pulled the reader from \(readingAt) to \(t.originY)")
 
-        t.scroll(toY: t.tableView.frame.height - t.scrollView.contentView.bounds.height)
+        t.scroll(toY: t.coordinator.scrollAnchor.bottomOriginY)
         await t.settle()
         #expect(t.coordinator.scrollAnchor.isPinnedToBottom, "scrolling back to the bottom resumes following")
         await stream(30, into: streaming, t)
@@ -373,7 +372,6 @@ struct ChatThreadReliabilityTests {
     @Test func rowsScrolledIntoThePaddingStayClickable() async {
         let t = Thread(viewportHeight: 400)
         defer { t.window.close() }
-        t.scrollView.contentInsets = NSEdgeInsets(top: 32, left: 0, bottom: 60, right: 0)
         for i in 1 ... 12 {
             t.turns.append(ChatTurn(role: .user, content: "Question \(i)"))
             t.turns.append(ChatTurn(role: .assistant, content: "\(Thread.paragraph)\n\n\(Thread.paragraph)"))

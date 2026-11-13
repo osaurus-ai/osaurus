@@ -790,16 +790,23 @@ final class NativeToolCallGroupView: NSView {
             ) { [weak self] in
                 self?.onToggle?(item.call.id)
             } onHeightChanged: { [weak self] in
+                self?.syncGroupHeight()
                 self?.onHeightChanged?()
             }
         }
         lastCallIds = newIds
+        syncGroupHeight()
+    }
 
-        let totalH = measuredHeight()
+    /// The group's height is required, so it must follow every row change,
+    /// not only a reconfigure, or a row resizing on its own is squeezed.
+    private func syncGroupHeight() {
+        let totalH = max(measuredHeight(), 1)
         if let c = groupHeightConstraint {
-            c.constant = max(totalH, 1)
+            guard c.constant != totalH else { return }
+            c.constant = totalH
         } else {
-            let c = heightAnchor.constraint(equalToConstant: max(totalH, 1))
+            let c = heightAnchor.constraint(equalToConstant: totalH)
             c.priority = .required
             c.isActive = true
             groupHeightConstraint = c
@@ -809,8 +816,9 @@ final class NativeToolCallGroupView: NSView {
 
     // MARK: Measured height (used by cell coordinator)
 
+    /// Height on screen, following any row's disclosure in motion.
     func measuredHeight() -> CGFloat {
-        rowViews.reduce(0) { $0 + $1.measuredHeight() }
+        rowViews.reduce(0) { $0 + $1.displayedHeight() }
             + rowStack.spacing * CGFloat(max(0, rowViews.count - 1))
     }
 
@@ -959,6 +967,7 @@ final class NativeToolCallRowView: NSView {
     // MARK: Self-sizing height constraint
 
     private var rowHeight: NSLayoutConstraint?
+    private let heightAnimation = DisclosureHeightAnimation()
 
     // MARK: State
 
@@ -1113,11 +1122,15 @@ final class NativeToolCallRowView: NSView {
             return
         }
         lastConfigureInputs = inputs
+        heightAnimation.isConfiguring = true
         self.currentWidth = width
         self.lastConfiguredTheme = theme
 
         let isNew = item.call.id != currentItemId
-        if isNew { stopRegistryObservation() }
+        if isNew {
+            stopRegistryObservation()
+            heightAnimation.cancel()
+        }
         let argumentsChanged = item.call.function.arguments != currentItem?.call.function.arguments
         if argumentsChanged { cachedArgs = nil }
         currentItemId = item.call.id
@@ -1320,10 +1333,12 @@ final class NativeToolCallRowView: NSView {
         // Same-call collapsed → expanded: fade the details in instead of
         // popping (cell recycling and streaming reconfigures must not fade).
         let expandTransition = !isNew && isExpanded && !wasExpanded
-        updateChevron(expanded: isExpanded, animated: !isNew && isExpanded != wasExpanded)
+        let toggled = !isNew && isExpanded != wasExpanded
+        updateChevron(expanded: isExpanded, animated: toggled)
 
-        separatorView.isHidden = !isExpanded
-        contentContainer.isHidden = !isExpanded
+        let showsContent = isExpanded || toggled || heightAnimation.isRunning
+        separatorView.isHidden = !showsContent
+        contentContainer.isHidden = !showsContent
 
         if isExpanded {
             applyToolDetailSectionHeading(to: argumentsSectionTitle, text: "ARGUMENTS", theme: theme)
@@ -1357,12 +1372,9 @@ final class NativeToolCallRowView: NSView {
             bindSubagentFeedIfPresent(toolCallId: item.call.id)
         }
 
-        // Tear down panes when the row collapses.
-        if !isExpanded {
-            stopRegistryObservation()
-            tearDownTerminalView()
-            tearDownSubagentFeedView()
-        }
+        // Tear down panes when the row collapses; a collapse in motion keeps
+        // them drawn until it finishes.
+        if !showsContent { tearDownCollapsedContent() }
 
         // After the detail views exist — on a first-ever expand the sections
         // are only built above, and a reveal fired before that would find an
@@ -1375,7 +1387,29 @@ final class NativeToolCallRowView: NSView {
         ActivityInspectionStyle.label(argPreviewLabel, property: "caption", theme: theme)
         applyAssignedLayout(theme)
         inspectionHeader.configure(theme: theme, selected: isExpanded)
-        applyHeight()
+        heightAnimation.isConfiguring = false
+        if toggled {
+            heightAnimation.run(
+                on: self,
+                from: rowHeight?.constant ?? measuredHeight(),
+                target: { [weak self] in self?.measuredHeight() ?? 0 },
+                apply: { [weak self] in self?.setHeight($0) },
+                finish: { [weak self] in
+                    guard let self, !self.isExpanded else { return }
+                    self.separatorView.isHidden = true
+                    self.contentContainer.isHidden = true
+                    self.tearDownCollapsedContent()
+                }
+            )
+        } else {
+            applyHeight()
+        }
+    }
+
+    private func tearDownCollapsedContent() {
+        stopRegistryObservation()
+        tearDownTerminalView()
+        tearDownSubagentFeedView()
     }
 
     private func applyAssignedLayout(_ theme: any ThemeProtocol) {
@@ -1941,8 +1975,16 @@ final class NativeToolCallRowView: NSView {
         return lines.joined(separator: "\n")
     }
 
+    /// Height the row occupies now: mid-disclosure the animated value.
+    func displayedHeight() -> CGFloat { heightAnimation.height(measured: measuredHeight()) }
+
     private func applyHeight() {
-        rowHeight?.constant = measuredHeight()
+        guard !heightAnimation.holdsHeight else { return }
+        setHeight(measuredHeight())
+    }
+
+    private func setHeight(_ height: CGFloat) {
+        rowHeight?.constant = height
         invalidateIntrinsicContentSize()
         onHeightChanged?()
     }
