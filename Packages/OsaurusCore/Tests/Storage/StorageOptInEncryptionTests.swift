@@ -221,6 +221,28 @@ struct StorageOptInEncryptionTests {
         sqlite3_close(plain)
     }
 
+    /// Stores gate their migrations on `user_version`; losing it re-runs
+    /// non-idempotent steps (Tasks v3 `ADD COLUMN`) and the store won't open.
+    @Test
+    func converterCarriesTheSchemaVersionBothWays() throws {
+        let path = tempDBPath()
+        let k = key(seed: 0x43)
+        try seedDB(at: path, key: nil, body: "versioned")
+        let seeded = try EncryptedSQLiteOpener.open(path: path, key: nil)
+        #expect(sqlite3_exec(seeded, "PRAGMA user_version = 7", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(seeded)
+
+        try StorageFormatConverter.encryptInPlace(path: path, key: k)
+        let enc = try EncryptedSQLiteOpener.open(path: path, key: k)
+        #expect(readSingleText(enc, "SELECT CAST(user_version AS TEXT) FROM pragma_user_version") == "7")
+        sqlite3_close(enc)
+
+        try StorageFormatConverter.decryptInPlace(path: path, key: k)
+        let plain = try EncryptedSQLiteOpener.open(path: path, key: nil)
+        #expect(readSingleText(plain, "SELECT CAST(user_version AS TEXT) FROM pragma_user_version") == "7")
+        sqlite3_close(plain)
+    }
+
     @Test
     func converterIsNoOpWhenAlreadyInTargetFormat() throws {
         let path = tempDBPath()
