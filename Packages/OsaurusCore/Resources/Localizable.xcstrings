@@ -1,6 +1,380 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld files failed to convert." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Dateien konnten nicht konvertiert werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 %lld개를 변환하지 못했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось преобразовать файлы: %lld."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个文件转换失败。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 個檔案轉換失敗。"
+          }
+        }
+      }
+    },
+    "1 file failed to convert." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Datei konnte nicht konvertiert werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 1개를 변환하지 못했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось преобразовать 1 файл."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 个文件转换失败。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 個檔案轉換失敗。"
+          }
+        }
+      }
+    },
+    "Decrypted %lld files; now plaintext at rest." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Dateien entschlüsselt; jetzt im Klartext gespeichert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 %lld개를 복호화했습니다. 이제 평문으로 저장됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расшифровано файлов: %lld; теперь хранятся открытым текстом."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解密 %lld 个文件；现以明文存储。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解密 %lld 個檔案；現以明文儲存。"
+          }
+        }
+      }
+    },
+    "Decrypted 1 file; now plaintext at rest." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Datei entschlüsselt; jetzt im Klartext gespeichert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 1개를 복호화했습니다. 이제 평문으로 저장됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расшифрован 1 файл; теперь хранится открытым текстом."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解密 1 个文件；现以明文存储。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解密 1 個檔案；現以明文儲存。"
+          }
+        }
+      }
+    },
+    "Encrypted %lld files at rest." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Dateien im Ruhezustand verschlüsselt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 %lld개를 저장 시 암호화했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зашифровано файлов на диске: %lld."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已对 %lld 个文件启用静态加密。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已加密 %lld 個檔案。"
+          }
+        }
+      }
+    },
+    "Encrypted 1 file at rest." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Datei im Ruhezustand verschlüsselt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 1개를 저장 시 암호화했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зашифрован 1 файл на диске."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已对 1 个文件启用静态加密。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已加密 1 個檔案。"
+          }
+        }
+      }
+    },
+    "Encryption is off. Nothing on disk needed converting." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verschlüsselung ist deaktiviert. Auf dem Datenträger musste nichts konvertiert werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "암호화가 꺼졌습니다. 디스크에서 변환할 항목이 없었습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шифрование выключено. На диске ничего не нужно было преобразовывать."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密已关闭。磁盘上没有需要转换的内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密已關閉。磁碟上沒有需要轉換的內容。"
+          }
+        }
+      }
+    },
+    "Encryption is on. Nothing on disk needed converting." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verschlüsselung ist aktiviert. Auf dem Datenträger musste nichts konvertiert werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "암호화가 켜졌습니다. 디스크에서 변환할 항목이 없었습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шифрование включено. На диске ничего не нужно было преобразовывать."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密已开启。磁盘上没有需要转换的内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密已開啟。磁碟上沒有需要轉換的內容。"
+          }
+        }
+      }
+    },
+    "Encryption wasn't turned on because the storage key couldn't be created or read: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Verschlüsselung wurde nicht aktiviert, weil der Speicherschlüssel nicht erstellt oder gelesen werden konnte: %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "저장소 키를 만들거나 읽을 수 없어 암호화를 켜지 못했습니다: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шифрование не включено: не удалось создать или прочитать ключ хранилища: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法创建或读取存储密钥，因此未开启加密：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法建立或讀取儲存密鑰，因此未開啟加密：%@"
+          }
+        }
+      }
+    },
+    "Files couldn't be converted because the encryption key is unavailable." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dateien konnten nicht konvertiert werden, weil der Verschlüsselungsschlüssel nicht verfügbar ist."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "암호화 키를 사용할 수 없어 파일을 변환하지 못했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось преобразовать файлы: ключ шифрования недоступен."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密密钥不可用，因此无法转换文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密密鑰無法使用，因此無法轉換檔案。"
+          }
+        }
+      }
+    },
+    "The storage key can't be read from your Keychain, so encrypted stores and the search, memory, and tool indexes built on them are unavailable. Unlock or restore the Keychain item and relaunch Osaurus." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Speicherschlüssel kann nicht aus deinem Schlüsselbund gelesen werden, daher sind verschlüsselte Speicher sowie die darauf aufbauenden Such-, Gedächtnis- und Werkzeugindizes nicht verfügbar. Entsperre oder stelle den Schlüsselbundeintrag wieder her und starte Osaurus neu."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "키체인에서 저장소 키를 읽을 수 없어 암호화된 저장소와 이를 기반으로 하는 검색, 메모리, 도구 색인을 사용할 수 없습니다. 키체인 항목을 잠금 해제하거나 복원한 뒤 Osaurus를 다시 실행하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удаётся прочитать ключ хранилища из связки ключей, поэтому зашифрованные хранилища и построенные на них индексы поиска, памяти и инструментов недоступны. Разблокируйте или восстановите запись в связке ключей и перезапустите Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法从钥匙串读取存储密钥，因此加密的存储以及基于它们的搜索、记忆和工具索引不可用。请解锁或恢复该钥匙串项目，然后重新启动 Osaurus。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法從鑰匙圈讀取儲存密鑰，因此加密的儲存以及以其為基礎的搜尋、記憶和工具索引無法使用。請解鎖或還原該鑰匙圈項目，然後重新啟動 Osaurus。"
+          }
+        }
+      }
+    },
     "Waiting for other local work…" : {
       "extractionState" : "manual",
       "localizations" : {

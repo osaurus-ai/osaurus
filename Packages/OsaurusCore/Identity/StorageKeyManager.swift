@@ -2,9 +2,10 @@
 //  StorageKeyManager.swift
 //  osaurus
 //
-//  Manages the data-encryption key (DEK) used for at-rest encryption of
-//  Osaurus's SQLite databases (via SQLCipher), VecturaKit indexes, JSON
-//  configuration, archived sessions, and spilled attachment blobs.
+//  Manages the data-encryption key (DEK) used by the opt-in at-rest
+//  encryption: the SQLCipher databases in `StorageDatabaseCatalog` and the
+//  AES-GCM `.osec` files (attachment blobs, config). In the
+//  default plaintext posture nothing asks for this key.
 //
 //  The DEK is a 32-byte raw `SymmetricKey` stored in the macOS Keychain
 //  with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Unlike the
@@ -89,9 +90,10 @@ public final class StorageKeyManager: @unchecked Sendable {
     private static let saltFilename = ".storage-key.salt"
 
     /// Non-secret marker written once a DEK has been provisioned for this
-    /// install. Its presence (or the presence of any encrypted artifact) means
-    /// a key already exists, so a failed key read must *never* mint a fresh key
-    /// over data the old key still protects. Cleared by `resetForWipe()`.
+    /// install. Diagnostic only: whether a missing key may be replaced is
+    /// decided by `encryptedArtifactsExist()`, because after a decrypt (or on
+    /// an install that never encrypted) the marker outlives every file the old
+    /// key protected. Cleared by `resetForWipe()`.
     private static let provisionedMarkerFilename = ".storage-key.provisioned"
 
     private let log = Logger(subsystem: "ai.osaurus", category: "storage.key")
@@ -109,6 +111,15 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// user's login Keychain. Production launches leave it unset.
     public static var disablesKeychainForProcess: Bool {
         ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] == "1"
+    }
+
+    /// Keychain-disabled processes keep an in-memory key per process. A test
+    /// Keychain replaces that so the real resolution path runs.
+    private var usesEphemeralKey: Bool {
+        #if DEBUG
+            if Self.keychainForTesting != nil { return false }
+        #endif
+        return Self.disablesKeychainForProcess
     }
 
     /// Returns the current data-encryption key, generating + persisting
@@ -138,23 +149,25 @@ public final class StorageKeyManager: @unchecked Sendable {
             os_unfair_lock_unlock(&lock)
 
             let key: SymmetricKey
-            if Self.disablesKeychainForProcess {
+            if usesEphemeralKey {
                 key = try generateInMemoryKey()
             } else if let existing = try readKeychainKey() {
                 key = SymmetricKey(data: existing)
                 markProvisioned()
-            } else if encryptedStorageExists() {
-                // Fail closed. The DEK is unreadable (both keychains missed) but
-                // encrypted artifacts already exist on disk. Generating a fresh
-                // key would re-key over data the old key still protects and
-                // permanently destroy it. Surface a recoverable error instead so
-                // the real key can be restored (e.g. a signing/entitlement fix,
-                // a retry once the keychain is unlocked) without data loss.
+            } else if Self.encryptedArtifactsExist() {
+                // Fail closed. The DEK is missing but files encrypted under it
+                // are still on disk. Encrypting new data under a fresh key would
+                // split the install across two keys and leave the old data
+                // permanently unreadable even if the real key comes back.
+                // Surface a recoverable error instead.
                 log.error(
-                    "Storage DEK is unreadable but encrypted storage already exists; refusing to mint a replacement key"
+                    "Storage DEK is missing but encrypted storage already exists; refusing to mint a replacement key"
                 )
                 throw StorageKeyError.keyUnavailableForExistingData
             } else {
+                if FileManager.default.fileExists(atPath: provisionedMarkerFile().path) {
+                    log.notice("Storage DEK was provisioned before but no encrypted data remains; minting a new key")
+                }
                 key = try generateAndPersistKey()
                 markProvisioned()
             }
@@ -226,9 +239,12 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// Returns true when a persisted key exists in Keychain. Cheap; no
     /// Touch ID prompt.
     public func keyExists() -> Bool {
-        if Self.disablesKeychainForProcess {
+        if usesEphemeralKey {
             return hasCachedKey
         }
+        #if DEBUG
+            if let fake = Self.keychainForTesting { return fake.contains(Self.keyAccount) }
+        #endif
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -255,9 +271,8 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// unrelated key.
     public func install(key: SymmetricKey) throws {
         let bytes = key.withUnsafeBytes { Data($0) }
-        if !Self.disablesKeychainForProcess {
-            try persistKeychain(data: bytes)
-        }
+        try persistKeychain(data: bytes)
+        markProvisioned()
         cacheResidentKey(key)
     }
 
@@ -268,7 +283,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// reproducible on another device with the same iCloud Keychain
     /// (and thus the same master key).
     public func deriveFromMasterKey(context: LAContext) throws -> SymmetricKey {
-        if Self.disablesKeychainForProcess {
+        if usesEphemeralKey {
             let key = try generateInMemoryKey()
             cacheResidentKey(key)
             return key
@@ -314,26 +329,14 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// **Irreversible.** Caller is responsible for moving any encrypted
     /// data out first if it should be preserved.
     public func resetForWipe() {
-        if Self.disablesKeychainForProcess {
+        if usesEphemeralKey {
             try? FileManager.default.removeItem(at: saltFile())
             try? FileManager.default.removeItem(at: provisionedMarkerFile())
             wipeCache()
             return
         }
-        let queries: [[String: Any]] = [
-            [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: Self.service,
-                kSecAttrAccount as String: Self.keyAccount,
-            ],
-            [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: Self.service,
-                kSecAttrAccount as String: Self.saltAccount,
-            ],
-        ]
-        for q in queries {
-            _ = SecItemDelete(q as CFDictionary)
+        for account in [Self.keyAccount, Self.saltAccount] {
+            deleteItem(account: account)
         }
         try? FileManager.default.removeItem(at: saltFile())
         try? FileManager.default.removeItem(at: provisionedMarkerFile())
@@ -362,8 +365,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     }
 
     /// Record that a DEK exists for this install. Best-effort and idempotent;
-    /// failure to write the marker is non-fatal because `encryptedStorageExists()`
-    /// also treats on-disk encrypted artifacts as proof of prior provisioning.
+    /// the marker only feeds diagnostics, see `provisionedMarkerFilename`.
     private func markProvisioned() {
         let url = provisionedMarkerFile()
         if FileManager.default.fileExists(atPath: url.path) { return }
@@ -371,22 +373,22 @@ public final class StorageKeyManager: @unchecked Sendable {
         try? Data([0x01]).write(to: url, options: [.atomic])
     }
 
-    /// True when there is evidence a DEK was already provisioned: either the
-    /// marker file or any SQLCipher-encrypted database. When this is true and the
-    /// key read fails, we must fail closed rather than re-key over existing data.
-    private func encryptedStorageExists() -> Bool {
+    /// True when any file the storage key protects is actually encrypted on
+    /// disk: a catalog database whose header isn't plaintext SQLite, or an
+    /// `.osec` file. A missing key may only be replaced when this is false.
+    /// Plaintext databases don't count, so an install that never encrypted
+    /// (every install since the plaintext default) can still opt in.
+    static func encryptedArtifactsExist() -> Bool {
+        // `work.db` is no longer opened, but an old encrypted copy still
+        // holds data under the original key.
+        let paths = StorageDatabaseCatalog.databaseTargets().map(\.path) + [OsaurusPaths.workDatabaseFile().path]
+        for path in paths where StorageFileFormat.detect(path: path) == .encrypted {
+            return true
+        }
         let fm = FileManager.default
-        if fm.fileExists(atPath: provisionedMarkerFile().path) { return true }
-        let encryptedArtifacts = [
-            OsaurusPaths.chatHistoryDatabaseFile(),
-            OsaurusPaths.agentChannelMessagesDatabaseFile(),
-            OsaurusPaths.memoryDatabaseFile(),
-            OsaurusPaths.methodsDatabaseFile(),
-            OsaurusPaths.toolIndexDatabaseFile(),
-            OsaurusPaths.workDatabaseFile(),
-        ]
-        for url in encryptedArtifacts {
-            if let size = try? fm.attributesOfItem(atPath: url.path)[.size] as? Int, size > 0 {
+        for root in StorageDatabaseCatalog.encryptedFileRoots() {
+            guard let files = fm.enumerator(at: root, includingPropertiesForKeys: nil) else { continue }
+            for case let url as URL in files where url.pathExtension == "osec" {
                 return true
             }
         }
@@ -394,7 +396,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     }
 
     private func generateAndPersistKey(forceFresh: Bool = false) throws -> SymmetricKey {
-        if Self.disablesKeychainForProcess {
+        if usesEphemeralKey {
             return try generateInMemoryKey()
         }
         var raw = [UInt8](repeating: 0, count: 32)
@@ -423,7 +425,7 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// to **both** Keychain and a sidecar file so neither single delete
     /// breaks reproducibility.
     private func fetchOrCreateSalt() throws -> Data {
-        if Self.disablesKeychainForProcess {
+        if usesEphemeralKey {
             if let s = readSaltSidecar() {
                 return s
             }
@@ -470,24 +472,24 @@ public final class StorageKeyManager: @unchecked Sendable {
     // MARK: - Keychain (key)
 
     private func persistKeychain(data: Data) throws {
-        if Self.disablesKeychainForProcess { return }
+        if usesEphemeralKey { return }
         try persistItem(account: Self.keyAccount, data: data, label: "Osaurus Storage Encryption Key")
     }
 
     private func readKeychainKey() throws -> Data? {
-        if Self.disablesKeychainForProcess { return nil }
+        if usesEphemeralKey { return nil }
         return try readItem(account: Self.keyAccount)
     }
 
     // MARK: - Keychain (salt)
 
     private func persistKeychainSalt(_ data: Data) throws {
-        if Self.disablesKeychainForProcess { return }
+        if usesEphemeralKey { return }
         try persistItem(account: Self.saltAccount, data: data, label: "Osaurus Storage Key Derivation Salt")
     }
 
     private func readKeychainSalt() throws -> Data? {
-        if Self.disablesKeychainForProcess { return nil }
+        if usesEphemeralKey { return nil }
         return try readItem(account: Self.saltAccount)
     }
 
@@ -499,6 +501,13 @@ public final class StorageKeyManager: @unchecked Sendable {
 
     /// Write `attributes` for `account` to the keychain (update-or-add).
     private func persistItem(account: String, data: Data, label: String) throws {
+        #if DEBUG
+            if let fake = Self.keychainForTesting {
+                try fake.write(data, account: account)
+                return
+            }
+        #endif
+        if Self.disablesKeychainForProcess { return }
         let baseQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -523,8 +532,19 @@ public final class StorageKeyManager: @unchecked Sendable {
         }
     }
 
-    /// Read `account` from the keychain.
+    /// Read `account` from the keychain. A read blocked on user interaction is
+    /// remembered only for the DEK itself, so later `currentKey()` calls fail
+    /// fast instead of retrying a prompt-less read.
     private func readItem(account: String) throws -> Data? {
+        let status: OSStatus
+        var data: Data?
+        #if DEBUG
+            if let fake = Self.keychainForTesting {
+                (status, data) = fake.read(account)
+                return try finishRead(account: account, status: status, data: data)
+            }
+        #endif
+        if Self.disablesKeychainForProcess { return nil }
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -535,20 +555,106 @@ public final class StorageKeyManager: @unchecked Sendable {
         ]
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(base as CFDictionary, &result)
+        status = SecItemCopyMatching(base as CFDictionary, &result)
+        data = result as? Data
+        return try finishRead(account: account, status: status, data: data)
+    }
+
+    private func finishRead(account: String, status: OSStatus, data: Data?) throws -> Data? {
         if status == errSecItemNotFound { return nil }
         if status != errSecSuccess {
-            cacheReadFailureIfNonInteractiveBlocked(status)
+            if account == Self.keyAccount {
+                cacheReadFailureIfNonInteractiveBlocked(status)
+            }
             throw StorageKeyError.keychainReadFailed(status)
         }
-        return result as? Data
+        return data
+    }
+
+    private func deleteItem(account: String) {
+        #if DEBUG
+            if let fake = Self.keychainForTesting {
+                fake.delete(account)
+                return
+            }
+        #endif
+        if Self.disablesKeychainForProcess { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service,
+            kSecAttrAccount as String: account,
+        ]
+        _ = SecItemDelete(query as CFDictionary)
     }
 }
 
 // MARK: - Test injection
 
 #if DEBUG
+    /// In-memory stand-in for the storage key's Keychain items, so tests run
+    /// the real resolution path (including the fail-closed guard) without the
+    /// login Keychain. `readStatus` / `writeStatus` simulate a locked or
+    /// failing Keychain.
+    public final class StorageKeyTestKeychain: @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [String: Data] = [:]
+        private var _readStatus: OSStatus = errSecSuccess
+        private var _writeStatus: OSStatus = errSecSuccess
+
+        public init() {}
+
+        public var readStatus: OSStatus {
+            get { lock.withLock { _readStatus } }
+            set { lock.withLock { _readStatus = newValue } }
+        }
+
+        public var writeStatus: OSStatus {
+            get { lock.withLock { _writeStatus } }
+            set { lock.withLock { _writeStatus = newValue } }
+        }
+
+        public func contains(_ account: String) -> Bool {
+            lock.withLock { items[account] != nil }
+        }
+
+        public func value(_ account: String) -> Data? {
+            lock.withLock { items[account] }
+        }
+
+        func read(_ account: String) -> (OSStatus, Data?) {
+            lock.withLock {
+                if _readStatus != errSecSuccess { return (_readStatus, nil) }
+                guard let data = items[account] else { return (errSecItemNotFound, nil) }
+                return (errSecSuccess, data)
+            }
+        }
+
+        func write(_ data: Data, account: String) throws {
+            try lock.withLock {
+                guard _writeStatus == errSecSuccess else {
+                    throw StorageKeyError.keychainWriteFailed(_writeStatus)
+                }
+                items[account] = data
+            }
+        }
+
+        func delete(_ account: String) {
+            lock.withLock { _ = items.removeValue(forKey: account) }
+        }
+    }
+
     extension StorageKeyManager {
+        private static let testKeychainLock = NSLock()
+        nonisolated(unsafe) private static var _keychainForTesting: StorageKeyTestKeychain?
+
+        /// Route every storage-key Keychain read and write to an in-memory
+        /// store. Set to nil to restore the real Keychain (or the ephemeral
+        /// key under `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS`).
+        public static var keychainForTesting: StorageKeyTestKeychain? {
+            get { testKeychainLock.withLock { _keychainForTesting } }
+            set { testKeychainLock.withLock { _keychainForTesting = newValue } }
+        }
+
         /// Inject a deterministic key for tests. Only available in DEBUG.
         /// Bypasses Keychain entirely.
         public func _setKeyForTesting(_ key: SymmetricKey) {

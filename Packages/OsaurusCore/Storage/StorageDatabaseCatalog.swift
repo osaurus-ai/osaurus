@@ -2,12 +2,14 @@
 //  StorageDatabaseCatalog.swift
 //  osaurus
 //
-//  Enumerates every at-rest SQLCipher database under `~/.osaurus/`:
-//  the core databases, one per installed plugin, and one per agent
-//  that opted in to the Agent DB feature. It's a standalone catalog
-//  because key rotation (`StorageExportService.rotateStorageKey`)
-//  and plaintext export (`StorageExportService.exportPlaintextBackup`)
-//  both need the same discovery logic.
+//  Enumerates everything the opt-in at-rest encryption covers under
+//  `~/.osaurus/`: every database opened through `OsaurusStorageOpener`
+//  (the core stores, one per installed plugin, one per agent with an
+//  Agent DB) and the directories holding policy-aware `.osec` files.
+//  Posture convergence, key rotation, plaintext export and the storage
+//  key's fail-closed guard all read this one list, so a store missing
+//  here is silently left out of all four (`StorageDatabaseCatalogTests`
+//  guards that).
 //
 
 import Foundation
@@ -41,12 +43,12 @@ public enum StorageDatabaseCatalog {
             .init(label: "memory", path: OsaurusPaths.memoryDatabaseFile().path),
             .init(label: "methods", path: OsaurusPaths.methodsDatabaseFile().path),
             .init(label: "tool index", path: OsaurusPaths.toolIndexDatabaseFile().path),
-            // Both Agent DB stores are created encrypted on first open
-            // via `EncryptedSQLiteOpener`; they're listed here so
-            // `StorageExportService.rotate(...)` rekeys them along with
-            // the core databases and `StorageMaintenance` PRAGMA passes
-            // can find them when the handles register themselves.
+            // Cross-agent next-run and pause slots for the Agent DB feature.
             .init(label: "scheduler", path: OsaurusPaths.schedulerDatabaseFile().path),
+            // The knowledge index holds document text, and the write log
+            // holds the prior content of every agent edit (its undo history).
+            .init(label: "knowledge", path: OsaurusPaths.knowledgeDatabaseFile().path),
+            .init(label: "knowledge write log", path: OsaurusPaths.knowledgeWriteLogDatabaseFile().path),
             // On-device Osaurus Router billing ledger. Encrypted with the
             // shared storage key, so it must be rekeyed alongside the core
             // databases on rotation and included in plaintext export.
@@ -90,8 +92,8 @@ public enum StorageDatabaseCatalog {
                 guard isDir else { continue }
                 // Only consider UUID-named subdirectories — `avatars/`
                 // and any future side-folders should be ignored.
-                guard UUID(uuidString: entry.lastPathComponent) != nil else { continue }
-                let dbPath = entry.appendingPathComponent("db.sqlite").path
+                guard let agentId = UUID(uuidString: entry.lastPathComponent) else { continue }
+                let dbPath = OsaurusPaths.agentDatabaseFile(for: agentId).path
                 if FileManager.default.fileExists(atPath: dbPath) {
                     targets.append(
                         .init(label: "agent db \(entry.lastPathComponent)", path: dbPath)
@@ -100,6 +102,42 @@ public enum StorageDatabaseCatalog {
             }
         }
         return targets
+    }
+
+    // MARK: - Policy-aware files
+
+    /// A directory whose files are written with
+    /// `EncryptedFileStore.writePolicyAware`: each logical file is a
+    /// plaintext twin or an AES-GCM `.osec` twin, following the posture.
+    public struct PolicyAwareDirectory: Sendable {
+        public let label: String
+        public let url: URL
+        /// Files in `url` that are always written raw and must never be
+        /// wrapped, because their readers don't go through the twin API.
+        public let rawFileNames: Set<String>
+    }
+
+    /// Directories convergence brings in line with the posture, along with
+    /// the databases.
+    public static func policyAwareDirectories() -> [PolicyAwareDirectory] {
+        [PolicyAwareDirectory(label: "attachments", url: AttachmentBlobStore.blobsDir(), rawFileNames: [])]
+    }
+
+    /// Every directory that can hold `.osec` files under the storage key: the
+    /// policy-aware directories plus the config trees the earlier always-on
+    /// encryption wrapped. Used by export, rotation and the key guard.
+    public static func encryptedFileRoots() -> [URL] {
+        policyAwareDirectories().map(\.url) + [
+            OsaurusPaths.agents(),
+            OsaurusPaths.themes(),
+            OsaurusPaths.schedules(),
+            OsaurusPaths.watchers(),
+            OsaurusPaths.providers(),
+            OsaurusPaths.config(),
+            OsaurusPaths.sessionsArchive(),
+            OsaurusPaths.sandboxPluginLibrary(),
+            OsaurusPaths.toolSpecs(),
+        ]
     }
 
     /// True for plugin IDs that could only have been created by a

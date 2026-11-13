@@ -225,7 +225,9 @@ public actor StorageExportService {
             // must not fight an open fd on those files. They reopen lazily.
             AgentDatabaseStore.shared.closeAll()
             PluginDatabase.closeAllOpen()
-            for target in StorageDatabaseCatalog.databaseTargets() {
+            // Plaintext and missing stores have nothing to rekey.
+            for target in StorageDatabaseCatalog.databaseTargets()
+            where StorageFileFormat.detect(path: target.path) == .encrypted {
                 do {
                     try rekeyDatabase(path: target.path, oldKey: oldKey, newKey: newKey)
                     log.info("storage rekey: \(target.label) done")

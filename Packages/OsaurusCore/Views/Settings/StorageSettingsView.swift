@@ -57,7 +57,7 @@ public struct StorageSettingsView: View {
         VStack(alignment: .leading, spacing: 24) {
             postureCard
                 .settingsLandingAnchor("storage.encryption")
-            if !storeIssues.isEmpty {
+            if !recoverableStoreIssues.isEmpty {
                 recoveryCard
             }
             tradeoffsCard
@@ -189,6 +189,15 @@ public struct StorageSettingsView: View {
                     }
                 }
 
+                if storageKeyIssue != nil {
+                    statusLine(
+                        text: L(
+                            "The storage key can't be read from your Keychain, so encrypted stores and the search, memory, and tool indexes built on them are unavailable. Unlock or restore the Keychain item and relaunch Osaurus."
+                        ),
+                        color: theme.warningColor,
+                        icon: "key.slash"
+                    )
+                }
                 if let err = errorMessage {
                     statusLine(text: err, color: theme.errorColor, icon: "exclamationmark.triangle")
                 }
@@ -273,8 +282,18 @@ public struct StorageSettingsView: View {
         }
     }
 
+    /// The storage key isn't a store the user can Retry or Reset on its own;
+    /// it is reported on the posture card instead.
+    private var storageKeyIssue: StorageStoreIssue? {
+        storeIssues.first { $0.store == StorageMigrationCoordinator.storageKeyIssueStore }
+    }
+
+    private var recoverableStoreIssues: [StorageStoreIssue] {
+        storeIssues.filter { $0.store != StorageMigrationCoordinator.storageKeyIssueStore }
+    }
+
     private var sortedStoreIssues: [StorageStoreIssue] {
-        storeIssues.sorted { $0.store < $1.store }
+        recoverableStoreIssues.sorted { $0.store < $1.store }
     }
 
     @ViewBuilder
@@ -693,35 +712,61 @@ public struct StorageSettingsView: View {
                 let report = try await StorageMigrationCoordinator.shared.setEncryptionEnabled(enabled)
                 await MainActor.run {
                     self.isWorking = false
-                    self.desiredEncrypted = enabled
                     if !report.locked.isEmpty {
                         let count = report.locked.count
                         self.errorMessage = count == 1
                             ? L("1 store couldn't be converted because the encryption key is unavailable.")
                             : L("\(count) stores couldn't be converted because the encryption key is unavailable.")
+                    } else if report.keyFailure != nil {
+                        self.errorMessage = L("Files couldn't be converted because the encryption key is unavailable.")
                     } else if !report.failed.isEmpty {
                         let count = report.failed.count
                         self.errorMessage = count == 1
                             ? L("1 store failed to convert.")
                             : L("\(count) stores failed to convert.")
-                    } else if enabled {
-                        self.lastSummary = report.converted == 1
-                            ? L("Encrypted 1 store at rest.")
-                            : L("Encrypted \(report.converted) stores at rest.")
+                    } else if report.filesFailed > 0 {
+                        let count = report.filesFailed
+                        self.errorMessage = count == 1
+                            ? L("1 file failed to convert.")
+                            : L("\(count) files failed to convert.")
                     } else {
-                        self.lastSummary = report.converted == 1
-                            ? L("Decrypted 1 store; now plaintext at rest.")
-                            : L("Decrypted \(report.converted) stores; now plaintext at rest.")
+                        self.lastSummary = Self.convergenceSummary(report, enabled: enabled)
                     }
                 }
-                await refresh()
             } catch {
                 await MainActor.run {
                     self.isWorking = false
                     self.errorMessage = error.localizedDescription
                 }
             }
+            // The coordinator may keep or restore the previous posture, so the
+            // toggle reflects the policy rather than the requested value.
+            await refresh()
         }
+    }
+
+    private static func convergenceSummary(_ report: StorageMigrationCoordinator.Report, enabled: Bool) -> String {
+        let stores = report.converted
+        let files = report.filesConverted
+        if stores == 0 && files == 0 {
+            return enabled
+                ? L("Encryption is on. Nothing on disk needed converting.")
+                : L("Encryption is off. Nothing on disk needed converting.")
+        }
+        if enabled {
+            if stores == 0 {
+                return files == 1 ? L("Encrypted 1 file at rest.") : L("Encrypted \(files) files at rest.")
+            }
+            return stores == 1 ? L("Encrypted 1 store at rest.") : L("Encrypted \(stores) stores at rest.")
+        }
+        if stores == 0 {
+            return files == 1
+                ? L("Decrypted 1 file; now plaintext at rest.")
+                : L("Decrypted \(files) files; now plaintext at rest.")
+        }
+        return stores == 1
+            ? L("Decrypted 1 store; now plaintext at rest.")
+            : L("Decrypted \(stores) stores; now plaintext at rest.")
     }
 
     /// Why an export is being run — drives the open-panel copy, the success
