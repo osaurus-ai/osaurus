@@ -112,7 +112,9 @@ enum ToolPermissionPromptService {
         return .make(
             granted: ChatExecutionContext.workflowGrantedPaths ?? [],
             writable: ChatExecutionContext.workflowWritableRoots, workspace: hooks?.workspace,
-            asksBeforeReplacing: hooks != nil)
+            folderRoot: ChatExecutionContext.currentFolderRoot, asksBeforeReplacing: hooks != nil,
+            sandboxPathsRouteToVM: ChatExecutionContext.sandboxReadBridge != nil
+                && !ChatExecutionContext.hostFolderIsDispatchTarget)
     }
 
     /// The bounds the sandbox enforces on a VM call: the VM size from the
