@@ -492,9 +492,21 @@ private extension osaurusApp {
         }
     }
 
+    /// Opens `string` in its default handler app without blocking the main thread.
+    ///
+    /// `NSWorkspace.shared.open(_:)` is synchronous: it waits on a LaunchServices
+    /// mach reply until the handler (usually the browser) has launched. Called from
+    /// a Help menu action on the main thread, that froze the UI for 3+ seconds on a
+    /// cold launch (Sentry APPLE-MACOS-3V1, same cause as APPLE-MACOS-36N). The
+    /// completion-handler variant returns immediately.
     func openURL(_ string: String) {
-        if let url = URL(string: string) {
-            NSWorkspace.shared.open(url)
+        guard let url = URL(string: string) else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.open(url, configuration: configuration) { _, error in
+            if let error {
+                NSLog("[osaurus] Failed to open URL %@: %@", url.absoluteString, error.localizedDescription)
+            }
         }
     }
 }
