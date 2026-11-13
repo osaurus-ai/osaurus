@@ -205,21 +205,19 @@ struct ModelUpdatePollingTests {
         #expect(!schedule.isDue("OsaurusAI/first", at: now))
     }
 
-    @Test func scheduleLoadAndPersistRoundTripOffMain() async throws {
+    @Test func scheduleLoadAndPersistRoundTrip() throws {
         let suite = "ModelUpdatePollingTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
         let key = "schedule"
-        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        #expect(ModelUpdatePollingSchedule.load(forKey: key, from: defaults).attempts.isEmpty)
         let now = Date(timeIntervalSince1970: 1000)
         var schedule = ModelUpdatePollingSchedule()
         schedule.record("OsaurusAI/model", at: now, succeeded: true)
-        let snapshot = schedule
-        let restored = try await Task.detached(priority: .utility) {
-            let defaults = try #require(UserDefaults(suiteName: suite))
-            #expect(ModelUpdatePollingSchedule.load(forKey: key, from: defaults).attempts.isEmpty)
-            snapshot.persist(forKey: key, to: defaults)
-            return ModelUpdatePollingSchedule.load(forKey: key, from: defaults)
-        }.value
+        schedule.persist(forKey: key, to: defaults)
+        let restored = ModelUpdatePollingSchedule.load(forKey: key, from: defaults)
         #expect(!restored.isDue("osaurusai/model", at: now.addingTimeInterval(21599)))
+        #expect(restored.isDue("osaurusai/model", at: now.addingTimeInterval(21600)))
     }
 
     @Test func corruptPersistedScheduleFallsBackToEmpty() throws {
