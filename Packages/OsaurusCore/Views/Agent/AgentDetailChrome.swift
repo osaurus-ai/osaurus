@@ -49,19 +49,22 @@ struct AgentHeaderAvatar: View {
         }
     }
 
+    /// Sized against the header's title and description, not the design
+    /// library's avatar size, which is for chat and list rows.
     private var avatar: some View {
         AgentAvatarView(
             mascotId: mascotId,
             name: name,
             tint: tint,
-            diameter: 32,
+            diameter: 48,
             customImageURL: customImageURL,
-            monogramFontSize: 14,
-            borderWidth: 1.5
+            monogramFontSize: 20,
+            borderWidth: 1.5,
+            followsLibrarySize: false
         )
         .overlay(alignment: .bottomTrailing) {
             if showsRemoteGlyph {
-                RemoteAvatarBadge(glyphSize: 8, padding: 3)
+                RemoteAvatarBadge(glyphSize: 10, padding: 4)
                     .offset(x: 2, y: 2)
             }
         }

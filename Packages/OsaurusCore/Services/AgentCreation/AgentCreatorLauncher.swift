@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Opens a New Agent chat: a Configurator chat with an empty draft bound
-//  to it. Settings hosts it on the Agents page (`AgentCreatorController`):
+//  to it, on the main window's New Agent page (`AgentCreatorController`):
 //  an intro asks what the agent should do, then the agent takes shape
 //  beside the conversation; only its Create button saves anything.
 //
@@ -18,11 +18,17 @@ enum AgentCreatorLauncher {
         case discovery
     }
 
-    /// Opens the New Agent creator in Settings → Agents, continuing the
-    /// draft in progress unless a `brief` asks for a fresh one.
+    /// Opens the New Agent page, continuing the draft in progress unless a
+    /// `brief` asks for a fresh one.
     static func open(brief: String? = nil, source: Source = .agentsPage) {
         AgentCreatorController.shared.open(brief: brief, source: source)
-        AppDelegate.shared?.showManagementWindow(initialTab: .agents)
+        ChatWindowManager.shared.showNewAgentSurface()
+    }
+
+    /// Opens the New Agent page on `draft`.
+    static func resume(_ draft: AgentDraft) {
+        AgentCreatorController.shared.resume(draft)
+        ChatWindowManager.shared.showNewAgentSurface()
     }
 
     /// A live session showing `sessionId`: a chat window's, or the creator's.

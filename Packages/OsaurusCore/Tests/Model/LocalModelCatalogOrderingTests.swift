@@ -65,6 +65,45 @@ struct LocalModelCatalogOrderingTests {
         )
     }
 
+    @Test func statusSortIsTheDefaultAndFlipsGroupsKeepingSourceOrder() {
+        let items = [
+            item("plain-newest"),
+            item("installed", status: .installed),
+            item("plain-older"),
+            item("downloading", status: .inProgress(progress: 0.5, detail: nil, isPaused: false)),
+        ]
+        let ascending = SettingsDataTableSort<LocalModelSortKey>(key: .status, ascending: true)
+        #expect(LocalModelColumn.defaultSort == ascending)
+        #expect(ids(LocalModelCatalogOrdering.sorted(items, by: ascending)) == ids(LocalModelCatalogOrdering.sorted(items, by: nil)))
+        let descending = SettingsDataTableSort<LocalModelSortKey>(key: .status, ascending: false)
+        #expect(
+            ids(LocalModelCatalogOrdering.sorted(items, by: descending))
+                == ["plain-newest", "plain-older", "installed", "downloading"])
+    }
+
+    @Test func headerClicksWithADefaultShowItAndReturnToIt() {
+        let status = LocalModelColumn.defaultSort
+        // Status is already showing: its first click flips it.
+        let flipped = SettingsDataTableSort.next(after: nil, default: status, key: .status, initialAscending: true)
+        #expect(flipped == SettingsDataTableSort(key: .status, ascending: false))
+        #expect(SettingsDataTableSort.next(after: flipped, default: status, key: .status, initialAscending: true) == nil)
+        // Another column cycles and lands back on the default (nil).
+        let name = SettingsDataTableSort.next(after: nil, default: status, key: .name, initialAscending: true)
+        #expect(name == SettingsDataTableSort(key: .name, ascending: true))
+        let nameDown = SettingsDataTableSort.next(after: name, default: status, key: .name, initialAscending: true)
+        #expect(SettingsDataTableSort.next(after: nameDown, default: status, key: .name, initialAscending: true) == nil)
+    }
+
+    @Test func rowsCompareByWhatTheyDrawNotTheirHandlers() {
+        var first = item("m", status: .installed)
+        first.menuActions = [.init(title: "Delete Model", icon: "trash", role: .destructive) {}]
+        var rebuilt = first
+        rebuilt.menuActions = [.init(title: "Delete Model", icon: "trash", role: .destructive) {}]
+        #expect(first.drawn == rebuilt.drawn)
+        rebuilt.status = .inProgress(progress: 0.4, detail: nil, isPaused: false)
+        #expect(first.drawn != rebuilt.drawn)
+    }
+
     // MARK: - Search
 
     @Test func searchRequiresEveryTerm() {
@@ -136,7 +175,7 @@ struct LocalModelCatalogOrderingTests {
         #expect(visible(700) == ["model", "fit", "memory", "size", "status"])
         #expect(visible(600) == ["model", "fit", "size", "status"])
         #expect(visible(520) == ["model", "fit", "status"])
-        // Model and status never hide, even when they overflow.
+        // Model and Status never hide, even when they overflow.
         #expect(visible(200) == ["model", "status"])
     }
 

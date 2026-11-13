@@ -6,7 +6,7 @@ order: 175
 
 # Insights and the Activity Log
 
-Insights is the audit dashboard. Every interaction Osaurus performs is recorded as one row, persisted on this Mac, and marked **Local** (data stayed on this Mac) or **Cloud** (data left this Mac). Open it from Settings… (⌘,) → Insights, from Privacy & Security → Activity Log → **Review Activity in Insights**, or from **Inspect response** in any assistant message's **…** menu (which opens that turn's request and response).
+Insights is the audit dashboard. Every interaction Osaurus performs is recorded as one row, persisted on this Mac, and marked **Local** (data stayed on this Mac) or **Cloud** (data left this Mac). Open it from the Insights button in the main window navigation rail (just above Settings), from Privacy & Security → Activity Log → **Review Activity in Insights**, or from **Inspect response** in any assistant message's **…** menu (which opens that turn's request and response).
 
 ## What gets recorded
 

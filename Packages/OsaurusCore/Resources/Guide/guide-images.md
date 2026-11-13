@@ -32,4 +32,4 @@ Qwen-Image 2.1/Turbo results include `effective_parameters`: the actual dimensio
 
 - Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). The built-in Orchestrator has no image tool of its own — add an image-enabled agent to Settings → Agents → Delegation → Allowed subagents and the Orchestrator delegates "generate an image of …" to it.
 - If no image model is installed, the tool is not offered — download one in Local Models → Image first.
-- Every image or video job is recorded in Settings… (⌘,) → Insights (**Audio & Media** scope tab, **Media** rows) with the prompt, size, step count and provider. Local MLX jobs are **Local**; Venice jobs are **Cloud**; Osaurus Cloud jobs appear as **Router** rows.
+- Every image or video job is recorded in Main window → Insights (**Audio & Media** scope tab, **Media** rows) with the prompt, size, step count and provider. Local MLX jobs are **Local**; Venice jobs are **Cloud**; Osaurus Cloud jobs appear as **Router** rows.

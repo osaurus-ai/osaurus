@@ -41,6 +41,9 @@ enum LocalModelSortKey: Hashable, Sendable {
     case memory
     case size
     case released
+    /// Downloads in flight, then on this Mac, then Top Picks, then the rest:
+    /// the table's default order.
+    case status
 }
 
 /// The shared column vocabulary, in display order. A kind lists only the
@@ -73,9 +76,13 @@ enum LocalModelColumn: String, CaseIterable, Sendable {
                 id: rawValue, title: "Released", width: .fixed(76), alignment: .trailing,
                 sortKey: .released, initialAscending: false, hidePriority: 4)
         case .status:
-            SettingsDataTableColumn(id: rawValue, title: "", width: .fixed(156), alignment: .trailing)
+            SettingsDataTableColumn(
+                id: rawValue, title: "Status", width: .fixed(156), alignment: .trailing, sortKey: .status)
         }
     }
+
+    /// What the table shows sorted when no header is picked.
+    static let defaultSort = SettingsDataTableSort<LocalModelSortKey>(key: .status, ascending: true)
 }
 
 struct LocalModelCatalogItem: Identifiable {
@@ -174,6 +181,60 @@ struct LocalModelCatalogItem: Identifiable {
     var isUnsupported = false
 }
 
+extension LocalModelCatalogItem {
+    /// Everything a table row shows, without the closures: two rows that
+    /// draw the same compare equal even when rebuilt with fresh handlers,
+    /// which act on the same model.
+    struct Drawn: Equatable, Sendable {
+        struct BadgeLook: Equatable, Sendable {
+            let text: String
+            let tone: StatusChip.Tone
+            let icon: String?
+            let help: String?
+        }
+
+        struct ActionLook: Equatable, Sendable {
+            let title: String
+            let icon: String
+            let role: Action.Role
+            let confirmation: String?
+        }
+
+        let id: String
+        let name: String
+        let subtitle: String
+        let icon: String
+        let badges: [BadgeLook]
+        let isTopPick: Bool
+        let isDefault: Bool
+        let fit: ModelCompatibility?
+        let memoryText: String?
+        let sizeText: String?
+        let releasedText: String?
+        let status: Status
+        let primaryAction: ActionLook?
+        let menuActions: [ActionLook]
+        let canPause: Bool
+        let canResume: Bool
+        let canCancel: Bool
+        let isUnsupported: Bool
+    }
+
+    var drawn: Drawn {
+        func look(_ action: Action) -> Drawn.ActionLook {
+            .init(title: action.title, icon: action.icon, role: action.role, confirmation: action.confirmation)
+        }
+        return Drawn(
+            id: id, name: name, subtitle: subtitle, icon: icon,
+            badges: badges.map { .init(text: $0.text, tone: $0.tone, icon: $0.icon, help: $0.help) },
+            isTopPick: isTopPick, isDefault: isDefault, fit: fit,
+            memoryText: memoryText, sizeText: sizeText, releasedText: releasedText, status: status,
+            primaryAction: primaryAction.map(look), menuActions: menuActions.map(look),
+            canPause: onPause != nil, canResume: onResume != nil, canCancel: onCancel != nil,
+            isUnsupported: isUnsupported)
+    }
+}
+
 // MARK: - Ordering
 
 enum LocalModelCatalogOrdering {
@@ -199,19 +260,23 @@ enum LocalModelCatalogOrdering {
         }
     }
 
-    /// Default order: downloads in flight, then models on this Mac, then Top
-    /// Picks, then the source's order. A header sort replaces it; rows with
-    /// no value for that column sort last either way, then by name.
+    /// Default order (`nil`, or Status ascending): downloads in flight, then
+    /// models on this Mac, then Top Picks, then the source's order; Status
+    /// descending flips the groups and keeps the source's order inside
+    /// each. Another header sort replaces it; rows with no value for that
+    /// column sort last either way, then by name.
     static func sorted(
         _ items: [LocalModelCatalogItem],
         by sort: SettingsDataTableSort<LocalModelSortKey>?
     ) -> [LocalModelCatalogItem] {
         let indexed = Array(items.enumerated())
-        guard let sort else {
+        let sort = sort ?? LocalModelColumn.defaultSort
+        if sort.key == .status {
             return indexed.sorted { lhs, rhs in
                 let l = defaultRank(lhs.element)
                 let r = defaultRank(rhs.element)
-                return l != r ? l < r : lhs.offset < rhs.offset
+                guard l != r else { return lhs.offset < rhs.offset }
+                return sort.ascending ? l < r : l > r
             }.map(\.element)
         }
         return indexed.sorted { lhs, rhs in
@@ -252,6 +317,7 @@ enum LocalModelCatalogOrdering {
         case .memory: item.memoryGB
         case .size: item.sizeBytes.map(Double.init)
         case .released: item.releasedAt?.timeIntervalSinceReferenceDate
+        case .status: Double(defaultRank(item))
         }
     }
 
