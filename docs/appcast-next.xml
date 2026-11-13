@@ -3,6 +3,36 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>1.0.3</title>
+            <pubDate>Fri, 13 Nov 2026 20:41:38 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.3</sparkle:version>
+            <sparkle:shortVersionString>1.0.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.3/Osaurus-1.0.3.dmg" length="121435852" type="application/octet-stream" sparkle:edSignature="dGfH8b5llz63EWGEk+rSEXPzwTvRdf4sPSH1FM+5MY8tYB0qKZJkQ1l3MO9KmPoojw4oYAAONP0wPXnEGxFaAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Open Settings inside the main window instead of its own window by @tpae in https://github.com/osaurus-ai/osaurus/pull/3406
+* Polish the first run: keep exploring the team, focus the chat, and give teammates an identity by @tpae in https://github.com/osaurus-ai/osaurus/pull/3407
+* Show full paths and where they live on the workflow approval sheet by @tpae in https://github.com/osaurus-ai/osaurus/pull/3409
+* Use LCached for SystemStatusBar labels to prevent main-thread hangs (APPLE-MACOS-3RN) by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3393
+* Compute sandbox environment disk usage off the main actor by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3403
+* Don't block the main thread checking pending sync status at launch by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3404
+* Resolve model decision verdicts off the main actor during catalog refresh by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3405
+* Memoize model compatibility and row badges via LCached by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3360
+* Make the chat thread follow, resize and disclose smoothly by @tpae in https://github.com/osaurus-ai/osaurus/pull/3411
+* Stop model grid re-evaluation on high-frequency manager publishes and cache cell transitions by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3341
+* Fix the onboarding Research Brief when web search returns junk by @tpae in https://github.com/osaurus-ai/osaurus/pull/3410
+* Fix two main-actor crashes and the onboarding folder-picker hang by @tpae in https://github.com/osaurus-ai/osaurus/pull/3412
+* Skip height re-notes for rows that settle back on the height AppKit has by @tpae in https://github.com/osaurus-ai/osaurus/pull/3417
+* Fix guide and docs drift against the current Settings and tools by @tpae in https://github.com/osaurus-ai/osaurus/pull/3416
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.2...1.0.3
+]]></description>
+        </item>
+        <item>
             <title>1.0.2</title>
             <pubDate>Thu, 12 Nov 2026 11:41:16 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
