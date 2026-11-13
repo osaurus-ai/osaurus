@@ -506,6 +506,27 @@ struct ChatThreadSmoothnessTests {
         #expect(zip(close.heights, close.heights.dropFirst()).allSatisfy { $1 <= $0 + 0.5 }, "collapse reversed")
     }
 
+    @Test func preparingAnOffscreenRowWhoseHeightHoldsNotesNothing() async throws {
+        let t = Thread(height: 600)
+        defer { t.window.close() }
+        for _ in 0 ..< 4 { t.addToolExchange() }
+        t.apply()
+        await t.settle()
+        let (row, _) = try #require(t.activityRows.dropFirst().first)
+        t.coordinator.userDidScrollUp()
+        t.userScroll(toY: t.tableView.rect(ofRow: row).minY - 40)
+        await t.settle()
+        let visible = t.tableView.rows(in: t.tableView.visibleRect)
+        for r in 0 ..< t.tableView.numberOfRows where !NSLocationInRange(r, visible) {
+            let height = t.tableView.rect(ofRow: r).height
+            t.tableView.notedRows.removeAll()
+            _ = t.tableView.view(atColumn: 0, row: r, makeIfNecessary: true)
+            t.layout()
+            #expect(t.tableView.rect(ofRow: r).height == height, "row \(r) changed height")
+            #expect(t.tableView.notedRows.isEmpty, "row \(r) re-noted \(t.tableView.notedRows.map { Array($0) })")
+        }
+    }
+
     @Test func aToggleWhileFollowingNeverScrolls() async throws {
         let t = Thread(height: 600)
         defer { t.window.close() }
