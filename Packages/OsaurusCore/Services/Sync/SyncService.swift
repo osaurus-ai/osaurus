@@ -409,15 +409,6 @@ final class SyncService: @unchecked Sendable {
         private var observers: [NSObjectProtocol] = []
         private let pathMonitor = NWPathMonitor()
         private let backfill: BackfillPolicyMonitor
-        /// Sleep handling waits on the store's write queue and the core, so it
-        /// runs here rather than on the main thread, where NSWorkspace posts.
-        private let sleepQueue: OperationQueue = {
-            let queue = OperationQueue()
-            queue.name = "ai.osaurus.sync.lifecycle"
-            queue.maxConcurrentOperationCount = 1
-            queue.qualityOfService = .userInitiated
-            return queue
-        }()
 
         init(core: SyncCore) {
             self.core = core
@@ -427,10 +418,18 @@ final class SyncService: @unchecked Sendable {
         func start() {
             let workspace = NSWorkspace.shared.notificationCenter
             observers.append(
-                workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: sleepQueue) {
+                workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) {
                     [core] _ in
-                    try? SyncConversationStore.shared.performWrite { SyncAgentDirectory.writePresence(.sleeping, core: $0) }
-                    _ = SyncService.blocking(timeout: 5) { try await core.suspend() }
+                    // Blocks on purpose: AppKit acknowledges sleep once this
+                    // returns, so the presence write and suspend should land
+                    // first. Both run in one detached job so the whole wait,
+                    // including any queued store writes, stays under 5s.
+                    _ = SyncService.blocking(timeout: 5) {
+                        try? SyncConversationStore.shared.performWrite {
+                            SyncAgentDirectory.writePresence(.sleeping, core: $0)
+                        }
+                        try await core.suspend()
+                    }
                 }
             )
             observers.append(
@@ -467,7 +466,6 @@ final class SyncService: @unchecked Sendable {
                 NotificationCenter.default.removeObserver(observer)
             }
             observers.removeAll()
-            sleepQueue.cancelAllOperations()
             pathMonitor.cancel()
             backfill.stop()
         }
